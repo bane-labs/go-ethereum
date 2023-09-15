@@ -13,6 +13,8 @@ interface IGovernance {
 }
 
 abstract contract GovernanceVote {
+    event Vote(address voter, bytes32 methodKey, bytes32 paramKey);
+
     IGovernance public constant governance =
         IGovernance(0x1212000000000000000000000000000000000001);
 
@@ -31,6 +33,7 @@ abstract contract GovernanceVote {
 
     function vote(bytes32 methodKey, bytes32 paramKey) internal {
         voteMap[methodKey][msg.sender] = paramKey;
+        emit Vote(msg.sender, methodKey, paramKey);
     }
 
     function clearVote(bytes32 methodKey) internal {

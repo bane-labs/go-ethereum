@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "./lib/EnumerableSet.sol";
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 interface IGovernance {
     struct Draft {
@@ -15,6 +15,22 @@ interface IGovernance {
         address[] miners;
         uint preHeight;
     }
+
+    event Propose(
+        address proposer,
+        uint draftId,
+        uint startHeight,
+        address[] miners
+    );
+
+    event Vote(address voter, uint draftId);
+
+    event VotePass(
+        uint votedBalance,
+        uint startHeight,
+        address[] miners,
+        uint preHeight
+    );
 
     // propose draft, contains start height and consensus list
     function propose(uint startHeight, address[] memory miners) external;
@@ -40,9 +56,9 @@ contract Governance is IGovernance {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     // the min balance for voting
-    uint public constant MIN_VOTE_AMOUNT = 10;
+    uint public constant MIN_VOTE_AMOUNT = 10 ether;
     // the balance target for a vote to pass
-    uint public constant VOTE_TARGET_AMOUNT = 3000000;
+    uint public constant VOTE_TARGET_AMOUNT = 3000000 ether;
 
     // the last Phase's start height, default 1
     uint public lastStartHeight;
@@ -60,13 +76,9 @@ contract Governance is IGovernance {
     // Draft mapping, draftId -> Draft
     mapping(uint => Draft) private draftMap;
 
-    bool private initialized;
-
-    // constructor should not be in upgradable contract, so we use initialize
-    // governance contract should predeploy in genesis.json, so the method is just for test
-    function initialize() public {
-        require(!initialized, "Contract instance has already been initialized");
-        initialized = true;
+    // constructor should not be in upgradable contract, this method is just for test
+    // governance contract should predeploy in genesis.json
+    constructor() {
         lastStartHeight = 1;
         startDraftId = 1;
         address[] memory defaultMiners = new address[](1);
@@ -119,6 +131,7 @@ contract Governance is IGovernance {
             miners: miners,
             startHeight: startHeight
         });
+        emit Propose(msg.sender, endDraftId, startHeight, miners);
     }
 
     function getDraftList() external view override returns (Draft[] memory) {
@@ -143,21 +156,6 @@ contract Governance is IGovernance {
         if (votedId == draftId) {
             return;
         }
-
-        // check vote balance
-        uint beforeBlance = getVoteBalance(draftId);
-        if (beforeBlance + balance >= VOTE_TARGET_AMOUNT) {
-            Draft memory draft = draftMap[draftId];
-            phaseMap[draft.startHeight] = Phase({
-                startHeight: draft.startHeight,
-                miners: draft.miners,
-                preHeight: lastStartHeight
-            });
-            lastStartHeight = draft.startHeight;
-            startDraftId = endDraftId + 1;
-
-            // todo: consider to clear vote and draft mapping, maybe cost more gas
-        }
         if (votedId > 0) // remove voted record
         {
             draftVoteList[votedId].remove(msg.sender);
@@ -166,6 +164,27 @@ contract Governance is IGovernance {
         // set new record
         draftVoteMap[msg.sender] = draftId;
         draftVoteList[draftId].add(msg.sender);
+        emit Vote(msg.sender, draftId);
+
+        // check vote balance
+        uint votedBalance = getVoteBalance(draftId);
+        if (votedBalance >= VOTE_TARGET_AMOUNT) {
+            Draft memory draft = draftMap[draftId];
+            Phase memory phase = Phase({
+                startHeight: draft.startHeight,
+                miners: draft.miners,
+                preHeight: lastStartHeight
+            });
+            phaseMap[draft.startHeight] = phase;
+            lastStartHeight = draft.startHeight;
+            startDraftId = endDraftId + 1;
+            emit VotePass(
+                votedBalance,
+                phase.startHeight,
+                phase.miners,
+                phase.preHeight
+            );
+        }
     }
 
     function revokeVote() external override {
@@ -177,6 +196,7 @@ contract Governance is IGovernance {
 
         draftVoteList[draftId].remove(msg.sender);
         delete draftVoteMap[msg.sender];
+        emit Vote(msg.sender, 0);
     }
 
     // calculate vote balance of draft
