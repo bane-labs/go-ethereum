@@ -23,12 +23,12 @@ contract Policy is GovernanceVote{
     }   
 
     //  cancel blacklist
-    function addBlackList (address _addr) external needVote(keccak256("setBlackList"), keccak256(abi.encode(_addr))) {
+    function addBlackList (address _addr) external needVote(keccak256("addBlackList"), keccak256(abi.encode(_addr))) {
         require(!isBlackListed[_addr],"Policy: Blacklist already exists");
         isBlackListed[_addr] = true;        
     }
     //  cancel blacklist
-    function removeBlackList (address _addr) external needVote(keccak256("setBlackList"), keccak256(abi.encode(_addr))) {
+    function removeBlackList (address _addr) external needVote(keccak256("removeBlackList"), keccak256(abi.encode(_addr))) {
         require(isBlackListed[_addr],"Policy: Blacklist does not exist");
         isBlackListed[_addr] = false;        
            
