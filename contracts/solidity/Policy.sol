@@ -14,7 +14,7 @@ contract Policy is GovernanceVote{
         require(!initialized, "Contract instance has already been initialized");
         minGasPrice = 10000000;       
         initialized = true;
-	}
+    }
 
     // set minimum gasprice
     function setMinGasPrice (uint _gasPrice) external needVote(keccak256("setMinGasPrice"), keccak256(abi.encode(_gasPrice)))  {
