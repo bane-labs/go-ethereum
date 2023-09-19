@@ -56,7 +56,7 @@ contract Governance is IGovernance {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     // the min balance for voting
-    uint public constant MIN_VOTE_AMOUNT = 10 ether;
+    uint public constant MIN_VOTE_AMOUNT = 1 ether;
     // the balance target for a vote to pass
     uint public constant VOTE_TARGET_AMOUNT = 3000000 ether;
 
@@ -147,6 +147,10 @@ contract Governance is IGovernance {
         require(
             draftId >= startDraftId && draftId <= endDraftId,
             "invalid draftId"
+        );
+        require(
+            draftMap[draftId].startHeight > block.number,
+            "invalid draft start height"
         );
 
         uint balance = msg.sender.balance;
