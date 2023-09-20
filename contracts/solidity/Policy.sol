@@ -8,9 +8,9 @@ contract Policy is GovernanceVote{
     uint public  minGasPrice ;
     mapping(address=>bool) public isBlackListed;    
     bool private initialized;
-    event SetMinGasPrice(address sender,uint gasPrice);
-    event AddBlackList(address sender,address addr);
-    event RemoveBlackList(address sender,address addr);
+    event SetMinGasPrice(uint gasPrice);
+    event AddBlackList(address addr);
+    event RemoveBlackList(address addr);
 
     function initialize() public {
         require(!initialized, "Contract instance has already been initialized");
@@ -22,20 +22,20 @@ contract Policy is GovernanceVote{
     function setMinGasPrice (uint _gasPrice) external needVote(keccak256("setMinGasPrice"), keccak256(abi.encode(_gasPrice)))  {
         require(_gasPrice > 0, "Policy: setMinGasPrice invalid parameter");
         minGasPrice = _gasPrice;   
-        emit SetMinGasPrice(msg.sender, _gasPrice); 
+        emit SetMinGasPrice(_gasPrice); 
     }   
 
     //  cancel blacklist
     function addBlackList (address _addr) external needVote(keccak256("addBlackList"), keccak256(abi.encode(_addr))) {
         require(!isBlackListed[_addr],"Policy: Blacklist already exists");
         isBlackListed[_addr] = true; 
-        emit AddBlackList(msg.sender, _addr);       
+        emit AddBlackList(_addr);       
     }
     //  cancel blacklist
     function removeBlackList (address _addr) external needVote(keccak256("removeBlackList"), keccak256(abi.encode(_addr))) {
         require(isBlackListed[_addr],"Policy: Blacklist does not exist");
         isBlackListed[_addr] = false; 
-        emit RemoveBlackList(msg.sender, _addr);      
+        emit RemoveBlackList(_addr);      
            
     }
 
