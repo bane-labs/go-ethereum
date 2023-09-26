@@ -50,9 +50,7 @@ endef
 define create_account
     @mkdir -p $(MAIN_DIR)/$(1)
     @echo $(call generate_password) > $(MAIN_DIR)/$(1)/password.txt
-    @$(GOBIN)/geth --datadir $(MAIN_DIR)/$(1) \
-    	account new \
-    	--password $(MAIN_DIR)/$(1)/password.txt >  $(MAIN_DIR)/$(1)/geth_create_account.log 2>&1
+    @$(GOBIN)/geth --datadir $(MAIN_DIR)/$(1) account new --password $(MAIN_DIR)/$(1)/password.txt
     $(call replace_node_address,$(1))
     @echo "Account $(1): "$$(cat $(MAIN_DIR)/$(1)/node_address.txt)
 endef
