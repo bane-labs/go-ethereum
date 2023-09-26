@@ -4,7 +4,7 @@
 
 .PHONY: geth android ios evm all test clean privnet_init privnet_nodes_stop privnet_bootnode_stop privnet_stop privnet_clean privnet_start
 
-GOBIN = ./build/bin
+GETHBIN = ./build/bin
 GO ?= latest
 GORUN = go run
 
@@ -30,7 +30,7 @@ NAT_POLICY = none
 
 define generate_bootnode
 	@mkdir -p $(MAIN_DIR)/$(BOOTNODE)
-	@$(GOBIN)/bootnode -genkey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key
+	@$(GETHBIN)/bootnode -genkey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key
 	@echo $$($(GOBIN)/bootnode --writeaddress -nodekey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key) > $(MAIN_DIR)/$(BOOTNODE)/bootnode_address.txt
 endef
 
@@ -50,13 +50,13 @@ endef
 define create_account
     @mkdir -p $(MAIN_DIR)/$(1)
     @echo $(call generate_password) > $(MAIN_DIR)/$(1)/password.txt
-    @$(GOBIN)/geth --datadir $(MAIN_DIR)/$(1) account new --password $(MAIN_DIR)/$(1)/password.txt
+    @$(GETHBIN)/geth --datadir $(MAIN_DIR)/$(1) account new --password $(MAIN_DIR)/$(1)/password.txt
     $(call replace_node_address,$(1))
     @echo "Account $(1): "$$(cat $(MAIN_DIR)/$(1)/node_address.txt)
 endef
 
 define run_bootnode
-    @$(GOBIN)/bootnode -nodekey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key \
+    @$(GETHBIN)/bootnode -nodekey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key \
     	-addr :$(BOOTNODE_PORT) \
     	-verbosity $(BOOTNODE_LOGLEVEL) > $(MAIN_DIR)/$(BOOTNODE)/bootnode.log 2>&1 &
 endef
@@ -66,7 +66,7 @@ define run_miner_node
 endef
 
 define run_node
-	@$(GOBIN)/geth --datadir $(MAIN_DIR)/$(1) \
+	@$(GETHBIN)/geth --datadir $(MAIN_DIR)/$(1) \
 		--port $(2) \
 		--bootnodes "enode://$$(cat $(MAIN_DIR)/$(BOOTNODE)/bootnode_address.txt)@127.0.0.1:0?discport=$(BOOTNODE_PORT)" \
 		--networkid "$$(cat $(MAIN_DIR)/networkid.txt)" \
@@ -84,13 +84,13 @@ define copy_genesis
 endef
 
 define init_node
-    @$(GOBIN)/geth init --datadir $(MAIN_DIR)/$(1) $(MAIN_DIR)/$(1)/$(GENESIS_WORK_JSON) > $(MAIN_DIR)/$(1)/geth_init.log 2>&1
+    @$(GETHBIN)/geth init --datadir $(MAIN_DIR)/$(1) $(MAIN_DIR)/$(1)/$(GENESIS_WORK_JSON) > $(MAIN_DIR)/$(1)/geth_init.log 2>&1
 endef
 
 geth:
 	$(GORUN) build/ci.go install ./cmd/geth
 	@echo "Done building."
-	@echo "Run \"$(GOBIN)/geth\" to launch geth."
+	@echo "Run \"$(GETHBIN)/geth\" to launch geth."
 
 all:
 	$(GORUN) build/ci.go install
@@ -103,7 +103,7 @@ lint: ## Run linters.
 
 clean:
 	go clean -cache
-	rm -fr build/_workspace/pkg/ $(GOBIN)/*
+	rm -fr build/_workspace/pkg/ $(GETHBIN)/*
 
 # The devtools target installs tools required for 'go generate'.
 # You need to put $GOBIN (or $GOPATH/bin) in your PATH to use 'go generate'.
