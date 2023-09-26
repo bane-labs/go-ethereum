@@ -31,7 +31,7 @@ NAT_POLICY = none
 define generate_bootnode
 	@mkdir -p $(MAIN_DIR)/$(BOOTNODE)
 	@$(GOBIN)/bootnode -genkey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key
-	@echo $$($(GOBIN)/bootnode --writeaddress -nodekey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key) >> $(MAIN_DIR)/$(BOOTNODE)/bootnode_address.txt
+	@echo $$($(GOBIN)/bootnode --writeaddress -nodekey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key) > $(MAIN_DIR)/$(BOOTNODE)/bootnode_address.txt
 endef
 
 define generate_password
@@ -43,13 +43,13 @@ define replace_chainid
 endef
 
 define replace_node_address
-	@echo $$(cat $(MAIN_DIR)/$(1)/keystore/* | sed -En 's/.*"address":"([^"]*).*/\1/p') >> $(MAIN_DIR)/$(1)/node_address.txt
+	@echo $$(cat $(MAIN_DIR)/$(1)/keystore/* | sed -En 's/.*"address":"([^"]*).*/\1/p') > $(MAIN_DIR)/$(1)/node_address.txt
 	@sed -i "s/$(1)/$$(cat $(MAIN_DIR)/$(1)/node_address.txt)/gI" $(MAIN_DIR)/$(GENESIS_WORK_JSON)
 endef
 
 define create_account
     @mkdir -p $(MAIN_DIR)/$(1)
-    @echo $(call generate_password) >> $(MAIN_DIR)/$(1)/password.txt
+    @echo $(call generate_password) > $(MAIN_DIR)/$(1)/password.txt
     @$(GOBIN)/geth --datadir $(MAIN_DIR)/$(1) \
     	account new \
     	--password $(MAIN_DIR)/$(1)/password.txt >  $(MAIN_DIR)/$(1)/geth_create_account.log 2>&1
@@ -138,11 +138,12 @@ devtools:
 # Privnet targets
 
 privnet_init: privnet_clean
+	@find $(MAIN_DIR)/* -type d -name 'keystore' -exec rm -rf {} +
 	@mkdir -p $(MAIN_DIR)
 	@echo "Generate  $(GENESIS_WORK_JSON) file"
 	@cp $(MAIN_DIR)/genesis_template.json $(MAIN_DIR)/$(GENESIS_WORK_JSON)
-	@echo $$(date +'%y%m%d%H%M') >> $(MAIN_DIR)/networkid.txt
-	@echo "networkid is "$$(cat $(MAIN_DIR)/networkid.txt)
+	@echo $$(date +'%y%m%d%H%M') > $(MAIN_DIR)/networkid.txt
+	@echo "Network ID is "$$(cat $(MAIN_DIR)/networkid.txt)
 	@echo "Generate bootnode"
 	$(call generate_bootnode)
 	$(call replace_chainid)
