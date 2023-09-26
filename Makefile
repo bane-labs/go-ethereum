@@ -152,10 +152,15 @@ privnet_clean: privnet_stop
 	@find $(MAIN_DIR)/* -type d -name 'geth' -print -exec rm -rf {} +
 	@find $(MAIN_DIR)/* -type s,f -not \( -path '*/keystore/*' -or -name '*.json' -or -name '*.txt' -or -name '*.key' -or -name '*.md' \) -print -exec rm -f {} +
 
-privnet_start:
-	@echo "Init nodes"
+privnet/$(NODE1)/geth:
+	@echo "Initializing $(NODE1) from genesis"
 	$(call init_node,$(NODE1))
+
+privnet/$(NODE2)/geth:
+	@echo "Initializing $(NODE2) from genesis"
 	$(call init_node,$(NODE2))
+
+privnet_start: privnet/$(NODE1)/geth privnet/$(NODE2)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode)
 	$(call run_miner_node,$(NODE1),$(NODE1_PORT),$(NODE1_RPC_PORT),$(NODE1))
