@@ -159,18 +159,18 @@ privnet_init: privnet_clean
 
 privnet_nodes_stop:
 	@echo "Killing nodes processes"
-	@killall -9 geth > /dev/null 2> /dev/null || :
+	@killall -w -v -9 geth || :
 
 privnet_bootnode_stop:
 	@echo "Killing bootnode processes"
-	@killall -9 bootnode > /dev/null 2> /dev/null || :
+	@killall -w -v -9 bootnode || :
 
 privnet_stop: privnet_bootnode_stop privnet_nodes_stop
 
 privnet_clean: privnet_stop
 	@echo "Cleaning the nodes database files from $(MAIN_DIR)"
-	@find $(MAIN_DIR)/* -type d -name 'geth' -exec rm -rf {} +
-	@find $(MAIN_DIR)/* -type s,f -not \( -path '*/keystore/*' -or -name '*.json' -or -name '*.txt' -or -name '*.key' -or -name '*.md' \) -exec rm -f {} +
+	@find $(MAIN_DIR)/* -type d -name 'geth' -print -exec rm -rf {} +
+	@find $(MAIN_DIR)/* -type s,f -not \( -path '*/keystore/*' -or -name '*.json' -or -name '*.txt' -or -name '*.key' -or -name '*.md' \) -print -exec rm -f {} +
 
 privnet_start:
 	@echo "Init nodes"
