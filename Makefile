@@ -168,9 +168,9 @@ privnet_bootnode_stop:
 privnet_stop: privnet_bootnode_stop privnet_nodes_stop
 
 privnet_clean: privnet_stop
-	@echo "Cleaning $(MAIN_DIR)"
-	@find $(MAIN_DIR)/* -type d -exec rm -rf {} +
-	@find $(MAIN_DIR)/* -type f -not \( -name 'genesis_template.json' -or -name 'README.md' \) -exec rm -f {} +
+	@echo "Cleaning the nodes database files from $(MAIN_DIR)"
+	@find $(MAIN_DIR)/* -type d -name 'geth' -exec rm -rf {} +
+	@find $(MAIN_DIR)/* -type s,f -not \( -path '*/keystore/*' -or -name '*.json' -or -name '*.txt' -or -name '*.key' -or -name '*.md' \) -exec rm -f {} +
 
 privnet_start:
 	@echo "Init nodes"
