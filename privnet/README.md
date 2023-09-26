@@ -299,9 +299,6 @@ based on the specifications mentioned above:
    affect the network settings files (accounts, passwords, genesis settings,
    network ID and etc.). So that it's possible to start a fresh privnet with the
    same network settings, accounts and genesis block.
-   
-   Network/chain identifier, node addresses, and passwords are stored in the file
-   `privnet/config.json`.
 
 ## Commands in JavaScript console
 
@@ -344,8 +341,7 @@ all configuration information if needed. Privnet reinitialization includes:
    `privnet/node[1,2]/password.txt`, `privnet/node[1,2]/keystore`, `privnet/bootnode/bootnode.key`, `privnet/bootnode/bootnode_address.txt`);
  * Network ID regeneration (`privnet/networkid.txt`);
  * Genesis block settings regeneration (`privnet/node[1,2]/genesis_privnet.json`);
- * Corresponding network configuration file update (`privnet/config.json`);
- * Informative `privnet/config.json` file regeneration.
+ * Corresponding network configuration file update (`privnet/config.json`).
 
 Note, that the reinitialisation operation is not supposed to be used during
 standard development flow. To reinitialize the entire private network, please

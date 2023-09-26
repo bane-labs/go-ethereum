@@ -87,23 +87,6 @@ define init_node
     @$(GOBIN)/geth init --datadir $(MAIN_DIR)/$(1) $(MAIN_DIR)/$(1)/$(GENESIS_WORK_JSON) > $(MAIN_DIR)/$(1)/geth_init.log 2>&1
 endef
 
-define create_json
-	@echo "{" > $(MAIN_DIR)/config.json
-	@echo "\t\"version\": \"1.0\"," >> $(MAIN_DIR)/config.json
-	@echo "\t\"accounts\": [" >> $(MAIN_DIR)/config.json
-	@echo "\t\t{" >> $(MAIN_DIR)/config.json
-	@echo "\t\t\t\"address\": \""$$(cat $(MAIN_DIR)/$(1)/node_address.txt)\", >> $(MAIN_DIR)/config.json
-	@echo "\t\t\t\"key\": \""$$(cat $(MAIN_DIR)/$(1)/password.txt)\" >> $(MAIN_DIR)/config.json
-	@echo "\t\t}," >> $(MAIN_DIR)/config.json
-	@echo "\t\t{" >> $(MAIN_DIR)/config.json
-    @echo "\t\t\t\"address\": \""$$(cat $(MAIN_DIR)/$(2)/node_address.txt)\", >> $(MAIN_DIR)/config.json
-    @echo "\t\t\t\"key\": \""$$(cat $(MAIN_DIR)/$(2)/password.txt)\" >> $(MAIN_DIR)/config.json
-    @echo "\t\t}" >> $(MAIN_DIR)/config.json
-	@echo "\t]," >> $(MAIN_DIR)/config.json
-	@echo "\t\"chain_id\": \""$$(cat $(MAIN_DIR)/networkid.txt)\" >> $(MAIN_DIR)/config.json
-	@echo "}" >> $(MAIN_DIR)/config.json
-endef
-
 geth:
 	$(GORUN) build/ci.go install ./cmd/geth
 	@echo "Done building."
@@ -152,8 +135,6 @@ privnet_init: privnet_clean
 	$(call copy_genesis,$(NODE1))
 	$(call copy_genesis,$(NODE2))
 	@rm $(MAIN_DIR)/$(GENESIS_WORK_JSON)
-	@echo "Generate config.json"
-	$(call create_json,$(NODE1),$(NODE2))
 	@echo "OK! For starting use 'make privnet_start'"
 
 privnet_nodes_stop:
