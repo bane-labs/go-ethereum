@@ -19,19 +19,21 @@ package dbft
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"math/big"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/clique"
+	"github.com/ethereum/go-ethereum/consensus/dbft/n3adaptors"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -40,10 +42,13 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
-	"golang.org/x/crypto/sha3"
+	"github.com/nspcc-dev/dbft"
+	"github.com/nspcc-dev/dbft/block"
+	dbftCrypto "github.com/nspcc-dev/dbft/crypto"
+	"github.com/nspcc-dev/neo-go/pkg/util"
+	"go.uber.org/zap"
 )
 
 const (
@@ -140,9 +145,6 @@ var (
 	errRecentlySigned = errors.New("recently signed")
 )
 
-// SignerFn hashes and signs the data to be signed by a backing account.
-type SignerFn func(signer accounts.Account, mimeType string, message []byte) ([]byte, error)
-
 // ecrecover extracts the Ethereum account address from a signed header.
 func ecrecover(header *types.Header, sigcache *sigLRU) (common.Address, error) {
 	// If the signature's already cached, return that
@@ -157,7 +159,7 @@ func ecrecover(header *types.Header, sigcache *sigLRU) (common.Address, error) {
 	signature := header.Extra[len(header.Extra)-extraSeal:]
 
 	// Recover the public key and the Ethereum address
-	pubkey, err := crypto.Ecrecover(SealHash(header).Bytes(), signature)
+	pubkey, err := crypto.Ecrecover(clique.SealHash(header).Bytes(), signature)
 	if err != nil {
 		return common.Address{}, err
 	}
@@ -170,17 +172,37 @@ func ecrecover(header *types.Header, sigcache *sigLRU) (common.Address, error) {
 
 // DBFT is the proof-of-authority consensus engine.
 type DBFT struct {
-	config *params.CliqueConfig // Consensus engine configuration parameters
-	db     ethdb.Database       // Database to store and retrieve snapshot checkpoints
+	config *params.DBFTConfig // Consensus engine configuration parameters
+	epoch  uint64             // Epoch duration left for backwards compatibility.
+	db     ethdb.Database     // Database to store and retrieve snapshot checkpoints
 
 	recents    *lru.Cache[common.Hash, *Snapshot] // Snapshots for recent block to speed up reorgs
 	signatures *sigLRU                            // Signatures of recent blocks to speed up mining
 
 	proposals map[common.Address]bool // Current list of proposals we are pushing
 
-	signer common.Address // Ethereum address of the signing key
-	signFn SignerFn       // Signer function to authorize hashes with
-	lock   sync.RWMutex   // Protects the signer and proposals fields
+	signer common.Address      // Ethereum address of the signing key
+	signFn n3adaptors.SignerFn // Signer function to authorize hashes with
+	lock   sync.RWMutex        // Protects the signer and proposals fields
+
+	dbft        *dbft.DBFT
+	dbftStarted atomic.Bool
+	blockQueue  chan *n3adaptors.Block
+
+	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
+	// received from dBFT or from chain. These fields have exactly those type
+	// that Eth offers, thus, they need to be converted before feeding to dBFT.
+	lastTimestamp uint64 // in seconds, like Eth requires.
+	lastIndex     uint64
+	lastBlockHash common.Hash
+
+	lastProposal *types.Block
+	lastReceipts []*types.Receipt
+
+	// chain instance needed for proper dBFT callbacks functioning.
+	chain    consensus.ChainHeaderReader
+	quit     chan struct{}
+	finished chan struct{}
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
@@ -188,22 +210,157 @@ type DBFT struct {
 
 // New creates a DBFT proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(config *params.CliqueConfig, db ethdb.Database) *DBFT {
+func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 	// Set any missing consensus parameters to their defaults
 	conf := *config
-	if conf.Epoch == 0 {
-		conf.Epoch = epochLength
-	}
 	// Allocate the snapshot caches and create the engine
 	recents := lru.NewCache[common.Hash, *Snapshot](inmemorySnapshots)
 	signatures := lru.NewCache[common.Hash, common.Address](inmemorySignatures)
 
-	return &DBFT{
+	c := &DBFT{
 		config:     &conf,
+		epoch:      epochLength,
 		db:         db,
 		recents:    recents,
 		signatures: signatures,
 		proposals:  make(map[common.Address]bool),
+		quit:       make(chan struct{}),
+		finished:   make(chan struct{}),
+	}
+
+	logger, _ := zap.NewDevelopment()
+	c.blockQueue = make(chan *n3adaptors.Block)
+	c.dbft = dbft.New(
+		dbft.WithLogger(logger),
+		dbft.WithSecondsPerBlock(time.Duration(conf.TimePerBlock)*time.Second),
+		dbft.WithGetKeyPair(func(keys []dbftCrypto.PublicKey) (int, dbftCrypto.PrivateKey, dbftCrypto.PublicKey) {
+			c.lock.RLock()
+			signer, signFn := c.signer, c.signFn
+			c.lock.RUnlock()
+
+			// Bail out if we're unauthorized to sign a block
+			for i, validator := range keys {
+				if validator.(*n3adaptors.PublicKey).Account.Cmp(signer) == 0 {
+					s := &n3adaptors.Signer{
+						Signer: signer,
+						SignFn: signFn,
+					}
+					return i,
+						s,
+						validator // This "public key" is not used by dBFT in any way, but we can provide it, so let it be here.
+				}
+			}
+
+			return -1, nil, nil
+		}),
+		// Consensus engine doesn't have access to the blockchain at the moment of call to constructor. Thus,
+		// we use these `lastIndex` and `lastBlockHash` fields cached in the service.
+		dbft.WithCurrentHeight(func() uint32 {
+			return uint32(c.lastIndex)
+		}),
+		dbft.WithCurrentBlockHash(func() util.Uint256 {
+			return util.Uint256(c.lastBlockHash)
+		}),
+		dbft.WithGetValidators(func(txs ...block.Transaction) []dbftCrypto.PublicKey {
+			if c.lastBlockHash.Cmp(common.Hash{}) == 0 {
+				// Program bug.
+				panic("last block hash wasn't initialized")
+			}
+
+			snap, err := c.snapshot(c.chain, c.lastIndex, c.lastBlockHash, nil)
+			if err != nil {
+				// Program bug.
+				panic(fmt.Errorf("failed to create snapshot while retrieving Validators: %w", err))
+			}
+			res := make([]dbftCrypto.PublicKey, 0, len(snap.Signers))
+			// Once signers are properly fetched from the Neo contract, we need to
+			// sort them so that dBFT can rely on the validator's index. Currently,
+			// they are sorted in ascending order.
+			for _, s := range snap.signers() {
+				res = append(res, &n3adaptors.PublicKey{
+					Account: s,
+				})
+			}
+			return res
+		}),
+		dbft.WithProcessBlock(func(b block.Block) {
+			ethBlock := b.(*n3adaptors.Block)
+			c.blockQueue <- ethBlock
+			// Do not call postBlock here to avoid race between the next pending sealing request that
+			// wants to update the same values as postBlock. Call postBlock in Seal instead.
+		}),
+		dbft.WithNewBlockFromContext(func(ctx *dbft.Context) block.Block {
+			if c.lastProposal == nil {
+				// Program bug.
+				panic("can't create new block from context: last proposal is not initialized")
+			}
+			h := types.CopyHeader(c.lastProposal.Header())
+
+			// Timestamp (ns) -> Time (s)
+			h.Time = ctx.Timestamp / n3adaptors.NsInS
+
+			// BlockIndex -> Number
+			h.Number = big.NewInt(int64(ctx.BlockIndex))
+
+			// PrimaryIndex -> Nonce
+			binary.BigEndian.PutUint64(h.Nonce[:], uint64(ctx.PrimaryIndex))
+
+			// NextConsensus -> MixHash
+			// This should be NextBlockValidators address, but for now we just
+			// put single validator account.
+			c.lock.RLock()
+			signer, _ := c.signer, c.signFn
+			c.lock.RUnlock()
+			h.MixDigest.SetBytes(signer.Bytes())
+
+			// PrevHash -> ParentHash
+			h.ParentHash.SetBytes(ctx.PrevHash.BytesBE())
+
+			txs := make([]*types.Transaction, len(ctx.Transactions))
+			for i, txH := range ctx.TransactionHashes {
+				txs[i] = ctx.Transactions[txH].(*n3adaptors.Transaction).Tx
+			}
+			return &n3adaptors.Block{
+				Block: types.NewBlock(h, txs, nil, c.lastReceipts, trie.NewStackTrie(nil)),
+			}
+		}),
+		dbft.WithWatchOnly(func() bool {
+			return false
+		}),
+		dbft.WithGetVerified(func() []block.Transaction {
+			if c.lastProposal == nil {
+				// Program bug.
+				panic("missing pending sealing work")
+			}
+			txs := c.lastProposal.Transactions()
+			res := make([]block.Transaction, len(txs))
+			for i := range txs {
+				res[i] = &n3adaptors.Transaction{
+					Tx: txs[i],
+				}
+			}
+			return res
+		}),
+		dbft.WithGetConsensusAddress(func(keys ...dbftCrypto.PublicKey) util.Uint160 {
+			// NextConsensus is filled manually in NewBlockFromContext.
+			return util.Uint160{}
+		}),
+	)
+
+	return c
+}
+
+// postBlock is a callback that updates latest accepted block data and resets
+// last proposal data. It must be called every time new block arrives from chain
+// or from consensus.
+func (c *DBFT) postBlock(b *types.Block) {
+	if c.lastTimestamp < b.Time() {
+		c.lastTimestamp = b.Time()
+		c.lastIndex = b.Number().Uint64()
+		c.lastBlockHash = b.Hash()
+
+		c.lastProposal = nil
+		c.lastReceipts = nil
 	}
 }
 
@@ -254,7 +411,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 		return consensus.ErrFutureBlock
 	}
 	// Checkpoint blocks need to enforce zero beneficiary
-	checkpoint := (number % c.config.Epoch) == 0
+	checkpoint := (number % c.epoch) == 0
 	if checkpoint && header.Coinbase != (common.Address{}) {
 		return errInvalidCheckpointBeneficiary
 	}
@@ -328,7 +485,7 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 	if parent == nil || parent.Number.Uint64() != number-1 || parent.Hash() != header.ParentHash {
 		return consensus.ErrUnknownAncestor
 	}
-	if parent.Time+c.config.Period > header.Time {
+	if parent.Time+c.config.TimePerBlock > header.Time {
 		return errInvalidTimestamp
 	}
 	// Verify that the gasUsed is <= gasLimit
@@ -353,7 +510,7 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 		return err
 	}
 	// If the block is a checkpoint block, verify the signer list
-	if number%c.config.Epoch == 0 {
+	if number%c.epoch == 0 {
 		signers := make([]byte, len(snap.Signers)*common.AddressLength)
 		for i, signer := range snap.signers() {
 			copy(signers[i*common.AddressLength:], signer[:])
@@ -382,7 +539,7 @@ func (c *DBFT) snapshot(chain consensus.ChainHeaderReader, number uint64, hash c
 		}
 		// If an on-disk checkpoint snapshot can be found, use that
 		if number%checkpointInterval == 0 {
-			if s, err := loadSnapshot(c.config, c.signatures, c.db, hash); err == nil {
+			if s, err := loadSnapshot(c.epoch, c.signatures, c.db, hash); err == nil {
 				log.Trace("Loaded voting snapshot from disk", "number", number, "hash", hash)
 				snap = s
 				break
@@ -392,7 +549,7 @@ func (c *DBFT) snapshot(chain consensus.ChainHeaderReader, number uint64, hash c
 		// at a checkpoint block without a parent (light client CHT), or we have piled
 		// up more headers than allowed to be reorged (chain reinit from a freezer),
 		// consider the checkpoint trusted and snapshot it.
-		if number == 0 || (number%c.config.Epoch == 0 && (len(headers) > params.FullImmutabilityThreshold || chain.GetHeaderByNumber(number-1) == nil)) {
+		if number == 0 || (number%c.epoch == 0 && (len(headers) > params.FullImmutabilityThreshold || chain.GetHeaderByNumber(number-1) == nil)) {
 			checkpoint := chain.GetHeaderByNumber(number)
 			if checkpoint != nil {
 				hash := checkpoint.Hash()
@@ -401,7 +558,7 @@ func (c *DBFT) snapshot(chain consensus.ChainHeaderReader, number uint64, hash c
 				for i := 0; i < len(signers); i++ {
 					copy(signers[i][:], checkpoint.Extra[extraVanity+i*common.AddressLength:])
 				}
-				snap = newSnapshot(c.config, c.signatures, number, hash, signers)
+				snap = newSnapshot(c.epoch, c.signatures, number, hash, signers)
 				if err := snap.store(c.db); err != nil {
 					return nil, err
 				}
@@ -422,7 +579,7 @@ func (c *DBFT) snapshot(chain consensus.ChainHeaderReader, number uint64, hash c
 			// No explicit parents (or no more left), reach out to the database
 			header = chain.GetHeader(hash, number)
 			if header == nil {
-				return nil, consensus.ErrUnknownAncestor
+				return nil, fmt.Errorf("failed to retrieve parent from DB: %w", consensus.ErrUnknownAncestor)
 			}
 		}
 		headers = append(headers, header)
@@ -510,7 +667,7 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 		return err
 	}
 	c.lock.RLock()
-	if number%c.config.Epoch != 0 {
+	if number%c.epoch != 0 {
 		// Gather all the proposals that make sense voting on
 		addresses := make([]common.Address, 0, len(c.proposals))
 		for address, authorize := range c.proposals {
@@ -542,7 +699,7 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	}
 	header.Extra = header.Extra[:extraVanity]
 
-	if number%c.config.Epoch == 0 {
+	if number%c.epoch == 0 {
 		for _, signer := range snap.signers() {
 			header.Extra = append(header.Extra, signer[:]...)
 		}
@@ -557,7 +714,7 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
-	header.Time = parent.Time + c.config.Period
+	header.Time = parent.Time + c.config.TimePerBlock
 	if header.Time < uint64(time.Now().Unix()) {
 		header.Time = uint64(time.Now().Unix())
 	}
@@ -583,12 +740,19 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 
 	// Assemble and return the final block for sealing.
-	return types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil)), nil
+	b := types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil))
+
+	// Save proposal so that the most fresh data will be available for dBFT once
+	// the new block should be created.
+	c.lastProposal = b
+	c.lastReceipts = receipts
+
+	return b, nil
 }
 
 // Authorize injects a private key into the consensus engine to mint new blocks
 // with.
-func (c *DBFT) Authorize(signer common.Address, signFn SignerFn) {
+func (c *DBFT) Authorize(signer common.Address, signFn n3adaptors.SignerFn) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -596,10 +760,50 @@ func (c *DBFT) Authorize(signer common.Address, signFn SignerFn) {
 	c.signFn = signFn
 }
 
+func (c *DBFT) Initialize(chain consensus.ChainHeaderReader) {
+	c.chain = chain
+
+	currHeader := chain.CurrentHeader()
+	c.lastIndex = currHeader.Number.Uint64()
+	c.lastTimestamp = currHeader.Time
+	c.lastBlockHash = currHeader.Hash()
+
+	// Do not start consensus immediately, we don't yet have sealing work.
+	// Start it once we have new sealing work in Seal.
+	c.dbft.InitializeConsensus(0, c.lastTimestamp*n3adaptors.NsInS)
+
+	go c.eventLoop()
+}
+
+func (c *DBFT) eventLoop() {
+events:
+	for {
+		select {
+		case <-c.quit:
+			c.dbft.Timer.Stop()
+			break events
+		case <-c.dbft.Timer.C():
+			hv := c.dbft.Timer.HV()
+			log.Debug("timer fired",
+				zap.Uint32("height", hv.Height),
+				zap.Uint("view", uint(hv.View)))
+			c.dbft.OnTimeout(hv)
+		}
+	}
+drainLoop:
+	for {
+		select {
+		default:
+			break drainLoop
+		}
+	}
+	close(c.finished)
+}
+
 // Seal implements consensus.Engine, attempting to create a sealed block using
 // the local signing credentials.
-func (c *DBFT) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-	header := block.Header()
+func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+	header := b.Header()
 
 	// Sealing the genesis block is not supported
 	number := header.Number.Uint64()
@@ -607,12 +811,12 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, block *types.Block, resul
 		return errUnknownBlock
 	}
 	// For 0-period chains, refuse to seal empty blocks (no reward but would spin sealing)
-	if c.config.Period == 0 && len(block.Transactions()) == 0 {
+	if c.config.TimePerBlock == 0 && len(b.Transactions()) == 0 {
 		return errors.New("sealing paused while waiting for transactions")
 	}
 	// Don't hold the signer fields for the entire sealing procedure
 	c.lock.RLock()
-	signer, signFn := c.signer, c.signFn
+	signer, _ := c.signer, c.signFn
 	c.lock.RUnlock()
 
 	// Bail out if we're unauthorized to sign a block
@@ -620,9 +824,13 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, block *types.Block, resul
 	if err != nil {
 		return err
 	}
+
+	// This check is duplicated in dBFT.WithGetKeyPair, but here we still need to
+	// keep it in order not to run the consensus if we're not the consensus node.
 	if _, authorized := snap.Signers[signer]; !authorized {
 		return errUnauthorizedSigner
 	}
+
 	// If we're amongst the recent signers, wait for the next block
 	for seen, recent := range snap.Recents {
 		if recent == signer {
@@ -641,12 +849,29 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, block *types.Block, resul
 
 		log.Trace("Out-of-turn signing requested", "wiggle", common.PrettyDuration(wiggle))
 	}
-	// Sign all the things!
-	sighash, err := signFn(accounts.Account{Address: signer}, accounts.MimetypeClique, CliqueRLP(header))
-	if err != nil {
-		return err
+
+	// Start dBFT once and afterward reinitialize it every time new block should be accepted.
+	if c.dbftStarted.CompareAndSwap(false, true) {
+		go c.dbft.Start(c.lastTimestamp * n3adaptors.NsInS)
+	} else {
+		go c.dbft.InitializeConsensus(0, c.lastTimestamp*n3adaptors.NsInS)
 	}
-	copy(header.Extra[len(header.Extra)-extraSeal:], sighash)
+	var (
+		sighash   []byte
+		dBFTBlock *types.Block
+	)
+	select {
+	case n3B := <-c.blockQueue:
+		sighash = n3B.Signature()
+		dBFTBlock = n3B.Block // this block is completely different from the one that FinalizeAndAssemble proposed.
+	}
+	dBFTHeader := dBFTBlock.Header()
+	copy(dBFTHeader.Extra[len(dBFTHeader.Extra)-extraSeal:], sighash)
+
+	// Completely replace proposed block with dBFT's one and relay it to the network.
+	res := dBFTBlock.WithSeal(dBFTHeader)
+	c.postBlock(res)
+
 	// Wait until sealing is terminated or delay timeout.
 	log.Trace("Waiting for slot to sign and propagate", "delay", common.PrettyDuration(delay))
 	go func() {
@@ -657,9 +882,9 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, block *types.Block, resul
 		}
 
 		select {
-		case results <- block.WithSeal(header):
+		case results <- res:
 		default:
-			log.Warn("Sealing result is not read by miner", "sealhash", SealHash(header))
+			log.Warn("Sealing result is not read by miner", "sealhash", clique.SealHash(dBFTHeader))
 		}
 	}()
 
@@ -690,11 +915,13 @@ func calcDifficulty(snap *Snapshot, signer common.Address) *big.Int {
 
 // SealHash returns the hash of a block prior to it being sealed.
 func (c *DBFT) SealHash(header *types.Header) common.Hash {
-	return SealHash(header)
+	return clique.SealHash(header)
 }
 
 // Close implements consensus.Engine. It's a noop for clique as there are no background threads.
 func (c *DBFT) Close() error {
+	close(c.quit)
+	<-c.finished
 	return nil
 }
 
@@ -705,54 +932,4 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 		Namespace: "clique",
 		Service:   &API{chain: chain, clique: c},
 	}}
-}
-
-// SealHash returns the hash of a block prior to it being sealed.
-func SealHash(header *types.Header) (hash common.Hash) {
-	hasher := sha3.NewLegacyKeccak256()
-	encodeSigHeader(hasher, header)
-	hasher.(crypto.KeccakState).Read(hash[:])
-	return hash
-}
-
-// CliqueRLP returns the rlp bytes which needs to be signed for the proof-of-authority
-// sealing. The RLP to sign consists of the entire header apart from the 65 byte signature
-// contained at the end of the extra data.
-//
-// Note, the method requires the extra data to be at least 65 bytes, otherwise it
-// panics. This is done to avoid accidentally using both forms (signature present
-// or not), which could be abused to produce different hashes for the same header.
-func CliqueRLP(header *types.Header) []byte {
-	b := new(bytes.Buffer)
-	encodeSigHeader(b, header)
-	return b.Bytes()
-}
-
-func encodeSigHeader(w io.Writer, header *types.Header) {
-	enc := []interface{}{
-		header.ParentHash,
-		header.UncleHash,
-		header.Coinbase,
-		header.Root,
-		header.TxHash,
-		header.ReceiptHash,
-		header.Bloom,
-		header.Difficulty,
-		header.Number,
-		header.GasLimit,
-		header.GasUsed,
-		header.Time,
-		header.Extra[:len(header.Extra)-crypto.SignatureLength], // Yes, this will panic if extra is too short
-		header.MixDigest,
-		header.Nonce,
-	}
-	if header.BaseFee != nil {
-		enc = append(enc, header.BaseFee)
-	}
-	if header.WithdrawalsHash != nil {
-		panic("unexpected withdrawal hash value in clique")
-	}
-	if err := rlp.Encode(w, enc); err != nil {
-		panic("can't encode: " + err.Error())
-	}
 }

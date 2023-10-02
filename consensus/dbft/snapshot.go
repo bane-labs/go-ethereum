@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/params"
 	"golang.org/x/exp/slices"
 )
 
@@ -51,8 +50,8 @@ type sigLRU = lru.Cache[common.Hash, common.Address]
 
 // Snapshot is the state of the authorization voting at a given point in time.
 type Snapshot struct {
-	config   *params.CliqueConfig // Consensus engine parameters to fine tune behavior
-	sigcache *sigLRU              // Cache of recent block signatures to speed up ecrecover
+	epoch    uint64  // Consensus engine parameters to fine tune behavior
+	sigcache *sigLRU // Cache of recent block signatures to speed up ecrecover
 
 	Number  uint64                      `json:"number"`  // Block number where the snapshot was created
 	Hash    common.Hash                 `json:"hash"`    // Block hash where the snapshot was created
@@ -65,9 +64,9 @@ type Snapshot struct {
 // newSnapshot creates a new snapshot with the specified startup parameters. This
 // method does not initialize the set of recent signers, so only ever use if for
 // the genesis block.
-func newSnapshot(config *params.CliqueConfig, sigcache *sigLRU, number uint64, hash common.Hash, signers []common.Address) *Snapshot {
+func newSnapshot(epoch uint64, sigcache *sigLRU, number uint64, hash common.Hash, signers []common.Address) *Snapshot {
 	snap := &Snapshot{
-		config:   config,
+		epoch:    epoch,
 		sigcache: sigcache,
 		Number:   number,
 		Hash:     hash,
@@ -82,7 +81,7 @@ func newSnapshot(config *params.CliqueConfig, sigcache *sigLRU, number uint64, h
 }
 
 // loadSnapshot loads an existing snapshot from the database.
-func loadSnapshot(config *params.CliqueConfig, sigcache *sigLRU, db ethdb.Database, hash common.Hash) (*Snapshot, error) {
+func loadSnapshot(epoch uint64, sigcache *sigLRU, db ethdb.Database, hash common.Hash) (*Snapshot, error) {
 	blob, err := db.Get(append(rawdb.CliqueSnapshotPrefix, hash[:]...))
 	if err != nil {
 		return nil, err
@@ -91,7 +90,7 @@ func loadSnapshot(config *params.CliqueConfig, sigcache *sigLRU, db ethdb.Databa
 	if err := json.Unmarshal(blob, snap); err != nil {
 		return nil, err
 	}
-	snap.config = config
+	snap.epoch = epoch
 	snap.sigcache = sigcache
 
 	return snap, nil
@@ -109,7 +108,7 @@ func (s *Snapshot) store(db ethdb.Database) error {
 // copy creates a deep copy of the snapshot, though not the individual votes.
 func (s *Snapshot) copy() *Snapshot {
 	cpy := &Snapshot{
-		config:   s.config,
+		epoch:    s.epoch,
 		sigcache: s.sigcache,
 		Number:   s.Number,
 		Hash:     s.Hash,
@@ -202,7 +201,7 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 	for i, header := range headers {
 		// Remove any votes on checkpoint blocks
 		number := header.Number.Uint64()
-		if number%s.config.Epoch == 0 {
+		if number%s.epoch == 0 {
 			snap.Votes = nil
 			snap.Tally = make(map[common.Address]Tally)
 		}

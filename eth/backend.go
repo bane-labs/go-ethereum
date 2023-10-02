@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/clique"
+	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -424,21 +425,37 @@ func (s *Ethereum) StartMining() error {
 			log.Error("Cannot start mining without etherbase", "err", err)
 			return fmt.Errorf("etherbase missing: %v", err)
 		}
-		var cli *clique.Clique
-		if c, ok := s.engine.(*clique.Clique); ok {
-			cli = c
-		} else if cl, ok := s.engine.(*beacon.Beacon); ok {
-			if c, ok := cl.InnerEngine().(*clique.Clique); ok {
-				cli = c
+		var (
+			cli *clique.Clique
+			bft *dbft.DBFT
+		)
+		switch t := s.engine.(type) {
+		case *clique.Clique:
+			cli = t
+		case *dbft.DBFT:
+			bft = t
+		case *beacon.Beacon:
+			switch inner := t.InnerEngine().(type) {
+			case *clique.Clique:
+				cli = inner
+			case *dbft.DBFT:
+				bft = inner
 			}
 		}
-		if cli != nil {
+		if cli != nil || bft != nil {
 			wallet, err := s.accountManager.Find(accounts.Account{Address: eb})
 			if wallet == nil || err != nil {
 				log.Error("Etherbase account unavailable locally", "err", err)
 				return fmt.Errorf("signer missing: %v", err)
 			}
-			cli.Authorize(eb, wallet.SignData)
+			if cli != nil {
+				cli.Authorize(eb, wallet.SignData)
+			}
+			if bft != nil {
+				log.Info("initializing BFT consensus")
+				bft.Authorize(eb, wallet.SignData)
+				bft.Initialize(s.blockchain)
+			}
 		}
 		// If mining is started, we can disable the transaction rejection mechanism
 		// introduced to speed sync times.

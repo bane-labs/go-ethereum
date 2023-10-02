@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/clique"
+	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -53,6 +54,7 @@ var (
 	testTxPoolConfig  legacypool.Config
 	ethashChainConfig *params.ChainConfig
 	cliqueChainConfig *params.ChainConfig
+	dbftChainConfig   *params.ChainConfig
 
 	// Test accounts
 	testBankKey, _  = crypto.GenerateKey()
@@ -82,6 +84,12 @@ func init() {
 	cliqueChainConfig.Clique = &params.CliqueConfig{
 		Period: 10,
 		Epoch:  30000,
+	}
+	dbftChainConfig = new(params.ChainConfig)
+	*dbftChainConfig = *params.TestChainConfig
+	dbftChainConfig.Clique = nil
+	dbftChainConfig.DBFT = &params.DBFTConfig{
+		TimePerBlock: 5,
 	}
 
 	signer := types.LatestSigner(params.TestChainConfig)
@@ -120,6 +128,12 @@ func newTestWorkerBackend(t *testing.T, chainConfig *params.ChainConfig, engine 
 	}
 	switch e := engine.(type) {
 	case *clique.Clique:
+		gspec.ExtraData = make([]byte, 32+common.AddressLength+crypto.SignatureLength)
+		copy(gspec.ExtraData[32:32+common.AddressLength], testBankAddress.Bytes())
+		e.Authorize(testBankAddress, func(account accounts.Account, s string, data []byte) ([]byte, error) {
+			return crypto.Sign(crypto.Keccak256(data), testBankKey)
+		})
+	case *dbft.DBFT:
 		gspec.ExtraData = make([]byte, 32+common.AddressLength+crypto.SignatureLength)
 		copy(gspec.ExtraData[32:32+common.AddressLength], testBankAddress.Bytes())
 		e.Authorize(testBankAddress, func(account accounts.Account, s string, data []byte) ([]byte, error) {
@@ -209,11 +223,58 @@ func TestGenerateAndImportBlock(t *testing.T) {
 	}
 }
 
+func TestGenerateAndImportBlockDBFT(t *testing.T) {
+	var (
+		db     = rawdb.NewMemoryDatabase()
+		config = *params.AllCliqueProtocolChanges
+	)
+	config.DBFT = &params.DBFTConfig{TimePerBlock: 1}
+	engine := dbft.New(config.DBFT, db)
+
+	w, b := newTestWorker(t, &config, engine, db, 0)
+	defer w.close()
+
+	// This test chain imports the mined blocks.
+	chain, _ := core.NewBlockChain(rawdb.NewMemoryDatabase(), nil, b.genesis, nil, engine, vm.Config{}, nil, nil)
+	defer chain.Stop()
+
+	// Ignore empty commit here for less noise.
+	w.skipSealHook = func(task *task) bool {
+		return len(task.receipts) == 0
+	}
+
+	// Wait for mined blocks.
+	sub := w.mux.Subscribe(core.NewMinedBlockEvent{})
+	defer sub.Unsubscribe()
+
+	// Start mining!
+	w.start()
+	// engine.Service.Start()
+
+	for i := 0; i < 5; i++ {
+		b.txPool.Add([]*types.Transaction{b.newRandomTx(true)}, true, false)
+		b.txPool.Add([]*types.Transaction{b.newRandomTx(false)}, true, false)
+
+		select {
+		case ev := <-sub.Chan():
+			block := ev.Data.(core.NewMinedBlockEvent).Block
+			if _, err := chain.InsertChain([]*types.Block{block}); err != nil {
+				t.Fatalf("failed to insert new mined block %d: %v", block.NumberU64(), err)
+			}
+		case <-time.After(10 * time.Second): // Worker needs 1s to include new changes.
+			t.Fatalf("timeout")
+		}
+	}
+}
+
 func TestEmptyWorkEthash(t *testing.T) {
 	testEmptyWork(t, ethashChainConfig, ethash.NewFaker())
 }
 func TestEmptyWorkClique(t *testing.T) {
 	testEmptyWork(t, cliqueChainConfig, clique.New(cliqueChainConfig.Clique, rawdb.NewMemoryDatabase()))
+}
+func TestEmptyWorkDBFT(t *testing.T) {
+	testEmptyWork(t, dbftChainConfig, dbft.New(dbftChainConfig.DBFT, rawdb.NewMemoryDatabase()))
 }
 
 func testEmptyWork(t *testing.T, chainConfig *params.ChainConfig, engine consensus.Engine) {

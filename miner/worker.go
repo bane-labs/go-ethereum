@@ -1035,6 +1035,7 @@ func (w *worker) generateWork(params *generateParams) *newPayloadResult {
 // commitWork generates several new sealing tasks based on the parent block
 // and submit them to the sealer.
 func (w *worker) commitWork(interrupt *atomic.Int32, timestamp int64) {
+	// Here preparation done on timer
 	// Abort committing if node is still syncing
 	if w.syncing.Load() {
 		return

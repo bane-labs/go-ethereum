@@ -332,6 +332,7 @@ type ChainConfig struct {
 	// Various consensus engines
 	Ethash    *EthashConfig `json:"ethash,omitempty"`
 	Clique    *CliqueConfig `json:"clique,omitempty"`
+	DBFT      *DBFTConfig   `json:"dbft,omitempty"`
 	IsDevMode bool          `json:"isDev,omitempty"`
 }
 
@@ -352,6 +353,16 @@ type CliqueConfig struct {
 // String implements the stringer interface, returning the consensus engine details.
 func (c *CliqueConfig) String() string {
 	return "clique"
+}
+
+// DBFTConfig is the consensus engine configs for proof-of-stake based sealing.
+type DBFTConfig struct {
+	TimePerBlock uint64 `json:"period"` // Number of seconds between blocks to enforce
+}
+
+// String implements the stringer interface, returning the consensus engine details.
+func (c *DBFTConfig) String() string {
+	return "dbft"
 }
 
 // Description returns a human-readable description of ChainConfig.
@@ -381,6 +392,8 @@ func (c *ChainConfig) Description() string {
 		} else {
 			banner += "Consensus: Beacon (proof-of-stake), merged from Clique (proof-of-authority)\n"
 		}
+	case c.DBFT != nil:
+		banner += "Consensus: dBFT (proof-of-authority)\n"
 	default:
 		banner += "Consensus: unknown\n"
 	}
