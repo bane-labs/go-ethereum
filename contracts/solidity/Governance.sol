@@ -5,35 +5,35 @@ import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 interface IGovernance {
     struct Draft {
-        uint id;
-        uint startHeight;
+        uint256 id;
+        uint256 startHeight;
         address[] miners;
     }
 
     struct Phase {
-        uint startHeight;
+        uint256 startHeight;
         address[] miners;
-        uint preHeight;
+        uint256 preHeight;
     }
 
     event Propose(
         address proposer,
-        uint draftId,
-        uint startHeight,
+        uint256 draftId,
+        uint256 startHeight,
         address[] miners
     );
 
-    event Vote(address voter, uint draftId);
+    event Vote(address voter, uint256 draftId);
 
     event VotePass(
-        uint votedBalance,
-        uint startHeight,
+        uint256 votedBalance,
+        uint256 startHeight,
         address[] miners,
-        uint preHeight
+        uint256 preHeight
     );
 
     // propose draft, contains start height and consensus list
-    function propose(uint startHeight, address[] memory miners) external;
+    function propose(uint256 startHeight, address[] memory miners) external;
 
     // get Draft list, contians unique id
     function getDraftList() external view returns (Draft[] memory);
@@ -49,46 +49,34 @@ interface IGovernance {
     function getCurrentPhase() external view returns (Phase memory);
 
     // get consensus phase by start height
-    function getPhaseByHeight(uint height) external view returns (Phase memory);
+    function getPhaseByHeight(
+        uint256 height
+    ) external view returns (Phase memory);
 }
 
 contract Governance is IGovernance {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     // the min balance for voting
-    uint public constant MIN_VOTE_AMOUNT = 1 ether;
+    uint256 public constant MIN_VOTE_AMOUNT = 1 ether;
     // the balance target for a vote to pass
-    uint public constant VOTE_TARGET_AMOUNT = 3000000 ether;
+    uint256 public constant VOTE_TARGET_AMOUNT = 3000000 ether;
 
     // the last Phase's start height, default 1
-    uint public lastStartHeight;
+    uint256 public lastStartHeight;
     // draft list start id, default 1
-    uint public startDraftId;
+    uint256 public startDraftId;
     // draft list end id, default 0
-    uint public endDraftId;
+    uint256 public endDraftId;
     // Phase mapping to store Phase, key is the start height of Phase,
     // should add first phase in genesis block
-    mapping(uint => Phase) private phaseMap;
+    mapping(uint256 => Phase) private phaseMap;
     // vote mapping, user address -> draftId
-    mapping(address => uint) private draftVoteMap;
+    mapping(address => uint256) private draftVoteMap;
     // vote list mapping,  draftId -> user address list
-    mapping(uint => EnumerableSet.AddressSet) private draftVoteList;
+    mapping(uint256 => EnumerableSet.AddressSet) private draftVoteList;
     // Draft mapping, draftId -> Draft
-    mapping(uint => Draft) private draftMap;
-
-    // constructor should not be in upgradable contract, this method is just for test
-    // governance contract should predeploy in genesis.json
-    constructor() {
-        lastStartHeight = 1;
-        startDraftId = 1;
-        address[] memory defaultMiners = new address[](1);
-        defaultMiners[0] = msg.sender;
-        phaseMap[1] = Phase({
-            startHeight: 1,
-            preHeight: 0,
-            miners: defaultMiners
-        });
-    }
+    mapping(uint256 => Draft) private draftMap;
 
     receive() external payable {}
 
@@ -99,7 +87,7 @@ contract Governance is IGovernance {
 
     function isMiner(address addr) public view returns (bool) {
         Phase memory currentPhase = getCurrentPhase();
-        for (uint i = 0; i < currentPhase.miners.length; i++) {
+        for (uint256 i = 0; i < currentPhase.miners.length; i++) {
             if (addr == currentPhase.miners[i]) {
                 return true;
             }
@@ -108,14 +96,14 @@ contract Governance is IGovernance {
     }
 
     function propose(
-        uint startHeight,
+        uint256 startHeight,
         address[] memory miners
     ) external override onlyConsensus {
         require(startHeight > block.number, "invalid startHeight");
         require(miners.length > 0, "invalid miners lenght");
         // check miners order
         if (miners.length > 1) {
-            for (uint i = 0; i < miners.length - 1; i++) {
+            for (uint256 i = 0; i < miners.length - 1; i++) {
                 require(miners[i] < miners[i + 1], "invalid miners order");
             }
         }
@@ -135,9 +123,9 @@ contract Governance is IGovernance {
     }
 
     function getDraftList() external view override returns (Draft[] memory) {
-        uint count = endDraftId - startDraftId + 1;
+        uint256 count = endDraftId - startDraftId + 1;
         Draft[] memory drafts = new Draft[](count);
-        for (uint i = 0; i < count; i++) {
+        for (uint256 i = 0; i < count; i++) {
             drafts[i] = draftMap[startDraftId + i];
         }
         return drafts;
@@ -153,10 +141,10 @@ contract Governance is IGovernance {
             "invalid draft start height"
         );
 
-        uint balance = msg.sender.balance;
+        uint256 balance = msg.sender.balance;
         require(balance >= MIN_VOTE_AMOUNT, "not enough balance");
 
-        uint votedId = draftVoteMap[msg.sender];
+        uint256 votedId = draftVoteMap[msg.sender];
         if (votedId == draftId) {
             return;
         }
@@ -171,7 +159,7 @@ contract Governance is IGovernance {
         emit Vote(msg.sender, draftId);
 
         // check vote balance
-        uint votedBalance = getVoteBalance(draftId);
+        uint256 votedBalance = getVoteBalance(draftId);
         if (votedBalance >= VOTE_TARGET_AMOUNT) {
             Draft memory draft = draftMap[draftId];
             Phase memory phase = Phase({
@@ -192,7 +180,7 @@ contract Governance is IGovernance {
     }
 
     function revokeVote() external override {
-        uint draftId = draftVoteMap[msg.sender];
+        uint256 draftId = draftVoteMap[msg.sender];
         require(
             draftId >= startDraftId && draftId <= endDraftId,
             "invalid draftId"
@@ -204,9 +192,11 @@ contract Governance is IGovernance {
     }
 
     // calculate vote balance of draft
-    function getVoteBalance(uint draftId) internal view returns (uint balance) {
-        uint length = draftVoteList[draftId].length();
-        for (uint i = 0; i < length; i++) {
+    function getVoteBalance(
+        uint256 draftId
+    ) internal view returns (uint256 balance) {
+        uint256 length = draftVoteList[draftId].length();
+        for (uint256 i = 0; i < length; i++) {
             balance += draftVoteList[draftId].at(i).balance;
         }
     }
@@ -216,12 +206,12 @@ contract Governance is IGovernance {
     }
 
     function getPhaseByHeight(
-        uint height
+        uint256 height
     ) public view override returns (Phase memory) {
         if (height >= lastStartHeight) {
             return phaseMap[lastStartHeight];
         }
-        uint currentHeight = lastStartHeight;
+        uint256 currentHeight = lastStartHeight;
         while (height < currentHeight) {
             currentHeight = phaseMap[currentHeight].preHeight;
         }
