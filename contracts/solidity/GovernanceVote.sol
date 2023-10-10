@@ -3,9 +3,9 @@ pragma solidity ^0.8.0;
 
 interface IGovernance {
     struct Phase {
-        uint startHeight;
+        uint256 startHeight;
         address[] miners;
-        uint preHeight;
+        uint256 preHeight;
     }
 
     // get current consensus phase
@@ -23,7 +23,7 @@ abstract contract GovernanceVote {
 
     function isMiner(address addr) public view returns (bool) {
         address[] memory miners = governance.getCurrentPhase().miners;
-        for (uint i = 0; i < miners.length; i++) {
+        for (uint256 i = 0; i < miners.length; i++) {
             if (addr == miners[i]) {
                 return true;
             }
@@ -38,7 +38,7 @@ abstract contract GovernanceVote {
 
     function clearVote(bytes32 methodKey) internal {
         address[] memory voters = governance.getCurrentPhase().miners;
-        for (uint i; i < voters.length; i++) {
+        for (uint256 i; i < voters.length; i++) {
             delete voteMap[methodKey][voters[i]];
         }
     }
@@ -48,8 +48,8 @@ abstract contract GovernanceVote {
         bytes32 paramKey
     ) internal view returns (bool isPass) {
         address[] memory voters = governance.getCurrentPhase().miners;
-        uint votedCount;
-        for (uint i; i < voters.length; i++) {
+        uint256 votedCount;
+        for (uint256 i; i < voters.length; i++) {
             if (voteMap[methodKey][voters[i]] == paramKey) {
                 votedCount++;
             }

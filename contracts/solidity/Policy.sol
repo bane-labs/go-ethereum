@@ -1,42 +1,47 @@
-
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.0;
 import "./GovernanceVote.sol";
 
-contract Policy is GovernanceVote{
-   
-    uint public  minGasPrice ;
-    mapping(address=>bool) public isBlackListed;    
-    bool private initialized;
-    event SetMinGasPrice(uint gasPrice);
+contract Policy is GovernanceVote {
+    uint256 public minGasPrice;
+    mapping(address => bool) public isBlackListed;
+    event SetMinGasPrice(uint256 gasPrice);
     event AddBlackList(address addr);
     event RemoveBlackList(address addr);
 
-    function initialize() public {
-        require(!initialized, "Contract instance has already been initialized");
-        minGasPrice = 10000000;       
-        initialized = true;
-    }
-
     // set minimum gasprice
-    function setMinGasPrice (uint _gasPrice) external needVote(keccak256("setMinGasPrice"), keccak256(abi.encode(_gasPrice)))  {
+    function setMinGasPrice(
+        uint256 _gasPrice
+    )
+        external
+        needVote(keccak256("setMinGasPrice"), keccak256(abi.encode(_gasPrice)))
+    {
         require(_gasPrice > 0, "Policy: setMinGasPrice invalid parameter");
-        minGasPrice = _gasPrice;   
-        emit SetMinGasPrice(_gasPrice); 
-    }   
-
-    //  cancel blacklist
-    function addBlackList (address _addr) external needVote(keccak256("addBlackList"), keccak256(abi.encode(_addr))) {
-        require(!isBlackListed[_addr],"Policy: Blacklist already exists");
-        isBlackListed[_addr] = true; 
-        emit AddBlackList(_addr);       
-    }
-    //  cancel blacklist
-    function removeBlackList (address _addr) external needVote(keccak256("removeBlackList"), keccak256(abi.encode(_addr))) {
-        require(isBlackListed[_addr],"Policy: Blacklist does not exist");
-        isBlackListed[_addr] = false; 
-        emit RemoveBlackList(_addr);      
-           
+        minGasPrice = _gasPrice;
+        emit SetMinGasPrice(_gasPrice);
     }
 
+    //  cancel blacklist
+    function addBlackList(
+        address _addr
+    )
+        external
+        needVote(keccak256("addBlackList"), keccak256(abi.encode(_addr)))
+    {
+        require(!isBlackListed[_addr], "Policy: Blacklist already exists");
+        isBlackListed[_addr] = true;
+        emit AddBlackList(_addr);
+    }
+
+    //  cancel blacklist
+    function removeBlackList(
+        address _addr
+    )
+        external
+        needVote(keccak256("removeBlackList"), keccak256(abi.encode(_addr)))
+    {
+        require(isBlackListed[_addr], "Policy: Blacklist does not exist");
+        isBlackListed[_addr] = false;
+        emit RemoveBlackList(_addr);
+    }
 }
