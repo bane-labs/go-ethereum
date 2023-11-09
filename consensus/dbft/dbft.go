@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"math/rand"
 	"sync"
@@ -42,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/nspcc-dev/dbft"
@@ -49,6 +51,7 @@ import (
 	dbftCrypto "github.com/nspcc-dev/dbft/crypto"
 	"github.com/nspcc-dev/neo-go/pkg/util"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/sha3"
 )
 
 const (
@@ -896,7 +899,7 @@ blocksLoop:
 		select {
 		case results <- res:
 		default:
-			log.Warn("Sealing result is not read by miner", "sealhash", clique.SealHash(dBFTHeader))
+			log.Warn("Sealing result is not read by miner", "sealhash", SealHash(dBFTHeader))
 		}
 	}()
 
@@ -927,7 +930,50 @@ func calcDifficulty(snap *Snapshot, signer common.Address) *big.Int {
 
 // SealHash returns the hash of a block prior to it being sealed.
 func (c *DBFT) SealHash(header *types.Header) common.Hash {
-	return clique.SealHash(header)
+	return SealHash(header)
+}
+
+// SealHash returns the hash of a header prior to it being sealed. SealHash is
+// override to exclude those header fields that will be changed by dBFT during
+// block sealing: MixDigest, Nonce and last [crypto.SignatureLength] bytes of
+// Extra.
+//
+// Be careful no to use SealHash anywhere where "the honest" SealHash is required.
+func SealHash(header *types.Header) (hash common.Hash) {
+	hasher := sha3.NewLegacyKeccak256()
+	encodeUnchangeableHeader(hasher, header)
+	hasher.(crypto.KeccakState).Read(hash[:])
+	return hash
+}
+
+// encodeUnchangeableHeader encodes those header fields that won't be changed by
+// dBFT during block sealing: every header field except MixDigest, Nonce and last
+// [crypto.SignatureLength] bytes of Extra.
+func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
+	enc := []interface{}{
+		header.ParentHash,
+		header.UncleHash,
+		header.Coinbase,
+		header.Root,
+		header.TxHash,
+		header.ReceiptHash,
+		header.Bloom,
+		header.Difficulty,
+		header.Number,
+		header.GasLimit,
+		header.GasUsed,
+		header.Time,
+		header.Extra[:len(header.Extra)-crypto.SignatureLength], // Yes, this will panic if extra is too short
+	}
+	if header.BaseFee != nil {
+		enc = append(enc, header.BaseFee)
+	}
+	if header.WithdrawalsHash != nil {
+		panic("unexpected withdrawal hash value in clique")
+	}
+	if err := rlp.Encode(w, enc); err != nil {
+		panic("can't encode: " + err.Error())
+	}
 }
 
 // Close implements consensus.Engine. It's a noop for clique as there are no background threads.
