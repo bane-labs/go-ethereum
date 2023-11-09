@@ -782,12 +782,6 @@ events:
 		case <-c.quit:
 			c.dbft.Timer.Stop()
 			break events
-		case <-c.dbft.Timer.C():
-			hv := c.dbft.Timer.HV()
-			log.Debug("timer fired",
-				zap.Uint32("height", hv.Height),
-				zap.Uint("view", uint(hv.View)))
-			c.dbft.OnTimeout(hv)
 		}
 	}
 drainLoop:
@@ -854,16 +848,34 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	if c.dbftStarted.CompareAndSwap(false, true) {
 		go c.dbft.Start(c.lastTimestamp * n3adaptors.NsInS)
 	} else {
-		go c.dbft.InitializeConsensus(0, c.lastTimestamp*n3adaptors.NsInS)
+		c.dbft.InitializeConsensus(0, c.lastTimestamp*n3adaptors.NsInS)
+		go func() {
+			<-c.dbft.Timer.C()
+			hv := c.dbft.Timer.HV()
+			log.Info("dBFT timer fired",
+				"height", hv.Height,
+				"view", uint(hv.View))
+			c.dbft.OnTimeout(hv)
+		}()
 	}
+
 	var (
 		sighash   []byte
 		dBFTBlock *types.Block
 	)
-	select {
-	case n3B := <-c.blockQueue:
-		sighash = n3B.Signature()
-		dBFTBlock = n3B.Block // this block is completely different from the one that FinalizeAndAssemble proposed.
+blocksLoop:
+	for {
+		select {
+		case n3B := <-c.blockQueue:
+			if uint64(n3B.Index()) <= c.lastIndex {
+				continue blocksLoop
+			}
+			sighash = n3B.Signature()
+			dBFTBlock = n3B.Block // this block is completely different from the one that FinalizeAndAssemble proposed.
+			break blocksLoop
+		case <-time.After(15 * time.Second): // for testing purposes only, remove in prod.
+			return errors.New("failed to collect block with dBFT")
+		}
 	}
 	dBFTHeader := dBFTBlock.Header()
 	copy(dBFTHeader.Extra[len(dBFTHeader.Extra)-extraSeal:], sighash)
