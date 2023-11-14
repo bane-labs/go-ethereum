@@ -664,7 +664,7 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	// Assemble the voting snapshot to check which votes make sense
 	snap, err := c.snapshot(chain, number-1, header.ParentHash, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create snapshot for voting calculations: %w", err)
 	}
 	c.lock.RLock()
 	if number%c.epoch != 0 {

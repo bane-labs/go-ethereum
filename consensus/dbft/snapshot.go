@@ -17,7 +17,6 @@
 package dbft
 
 import (
-	"bytes"
 	"encoding/json"
 	"time"
 
@@ -235,16 +234,11 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 				break // only one vote allowed
 			}
 		}
-		// Tally up the new vote from the signer
-		var authorize bool
-		switch {
-		case bytes.Equal(header.Nonce[:], nonceAuthVote):
-			authorize = true
-		case bytes.Equal(header.Nonce[:], nonceDropVote):
-			authorize = false
-		default:
-			return nil, errInvalidVote
-		}
+		// Tally up the new vote from the signer. Consider the signer always unauthorized
+		// to prevent the following block sealing error after subseuent block sealing:
+		// "signed recently, must wait for others". This part of code will be dropped
+		// in future.
+		var authorize = false
 		if snap.cast(header.Coinbase, authorize) {
 			snap.Votes = append(snap.Votes, &Vote{
 				Signer:    signer,
