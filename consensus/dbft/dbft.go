@@ -199,8 +199,14 @@ type DBFT struct {
 	lastIndex     uint64
 	lastBlockHash common.Hash
 
-	lastProposal *types.Block
-	lastReceipts []*types.Receipt
+	lastProposalLock sync.RWMutex
+	lastProposal     *types.Block
+	lastReceipts     []*types.Receipt
+
+	sealingLock     sync.RWMutex
+	isSealing       bool
+	sealingProposal *types.Block
+	sealingReceipts []*types.Receipt
 
 	// chain instance needed for proper dBFT callbacks functioning.
 	chain    consensus.ChainHeaderReader
@@ -293,11 +299,20 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			// wants to update the same values as postBlock. Call postBlock in Seal instead.
 		}),
 		dbft.WithNewBlockFromContext(func(ctx *dbft.Context) block.Block {
-			if c.lastProposal == nil {
+			var (
+				proposal *types.Block
+				receipts []*types.Receipt
+			)
+			c.sealingLock.RLock()
+			if c.sealingProposal == nil {
 				// Program bug.
-				panic("can't create new block from context: last proposal is not initialized")
+				panic("can't create new block from context: sealing proposal is not initialized")
 			}
-			h := types.CopyHeader(c.lastProposal.Header())
+			proposal = c.sealingProposal
+			receipts = c.sealingReceipts
+			c.sealingLock.RUnlock()
+
+			h := types.CopyHeader(proposal.Header())
 
 			// Timestamp (ns) -> Time (s)
 			h.Time = ctx.Timestamp / n3adaptors.NsInS
@@ -323,19 +338,24 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			for i, txH := range ctx.TransactionHashes {
 				txs[i] = ctx.Transactions[txH].(*n3adaptors.Transaction).Tx
 			}
+
 			return &n3adaptors.Block{
-				Block: types.NewBlock(h, txs, nil, c.lastReceipts, trie.NewStackTrie(nil)),
+				Block: types.NewBlock(h, txs, nil, receipts, trie.NewStackTrie(nil)),
 			}
 		}),
 		dbft.WithWatchOnly(func() bool {
 			return false
 		}),
 		dbft.WithGetVerified(func() []block.Transaction {
-			if c.lastProposal == nil {
+			var txs types.Transactions
+			c.sealingLock.RLock()
+			if c.sealingProposal == nil {
 				// Program bug.
 				panic("missing pending sealing work")
 			}
-			txs := c.lastProposal.Transactions()
+			txs = c.sealingProposal.Transactions()
+			c.sealingLock.RUnlock()
+
 			res := make([]block.Transaction, len(txs))
 			for i := range txs {
 				res[i] = &n3adaptors.Transaction{
@@ -362,8 +382,10 @@ func (c *DBFT) postBlock(b *types.Block) {
 		c.lastIndex = b.Number().Uint64()
 		c.lastBlockHash = b.Hash()
 
-		c.lastProposal = nil
-		c.lastReceipts = nil
+		c.sealingLock.Lock()
+		c.sealingProposal = nil
+		c.sealingReceipts = nil
+		c.sealingLock.Unlock()
 	}
 }
 
@@ -744,8 +766,10 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 
 	// Save proposal so that the most fresh data will be available for dBFT once
 	// the new block should be created.
+	c.lastProposalLock.Lock()
 	c.lastProposal = b
 	c.lastReceipts = receipts
+	c.lastProposalLock.Unlock()
 
 	return b, nil
 }
@@ -797,6 +821,29 @@ drainLoop:
 // Seal implements consensus.Engine, attempting to create a sealed block using
 // the local signing credentials.
 func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+	c.sealingLock.Lock()
+	if c.isSealing {
+		c.sealingLock.Unlock()
+		return errors.New("previous sealing is not yet finished")
+	}
+	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
+		c.sealingLock.Unlock()
+		return errors.New("stale sealing task: stale parent hash")
+	}
+
+	c.lastProposalLock.RLock()
+	if c.lastProposal == nil {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
+		return errors.New("no initialized pending sealing task")
+	}
+	c.sealingProposal = c.lastProposal
+	c.sealingReceipts = c.lastReceipts
+	c.lastProposalLock.RUnlock()
+
+	c.isSealing = true
+	c.sealingLock.Unlock()
+
 	header := b.Header()
 
 	// Sealing the genesis block is not supported
@@ -833,15 +880,6 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 				return errors.New("signed recently, must wait for others")
 			}
 		}
-	}
-	// Sweet, the protocol permits us to sign the block, wait for our time
-	delay := time.Unix(int64(header.Time), 0).Sub(time.Now()) // nolint: gosimple
-	if header.Difficulty.Cmp(diffNoTurn) == 0 {
-		// It's not our turn explicitly to sign, delay it a bit
-		wiggle := time.Duration(len(snap.Signers)/2+1) * wiggleTime
-		delay += time.Duration(rand.Int63n(int64(wiggle)))
-
-		log.Trace("Out-of-turn signing requested", "wiggle", common.PrettyDuration(wiggle))
 	}
 
 	// Start dBFT once and afterward reinitialize it every time new block should be accepted.
@@ -884,21 +922,17 @@ blocksLoop:
 	res := dBFTBlock.WithSeal(dBFTHeader)
 	c.postBlock(res)
 
-	// Wait until sealing is terminated or delay timeout.
-	log.Trace("Waiting for slot to sign and propagate", "delay", common.PrettyDuration(delay))
-	go func() {
-		select {
-		case <-stop:
-			return
-		case <-time.After(delay):
-		}
+	// Seal interrupt is not possible with dBFT, thus, ignore stop channel and don't
+	// wait for any delay, because dBFT provides proper block timing.
+	select {
+	case results <- res:
+	default:
+		log.Warn("Sealing result is not read by miner", "sealhash", SealHash(dBFTHeader))
+	}
 
-		select {
-		case results <- res:
-		default:
-			log.Warn("Sealing result is not read by miner", "sealhash", SealHash(dBFTHeader))
-		}
-	}()
+	c.sealingLock.Lock()
+	c.isSealing = false
+	c.sealingLock.Unlock()
 
 	return nil
 }
