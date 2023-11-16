@@ -32,7 +32,7 @@ import (
 // mechanisms of the proof-of-authority scheme.
 type API struct {
 	chain  consensus.ChainHeaderReader
-	clique *Clique
+	clique *DBFT
 }
 
 // GetSnapshot retrieves the state snapshot at a given block.
