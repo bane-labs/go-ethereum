@@ -103,8 +103,9 @@ func (b *Block) Verify(pub crypto.PublicKey, sign []byte) error {
 	panic("TODO")
 }
 
-// Hash implements Block interface. Hash returns sealed block hash in order to avoid
-// caching of the real block hash before signing process end.
+// Hash implements Block interface. Hash returns unsealed block hash that doesn't
+// include Nonce, MixDigest fields and Extra's signature part, thus, can be used
+// only for worker's block identification and information purposes.
 func (b *Block) Hash() util.Uint256 {
-	return clique.SealHash(b.Header()).Uint256()
+	return SealHash(b.Header()).Uint256()
 }
