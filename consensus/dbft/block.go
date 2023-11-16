@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/nspcc-dev/dbft/block"
 	"github.com/nspcc-dev/dbft/crypto"
@@ -89,9 +88,9 @@ func (b *Block) Signature() []byte {
 
 // Sign implements Block interface.
 func (b *Block) Sign(key crypto.PrivateKey) error {
-	sighash, err := key.Sign(clique.CliqueRLP(b.Header()))
+	sighash, err := key.Sign(dbftRLP(b.Header()))
 	if err != nil {
-		return fmt.Errorf("failed to sign CliqueRLP header: %w", err)
+		return fmt.Errorf("failed to sign dbftRLP header: %w", err)
 	}
 
 	b.signatureBytes = sighash

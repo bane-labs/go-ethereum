@@ -19,7 +19,7 @@ type Signer struct {
 }
 
 // Sign implements dbftCrypto.PrivateKey interface and signs the given message.
-// In case of block, msg is expected to be CliqueRLP(header) that must be
+// In case of block, msg is expected to be dbftRLP(header) that must be
 // guaranteed by Block.Sign method.
 func (s *Signer) Sign(msg []byte) ([]byte, error) {
 	return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeClique, msg)
