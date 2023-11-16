@@ -372,7 +372,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 // last proposal data. It must be called every time new block arrives from chain
 // or from consensus.
 func (c *DBFT) postBlock(b *types.Block) {
-	if c.lastTimestamp < b.Time() {
+	if c.lastIndex < b.NumberU64() {
 		c.lastTimestamp = b.Time()
 		c.lastIndex = b.Number().Uint64()
 		c.lastBlockHash = b.Hash()
@@ -731,10 +731,7 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
-	header.Time = parent.Time + c.config.TimePerBlock
-	if header.Time < uint64(time.Now().Unix()) {
-		header.Time = uint64(time.Now().Unix())
-	}
+	header.Time = uint64(time.Now().Unix())
 	return nil
 }
 
