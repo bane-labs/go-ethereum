@@ -34,7 +34,6 @@ import (
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/clique"
-	"github.com/ethereum/go-ethereum/consensus/dbft/n3adaptors"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -184,13 +183,13 @@ type DBFT struct {
 
 	proposals map[common.Address]bool // Current list of proposals we are pushing
 
-	signer common.Address      // Ethereum address of the signing key
-	signFn n3adaptors.SignerFn // Signer function to authorize hashes with
-	lock   sync.RWMutex        // Protects the signer and proposals fields
+	signer common.Address // Ethereum address of the signing key
+	signFn SignerFn       // Signer function to authorize hashes with
+	lock   sync.RWMutex   // Protects the signer and proposals fields
 
 	dbft        *dbft.DBFT
 	dbftStarted atomic.Bool
-	blockQueue  chan *n3adaptors.Block
+	blockQueue  chan *Block
 
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
 	// received from dBFT or from chain. These fields have exactly those type
@@ -238,7 +237,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 	}
 
 	logger, _ := zap.NewDevelopment()
-	c.blockQueue = make(chan *n3adaptors.Block)
+	c.blockQueue = make(chan *Block)
 	c.dbft = dbft.New(
 		dbft.WithLogger(logger),
 		dbft.WithSecondsPerBlock(time.Duration(conf.TimePerBlock)*time.Second),
@@ -249,8 +248,8 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 
 			// Bail out if we're unauthorized to sign a block
 			for i, validator := range keys {
-				if validator.(*n3adaptors.PublicKey).Account.Cmp(signer) == 0 {
-					s := &n3adaptors.Signer{
+				if validator.(*PublicKey).Account.Cmp(signer) == 0 {
+					s := &Signer{
 						Signer: signer,
 						SignFn: signFn,
 					}
@@ -286,14 +285,14 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			// sort them so that dBFT can rely on the validator's index. Currently,
 			// they are sorted in ascending order.
 			for _, s := range snap.signers() {
-				res = append(res, &n3adaptors.PublicKey{
+				res = append(res, &PublicKey{
 					Account: s,
 				})
 			}
 			return res
 		}),
 		dbft.WithProcessBlock(func(b block.Block) {
-			ethBlock := b.(*n3adaptors.Block)
+			ethBlock := b.(*Block)
 			c.blockQueue <- ethBlock
 			// Do not call postBlock here to avoid race between the next pending sealing request that
 			// wants to update the same values as postBlock. Call postBlock in Seal instead.
@@ -333,10 +332,10 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 
 			txs := make([]*types.Transaction, len(ctx.Transactions))
 			for i, txH := range ctx.TransactionHashes {
-				txs[i] = ctx.Transactions[txH].(*n3adaptors.Transaction).Tx
+				txs[i] = ctx.Transactions[txH].(*Transaction).Tx
 			}
 
-			return &n3adaptors.Block{
+			return &Block{
 				Block: types.NewBlock(h, txs, nil, receipts, trie.NewStackTrie(nil)),
 			}
 		}),
@@ -355,7 +354,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 
 			res := make([]block.Transaction, len(txs))
 			for i := range txs {
-				res[i] = &n3adaptors.Transaction{
+				res[i] = &Transaction{
 					Tx: txs[i],
 				}
 			}
@@ -773,7 +772,7 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 
 // Authorize injects a private key into the consensus engine to mint new blocks
 // with.
-func (c *DBFT) Authorize(signer common.Address, signFn n3adaptors.SignerFn) {
+func (c *DBFT) Authorize(signer common.Address, signFn SignerFn) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -791,7 +790,7 @@ func (c *DBFT) Initialize(chain consensus.ChainHeaderReader) {
 
 	// Do not start consensus immediately, we don't yet have sealing work.
 	// Start it once we have new sealing work in Seal.
-	c.dbft.InitializeConsensus(0, c.lastTimestamp*n3adaptors.NsInS)
+	c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
 
 	go c.eventLoop()
 }
@@ -885,9 +884,9 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 
 	// Start dBFT once and afterward reinitialize it every time new block should be accepted.
 	if c.dbftStarted.CompareAndSwap(false, true) {
-		go c.dbft.Start(c.lastTimestamp * n3adaptors.NsInS)
+		go c.dbft.Start(c.lastTimestamp * NsInS)
 	} else {
-		c.dbft.InitializeConsensus(0, c.lastTimestamp*n3adaptors.NsInS)
+		c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
 		go func() {
 			<-c.dbft.Timer.C()
 			hv := c.dbft.Timer.HV()

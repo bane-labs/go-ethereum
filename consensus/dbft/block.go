@@ -1,4 +1,4 @@
-package n3adaptors
+package dbft
 
 import (
 	"fmt"

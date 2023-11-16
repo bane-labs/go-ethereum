@@ -1,4 +1,4 @@
-package n3adaptors
+package dbft
 
 import (
 	"github.com/ethereum/go-ethereum/accounts"
