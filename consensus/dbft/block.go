@@ -106,5 +106,5 @@ func (b *Block) Verify(pub crypto.PublicKey, sign []byte) error {
 // include Nonce, MixDigest fields and Extra's signature part, thus, can be used
 // only for worker's block identification and information purposes.
 func (b *Block) Hash() util.Uint256 {
-	return SealHash(b.Header()).Uint256()
+	return WorkerSealHash(b.Header()).Uint256()
 }

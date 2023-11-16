@@ -923,7 +923,7 @@ blocksLoop:
 	select {
 	case results <- res:
 	default:
-		log.Warn("Sealing result is not read by miner", "sealhash", SealHash(dBFTHeader))
+		log.Warn("Sealing result is not read by miner", "sealhash", WorkerSealHash(dBFTHeader))
 	}
 
 	c.sealingLock.Lock()
@@ -955,18 +955,19 @@ func calcDifficulty(snap *Snapshot, signer common.Address) *big.Int {
 	return new(big.Int).Set(diffNoTurn)
 }
 
-// SealHash returns the hash of a block prior to it being sealed.
+// SealHash returns the hash of a block prior to it being sealed. It implements
+// consensus.Engine interface.
 func (c *DBFT) SealHash(header *types.Header) common.Hash {
-	return SealHash(header)
+	return WorkerSealHash(header)
 }
 
-// SealHash returns the hash of a header prior to it being sealed. SealHash is
+// WorkerSealHash returns the hash of a header prior to it being sealed. WorkerSealHash is
 // override to exclude those header fields that will be changed by dBFT during
 // block sealing: MixDigest, Nonce and last [crypto.SignatureLength] bytes of
 // Extra.
 //
-// Be careful no to use SealHash anywhere where "the honest" SealHash is required.
-func SealHash(header *types.Header) (hash common.Hash) {
+// Be careful no to use WorkerSealHash anywhere where "the honest" WorkerSealHash is required.
+func WorkerSealHash(header *types.Header) (hash common.Hash) {
 	hasher := sha3.NewLegacyKeccak256()
 	encodeUnchangeableHeader(hasher, header)
 	hasher.(crypto.KeccakState).Read(hash[:])
@@ -1004,7 +1005,7 @@ func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 }
 
 // HonestSealHash returns the hash of a block prior to it being sealed. It differs
-// from SealHash in that all block fields except Extra's signature bytes are being
+// from WorkerSealHash in that all block fields except Extra's signature bytes are being
 // hashed.
 func HonestSealHash(header *types.Header) (hash common.Hash) {
 	hasher := sha3.NewLegacyKeccak256()
