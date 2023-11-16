@@ -314,9 +314,6 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 
 			h := types.CopyHeader(proposal.Header())
 
-			// Timestamp (ns) -> Time (s)
-			h.Time = ctx.Timestamp / n3adaptors.NsInS
-
 			// BlockIndex -> Number
 			h.Number = big.NewInt(int64(ctx.BlockIndex))
 
@@ -443,7 +440,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	// Nonces contain Primary index, so it's not required for them to be 0x00..0
 	// ([nonceAuthVote]) or 0xff..f ([nonceDropVote]), thus, skip Nonce check.
 	// It's not bound to checkpoint anymore.
-	
+
 	// Check that the extra-data contains both the vanity and signature
 	if len(header.Extra) < extraVanity {
 		return errMissingVanity
