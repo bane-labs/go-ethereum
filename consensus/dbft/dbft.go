@@ -823,9 +823,13 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.sealingLock.Unlock()
 		return errors.New("previous sealing is not yet finished")
 	}
+	if b.NumberU64() != c.lastIndex+1 {
+		c.sealingLock.Unlock()
+		return fmt.Errorf("stale sealing task: invalid Number: expected %d, got %d", c.lastIndex+1, b.NumberU64())
+	}
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
 		c.sealingLock.Unlock()
-		return errors.New("stale sealing task: stale parent hash")
+		return fmt.Errorf("stale sealing task: invalid ParentHash: expected %s, got %s", c.lastBlockHash, b.ParentHash())
 	}
 
 	c.lastProposalLock.RLock()
