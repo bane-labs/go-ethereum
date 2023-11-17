@@ -473,10 +473,10 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 		return fmt.Errorf("invalid gasLimit: have %v, max %v", header.GasLimit, params.MaxGasLimit)
 	}
 	if chain.Config().IsShanghai(header.Number, header.Time) {
-		return errors.New("clique does not support shanghai fork")
+		return errors.New("dbft does not support shanghai fork")
 	}
 	if chain.Config().IsCancun(header.Number, header.Time) {
-		return errors.New("clique does not support cancun fork")
+		return errors.New("dbft does not support cancun fork")
 	}
 	// All basic checks passed, verify cascading fields
 	return c.verifyCascadingFields(chain, header, parents)
@@ -736,7 +736,7 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 }
 
 // Finalize implements consensus.Engine. There is no post-transaction
-// consensus rules in clique, do nothing here.
+// consensus rules in dbft, do nothing here.
 func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
 	// No block rewards in PoA, so the state remains as is
 }
@@ -745,7 +745,7 @@ func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header,
 // nor block rewards given, and returns the final block.
 func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, error) {
 	if len(withdrawals) > 0 {
-		return nil, errors.New("clique does not support withdrawals")
+		return nil, errors.New("dbft does not support withdrawals")
 	}
 	// Finalize block
 	c.Finalize(chain, header, state, txs, uncles, nil)
@@ -997,7 +997,7 @@ func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 		enc = append(enc, header.BaseFee)
 	}
 	if header.WithdrawalsHash != nil {
-		panic("unexpected withdrawal hash value in clique")
+		panic("unexpected withdrawal hash value in dbft")
 	}
 	if err := rlp.Encode(w, enc); err != nil {
 		panic("can't encode: " + err.Error())
@@ -1049,14 +1049,14 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 		enc = append(enc, header.BaseFee)
 	}
 	if header.WithdrawalsHash != nil {
-		panic("unexpected withdrawal hash value in clique")
+		panic("unexpected withdrawal hash value in dbft")
 	}
 	if err := rlp.Encode(w, enc); err != nil {
 		panic("can't encode: " + err.Error())
 	}
 }
 
-// Close implements consensus.Engine. It's a noop for clique as there are no background threads.
+// Close implements consensus.Engine.
 func (c *DBFT) Close() error {
 	close(c.quit)
 	<-c.finished
@@ -1067,7 +1067,7 @@ func (c *DBFT) Close() error {
 // controlling the signer voting.
 func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	return []rpc.API{{
-		Namespace: "clique",
+		Namespace: "dbft",
 		Service:   &API{chain: chain, clique: c},
 	}}
 }
