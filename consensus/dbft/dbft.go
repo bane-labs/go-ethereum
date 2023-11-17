@@ -239,7 +239,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 	c.blockQueue = make(chan *Block)
 	c.dbft = dbft.New(
 		dbft.WithLogger(logger),
-		dbft.WithSecondsPerBlock(time.Duration(conf.TimePerBlock)*time.Second),
+		dbft.WithSecondsPerBlock(time.Duration(conf.SecondsPerBlock)*time.Second),
 		dbft.WithGetKeyPair(func(keys []dbftCrypto.PublicKey) (int, dbftCrypto.PrivateKey, dbftCrypto.PublicKey) {
 			c.lock.RLock()
 			signer, signFn := c.signer, c.signFn
@@ -848,7 +848,7 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		return errUnknownBlock
 	}
 	// For 0-period chains, refuse to seal empty blocks (no reward but would spin sealing)
-	if c.config.TimePerBlock == 0 && len(b.Transactions()) == 0 {
+	if c.config.SecondsPerBlock == 0 && len(b.Transactions()) == 0 {
 		return errors.New("sealing paused while waiting for transactions")
 	}
 	// Don't hold the signer fields for the entire sealing procedure

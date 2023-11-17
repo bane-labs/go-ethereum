@@ -89,7 +89,7 @@ func init() {
 	*dbftChainConfig = *params.TestChainConfig
 	dbftChainConfig.Clique = nil
 	dbftChainConfig.DBFT = &params.DBFTConfig{
-		TimePerBlock: 5,
+		SecondsPerBlock: 5,
 	}
 
 	signer := types.LatestSigner(params.TestChainConfig)
@@ -228,7 +228,7 @@ func TestGenerateAndImportBlockDBFT(t *testing.T) {
 		db     = rawdb.NewMemoryDatabase()
 		config = *params.AllCliqueProtocolChanges
 	)
-	config.DBFT = &params.DBFTConfig{TimePerBlock: 1}
+	config.DBFT = &params.DBFTConfig{SecondsPerBlock: 1}
 	engine := dbft.New(config.DBFT, db)
 
 	w, b := newTestWorker(t, &config, engine, db, 0)
