@@ -907,8 +907,6 @@ blocksLoop:
 			sighash = n3B.Signature()
 			dBFTBlock = n3B.Block // this block is completely different from the one that FinalizeAndAssemble proposed.
 			break blocksLoop
-		case <-time.After(15 * time.Second): // for testing purposes only, remove in prod.
-			return errors.New("failed to collect block with dBFT")
 		}
 	}
 	dBFTHeader := dBFTBlock.Header()
