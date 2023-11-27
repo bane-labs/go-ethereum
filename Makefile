@@ -13,10 +13,12 @@ MAIN_DIR = ./privnet
 NODE1 = node1
 NODE1_PORT = 30306
 NODE1_RPC_PORT = 8552
+NODE1_HTTP_PORT = 8545
 
 NODE2 = node2
 NODE2_PORT = 30307
 NODE2_RPC_PORT = 8553
+NODE2_HTTP_PORT = 8546
 
 PASSWORD_LEN = 32
 GENESIS_WORK_JSON = genesis_privnet.json
@@ -62,7 +64,7 @@ define run_bootnode
 endef
 
 define run_miner_node
-	$(call run_node,$(1),$(2),$(3),--mine --miner.etherbase="0x$$(cat $(MAIN_DIR)/$(4)/node_address.txt)")
+	$(call run_node,$(1),$(2),$(3),$(4),--mine --miner.etherbase="0x$$(cat $(MAIN_DIR)/$(5)/node_address.txt)")
 endef
 
 define run_node
@@ -73,10 +75,14 @@ define run_node
 		--unlock 0x"$$(cat $(MAIN_DIR)/$(1)/node_address.txt)" \
 		--authrpc.port $(3) \
 		--password $(MAIN_DIR)/$(1)/password.txt \
+		--authrpc.port $(3) \
+		--http.api admin,eth,debug,miner,net,txpool,personal,web3 \
+		--http --http.addr 0.0.0.0 --http.port $(4) --http.vhosts "*" --http.corsdomain "*"  \
+		--allow-insecure-unlock \
 		--metrics \
 		--nat $(NAT_POLICY) \
 		--netrestrict $(RESTRICTED_NETWORK) \
-		$(4) >  $(MAIN_DIR)/$(1)/geth_node.log 2>&1 &
+		$(5) >  $(MAIN_DIR)/$(1)/geth_node.log 2>&1 &
 endef
 
 define copy_genesis
@@ -163,6 +169,6 @@ privnet/$(NODE2)/geth:
 privnet_start: privnet/$(NODE1)/geth privnet/$(NODE2)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode)
-	$(call run_miner_node,$(NODE1),$(NODE1_PORT),$(NODE1_RPC_PORT),$(NODE1))
-	$(call run_node,$(NODE2),$(NODE2_PORT),$(NODE2_RPC_PORT))
+	$(call run_miner_node,$(NODE1),$(NODE1_PORT),$(NODE1_RPC_PORT),$(NODE1_HTTP_PORT),$(NODE1))
+	$(call run_node,$(NODE2),$(NODE2_PORT),$(NODE2_RPC_PORT),$(NODE2_HTTP_PORT))
 	@echo "OK! Check logs in privnet/<node_dir>/geth_node.log"
