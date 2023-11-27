@@ -1,29 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-interface IGovernance {
-    struct Phase {
-        uint256 startHeight;
-        address[] miners;
-        uint256 preHeight;
-    }
-
-    // get current consensus phase
-    function getCurrentPhase() external view returns (Phase memory);
+interface IGovReward {
+    function getMiners() external view returns (address[] memory);
 }
 
 abstract contract GovernanceVote {
+    // events for voting
     event Vote(address voter, bytes32 methodKey, bytes32 paramKey);
+    event VotePass(bytes32 methodKey, bytes32 paramKey);
 
-    IGovernance public constant governance =
-        IGovernance(0x1212000000000000000000000000000000000001);
+    // governance reward contact
+    address public constant govReward =
+        0x1212000000000000000000000000000000000003;
 
     // vote mapping, method key ->(user address -> param key)
     mapping(bytes32 => mapping(address => bytes32)) private voteMap;
 
     function isMiner(address addr) public view returns (bool) {
-        address[] memory miners = governance.getCurrentPhase().miners;
-        for (uint256 i = 0; i < miners.length; i++) {
+        address[] memory miners = IGovReward(govReward).getMiners();
+        for (uint i = 0; i < miners.length; i++) {
             if (addr == miners[i]) {
                 return true;
             }
@@ -37,8 +33,8 @@ abstract contract GovernanceVote {
     }
 
     function clearVote(bytes32 methodKey) internal {
-        address[] memory voters = governance.getCurrentPhase().miners;
-        for (uint256 i; i < voters.length; i++) {
+        address[] memory voters = IGovReward(govReward).getMiners();
+        for (uint i; i < voters.length; i++) {
             delete voteMap[methodKey][voters[i]];
         }
     }
@@ -47,9 +43,9 @@ abstract contract GovernanceVote {
         bytes32 methodKey,
         bytes32 paramKey
     ) internal view returns (bool isPass) {
-        address[] memory voters = governance.getCurrentPhase().miners;
-        uint256 votedCount;
-        for (uint256 i; i < voters.length; i++) {
+        address[] memory voters = IGovReward(govReward).getMiners();
+        uint votedCount;
+        for (uint i; i < voters.length; i++) {
             if (voteMap[methodKey][voters[i]] == paramKey) {
                 votedCount++;
             }
@@ -67,6 +63,7 @@ abstract contract GovernanceVote {
         }
         // execute method
         _;
+        emit VotePass(methodKey, paramKey);
         // clear vote
         clearVote(methodKey);
     }
