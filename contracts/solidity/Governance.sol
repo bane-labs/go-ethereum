@@ -257,7 +257,7 @@ contract Governance is IGovernance {
     function getRewardAmount(
         address addr
     ) public view override returns (uint reward) {
-        Phase memory current = getCurrentPhase();
+        Phase memory current = phaseMap[lastStartHeight];
         Phase memory prePhase = phaseMap[current.preHeight];
         uint currentReward = 0;
         uint preReward = 0;
