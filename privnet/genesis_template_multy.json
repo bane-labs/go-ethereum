@@ -15,7 +15,13 @@
     "arrowGlacierBlock": 0,
     "grayGlacierBlock": 0,
     "dbft": {
-      "period": 5
+      "period": 5,
+      "standby":[
+        "0xnode1",
+        "0xnode2",
+        "0xnode3",
+        "0xnode4"
+      ]
     }
   },
   "difficulty": "1",
