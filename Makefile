@@ -31,7 +31,7 @@ NAT_POLICY = none
 define generate_bootnode
 	@mkdir -p $(MAIN_DIR)/$(BOOTNODE)
 	@$(GETHBIN)/bootnode -genkey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key
-	@echo $$($(GOBIN)/bootnode --writeaddress -nodekey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key) > $(MAIN_DIR)/$(BOOTNODE)/bootnode_address.txt
+	@echo $$($(GETHBIN)/bootnode --writeaddress -nodekey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key) > $(MAIN_DIR)/$(BOOTNODE)/bootnode_address.txt
 endef
 
 define generate_password
