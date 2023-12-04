@@ -18,6 +18,18 @@ NODE2 = node2
 NODE2_PORT = 30307
 NODE2_RPC_PORT = 8553
 
+NODE3 = node3
+NODE3_PORT = 30308
+NODE3_RPC_PORT = 8554
+
+NODE4 = node4
+NODE4_PORT = 30309
+NODE4_RPC_PORT = 8555
+
+NODE5 = node5
+NODE5_PORT = 30310
+NODE5_RPC_PORT = 8556
+
 PASSWORD_LEN = 32
 GENESIS_WORK_JSON = genesis_privnet.json
 
@@ -137,6 +149,31 @@ privnet_init: privnet_clean
 	@rm $(MAIN_DIR)/$(GENESIS_WORK_JSON)
 	@echo "OK! For starting use 'make privnet_start'"
 
+privnet_init_multy: privnet_clean
+	@find $(MAIN_DIR)/* -type d -name 'keystore' -exec rm -rf {} +
+	@mkdir -p $(MAIN_DIR)
+	@echo "Generate  $(GENESIS_WORK_JSON) file"
+	@cp $(MAIN_DIR)/genesis_template_multy.json $(MAIN_DIR)/$(GENESIS_WORK_JSON)
+	@echo $$(date +'%y%m%d%H%M') > $(MAIN_DIR)/networkid.txt
+	@echo "Network ID is "$$(cat $(MAIN_DIR)/networkid.txt)
+	@echo "Generate bootnode"
+	$(call generate_bootnode)
+	$(call replace_chainid)
+	@echo "Create accounts"
+	$(call create_account,$(NODE1))
+	$(call create_account,$(NODE2))
+	$(call create_account,$(NODE3))
+	$(call create_account,$(NODE4))
+	$(call create_account,$(NODE5))
+	@echo "Copy genesis_privnet.json into nodes"
+	$(call copy_genesis,$(NODE1))
+	$(call copy_genesis,$(NODE2))
+	$(call copy_genesis,$(NODE3))
+	$(call copy_genesis,$(NODE4))
+	$(call copy_genesis,$(NODE5))
+	@rm $(MAIN_DIR)/$(GENESIS_WORK_JSON)
+	@echo "OK! For starting use 'make privnet_start_multy'"
+
 privnet_nodes_stop:
 	@echo "Killing nodes processes"
 	@killall -w -v -9 geth || :
@@ -160,9 +197,31 @@ privnet/$(NODE2)/geth:
 	@echo "Initializing $(NODE2) from genesis"
 	$(call init_node,$(NODE2))
 
+privnet/$(NODE3)/geth:
+	@echo "Initializing $(NODE3) from genesis"
+	$(call init_node,$(NODE3))
+
+privnet/$(NODE4)/geth:
+	@echo "Initializing $(NODE4) from genesis"
+	$(call init_node,$(NODE4))
+
+privnet/$(NODE5)/geth:
+	@echo "Initializing $(NODE5) from genesis"
+	$(call init_node,$(NODE5))
+
 privnet_start: privnet/$(NODE1)/geth privnet/$(NODE2)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode)
 	$(call run_miner_node,$(NODE1),$(NODE1_PORT),$(NODE1_RPC_PORT),$(NODE1))
 	$(call run_node,$(NODE2),$(NODE2_PORT),$(NODE2_RPC_PORT))
+	@echo "OK! Check logs in privnet/<node_dir>/geth_node.log"
+
+privnet_start_multy: privnet/$(NODE1)/geth privnet/$(NODE2)/geth privnet/$(NODE3)/geth privnet/$(NODE4)/geth privnet/$(NODE5)/geth
+	@echo "Starting nodes..."
+	$(call run_bootnode)
+	$(call run_miner_node,$(NODE1),$(NODE1_PORT),$(NODE1_RPC_PORT),$(NODE1))
+	$(call run_miner_node,$(NODE2),$(NODE2_PORT),$(NODE2_RPC_PORT),$(NODE2))
+	$(call run_miner_node,$(NODE3),$(NODE3_PORT),$(NODE3_RPC_PORT),$(NODE3))
+	$(call run_miner_node,$(NODE4),$(NODE4_PORT),$(NODE4_RPC_PORT),$(NODE4))
+	$(call run_node,$(NODE5),$(NODE5_PORT),$(NODE5_RPC_PORT))
 	@echo "OK! Check logs in privnet/<node_dir>/geth_node.log"
