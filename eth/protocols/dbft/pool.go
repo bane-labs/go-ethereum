@@ -27,8 +27,8 @@ type Pool struct {
 	chain     Ledger
 }
 
-// New returns a new payload pool using the provided chain.
-func New(bc Ledger, capacity int) *Pool {
+// NewPool returns a new payload pool using the provided chain.
+func NewPool(bc Ledger, capacity int) *Pool {
 	if capacity <= 0 {
 		panic("invalid capacity")
 	}

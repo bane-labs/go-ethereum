@@ -17,7 +17,7 @@ func TestAddGet(t *testing.T) {
 	bc := newTestChain()
 	bc.height = 10
 
-	p := New(bc, 100)
+	p := NewPool(bc, 100)
 	t.Run("invalid witness", func(t *testing.T) {
 		m := someMessage(t, 100, bc.goodAddrs[0], bc.badKey)
 		p.testAdd(t, false, invalidSig, m)
@@ -47,10 +47,10 @@ func TestCapacityLimit(t *testing.T) {
 	bc.height = 10
 
 	t.Run("invalid capacity", func(t *testing.T) {
-		require.Panics(t, func() { New(bc, 0) })
+		require.Panics(t, func() { NewPool(bc, 0) })
 	})
 
-	p := New(bc, 3)
+	p := NewPool(bc, 3)
 
 	first := bc.goodMessage(t, 11)
 	p.testAdd(t, true, nil, first)
@@ -74,7 +74,7 @@ func TestRemoveStale(t *testing.T) {
 	bc.height = 10
 	bc.goodAddrs = append(bc.goodAddrs, crypto.PubkeyToAddress(bc.badKey.PublicKey))
 
-	p := New(bc, 100)
+	p := NewPool(bc, 100)
 	eps := []*Message{
 		bc.goodMessage(t, 11), // small height
 		bc.goodMessage(t, 12), // good
