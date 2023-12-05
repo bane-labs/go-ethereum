@@ -296,6 +296,7 @@ contract Governance is IGovernance {
             withdrawedReward[msg.sender] += reward;
             totalWithdrawedReward += reward;
             IGovReward(govReward).withdraw(msg.sender, reward);
+            emit WithdrawReward(msg.sender, reward);
         }
     }
 
