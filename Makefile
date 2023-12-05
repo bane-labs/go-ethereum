@@ -9,6 +9,8 @@ GO ?= latest
 GORUN = go run
 
 MAIN_DIR = ./privnet
+SINGLE_DIR = $(MAIN_DIR)/single
+FOUR_DIR = $(MAIN_DIR)/four
 
 NODE1 = node1
 NODE1_PORT = 30306
@@ -41,9 +43,9 @@ RESTRICTED_NETWORK = 127.0.0.0/24
 NAT_POLICY = none
 
 define generate_bootnode
-	@mkdir -p $(MAIN_DIR)/$(BOOTNODE)
-	@$(GETHBIN)/bootnode -genkey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key
-	@echo $$($(GETHBIN)/bootnode --writeaddress -nodekey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key) > $(MAIN_DIR)/$(BOOTNODE)/bootnode_address.txt
+	@mkdir -p $(1)/$(BOOTNODE)
+	@$(GETHBIN)/bootnode -genkey $(1)/$(BOOTNODE)/bootnode.key
+	@echo $$($(GETHBIN)/bootnode --writeaddress -nodekey $(1)/$(BOOTNODE)/bootnode.key) > $(1)/$(BOOTNODE)/bootnode_address.txt
 endef
 
 define generate_password
@@ -51,52 +53,52 @@ define generate_password
 endef
 
 define replace_chainid
-	@sed -i "s/_chain_id_/$$(cat $(MAIN_DIR)/networkid.txt)/gI" $(MAIN_DIR)/$(GENESIS_WORK_JSON)
+	@sed -i "s/_chain_id_/$$(cat $(1)/networkid.txt)/gI" $(1)/$(GENESIS_WORK_JSON)
 endef
 
 define replace_node_address
-	@echo $$(cat $(MAIN_DIR)/$(1)/keystore/* | sed -En 's/.*"address":"([^"]*).*/\1/p') > $(MAIN_DIR)/$(1)/node_address.txt
-	@sed -i "s/$(1)/$$(cat $(MAIN_DIR)/$(1)/node_address.txt)/gI" $(MAIN_DIR)/$(GENESIS_WORK_JSON)
+	@echo $$(cat $(1)/$(2)/keystore/* | sed -En 's/.*"address":"([^"]*).*/\1/p') > $(1)/$(2)/node_address.txt
+	@sed -i "s/$(2)/$$(cat $(1)/$(2)/node_address.txt)/gI" $(1)/$(GENESIS_WORK_JSON)
 endef
 
 define create_account
-    @mkdir -p $(MAIN_DIR)/$(1)
-    @echo $(call generate_password) > $(MAIN_DIR)/$(1)/password.txt
-    @$(GETHBIN)/geth --datadir $(MAIN_DIR)/$(1) account new --password $(MAIN_DIR)/$(1)/password.txt
-    $(call replace_node_address,$(1))
-    @echo "Account $(1): "$$(cat $(MAIN_DIR)/$(1)/node_address.txt)
+    @mkdir -p $(1)/$(2)
+    @echo $(call generate_password) > $(1)/$(2)/password.txt
+    @$(GETHBIN)/geth --datadir $(1)/$(2) account new --password $(1)/$(2)/password.txt
+    $(call replace_node_address,$(1),$(2))
+    @echo "Account $(1): "$$(cat $(1)/$(2)/node_address.txt)
 endef
 
 define run_bootnode
-    @$(GETHBIN)/bootnode -nodekey $(MAIN_DIR)/$(BOOTNODE)/bootnode.key \
+    @$(GETHBIN)/bootnode -nodekey $(1)/$(BOOTNODE)/bootnode.key \
     	-addr :$(BOOTNODE_PORT) \
-    	-verbosity $(BOOTNODE_LOGLEVEL) > $(MAIN_DIR)/$(BOOTNODE)/bootnode.log 2>&1 &
+    	-verbosity $(BOOTNODE_LOGLEVEL) > $(1)/$(BOOTNODE)/bootnode.log 2>&1 &
 endef
 
 define run_miner_node
-	$(call run_node,$(1),$(2),$(3),--mine --miner.etherbase="0x$$(cat $(MAIN_DIR)/$(4)/node_address.txt)")
+	$(call run_node,$(1),$(2),$(3),$(4),--mine --miner.etherbase="0x$$(cat $(1)/$(5)/node_address.txt)")
 endef
 
 define run_node
-	@$(GETHBIN)/geth --datadir $(MAIN_DIR)/$(1) \
-		--port $(2) \
-		--bootnodes "enode://$$(cat $(MAIN_DIR)/$(BOOTNODE)/bootnode_address.txt)@127.0.0.1:0?discport=$(BOOTNODE_PORT)" \
-		--networkid "$$(cat $(MAIN_DIR)/networkid.txt)" \
-		--unlock 0x"$$(cat $(MAIN_DIR)/$(1)/node_address.txt)" \
-		--authrpc.port $(3) \
-		--password $(MAIN_DIR)/$(1)/password.txt \
+	@$(GETHBIN)/geth --datadir $(1)/$(2) \
+		--port $(3) \
+		--bootnodes "enode://$$(cat $(1)/$(BOOTNODE)/bootnode_address.txt)@127.0.0.1:0?discport=$(BOOTNODE_PORT)" \
+		--networkid "$$(cat $(1)/networkid.txt)" \
+		--unlock 0x"$$(cat $(1)/$(2)/node_address.txt)" \
+		--authrpc.port $(4) \
+		--password $(1)/$(2)/password.txt \
 		--metrics \
 		--nat $(NAT_POLICY) \
 		--netrestrict $(RESTRICTED_NETWORK) \
-		$(4) >  $(MAIN_DIR)/$(1)/geth_node.log 2>&1 &
+		$(5) >  $(1)/$(2)/geth_node.log 2>&1 &
 endef
 
 define copy_genesis
-	@cp $(MAIN_DIR)/$(GENESIS_WORK_JSON) $(MAIN_DIR)/$(1)/$(GENESIS_WORK_JSON)
+	@cp $(1)/$(GENESIS_WORK_JSON) $(1)/$(2)/$(GENESIS_WORK_JSON)
 endef
 
 define init_node
-    @$(GETHBIN)/geth init --datadir $(MAIN_DIR)/$(1) $(MAIN_DIR)/$(1)/$(GENESIS_WORK_JSON) > $(MAIN_DIR)/$(1)/geth_init.log 2>&1
+    @$(GETHBIN)/geth init --datadir $(1)/$(2) $(1)/$(2)/$(GENESIS_WORK_JSON) > $(1)/$(2)/geth_init.log 2>&1
 endef
 
 geth:
@@ -131,48 +133,48 @@ devtools:
 # Privnet targets
 
 privnet_init: privnet_clean
-	@find $(MAIN_DIR)/* -type d -name 'keystore' -exec rm -rf {} +
-	@mkdir -p $(MAIN_DIR)
+	@find $(SINGLE_DIR)/* -type d -name 'keystore' -exec rm -rf {} +
+	@mkdir -p $(SINGLE_DIR)
 	@echo "Generate  $(GENESIS_WORK_JSON) file"
-	@cp $(MAIN_DIR)/genesis_template.json $(MAIN_DIR)/$(GENESIS_WORK_JSON)
-	@echo $$(date +'%y%m%d%H%M') > $(MAIN_DIR)/networkid.txt
-	@echo "Network ID is "$$(cat $(MAIN_DIR)/networkid.txt)
+	@cp $(SINGLE_DIR)/genesis_template.json $(SINGLE_DIR)/$(GENESIS_WORK_JSON)
+	@echo $$(date +'%y%m%d%H%M') > $(SINGLE_DIR)/networkid.txt
+	@echo "Network ID is "$$(cat $(SINGLE_DIR)/networkid.txt)
 	@echo "Generate bootnode"
-	$(call generate_bootnode)
-	$(call replace_chainid)
+	$(call generate_bootnode,$(SINGLE_DIR))
+	$(call replace_chainid,$(SINGLE_DIR))
 	@echo "Create accounts"
-	$(call create_account,$(NODE1))
-	$(call create_account,$(NODE2))
+	$(call create_account,$(SINGLE_DIR),$(NODE1))
+	$(call create_account,$(SINGLE_DIR),$(NODE2))
 	@echo "Copy genesis_privnet.json into nodes"
-	$(call copy_genesis,$(NODE1))
-	$(call copy_genesis,$(NODE2))
-	@rm $(MAIN_DIR)/$(GENESIS_WORK_JSON)
+	$(call copy_genesis,$(SINGLE_DIR),$(NODE1))
+	$(call copy_genesis,$(SINGLE_DIR),$(NODE2))
+	@rm $(SINGLE_DIR)/$(GENESIS_WORK_JSON)
 	@echo "OK! For starting use 'make privnet_start'"
 
-privnet_init_multy: privnet_clean
-	@find $(MAIN_DIR)/* -type d -name 'keystore' -exec rm -rf {} +
-	@mkdir -p $(MAIN_DIR)
+privnet_init_four: privnet_clean
+	@find $(FOUR_DIR)/* -type d -name 'keystore' -exec rm -rf {} +
+	@mkdir -p $(FOUR_DIR)
 	@echo "Generate  $(GENESIS_WORK_JSON) file"
-	@cp $(MAIN_DIR)/genesis_template_multy.json $(MAIN_DIR)/$(GENESIS_WORK_JSON)
-	@echo $$(date +'%y%m%d%H%M') > $(MAIN_DIR)/networkid.txt
-	@echo "Network ID is "$$(cat $(MAIN_DIR)/networkid.txt)
+	@cp $(FOUR_DIR)/genesis_template.json $(FOUR_DIR)/$(GENESIS_WORK_JSON)
+	@echo $$(date +'%y%m%d%H%M') > $(FOUR_DIR)/networkid.txt
+	@echo "Network ID is "$$(cat $(FOUR_DIR)/networkid.txt)
 	@echo "Generate bootnode"
-	$(call generate_bootnode)
-	$(call replace_chainid)
+	$(call generate_bootnode,$(FOUR_DIR))
+	$(call replace_chainid,$(FOUR_DIR))
 	@echo "Create accounts"
-	$(call create_account,$(NODE1))
-	$(call create_account,$(NODE2))
-	$(call create_account,$(NODE3))
-	$(call create_account,$(NODE4))
-	$(call create_account,$(NODE5))
+	$(call create_account,$(FOUR_DIR),$(NODE1))
+	$(call create_account,$(FOUR_DIR),$(NODE2))
+	$(call create_account,$(FOUR_DIR),$(NODE3))
+	$(call create_account,$(FOUR_DIR),$(NODE4))
+	$(call create_account,$(FOUR_DIR),$(NODE5))
 	@echo "Copy genesis_privnet.json into nodes"
-	$(call copy_genesis,$(NODE1))
-	$(call copy_genesis,$(NODE2))
-	$(call copy_genesis,$(NODE3))
-	$(call copy_genesis,$(NODE4))
-	$(call copy_genesis,$(NODE5))
-	@rm $(MAIN_DIR)/$(GENESIS_WORK_JSON)
-	@echo "OK! For starting use 'make privnet_start_multy'"
+	$(call copy_genesis,$(FOUR_DIR),$(NODE1))
+	$(call copy_genesis,$(FOUR_DIR),$(NODE2))
+	$(call copy_genesis,$(FOUR_DIR),$(NODE3))
+	$(call copy_genesis,$(FOUR_DIR),$(NODE4))
+	$(call copy_genesis,$(FOUR_DIR),$(NODE5))
+	@rm $(FOUR_DIR)/$(GENESIS_WORK_JSON)
+	@echo "OK! For starting use 'make privnet_start_four'"
 
 privnet_nodes_stop:
 	@echo "Killing nodes processes"
@@ -189,39 +191,47 @@ privnet_clean: privnet_stop
 	@find $(MAIN_DIR)/* -type d -name 'geth' -print -exec rm -rf {} +
 	@find $(MAIN_DIR)/* -type s,f -not \( -path '*/keystore/*' -or -name '*.json' -or -name '*.txt' -or -name '*.key' -or -name '*.md' \) -print -exec rm -f {} +
 
-privnet/$(NODE1)/geth:
+$(SINGLE_DIR)/$(NODE1)/geth:
 	@echo "Initializing $(NODE1) from genesis"
-	$(call init_node,$(NODE1))
+	$(call init_node,$(SINGLE_DIR),$(NODE1))
 
-privnet/$(NODE2)/geth:
+$(SINGLE_DIR)/$(NODE2)/geth:
 	@echo "Initializing $(NODE2) from genesis"
-	$(call init_node,$(NODE2))
+	$(call init_node,$(SINGLE_DIR),$(NODE2))
 
-privnet/$(NODE3)/geth:
+$(FOUR_DIR)/$(NODE1)/geth:
+	@echo "Initializing $(NODE1) from genesis"
+	$(call init_node,$(FOUR_DIR),$(NODE1))
+
+$(FOUR_DIR)/$(NODE2)/geth:
+	@echo "Initializing $(NODE2) from genesis"
+	$(call init_node,$(FOUR_DIR),$(NODE2))
+
+$(FOUR_DIR)/$(NODE3)/geth:
 	@echo "Initializing $(NODE3) from genesis"
-	$(call init_node,$(NODE3))
+	$(call init_node,$(FOUR_DIR),$(NODE3))
 
-privnet/$(NODE4)/geth:
+$(FOUR_DIR)/$(NODE4)/geth:
 	@echo "Initializing $(NODE4) from genesis"
-	$(call init_node,$(NODE4))
+	$(call init_node,$(FOUR_DIR),$(NODE4))
 
-privnet/$(NODE5)/geth:
+$(FOUR_DIR)/$(NODE5)/geth:
 	@echo "Initializing $(NODE5) from genesis"
-	$(call init_node,$(NODE5))
+	$(call init_node,$(FOUR_DIR),$(NODE5))
 
-privnet_start: privnet/$(NODE1)/geth privnet/$(NODE2)/geth
+privnet_start: $(SINGLE_DIR)/$(NODE1)/geth $(SINGLE_DIR)/$(NODE2)/geth
 	@echo "Starting nodes..."
-	$(call run_bootnode)
-	$(call run_miner_node,$(NODE1),$(NODE1_PORT),$(NODE1_RPC_PORT),$(NODE1))
-	$(call run_node,$(NODE2),$(NODE2_PORT),$(NODE2_RPC_PORT))
-	@echo "OK! Check logs in privnet/<node_dir>/geth_node.log"
+	$(call run_bootnode,$(SINGLE_DIR))
+	$(call run_miner_node,$(SINGLE_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_RPC_PORT),$(NODE1))
+	$(call run_node,$(SINGLE_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_RPC_PORT))
+	@echo "OK! Check logs in $(SINGLE_DIR)/<node_dir>/geth_node.log"
 
-privnet_start_multy: privnet/$(NODE1)/geth privnet/$(NODE2)/geth privnet/$(NODE3)/geth privnet/$(NODE4)/geth privnet/$(NODE5)/geth
+privnet_start_four: $(FOUR_DIR)/$(NODE1)/geth $(FOUR_DIR)/$(NODE2)/geth $(FOUR_DIR)/$(NODE3)/geth $(FOUR_DIR)/$(NODE4)/geth $(FOUR_DIR)/$(NODE5)/geth
 	@echo "Starting nodes..."
-	$(call run_bootnode)
-	$(call run_miner_node,$(NODE1),$(NODE1_PORT),$(NODE1_RPC_PORT),$(NODE1))
-	$(call run_miner_node,$(NODE2),$(NODE2_PORT),$(NODE2_RPC_PORT),$(NODE2))
-	$(call run_miner_node,$(NODE3),$(NODE3_PORT),$(NODE3_RPC_PORT),$(NODE3))
-	$(call run_miner_node,$(NODE4),$(NODE4_PORT),$(NODE4_RPC_PORT),$(NODE4))
-	$(call run_node,$(NODE5),$(NODE5_PORT),$(NODE5_RPC_PORT))
-	@echo "OK! Check logs in privnet/<node_dir>/geth_node.log"
+	$(call run_bootnode,$(FOUR_DIR))
+	$(call run_miner_node,$(FOUR_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_RPC_PORT),$(NODE1))
+	$(call run_miner_node,$(FOUR_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_RPC_PORT),$(NODE2))
+	$(call run_miner_node,$(FOUR_DIR),$(NODE3),$(NODE3_PORT),$(NODE3_RPC_PORT),$(NODE3))
+	$(call run_miner_node,$(FOUR_DIR),$(NODE4),$(NODE4_PORT),$(NODE4_RPC_PORT),$(NODE4))
+	$(call run_node,$(FOUR_DIR),$(NODE5),$(NODE5_PORT),$(NODE5_RPC_PORT))
+	@echo "OK! Check logs in $(FOUR_DIR)/<node_dir>/geth_node.log"

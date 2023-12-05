@@ -51,5 +51,4 @@ logs/
 
 # privnet
 /privnet/**/*.log
-/privnet/node1/geth/
-/privnet/node2/geth/
+/privnet/**/geth/
