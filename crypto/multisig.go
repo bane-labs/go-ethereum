@@ -74,12 +74,17 @@ func VerifyMulti(hash []byte, pubs [][]byte, sigs [][]byte) error {
 	})
 	var vi int
 	for si := range sPubs {
-		for ; vi < len(vPubs); vi++ {
+		var match bool
+		for vi < len(vPubs) {
 			if bytes.Compare(vPubs[vi], sPubs[si]) == 0 {
+				match = true
+			}
+			vi++
+			if match {
 				break
 			}
 		}
-		if vi == len(vPubs) {
+		if !match {
 			return errors.New("invalid signature")
 		}
 	}

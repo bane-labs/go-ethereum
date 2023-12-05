@@ -76,4 +76,9 @@ func TestVerifyMulti(t *testing.T) {
 	// Broken signature.
 	sigs[0] = append(sigs[0], 'a', 'b', 'c')
 	require.Error(t, VerifyMulti(testmsg, pubs, sigs))
+
+	// Duplicate sig.
+	sigs[2] = sigs[1]
+	require.Error(t, VerifyMulti(testmsg, pubs, sigs[1:3]))
+
 }
