@@ -20,6 +20,7 @@ import (
 	"crypto/ecdsa"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,14 +31,14 @@ func TestVerifyMulti(t *testing.T) {
 
 	var (
 		keys = make([]*ecdsa.PrivateKey, nKeys)
-		pubs = make([][]byte, nKeys)
+		pubs = make([]common.Address, nKeys)
 		sigs = make([][]byte, nKeys)
 	)
 
 	for i := range keys {
 		k, _ := GenerateKey()
 		keys[i] = k
-		pubs[i] = FromECDSAPub(&k.PublicKey)
+		pubs[i] = PubkeyToAddress(k.PublicKey)
 		s, err := Sign(testmsg, k)
 		require.NoError(t, err)
 		sigs[i] = s

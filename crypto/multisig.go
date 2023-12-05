@@ -20,13 +20,27 @@ import (
 	"bytes"
 	"errors"
 	"sort"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
+// GetBFTHonestNodeCount returns minimum number of honest nodes
+// required for BFT network of size n.
+func GetBFTHonestNodeCount(n int) int {
+	return n - (n-1)/3
+}
+
+// GetMajorityHonestNodeCount returns minimum number of honest nodes
+// required for majority-style agreement.
+func GetMajorityHonestNodeCount(n int) int {
+	return n - (n-1)/2
+}
+
 // VerifyMultiBFT checks for BFT (> 2/3) number of sigs made by pubs for hash.
-func VerifyMultiBFT(hash []byte, pubs [][]byte, sigs [][]byte) error {
+func VerifyMultiBFT(hash []byte, pubs []common.Address, sigs [][]byte) error {
 	var (
 		n = len(pubs)
-		m = n - (n-1)/3
+		m = GetBFTHonestNodeCount(n)
 	)
 	if len(sigs) != m {
 		return errors.New("wrong number of signatures")
@@ -34,11 +48,11 @@ func VerifyMultiBFT(hash []byte, pubs [][]byte, sigs [][]byte) error {
 	return VerifyMulti(hash, pubs, sigs)
 }
 
-// VerifyMultiBFT checks for majority (> 1/2) number of sigs made by pubs for hash.
-func VerifyMultiMajority(hash []byte, pubs [][]byte, sigs [][]byte) error {
+// VerifyMultiMajority checks for majority (> 1/2) number of sigs made by pubs for hash.
+func VerifyMultiMajority(hash []byte, pubs []common.Address, sigs [][]byte) error {
 	var (
 		n = len(pubs)
-		m = n - (n-1)/2
+		m = GetMajorityHonestNodeCount(n)
 	)
 	if len(sigs) != m {
 		return errors.New("wrong number of signatures")
@@ -49,34 +63,35 @@ func VerifyMultiMajority(hash []byte, pubs [][]byte, sigs [][]byte) error {
 // VerifyMulti verifies that hash was signed by a subset of keys specified
 // in pubs. Checking the number of sigs is out of scope, see [VerifyMultiBFT]
 // and [VerifyMultiMajority].
-func VerifyMulti(hash []byte, pubs [][]byte, sigs [][]byte) error {
+func VerifyMulti(hash []byte, pubs []common.Address, sigs [][]byte) error {
 	if len(pubs) < len(sigs) {
 		return errors.New("number of public keys and signatures doesn't match")
 	}
 
 	var (
-		vPubs = make([][]byte, len(pubs))
-		sPubs = make([][]byte, 0, len(pubs))
+		vPubs = make([]common.Address, len(pubs))
+		sPubs = make([]common.Address, 0, len(pubs))
 	)
 	copy(vPubs, pubs)
 	sort.Slice(vPubs, func(i, j int) bool {
-		return bytes.Compare(vPubs[i], vPubs[j]) < 0
+		return bytes.Compare(vPubs[i][:], vPubs[j][:]) < 0
 	})
 	for i := range sigs {
 		pubkey, err := Ecrecover(hash, sigs[i])
 		if err != nil {
 			return err
 		}
-		sPubs = append(sPubs, pubkey)
+
+		sPubs = append(sPubs, PubkeyBytesToAddress(pubkey))
 	}
 	sort.Slice(sPubs, func(i, j int) bool {
-		return bytes.Compare(sPubs[i], sPubs[j]) < 0
+		return bytes.Compare(sPubs[i][:], sPubs[j][:]) < 0
 	})
 	var vi int
 	for si := range sPubs {
 		var match bool
 		for vi < len(vPubs) {
-			if bytes.Compare(vPubs[vi], sPubs[si]) == 0 {
+			if vPubs[vi] == sPubs[si] {
 				match = true
 			}
 			vi++

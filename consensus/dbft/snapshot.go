@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 	"golang.org/x/exp/slices"
 )
 
@@ -49,8 +50,8 @@ type sigLRU = lru.Cache[common.Hash, common.Address]
 
 // Snapshot is the state of the authorization voting at a given point in time.
 type Snapshot struct {
-	epoch    uint64  // Consensus engine parameters to fine tune behavior
-	sigcache *sigLRU // Cache of recent block signatures to speed up ecrecover
+	epoch  uint64 // Consensus engine parameters to fine tune behavior
+	config *params.DBFTConfig
 
 	Number  uint64                      `json:"number"`  // Block number where the snapshot was created
 	Hash    common.Hash                 `json:"hash"`    // Block hash where the snapshot was created
@@ -63,15 +64,15 @@ type Snapshot struct {
 // newSnapshot creates a new snapshot with the specified startup parameters. This
 // method does not initialize the set of recent signers, so only ever use if for
 // the genesis block.
-func newSnapshot(epoch uint64, sigcache *sigLRU, number uint64, hash common.Hash, signers []common.Address) *Snapshot {
+func newSnapshot(epoch uint64, cfg *params.DBFTConfig, number uint64, hash common.Hash, signers []common.Address) *Snapshot {
 	snap := &Snapshot{
-		epoch:    epoch,
-		sigcache: sigcache,
-		Number:   number,
-		Hash:     hash,
-		Signers:  make(map[common.Address]struct{}),
-		Recents:  make(map[uint64]common.Address),
-		Tally:    make(map[common.Address]Tally),
+		epoch:   epoch,
+		config:  cfg,
+		Number:  number,
+		Hash:    hash,
+		Signers: make(map[common.Address]struct{}),
+		Recents: make(map[uint64]common.Address),
+		Tally:   make(map[common.Address]Tally),
 	}
 	for _, signer := range signers {
 		snap.Signers[signer] = struct{}{}
@@ -80,7 +81,7 @@ func newSnapshot(epoch uint64, sigcache *sigLRU, number uint64, hash common.Hash
 }
 
 // loadSnapshot loads an existing snapshot from the database.
-func loadSnapshot(epoch uint64, sigcache *sigLRU, db ethdb.Database, hash common.Hash) (*Snapshot, error) {
+func loadSnapshot(epoch uint64, cfg *params.DBFTConfig, db ethdb.Database, hash common.Hash) (*Snapshot, error) {
 	blob, err := db.Get(append(rawdb.CliqueSnapshotPrefix, hash[:]...))
 	if err != nil {
 		return nil, err
@@ -90,7 +91,7 @@ func loadSnapshot(epoch uint64, sigcache *sigLRU, db ethdb.Database, hash common
 		return nil, err
 	}
 	snap.epoch = epoch
-	snap.sigcache = sigcache
+	snap.config = cfg
 
 	return snap, nil
 }
@@ -106,15 +107,16 @@ func (s *Snapshot) store(db ethdb.Database) error {
 
 // copy creates a deep copy of the snapshot, though not the individual votes.
 func (s *Snapshot) copy() *Snapshot {
+	cfg := *s.config
 	cpy := &Snapshot{
-		epoch:    s.epoch,
-		sigcache: s.sigcache,
-		Number:   s.Number,
-		Hash:     s.Hash,
-		Signers:  make(map[common.Address]struct{}),
-		Recents:  make(map[uint64]common.Address),
-		Votes:    make([]*Vote, len(s.Votes)),
-		Tally:    make(map[common.Address]Tally),
+		epoch:   s.epoch,
+		config:  &cfg,
+		Number:  s.Number,
+		Hash:    s.Hash,
+		Signers: make(map[common.Address]struct{}),
+		Recents: make(map[uint64]common.Address),
+		Votes:   make([]*Vote, len(s.Votes)),
+		Tally:   make(map[common.Address]Tally),
 	}
 	for signer := range s.Signers {
 		cpy.Signers[signer] = struct{}{}
@@ -209,10 +211,12 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 			delete(snap.Recents, number-limit)
 		}
 		// Resolve the authorization key and check against signers
-		signer, err := ecrecover(header, s.sigcache)
+		// TODO: this must be fixed, works incorrectly now.
+		vals, _, err := getSignersAndSigs(s.config, header)
 		if err != nil {
 			return nil, err
 		}
+		signer := vals[header.Primary()]
 		if _, ok := snap.Signers[signer]; !ok {
 			return nil, errUnauthorizedSigner
 		}
@@ -280,7 +284,7 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 			}
 			delete(snap.Tally, header.Coinbase)
 		}
-		// If we're taking too much time (ecrecover), notify the user once a while
+		// If we're taking too much time (getSignersAndSigs), notify the user once a while
 		if time.Since(logged) > 8*time.Second {
 			log.Info("Reconstructing voting history", "processed", i, "total", len(headers), "elapsed", common.PrettyDuration(time.Since(start)))
 			logged = time.Now()

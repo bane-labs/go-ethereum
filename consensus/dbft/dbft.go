@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -47,6 +48,7 @@ import (
 	"github.com/nspcc-dev/dbft"
 	"github.com/nspcc-dev/dbft/block"
 	dbftCrypto "github.com/nspcc-dev/dbft/crypto"
+	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
 	"github.com/nspcc-dev/neo-go/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/sha3"
@@ -65,7 +67,7 @@ var (
 	epochLength = uint64(30000) // Default number of blocks after which to checkpoint and reset the pending votes
 
 	extraVanity = 32                     // Fixed number of extra-data prefix bytes reserved for signer vanity
-	extraSeal   = crypto.SignatureLength // Fixed number of extra-data suffix bytes reserved for signer seal
+	extraSeal   = crypto.SignatureLength // Fixed number of extra-data suffix bytes reserved for a single signer seal
 
 	nonceAuthVote = hexutil.MustDecode("0xffffffffffffffff") // Magic nonce number to vote on adding a new signer
 	nonceDropVote = hexutil.MustDecode("0x0000000000000000") // Magic nonce number to vote on removing a signer.
@@ -146,29 +148,35 @@ var (
 	errRecentlySigned = errors.New("recently signed")
 )
 
-// ecrecover extracts the Ethereum account address from a signed header.
-func ecrecover(header *types.Header, sigcache *sigLRU) (common.Address, error) {
-	// If the signature's already cached, return that
-	hash := header.Hash()
-	if address, known := sigcache.Get(hash); known {
-		return address, nil
-	}
+// getSignersAndSigs extracts the set of validators addresses (ValidatorsCount number of them)
+// and a set of validators signatures (BFT number of them) from a signed header.
+func getSignersAndSigs(cfg *params.DBFTConfig, header *types.Header) ([]common.Address, [][]byte, error) {
 	// Retrieve the signature from the header extra-data
-	if len(header.Extra) < extraSeal {
-		return common.Address{}, errMissingSignature
+	var (
+		n             = int(cfg.ValidatorsCount)
+		m             = crypto.GetBFTHonestNodeCount(n)
+		addrsBytesLen = common.AddressLength * n
+		sigsBytesLen  = extraSeal * m
+	)
+	if len(header.Extra) < extraVanity+addrsBytesLen+sigsBytesLen {
+		return nil, nil, errMissingSignature
 	}
-	signature := header.Extra[len(header.Extra)-extraSeal:]
 
 	// Recover the public key and the Ethereum address
-	pubkey, err := crypto.Ecrecover(HonestSealHash(header).Bytes(), signature)
-	if err != nil {
-		return common.Address{}, err
+	var (
+		addrs = make([]common.Address, n)
+		sigs  = make([][]byte, m)
+	)
+	for i := range addrs {
+		addrOffset := extraVanity + i*common.AddressLength
+		copy(addrs[i][:], header.Extra[addrOffset:addrOffset+common.AddressLength])
 	}
-	var signer common.Address
-	copy(signer[:], crypto.Keccak256(pubkey[1:])[12:])
+	for i := range sigs {
+		sigOffset := len(header.Extra) - sigsBytesLen + i*extraSeal
+		sigs[i] = header.Extra[sigOffset : sigOffset+extraSeal]
+	}
 
-	sigcache.Add(hash, signer)
-	return signer, nil
+	return addrs, sigs, nil
 }
 
 // DBFT is the proof-of-authority consensus engine.
@@ -319,12 +327,11 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			binary.BigEndian.PutUint64(h.Nonce[:], uint64(ctx.PrimaryIndex))
 
 			// NextConsensus -> MixHash
-			// This should be NextBlockValidators address, but for now we just
-			// put single validator account.
-			c.lock.RLock()
-			signer, _ := c.signer, c.signFn
-			c.lock.RUnlock()
-			h.MixDigest.SetBytes(signer.Bytes())
+			nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex)
+			if err != nil {
+				panic(fmt.Errorf("failed to retrieve next block validators: %w", err))
+			}
+			h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
 
 			// PrevHash -> ParentHash
 			h.ParentHash.SetBytes(ctx.PrevHash.BytesBE())
@@ -387,7 +394,11 @@ func (c *DBFT) postBlock(b *types.Block) {
 // Author implements consensus.Engine, returning the Ethereum address recovered
 // from the signature in the header's extra-data section.
 func (c *DBFT) Author(header *types.Header) (common.Address, error) {
-	return ecrecover(header, c.signatures)
+	vals, _, err := getSignersAndSigs(c.config, header)
+	if err != nil {
+		return common.Address{}, fmt.Errorf("failed to retrieve validators addresses and signatures from header: %w", err)
+	}
+	return vals[header.Primary()], nil
 }
 
 // VerifyHeader checks whether a header conforms to the consensus rules.
@@ -443,15 +454,17 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if len(header.Extra) < extraVanity {
 		return errMissingVanity
 	}
-	if len(header.Extra) < extraVanity+extraSeal {
+	m := smartcontract.GetDefaultHonestNodeCount(int(c.config.ValidatorsCount))
+	sigBytesLen := m * extraSeal
+	if len(header.Extra) < extraVanity+sigBytesLen {
 		return errMissingSignature
 	}
 	// Ensure that the extra-data contains a signer list on checkpoint, but none otherwise
-	signersBytes := len(header.Extra) - extraVanity - extraSeal
-	if !checkpoint && signersBytes != 0 {
-		return errExtraSigners
+	signersBytes := len(header.Extra) - extraVanity - sigBytesLen
+	if signersBytes == 0 {
+		return fmt.Errorf("missing validators addresses")
 	}
-	if checkpoint && signersBytes%common.AddressLength != 0 {
+	if signersBytes%common.AddressLength != 0 {
 		return errInvalidCheckpointSigners
 	}
 	// Ensure that the mix digest is not zero.
@@ -526,19 +539,8 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 	if err != nil {
 		return err
 	}
-	// If the block is a checkpoint block, verify the signer list
-	if number%c.epoch == 0 {
-		signers := make([]byte, len(snap.Signers)*common.AddressLength)
-		for i, signer := range snap.signers() {
-			copy(signers[i*common.AddressLength:], signer[:])
-		}
-		extraSuffix := len(header.Extra) - extraSeal
-		if !bytes.Equal(header.Extra[extraVanity:extraSuffix], signers) {
-			return errMismatchingCheckpointSigners
-		}
-	}
 	// All basic checks passed, verify the seal and return
-	return c.verifySeal(snap, header, parents)
+	return c.verifySeal(snap, header, parents, parent)
 }
 
 // snapshot retrieves the authorization snapshot at a given point in time.
@@ -556,7 +558,7 @@ func (c *DBFT) snapshot(chain consensus.ChainHeaderReader, number uint64, hash c
 		}
 		// If an on-disk checkpoint snapshot can be found, use that
 		if number%checkpointInterval == 0 {
-			if s, err := loadSnapshot(c.epoch, c.signatures, c.db, hash); err == nil {
+			if s, err := loadSnapshot(c.epoch, c.config, c.db, hash); err == nil {
 				log.Trace("Loaded voting snapshot from disk", "number", number, "hash", hash)
 				snap = s
 				break
@@ -570,12 +572,12 @@ func (c *DBFT) snapshot(chain consensus.ChainHeaderReader, number uint64, hash c
 			checkpoint := chain.GetHeaderByNumber(number)
 			if checkpoint != nil {
 				hash := checkpoint.Hash()
-
-				signers := make([]common.Address, (len(checkpoint.Extra)-extraVanity-extraSeal)/common.AddressLength)
+				sigsBytesLen := extraSeal * smartcontract.GetDefaultHonestNodeCount(int(c.config.ValidatorsCount))
+				signers := make([]common.Address, (len(checkpoint.Extra)-extraVanity-sigsBytesLen)/common.AddressLength)
 				for i := 0; i < len(signers); i++ {
 					copy(signers[i][:], checkpoint.Extra[extraVanity+i*common.AddressLength:])
 				}
-				snap = newSnapshot(c.epoch, c.signatures, number, hash, signers)
+				snap = newSnapshot(c.epoch, c.config, number, hash, signers)
 				if err := snap.store(c.db); err != nil {
 					return nil, err
 				}
@@ -635,30 +637,31 @@ func (c *DBFT) VerifyUncles(chain consensus.ChainReader, block *types.Block) err
 // consensus protocol requirements. The method accepts an optional list of parent
 // headers that aren't yet part of the local blockchain to generate the snapshots
 // from.
-func (c *DBFT) verifySeal(snap *Snapshot, header *types.Header, parents []*types.Header) error {
+func (c *DBFT) verifySeal(snap *Snapshot, header *types.Header, parents []*types.Header, parent *types.Header) error {
 	// Verifying the genesis block is not supported
 	number := header.Number.Uint64()
 	if number == 0 {
 		return errUnknownBlock
 	}
-	// Resolve the authorization key and check against signers
-	signer, err := ecrecover(header, c.signatures)
+	// Resolve the authorization key and check against signers.
+	vals, sigs, err := getSignersAndSigs(c.config, header)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
 	}
-	if _, ok := snap.Signers[signer]; !ok {
-		return errUnauthorizedSigner
-	}
-	for seen, recent := range snap.Recents {
-		if recent == signer {
-			// Signer is among recents, only fail if the current block doesn't shift it out
-			if limit := uint64(len(snap.Signers)/2 + 1); seen > number-limit {
-				return errRecentlySigned
-			}
+	// TODO: fill in NextConsensus of genesis block properly or don't check it at all.
+	if header.Number.Uint64() != 1 {
+		nextConsensus := dbftutil.GetNextConsensusHash(vals)
+		if parent.NextConsensus() != nextConsensus {
+			return fmt.Errorf("invalid NextConsensus address retrieved from validators addresses: expected %s, got %s", parent.NextConsensus(), nextConsensus)
 		}
+	}
+	err = crypto.VerifyMultiBFT(HonestSealHash(header).Bytes(), vals, sigs)
+	if err != nil {
+		return fmt.Errorf("%w: %s", errUnauthorizedSigner, err)
 	}
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
 	if !c.fakeDiff {
+		signer := vals[header.Primary()]
 		inturn := snap.inturn(header.Number.Uint64(), signer)
 		if inturn && header.Difficulty.Cmp(diffInTurn) != 0 {
 			return errWrongDifficulty
@@ -716,12 +719,14 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	}
 	header.Extra = header.Extra[:extraVanity]
 
-	if number%c.epoch == 0 {
-		for _, signer := range snap.signers() {
-			header.Extra = append(header.Extra, signer[:]...)
-		}
+	vals, err := c.getNextBlockValidators(header.ParentHash, number-1)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve next block validators: %w", err)
 	}
-	header.Extra = append(header.Extra, make([]byte, extraSeal)...)
+	for _, v := range vals {
+		header.Extra = append(header.Extra, v[:]...)
+	}
+	header.Extra = append(header.Extra, make([]byte, smartcontract.GetDefaultHonestNodeCount(len(vals))*extraSeal)...)
 
 	// Mix digest is reserved for now, set to empty
 	header.MixDigest = common.Hash{}
@@ -1068,4 +1073,20 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 		Namespace: "dbft",
 		Service:   &API{chain: chain, clique: c},
 	}}
+}
+
+// getNextBlockValidators returns next block validators that should be set as
+// a NextConsensus address for the next block accepted after block with blockHash
+// hash and blockNum height.
+func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64) ([]common.Address, error) {
+	// Currently we don't have governance contract, thus, always return standby set.
+	if true {
+		return c.config.StandByCommittee, nil
+	}
+
+	return nil, nil
+}
+
+func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
+	return blockNum%uint64(len(c.config.StandByCommittee)) == 0
 }

@@ -16,9 +16,10 @@
     "grayGlacierBlock": 0,
     "dbft": {
       "period": 5,
-      "standby": [
+      "standbyCommittee": [
         "0xd40110de287c8d55e72a28600630a40283e4b8aa"
-      ]
+      ],
+      "validatorsCount": 1
     }
   },
   "difficulty": "1",
