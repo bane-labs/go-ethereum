@@ -16,8 +16,8 @@ func newLedger(bc BlockChainAPI) *ledger {
 	return &ledger{bc: bc}
 }
 
-func (l *ledger) BlockHeight() uint32 {
-	return uint32(l.bc.BlockNumber())
+func (l *ledger) BlockHeight() uint64 {
+	return uint64(l.bc.BlockNumber())
 }
 
 func (l *ledger) IsAddressAllowed(addr common.Address) bool {

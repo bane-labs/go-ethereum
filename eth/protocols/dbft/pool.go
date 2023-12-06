@@ -13,7 +13,7 @@ import (
 
 // Ledger is enough of Blockchain to satisfy Pool.
 type Ledger interface {
-	BlockHeight() uint32
+	BlockHeight() uint64
 	IsAddressAllowed(common.Address) bool
 }
 
@@ -109,7 +109,7 @@ func (p *Pool) Get(h common.Hash) *Message {
 }
 
 // RemoveStale removes invalid payloads after block processing.
-func (p *Pool) RemoveStale(index uint32) {
+func (p *Pool) RemoveStale(index uint64) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
