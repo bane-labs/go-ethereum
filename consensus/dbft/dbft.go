@@ -19,16 +19,19 @@ package dbft
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/lru"
@@ -37,9 +40,11 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -218,6 +223,10 @@ type DBFT struct {
 	quit     chan struct{}
 	finished chan struct{}
 
+	// various native contract APIs that dBFT uses.
+	ethAPI        *ethapi.BlockChainAPI
+	governanceABI abi.ABI
+
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
 }
@@ -372,6 +381,11 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 	)
 
 	return c
+}
+
+// SetEthAPI initializes Eth blockchain API for proper consensus module work.
+func (c *DBFT) SetEthAPI(api *ethapi.BlockChainAPI) {
+	c.ethAPI = api
 }
 
 // postBlock is a callback that updates latest accepted block data and resets
@@ -1080,7 +1094,44 @@ func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64) ([
 		return c.config.StandByCommittee, nil
 	}
 
-	return nil, nil
+	if c.ethAPI == nil {
+		return nil, errors.New("eth blockchain API is not initialized, dBFT can't function properly")
+	}
+
+	// Once we have governance contract, we don't need StandByCommittee in the dBFT's
+	// config, governance contract will handle it internally.
+	blockNr := rpc.BlockNumberOrHashWithHash(blockHash, false)
+
+	// Different values depending on dBFT epoch.
+	method := "getNextBlockValidators" // current epoch validators
+	if c.shouldUpdateCommitteeAt(blockNum + 1) {
+		method = "computeNextBlockValidators" // next epoch validators
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel when we are finished consuming integers
+	defer cancel()
+	data, err := c.governanceABI.Pack(method)
+	if err != nil {
+		log.Error("Unable to pack tx to retrieve next block validators", "error", err)
+		return nil, err
+	}
+	// do smart contract call
+	msgData := (hexutil.Bytes)(data)
+	toAddress := common.HexToAddress(systemcontracts.GovernanceContract)
+	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
+	result, err := c.ethAPI.Call(ctx, ethapi.TransactionArgs{
+		Gas:  &gas,
+		To:   &toAddress,
+		Data: &msgData,
+	}, blockNr, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var valSet []common.Address
+	err = c.governanceABI.UnpackIntoInterface(&valSet, method, result)
+	return valSet, err
 }
 
 func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
