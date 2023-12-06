@@ -48,7 +48,6 @@ import (
 	"github.com/nspcc-dev/dbft"
 	"github.com/nspcc-dev/dbft/block"
 	dbftCrypto "github.com/nspcc-dev/dbft/crypto"
-	"github.com/nspcc-dev/neo-go/pkg/smartcontract"
 	"github.com/nspcc-dev/neo-go/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/sha3"
@@ -454,7 +453,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if len(header.Extra) < extraVanity {
 		return errMissingVanity
 	}
-	m := smartcontract.GetDefaultHonestNodeCount(int(c.config.ValidatorsCount))
+	m := crypto.GetBFTHonestNodeCount(int(c.config.ValidatorsCount))
 	sigBytesLen := m * extraSeal
 	if len(header.Extra) < extraVanity+sigBytesLen {
 		return errMissingSignature
@@ -572,7 +571,7 @@ func (c *DBFT) snapshot(chain consensus.ChainHeaderReader, number uint64, hash c
 			checkpoint := chain.GetHeaderByNumber(number)
 			if checkpoint != nil {
 				hash := checkpoint.Hash()
-				sigsBytesLen := extraSeal * smartcontract.GetDefaultHonestNodeCount(int(c.config.ValidatorsCount))
+				sigsBytesLen := extraSeal * crypto.GetBFTHonestNodeCount(int(c.config.ValidatorsCount))
 				signers := make([]common.Address, (len(checkpoint.Extra)-extraVanity-sigsBytesLen)/common.AddressLength)
 				for i := 0; i < len(signers); i++ {
 					copy(signers[i][:], checkpoint.Extra[extraVanity+i*common.AddressLength:])
@@ -648,12 +647,9 @@ func (c *DBFT) verifySeal(snap *Snapshot, header *types.Header, parents []*types
 	if err != nil {
 		return fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
 	}
-	// TODO: fill in NextConsensus of genesis block properly or don't check it at all.
-	if header.Number.Uint64() != 1 {
-		nextConsensus := dbftutil.GetNextConsensusHash(vals)
-		if parent.NextConsensus() != nextConsensus {
-			return fmt.Errorf("invalid NextConsensus address retrieved from validators addresses: expected %s, got %s", parent.NextConsensus(), nextConsensus)
-		}
+	nextConsensus := dbftutil.GetNextConsensusHash(vals)
+	if parent.NextConsensus() != nextConsensus {
+		return fmt.Errorf("invalid NextConsensus address retrieved from validators addresses: expected %s, got %s", parent.NextConsensus(), nextConsensus)
 	}
 	err = crypto.VerifyMultiBFT(HonestSealHash(header).Bytes(), vals, sigs)
 	if err != nil {
@@ -726,7 +722,7 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	for _, v := range vals {
 		header.Extra = append(header.Extra, v[:]...)
 	}
-	header.Extra = append(header.Extra, make([]byte, smartcontract.GetDefaultHonestNodeCount(len(vals))*extraSeal)...)
+	header.Extra = append(header.Extra, make([]byte, crypto.GetBFTHonestNodeCount(len(vals))*extraSeal)...)
 
 	// Mix digest is reserved for now, set to empty
 	header.MixDigest = common.Hash{}
