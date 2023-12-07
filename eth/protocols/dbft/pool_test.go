@@ -55,7 +55,7 @@ func TestCapacityLimit(t *testing.T) {
 	first := bc.goodMessage(t, 11)
 	p.testAdd(t, true, nil, first)
 
-	for _, height := range []uint32{12, 13} {
+	for _, height := range []uint64{12, 13} {
 		m := bc.goodMessage(t, height)
 		p.testAdd(t, true, nil, m)
 	}
@@ -101,7 +101,7 @@ func (p *Pool) testAdd(t *testing.T, expectedOk bool, expectedErr error, ep *Mes
 }
 
 type testChain struct {
-	height    uint32
+	height    uint64
 	goodKey   *ecdsa.PrivateKey
 	badKey    *ecdsa.PrivateKey
 	goodAddrs []common.Address
@@ -128,17 +128,17 @@ func (c *testChain) IsAddressAllowed(u common.Address) bool {
 	}
 	return false
 }
-func (c *testChain) BlockHeight() uint32 { return c.height }
+func (c *testChain) BlockHeight() uint64 { return c.height }
 
-func (c *testChain) goodMessage(t *testing.T, height uint32) *Message {
+func (c *testChain) goodMessage(t *testing.T, height uint64) *Message {
 	return someMessage(t, height, c.goodAddrs[0], c.goodKey)
 }
 
-func (c *testChain) badMessage(t *testing.T, height uint32) *Message {
+func (c *testChain) badMessage(t *testing.T, height uint64) *Message {
 	return someMessage(t, height, c.badAddr, c.badKey)
 }
 
-func someMessage(t *testing.T, height uint32, sender common.Address, signer *ecdsa.PrivateKey) *Message {
+func someMessage(t *testing.T, height uint64, sender common.Address, signer *ecdsa.PrivateKey) *Message {
 	m := &Message{ValidBlockEnd: height, Sender: sender, Data: []byte{42}}
 	h := m.Hash()
 	sig, err := crypto.Sign(h[:], signer)

@@ -165,6 +165,16 @@ func (h *Header) EmptyReceipts() bool {
 	return h.ReceiptHash == EmptyReceiptsHash
 }
 
+// Primary returns index of the node that authored Header's proposal.
+func (h *Header) Primary() uint8 {
+	return uint8(binary.BigEndian.Uint64(h.Nonce[:]))
+}
+
+// NextConsensus returns the next consensus address.
+func (h *Header) NextConsensus() common.Hash {
+	return h.MixDigest
+}
+
 // Body is a simple (mutable, non-safe) data container for storing and moving
 // a block's data contents (transactions and uncles) together.
 type Body struct {

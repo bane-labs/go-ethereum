@@ -258,6 +258,21 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, gpoParams)
 
 	eth.dbftSrv = dbftproto.New(ethapi.NewBlockChainAPI(eth.APIBackend))
+	
+	var bft *dbft.DBFT
+	switch t := eth.engine.(type) {
+	case *dbft.DBFT:
+		bft = t
+	case *beacon.Beacon:
+		switch inner := t.InnerEngine().(type) {
+		case *dbft.DBFT:
+			bft = inner
+		}
+	}
+	if bft != nil {
+		ethAPI := ethapi.NewBlockChainAPI(eth.APIBackend)
+		bft.SetEthAPI(ethAPI)
+	}
 
 	// Setup DNS discovery iterators.
 	dnsclient := dnsdisc.NewClient(dnsdisc.Config{})

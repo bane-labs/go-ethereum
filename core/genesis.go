@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -475,6 +476,30 @@ func (g *Genesis) ToBlock() *types.Block {
 			head.BaseFee = new(big.Int).SetUint64(params.InitialBaseFee)
 		}
 	}
+	if g.Config != nil && g.Config.DBFT != nil {
+		if len(g.Config.DBFT.StandByCommittee) == 0 {
+			panic("StandByCommittee is not specified in the dBFT config")
+		}
+		if g.Config.DBFT.ValidatorsCount == 0 {
+			panic("ValidatorsCount is not specified in the dBFT config")
+		}
+		var (
+			n           = int(g.Config.DBFT.ValidatorsCount)
+			m           = crypto.GetBFTHonestNodeCount(n)
+			extraVanity = 32
+		)
+		if len(g.ExtraData) == 0 {
+			extra := make([]byte, extraVanity+n*common.AddressLength+m*crypto.SignatureLength)
+			for i, v := range g.Config.DBFT.StandByCommittee[:n] {
+				offset := extraVanity + i*common.AddressLength
+				copy(extra[offset:offset+common.AddressLength], v.Bytes())
+			}
+			head.Extra = extra
+		}
+		if g.Mixhash == (common.Hash{}) {
+			head.MixDigest = dbftutil.GetNextConsensusHash(g.Config.DBFT.StandByCommittee[:n])
+		}
+	}
 	var withdrawals []*types.Withdrawal
 	if conf := g.Config; conf != nil {
 		num := big.NewInt(int64(g.Number))
@@ -517,6 +542,26 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *trie.Database) (*types.Block
 	}
 	if config.Clique != nil && len(block.Extra()) < 32+crypto.SignatureLength {
 		return nil, errors.New("can't start clique chain without signers")
+	}
+	if config.DBFT != nil {
+		var (
+			n           = int(config.DBFT.ValidatorsCount)
+			m           = crypto.GetBFTHonestNodeCount(n)
+			extra       = block.Extra()
+			extraVanity = 32
+		)
+		if len(extra) < extraVanity+n*common.AddressLength+m*crypto.SignatureLength {
+			return nil, errors.New("can't start dBFT chain without validators addresses/signatures set in the genesis")
+		}
+		vals := make([]common.Address, n)
+		for i := range vals {
+			offset := extraVanity + i*common.AddressLength
+			vals[i] = common.BytesToAddress(extra[offset : offset+common.AddressLength])
+		}
+		expected := dbftutil.GetNextConsensusHash(vals)
+		if block.MixDigest() != expected {
+			return nil, fmt.Errorf("inconsistent MixHash (NextConsensus) genesis block setting: expected %s, got %s", expected, block.MixDigest())
+		}
 	}
 	// All the checks has passed, flush the states derived from the genesis
 	// specification as well as the specification itself into the provided
