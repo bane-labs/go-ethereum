@@ -19,7 +19,8 @@ const NsInS = 1000_000_000
 // sufficient for dBFT operations.
 type Block struct {
 	*types.Block
-	signatureBytes []byte
+	localSignatureBytes []byte
+	changeableExtra     []byte
 }
 
 // Version implements block.Block interface.
@@ -83,7 +84,7 @@ func (b *Block) SetTransactions(txx []block.Transaction) {
 
 // Signature implements Block interface.
 func (b *Block) Signature() []byte {
-	return b.signatureBytes
+	return b.localSignatureBytes
 }
 
 // Sign implements Block interface.
@@ -93,7 +94,7 @@ func (b *Block) Sign(key crypto.PrivateKey) error {
 		return fmt.Errorf("failed to sign dbftRLP header: %w", err)
 	}
 
-	b.signatureBytes = sighash
+	b.localSignatureBytes = sighash
 	return nil
 }
 

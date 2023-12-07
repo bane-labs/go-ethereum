@@ -56,6 +56,7 @@ import (
 	"github.com/nspcc-dev/neo-go/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/sha3"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -70,8 +71,7 @@ const (
 var (
 	epochLength = uint64(30000) // Default number of blocks after which to checkpoint and reset the pending votes
 
-	extraVanity = 32                     // Fixed number of extra-data prefix bytes reserved for signer vanity
-	extraSeal   = crypto.SignatureLength // Fixed number of extra-data suffix bytes reserved for a single signer seal
+	extraVanity = 32 // Fixed number of extra-data prefix bytes reserved for signer vanity
 
 	nonceAuthVote = hexutil.MustDecode("0xffffffffffffffff") // Magic nonce number to vote on adding a new signer
 	nonceDropVote = hexutil.MustDecode("0x0000000000000000") // Magic nonce number to vote on removing a signer.
@@ -81,6 +81,8 @@ var (
 	diffInTurn = big.NewInt(2) // Block difficulty for in-turn signatures
 	diffNoTurn = big.NewInt(1) // Block difficulty for out-of-turn signatures
 )
+
+const extraSeal = crypto.SignatureLength // Fixed number of extra-data suffix bytes reserved for a single signer seal
 
 // Various error messages to mark blocks invalid. These should be private to
 // prevent engine specific errors from being referenced in the remainder of the
@@ -166,7 +168,7 @@ func getSignersAndSigs(cfg *params.DBFTConfig, header *types.Header) ([]common.A
 		return nil, nil, errMissingSignature
 	}
 
-	// Recover the public key and the Ethereum address
+	// Recover Ethereum addresses of validators and their signatures.
 	var (
 		addrs = make([]common.Address, n)
 		sigs  = make([][]byte, m)
@@ -290,24 +292,40 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 				panic("last block hash wasn't initialized")
 			}
 
-			snap, err := c.snapshot(c.chain, c.lastIndex, c.lastBlockHash, nil)
+			var (
+				pKeys []common.Address
+				err   error
+			)
+			if txs == nil {
+				// getValidators with empty args is used by dbft to fill the list of
+				// block's validators, thus should return validators from the current
+				// epoch without recalculation.
+				pKeys, err = c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, false)
+			} else {
+				// getValidators with non-empty args is used by dbft to fill block's
+				// NextConsensus field, ComputeNextBlockValidators will return proper
+				// value for NextConsensus wrt dBFT epoch start/end.
+				pKeys, err = c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true)
+			}
 			if err != nil {
 				// Program bug.
 				panic(fmt.Errorf("failed to create snapshot while retrieving Validators: %w", err))
 			}
-			res := make([]dbftCrypto.PublicKey, 0, len(snap.Signers))
+			res := make([]dbftCrypto.PublicKey, len(pKeys))
 			// Once signers are properly fetched from the Neo contract, we need to
 			// sort them so that dBFT can rely on the validator's index. Currently,
 			// they are sorted in ascending order.
-			for _, s := range snap.signers() {
-				res = append(res, &PublicKey{
+			for i, s := range pKeys {
+				res[i] = &PublicKey{
 					Account: s,
-				})
+				}
 			}
 			return res
 		}),
 		dbft.WithProcessBlock(func(b block.Block) {
 			ethBlock := b.(*Block)
+			ethBlock.changeableExtra = c.getBlockWitness()
+
 			c.blockQueue <- ethBlock
 			// Do not call postBlock here to avoid race between the next pending sealing request that
 			// wants to update the same values as postBlock. Call postBlock in Seal instead.
@@ -335,7 +353,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			binary.BigEndian.PutUint64(h.Nonce[:], uint64(ctx.PrimaryIndex))
 
 			// NextConsensus -> MixHash
-			nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex)
+			nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true) // always compute as it's NextConsensus.
 			if err != nil {
 				panic(fmt.Errorf("failed to retrieve next block validators: %w", err))
 			}
@@ -381,6 +399,37 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 	)
 
 	return c
+}
+
+func (c *DBFT) getBlockWitness() []byte {
+	dctx := c.dbft.Context
+
+	// Validators sorting order is guaranteed by governance contract, they are sorted
+	// by their vote's weight, thus, no additional sorting here.
+	vals := make([]common.Address, len(dctx.Validators))
+	for i := range dctx.Validators {
+		vals[i] = dctx.Validators[i].(*PublicKey).Account
+	}
+	res := dbftutil.FlattenAddresses(vals)
+
+	sigs := make(map[common.Address][]byte)
+	for i := range vals {
+		if p := dctx.CommitPayloads[i]; p != nil && p.ViewNumber() == dctx.ViewNumber {
+			sigs[vals[i]] = p.GetCommit().Signature()
+		}
+	}
+	m := c.dbft.Context.M()
+
+	// Signatures sorting order is the same as corresponding *sorted* validators order.
+	slices.SortFunc(vals, common.Address.Cmp)
+	for i, j := 0, 0; i < len(vals) && j < m; i++ {
+		if sig, ok := sigs[vals[i]]; ok {
+			res = append(res, sig...)
+			j++
+		}
+	}
+
+	return res
 }
 
 // SetEthAPI initializes Eth blockchain API for proper consensus module work.
@@ -727,16 +776,11 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	if len(header.Extra) < extraVanity {
 		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
 	}
+	// Fill only extraVanity. The rest components of Header's Extra (validators
+	// addresses and BFT number of validators signatures) are treated as changeable
+	// and are not filled in during Prepare. These data will be set after block
+	// sealing in processBlock dBFT callback.
 	header.Extra = header.Extra[:extraVanity]
-
-	vals, err := c.getNextBlockValidators(header.ParentHash, number-1)
-	if err != nil {
-		return fmt.Errorf("failed to retrieve next block validators: %w", err)
-	}
-	for _, v := range vals {
-		header.Extra = append(header.Extra, v[:]...)
-	}
-	header.Extra = append(header.Extra, make([]byte, crypto.GetBFTHonestNodeCount(len(vals))*extraSeal)...)
 
 	// Mix digest is reserved for now, set to empty
 	header.MixDigest = common.Hash{}
@@ -909,7 +953,7 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	}
 
 	var (
-		sighash   []byte
+		sigBytes  []byte
 		dBFTBlock *types.Block
 	)
 blocksLoop:
@@ -919,13 +963,13 @@ blocksLoop:
 			if uint64(n3B.Index()) <= c.lastIndex {
 				continue blocksLoop
 			}
-			sighash = n3B.Signature()
+			sigBytes = n3B.changeableExtra
 			dBFTBlock = n3B.Block // this block is completely different from the one that FinalizeAndAssemble proposed.
 			break blocksLoop
 		}
 	}
 	dBFTHeader := dBFTBlock.Header()
-	copy(dBFTHeader.Extra[len(dBFTHeader.Extra)-extraSeal:], sighash)
+	dBFTHeader.Extra = append(dBFTHeader.Extra, sigBytes...) // extraVanity isn't changed, validators addresses and signatures are added.
 
 	// Completely replace proposed block with dBFT's one and relay it to the network.
 	res := dBFTBlock.WithSeal(dBFTHeader)
@@ -1004,7 +1048,8 @@ func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 		header.GasLimit,
 		header.GasUsed,
 		header.Time,
-		header.Extra[:len(header.Extra)-crypto.SignatureLength], // Yes, this will panic if extra is too short
+		// Do not include validators addresses into hashable part.
+		header.Extra[:extraVanity], // Yes, this will panic if extra is too short.
 	}
 	if header.BaseFee != nil {
 		enc = append(enc, header.BaseFee)
@@ -1054,7 +1099,7 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 		header.GasLimit,
 		header.GasUsed,
 		header.Time,
-		header.Extra[:len(header.Extra)-crypto.SignatureLength], // Yes, this will panic if extra is too short
+		header.Extra[:extraVanity], // Yes, this will panic if extra is too short
 		header.MixDigest,
 		header.Nonce,
 	}
@@ -1087,8 +1132,10 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 
 // getNextBlockValidators returns next block validators that should be set as
 // a NextConsensus address for the next block accepted after block with blockHash
-// hash and blockNum height.
-func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64) ([]common.Address, error) {
+// hash and blockNum height (if compute is true). It also returns validators of
+// the currently processing blocks to properly initialize dBFT context's Validators
+// field (if compute is false).
+func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, compute bool) ([]common.Address, error) {
 	// Currently we don't have governance contract, thus, always return standby set.
 	if true {
 		return c.config.StandByCommittee, nil
@@ -1104,8 +1151,8 @@ func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64) ([
 
 	// Different values depending on dBFT epoch.
 	method := "getNextBlockValidators" // current epoch validators
-	if c.shouldUpdateCommitteeAt(blockNum + 1) {
-		method = "computeNextBlockValidators" // next epoch validators
+	if compute {
+		method = "computeNextBlockValidators" // current epoch validators for the middle of dBFT epoch and next epoch validators for the last block in epoch
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

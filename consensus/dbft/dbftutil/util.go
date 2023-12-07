@@ -5,11 +5,18 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// GetNextConsensusHash returns hash of the given next consensus members.
+// GetNextConsensusHash returns hash of the given next consensus members. nextBlockVals
+// must be sorted by their consensus weight.
 func GetNextConsensusHash(nextBlockVals []common.Address) common.Hash {
-	var res []byte
-	for _, v := range nextBlockVals {
-		res = append(res, v.Bytes()...)
+	return common.BytesToHash(crypto.Keccak256(FlattenAddresses(nextBlockVals)))
+}
+
+// FlattenAddresses flattens provided addresses in a byte raw.
+func FlattenAddresses(vals []common.Address) []byte {
+	res := make([]byte, len(vals)*common.AddressLength)
+	for i, v := range vals {
+		offset := i * common.AddressLength
+		copy(res[offset:], v.Bytes())
 	}
-	return common.BytesToHash(crypto.Keccak256(res))
+	return res
 }
