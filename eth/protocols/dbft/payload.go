@@ -16,9 +16,9 @@ import (
 // Message is any broadcasted DBFT message.
 type Message struct {
 	// ValidBlockStart is the starting height for a payload to be valid.
-	ValidBlockStart uint32
+	ValidBlockStart uint64
 	// ValidBlockEnd is the height after which a payload becomes invalid.
-	ValidBlockEnd uint32
+	ValidBlockEnd uint64
 	// Sender is the payload sender or signer.
 	Sender common.Address
 	// Data is custom payload data.
