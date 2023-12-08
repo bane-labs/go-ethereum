@@ -212,7 +212,7 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 		}
 		// Resolve the authorization key and check against signers
 		// TODO: this must be fixed, works incorrectly now.
-		vals, _, err := getSignersAndSigs(s.config, header)
+		vals, _, err := getSignersAndSigs(s.config, header.Extra)
 		if err != nil {
 			return nil, err
 		}

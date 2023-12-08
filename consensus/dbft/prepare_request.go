@@ -1,0 +1,96 @@
+package dbft
+
+import (
+	"fmt"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/nspcc-dev/dbft/payload"
+	"github.com/nspcc-dev/neo-go/pkg/io"
+	"github.com/nspcc-dev/neo-go/pkg/util"
+)
+
+// prepareRequest represents dBFT prepareRequest message.
+type prepareRequest struct {
+	// TODO: we don't need the whole structures, in future we need to exclude those
+	// that are not used for consensus agreement.
+	sealingProposal   *types.Header
+	sealingReceipts   []*types.Receipt
+	transactionHashes []util.Uint256
+
+	// Fields that should be included into PrepareRequest for its verification:
+	parentSealHash common.Hash
+	parentExtra    []byte // TODO: optimize to exclude hashable part.
+}
+
+var _ payload.PrepareRequest = (*prepareRequest)(nil)
+
+// Version implements the payload.PrepareRequest interface.
+func (p prepareRequest) Version() uint32 {
+	return 0
+}
+
+// SetVersion implements the payload.PrepareRequest interface.
+func (p *prepareRequest) SetVersion(v uint32) {
+	return
+}
+
+// PrevHash implements the payload.PrepareRequest interface.
+func (p prepareRequest) PrevHash() util.Uint256 {
+	return p.sealingProposal.ParentHash.Uint256()
+}
+
+// SetPrevHash implements the payload.PrepareRequest interface.
+func (p *prepareRequest) SetPrevHash(h util.Uint256) {
+	// No setter, the proposal must be kept as is.
+	return
+}
+
+// Timestamp implements the payload.PrepareRequest interface.
+func (p *prepareRequest) Timestamp() uint64 { return p.sealingProposal.Time * NsInS }
+
+// SetTimestamp implements the payload.PrepareRequest interface.
+func (p *prepareRequest) SetTimestamp(ts uint64) {
+	// @roman, we don't explicitly set timestamp in prepare request, instead we use
+	// exactly those timestamp that was provided via latest sealing proposal.
+	// TODO: we need to inspect how it may affect dBFT, on the server side this
+	// leads to subsequent deviations in blocks timestamps (need to check).
+}
+
+// Nonce implements the payload.PrepareRequest interface.
+func (p *prepareRequest) Nonce() uint64 { return 0 }
+
+// SetNonce implements the payload.PrepareRequest interface.
+func (p *prepareRequest) SetNonce(nonce uint64) {}
+
+// TransactionHashes implements the payload.PrepareRequest interface.
+func (p *prepareRequest) TransactionHashes() []util.Uint256 { return p.transactionHashes }
+
+// SetTransactionHashes implements the payload.PrepareRequest interface.
+func (p *prepareRequest) SetTransactionHashes(hs []util.Uint256) { p.transactionHashes = hs }
+
+// NextConsensus implements the payload.PrepareRequest interface.
+func (p *prepareRequest) NextConsensus() util.Uint160 { return util.Uint160{} }
+
+// SetNextConsensus implements the payload.PrepareRequest interface.
+func (p *prepareRequest) SetNextConsensus(_ util.Uint160) {}
+
+// EncodeBinary implements the io.Serializable interface.
+func (p *prepareRequest) EncodeBinary(w *io.BinWriter) {
+	b, err := rlp.EncodeToBytes(p)
+	if err != nil {
+		w.Err = fmt.Errorf("failed to encode PrepareRequest to RLP: %w", err)
+		return
+	}
+	w.WriteVarBytes(b)
+}
+
+// DecodeBinary implements the io.Serializable interface.
+func (p *prepareRequest) DecodeBinary(r *io.BinReader) {
+	err := rlp.DecodeBytes(r.ReadVarBytes(), p)
+	if err != nil {
+		r.Err = fmt.Errorf("failed to decode PrepareRequest RLP: %w", err)
+	}
+	// TODO: restrict MaxTransactionsPerBlock.
+}
