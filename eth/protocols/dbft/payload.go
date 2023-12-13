@@ -6,6 +6,7 @@ package dbft
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -44,12 +45,14 @@ func (m Message) Hash() common.Hash {
 func (m Message) Verify() error {
 	var h = m.Hash()
 
-	pk, err := crypto.SigToPub(h[:], m.Witness)
+	pk, err := crypto.Ecrecover(h.Bytes(), m.Witness)
 	if err != nil {
 		return err
 	}
-	if crypto.PubkeyToAddress(*pk) != m.Sender {
-		return invalidSig
+
+	addr := crypto.PubkeyBytesToAddress(pk)
+	if addr != m.Sender {
+		return fmt.Errorf("%w: expected sender %s, recovered sender %s", invalidSig, m.Sender, addr)
 	}
 	return nil
 }
