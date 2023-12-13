@@ -212,7 +212,7 @@ type DBFT struct {
 
 	dbft        *dbft.DBFT
 	dbftStarted atomic.Bool
-	blockQueue  chan *Block
+	blockQueue  *blockQueue
 
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
 	// received from dBFT or from chain. These fields have exactly those type
@@ -262,12 +262,12 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		recents:    recents,
 		signatures: signatures,
 		proposals:  make(map[common.Address]bool),
+		blockQueue: newBlockQueue(),
 		quit:       make(chan struct{}),
 		finished:   make(chan struct{}),
 	}
 
 	logger, _ := zap.NewDevelopment()
-	c.blockQueue = make(chan *Block)
 	c.messages = make(chan Payload, 100)
 	c.dbft = dbft.New(
 		dbft.WithLogger(logger),
@@ -338,11 +338,23 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		}),
 		dbft.WithProcessBlock(func(b block.Block) {
 			ethBlock := b.(*Block)
-			ethBlock.changeableExtra = c.getBlockWitness()
+			if uint64(ethBlock.Index()) <= c.lastIndex { // TODO: lock lastIndex?
+				return
+			}
+			dBFTHeader := ethBlock.Header()
+			dBFTHeader.Extra = append(dBFTHeader.Extra, c.getBlockWitness()...) // extraVanity isn't changed, validators addresses and signatures are added.
+			// Completely replace block proposed by miner with the dBFT's one and relay it to the network.
+			res := ethBlock.WithSeal(dBFTHeader)
 
-			c.blockQueue <- ethBlock
-			// Do not call postBlock here to avoid race between the next pending sealing request that
-			// wants to update the same values as postBlock. Call postBlock in Seal instead.
+			if err := c.blockQueue.PutBlock(res); err != nil {
+				// The block might already be added via the regular network
+				// interaction.
+				if h := c.chain.GetHeaderByNumber(res.Number().Uint64()); h == nil {
+					log.Warn("error on enqueue block", zap.Error(err))
+				}
+			}
+
+			c.postBlock(res)
 		}),
 		dbft.WithNewBlockFromContext(func(ctx *dbft.Context) block.Block {
 			var (
@@ -545,6 +557,7 @@ func (c *DBFT) postBlock(b *types.Block) {
 		c.lastBlockExtra = h.Extra
 
 		c.sealingLock.Lock()
+		c.isSealing = false
 		c.sealingProposal = nil
 		c.sealingReceipts = nil
 		c.sealingTransactions = nil
@@ -957,7 +970,7 @@ func (c *DBFT) Initialize(chain consensus.ChainHeaderReader) {
 
 	// Do not start consensus immediately, we don't yet have sealing work.
 	// Start it once we have new sealing work in Seal.
-	c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
+	// c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
 }
 
 // Seal implements consensus.Engine, attempting to create a sealed block using
@@ -1040,56 +1053,19 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		}
 	}
 
+	err = c.blockQueue.SubmitTask(sealingHash, results, stop)
+	if err != nil {
+		return fmt.Errorf("failed to submit sealing task to dBFT: %w", err)
+	}
+
 	// Start dBFT once and afterward reinitialize it every time new block should be accepted.
 	if c.dbftStarted.CompareAndSwap(false, true) {
-		go c.dbft.Start(c.lastTimestamp * NsInS) // TODO: not in a separate loop?
+		c.dbft.Start(c.lastTimestamp * NsInS)
+
 		go c.eventLoop()
 	} else {
 		c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
-		go func() {
-			<-c.dbft.Timer.C()
-			hv := c.dbft.Timer.HV()
-			log.Info("dBFT timer fired",
-				"height", hv.Height,
-				"view", uint(hv.View))
-			c.dbft.OnTimeout(hv)
-		}()
 	}
-
-	var (
-		sigBytes  []byte
-		dBFTBlock *types.Block
-	)
-blocksLoop:
-	for {
-		select {
-		case n3B := <-c.blockQueue:
-			if uint64(n3B.Index()) <= c.lastIndex {
-				continue blocksLoop
-			}
-			sigBytes = n3B.changeableExtra
-			dBFTBlock = n3B.Block // this block is completely different from the one that FinalizeAndAssemble proposed.
-			break blocksLoop
-		}
-	}
-	dBFTHeader := dBFTBlock.Header()
-	dBFTHeader.Extra = append(dBFTHeader.Extra, sigBytes...) // extraVanity isn't changed, validators addresses and signatures are added.
-
-	// Completely replace proposed block with dBFT's one and relay it to the network.
-	res := dBFTBlock.WithSeal(dBFTHeader)
-	c.postBlock(res)
-
-	// Seal interrupt is not possible with dBFT, thus, ignore stop channel and don't
-	// wait for any delay, because dBFT provides proper block timing.
-	select {
-	case results <- res:
-	default:
-		log.Warn("Sealing result is not read by miner", "sealhash", WorkerSealHash(dBFTHeader))
-	}
-
-	c.sealingLock.Lock()
-	c.isSealing = false
-	c.sealingLock.Unlock()
 
 	return nil
 }
