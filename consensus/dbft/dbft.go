@@ -985,7 +985,15 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.sealingLock.Unlock()
 		return errors.New("no initialized pending sealing task")
 	}
-	c.sealingProposal = c.lastProposal.Header()
+	lastHeader := c.lastProposal.Header()
+	sealingHash := c.SealHash(lastHeader)
+	if sealingHash != c.SealHash(b.Header()) {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
+		return errors.New("initialized pending sealing task mismatch with target sealing task")
+	}
+
+	c.sealingProposal = lastHeader
 	c.sealingTransactions = c.lastProposal.Transactions()
 	c.sealingReceipts = c.lastReceipts
 	c.lastProposalLock.RUnlock()
