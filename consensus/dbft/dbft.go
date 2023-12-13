@@ -39,12 +39,14 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -193,9 +195,11 @@ type DBFT struct {
 	service  *dbftproto.Service
 	messages chan Payload
 
-	// TODO: properly integrate chain.
-	transactions chan *types.Transaction
-	blockEvents  chan *types.Block
+	// various chain/mempool events and subscription management:
+	blockEvents  chan core.ChainHeadEvent
+	txpool       txPool
+	txsSub       event.Subscription
+	transactions chan core.NewTxsEvent
 
 	config *params.DBFTConfig // Consensus engine configuration parameters
 	epoch  uint64             // Epoch duration left for backwards compatibility.
@@ -234,7 +238,7 @@ type DBFT struct {
 	sealingTransactions types.Transactions
 
 	// chain instance needed for proper dBFT callbacks functioning.
-	chain    consensus.ChainHeaderReader
+	chain    ChainHeaderReader
 	quit     chan struct{}
 	finished chan struct{}
 
@@ -263,12 +267,16 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		signatures: signatures,
 		proposals:  make(map[common.Address]bool),
 		blockQueue: newBlockQueue(),
-		quit:       make(chan struct{}),
-		finished:   make(chan struct{}),
+
+		messages:     make(chan Payload, 100),
+		transactions: make(chan core.NewTxsEvent, 100),
+		blockEvents:  make(chan core.ChainHeadEvent),
+
+		quit:     make(chan struct{}),
+		finished: make(chan struct{}),
 	}
 
 	logger, _ := zap.NewDevelopment()
-	c.messages = make(chan Payload, 100)
 	c.dbft = dbft.New(
 		dbft.WithLogger(logger),
 		dbft.WithSecondsPerBlock(time.Duration(conf.SecondsPerBlock)*time.Second),
@@ -542,6 +550,10 @@ func (c *DBFT) SetEthAPI(api *ethapi.BlockChainAPI) {
 
 func (c *DBFT) SetService(srv *dbftproto.Service) {
 	c.service = srv
+}
+
+func (c *DBFT) SetTxPool(pool txPool) {
+	c.txpool = pool
 }
 
 // postBlock is a callback that updates latest accepted block data and resets
@@ -958,7 +970,7 @@ func (c *DBFT) Authorize(signer common.Address, signFn SignerFn) {
 	c.signFn = signFn
 }
 
-func (c *DBFT) Initialize(chain consensus.ChainHeaderReader) {
+func (c *DBFT) Initialize(chain ChainHeaderReader) {
 	c.chain = chain
 
 	currHeader := chain.CurrentHeader()
@@ -1062,6 +1074,10 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	if c.dbftStarted.CompareAndSwap(false, true) {
 		c.dbft.Start(c.lastTimestamp * NsInS)
 
+		// Subscribe for minted blocks and transactions from mempool.
+		c.txsSub = c.txpool.SubscribeNewTxsEvent(c.transactions)
+		c.chain.SubscribeChainHeadEvent(c.blockEvents)
+
 		go c.eventLoop()
 	} else {
 		c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
@@ -1111,14 +1127,17 @@ events:
 
 			log.Debug("received message", fields...)
 			c.dbft.OnReceive(&msg)
-		case tx := <-c.transactions:
-			c.dbft.OnTransaction(&Transaction{Tx: tx})
+		case txs := <-c.transactions:
+			// TODO: we likely need to filter some of them out.
+			for _, tx := range txs.Txs {
+				c.dbft.OnTransaction(&Transaction{Tx: tx})
+			}
 		case b := <-c.blockEvents:
-			c.handleChainBlock(b)
+			c.handleChainBlock(b.Block)
 		}
 		// Always process block event if there is any, we can add one above or external
 		// services can add several blocks during message processing.
-		var latestBlock *types.Block
+		var latestBlock core.ChainHeadEvent
 	syncLoop:
 		for {
 			select {
@@ -1127,8 +1146,8 @@ events:
 				break syncLoop
 			}
 		}
-		if latestBlock != nil {
-			c.handleChainBlock(latestBlock)
+		if latestBlock.Block != nil {
+			c.handleChainBlock(latestBlock.Block)
 		}
 	}
 drainLoop:

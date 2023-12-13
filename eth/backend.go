@@ -278,6 +278,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		ethAPI := ethapi.NewBlockChainAPI(eth.APIBackend)
 		bft.SetEthAPI(ethAPI)
 		bft.SetService(eth.dbftSrv)
+		bft.SetTxPool(eth.txPool)
 	}
 
 	// Setup DNS discovery iterators.
