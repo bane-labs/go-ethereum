@@ -217,6 +217,7 @@ type DBFT struct {
 	dbft        *dbft.DBFT
 	dbftStarted atomic.Bool
 	blockQueue  *blockQueue
+	newtask     chan struct{}
 
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
 	// received from dBFT or from chain. These fields have exactly those type
@@ -271,6 +272,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		messages:     make(chan Payload, 100),
 		transactions: make(chan core.NewTxsEvent, 100),
 		blockEvents:  make(chan core.ChainHeadEvent),
+		newtask:      make(chan struct{}),
 
 		quit:     make(chan struct{}),
 		finished: make(chan struct{}),
@@ -1083,6 +1085,7 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
 	}
 
+	c.newtask <- struct{}{}
 	return nil
 }
 
@@ -1101,6 +1104,8 @@ events:
 				"height", hv.Height,
 				"view", uint(hv.View))
 			c.dbft.OnTimeout(hv)
+		case <-c.newtask:
+
 		case msg := <-c.messages:
 			fields := []any{
 				"from", msg.message.ValidatorIndex,
