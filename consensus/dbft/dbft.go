@@ -969,8 +969,9 @@ func (c *DBFT) Authorize(signer common.Address, signFn SignerFn) {
 	c.signFn = signFn
 }
 
-func (c *DBFT) Initialize(chain ChainHeaderReader) {
+func (c *DBFT) Initialize(chain ChainHeaderWriter) {
 	c.chain = chain
+	c.blockQueue.chain = chain
 
 	currHeader := chain.CurrentHeader()
 	c.lastIndex = currHeader.Number.Uint64()
