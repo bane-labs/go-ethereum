@@ -82,8 +82,9 @@ func (s *Service) BroadcastMessage(m *Message) error {
 		return err
 	}
 	var peers = s.grabPeers()
+	h := m.Hash()
 	for _, p := range peers {
-		err := p.SendAnnounceMsg(m.Hash())
+		err := p.SendAnnounceMsg(h)
 		if err != nil {
 			return err
 		}
