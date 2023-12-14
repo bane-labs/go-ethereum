@@ -1173,7 +1173,7 @@ drainLoop:
 
 // OnPayload handles Payload receive.
 func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
-	p := c.payloadFromMessage(cp)
+	p := payloadFromMessage(cp)
 	// decode payload data into message
 	if err := p.decodeData(); err != nil {
 		log.Info("can't decode payload data", "hash", cp.Hash(), "error", err)
@@ -1194,7 +1194,7 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 	return nil
 }
 
-func (s *DBFT) payloadFromMessage(ep *dbftproto.Message) *Payload {
+func payloadFromMessage(ep *dbftproto.Message) *Payload {
 	return &Payload{
 		Message: *ep,
 		message: message{},
