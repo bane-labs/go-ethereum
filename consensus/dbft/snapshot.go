@@ -56,7 +56,6 @@ type Snapshot struct {
 	Number  uint64                      `json:"number"`  // Block number where the snapshot was created
 	Hash    common.Hash                 `json:"hash"`    // Block hash where the snapshot was created
 	Signers map[common.Address]struct{} `json:"signers"` // Set of authorized signers at this moment
-	Recents map[uint64]common.Address   `json:"recents"` // Set of recent signers for spam protections
 	Votes   []*Vote                     `json:"votes"`   // List of votes cast in chronological order
 	Tally   map[common.Address]Tally    `json:"tally"`   // Current vote tally to avoid recalculating
 }
@@ -71,7 +70,6 @@ func newSnapshot(epoch uint64, cfg *params.DBFTConfig, number uint64, hash commo
 		Number:  number,
 		Hash:    hash,
 		Signers: make(map[common.Address]struct{}),
-		Recents: make(map[uint64]common.Address),
 		Tally:   make(map[common.Address]Tally),
 	}
 	for _, signer := range signers {
@@ -114,15 +112,11 @@ func (s *Snapshot) copy() *Snapshot {
 		Number:  s.Number,
 		Hash:    s.Hash,
 		Signers: make(map[common.Address]struct{}),
-		Recents: make(map[uint64]common.Address),
 		Votes:   make([]*Vote, len(s.Votes)),
 		Tally:   make(map[common.Address]Tally),
 	}
 	for signer := range s.Signers {
 		cpy.Signers[signer] = struct{}{}
-	}
-	for block, signer := range s.Recents {
-		cpy.Recents[block] = signer
 	}
 	for address, tally := range s.Tally {
 		cpy.Tally[address] = tally
@@ -206,10 +200,6 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 			snap.Votes = nil
 			snap.Tally = make(map[common.Address]Tally)
 		}
-		// Delete the oldest signer from the recent list to allow it signing again
-		if limit := uint64(len(snap.Signers)/2 + 1); number >= limit {
-			delete(snap.Recents, number-limit)
-		}
 		// Resolve the authorization key and check against signers
 		// TODO: this must be fixed, works incorrectly now.
 		vals, _, err := getSignersAndSigs(s.config, header.Extra)
@@ -220,12 +210,6 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 		if _, ok := snap.Signers[signer]; !ok {
 			return nil, errUnauthorizedSigner
 		}
-		for _, recent := range snap.Recents {
-			if recent == signer {
-				return nil, errRecentlySigned
-			}
-		}
-		snap.Recents[number] = signer
 
 		// Header authorized, discard any previous votes from the signer
 		for i, vote := range snap.Votes {
@@ -258,10 +242,6 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 			} else {
 				delete(snap.Signers, header.Coinbase)
 
-				// Signer list shrunk, delete any leftover recent caches
-				if limit := uint64(len(snap.Signers)/2 + 1); number >= limit {
-					delete(snap.Recents, number-limit)
-				}
 				// Discard any previous votes the deauthorized signer cast
 				for i := 0; i < len(snap.Votes); i++ {
 					if snap.Votes[i].Signer == header.Coinbase {

@@ -152,10 +152,6 @@ var (
 
 	// errUnauthorizedSigner is returned if a header is signed by a non-authorized entity.
 	errUnauthorizedSigner = errors.New("unauthorized signer")
-
-	// errRecentlySigned is returned if a header is signed by an authorized entity
-	// that already signed a header recently, thus is temporarily not allowed to.
-	errRecentlySigned = errors.New("recently signed")
 )
 
 // getSignersAndSigs extracts the set of validators addresses (ValidatorsCount number of them)
