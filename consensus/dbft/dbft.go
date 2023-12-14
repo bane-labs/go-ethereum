@@ -356,7 +356,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 				// The block might already be added via the regular network
 				// interaction.
 				if h := c.chain.GetHeaderByNumber(res.Number().Uint64()); h == nil {
-					log.Warn("error on enqueue block", zap.Error(err))
+					log.Warn("error on enqueue block", "error", err.Error())
 				}
 			}
 
