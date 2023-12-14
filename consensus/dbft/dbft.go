@@ -1058,16 +1058,6 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		return errUnauthorizedSigner
 	}
 
-	// If we're amongst the recent signers, wait for the next block
-	for seen, recent := range snap.Recents {
-		if recent == signer {
-			// Signer is among recents, only wait if the current block doesn't shift it out
-			if limit := uint64(len(snap.Signers)/2 + 1); number < limit || seen > number-limit {
-				return errors.New("signed recently, must wait for others")
-			}
-		}
-	}
-
 	err = c.blockQueue.SubmitTask(sealingHash, results, stop)
 	if err != nil {
 		return fmt.Errorf("failed to submit sealing task to dBFT: %w", err)
