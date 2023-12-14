@@ -13,6 +13,7 @@ type ChainHeaderReader interface {
 	consensus.ChainHeaderReader
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	HasBlock(hash common.Hash, number uint64) bool
+	GetBlockByNumber(uint64) *types.Block
 }
 
 // ChainHeaderWriter is a Blockchain API abstraction needed for proper blockQueue

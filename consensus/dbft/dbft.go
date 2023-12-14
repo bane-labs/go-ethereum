@@ -476,6 +476,16 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 				// After that we assume that parent block is valid and it can be sent to chain.
 				// For now, we'll hope that parent block will be fetched automatically and internal forks resolving mechanism will
 				// choose the right chain.
+				savedParent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 1)
+				if savedParent != nil { // TODO: what if it's nil? Is it ever possible?
+					newHeader := savedParent.Header()
+					newHeader.Extra = req.ParentExtra
+					err := c.blockQueue.PutBlock(savedParent.WithSeal(newHeader)) // TODO: maybe send to a separate routine.
+					if err != nil {
+						// TODO: this error is very critical for further block processing.
+						log.Warn("failed to enqueue parent with updated extra: %w", err)
+					}
+				}
 
 				// TODO: lock it?
 				c.lastBlockHash = req.SealingProposal.ParentHash
