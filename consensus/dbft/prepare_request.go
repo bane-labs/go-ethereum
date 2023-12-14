@@ -15,13 +15,13 @@ import (
 type prepareRequest struct {
 	// TODO: we don't need the whole structures, in future we need to exclude those
 	// that are not used for consensus agreement.
-	sealingProposal   *types.Header
-	sealingReceipts   []*types.Receipt
-	transactionHashes []util.Uint256
+	SealingProposal *types.Header
+	SealingReceipts []*types.Receipt
+	TxHashes        []util.Uint256
 
 	// Fields that should be included into PrepareRequest for its verification:
-	parentSealHash common.Hash
-	parentExtra    []byte // TODO: optimize to exclude hashable part.
+	ParentSealHash common.Hash
+	ParentExtra    []byte // TODO: optimize to exclude hashable part.
 }
 
 var _ payload.PrepareRequest = (*prepareRequest)(nil)
@@ -38,7 +38,7 @@ func (p *prepareRequest) SetVersion(v uint32) {
 
 // PrevHash implements the payload.PrepareRequest interface.
 func (p prepareRequest) PrevHash() util.Uint256 {
-	return p.sealingProposal.ParentHash.Uint256()
+	return p.SealingProposal.ParentHash.Uint256()
 }
 
 // SetPrevHash implements the payload.PrepareRequest interface.
@@ -48,7 +48,7 @@ func (p *prepareRequest) SetPrevHash(h util.Uint256) {
 }
 
 // Timestamp implements the payload.PrepareRequest interface.
-func (p *prepareRequest) Timestamp() uint64 { return p.sealingProposal.Time * NsInS }
+func (p *prepareRequest) Timestamp() uint64 { return p.SealingProposal.Time * NsInS }
 
 // SetTimestamp implements the payload.PrepareRequest interface.
 func (p *prepareRequest) SetTimestamp(ts uint64) {
@@ -65,10 +65,10 @@ func (p *prepareRequest) Nonce() uint64 { return 0 }
 func (p *prepareRequest) SetNonce(nonce uint64) {}
 
 // TransactionHashes implements the payload.PrepareRequest interface.
-func (p *prepareRequest) TransactionHashes() []util.Uint256 { return p.transactionHashes }
+func (p *prepareRequest) TransactionHashes() []util.Uint256 { return p.TxHashes }
 
 // SetTransactionHashes implements the payload.PrepareRequest interface.
-func (p *prepareRequest) SetTransactionHashes(hs []util.Uint256) { p.transactionHashes = hs }
+func (p *prepareRequest) SetTransactionHashes(hs []util.Uint256) { p.TxHashes = hs }
 
 // NextConsensus implements the payload.PrepareRequest interface.
 func (p *prepareRequest) NextConsensus() util.Uint160 { return util.Uint160{} }
@@ -88,7 +88,11 @@ func (p *prepareRequest) EncodeBinary(w *io.BinWriter) {
 
 // DecodeBinary implements the io.Serializable interface.
 func (p *prepareRequest) DecodeBinary(r *io.BinReader) {
-	err := rlp.DecodeBytes(r.ReadVarBytes(), p)
+	b := r.ReadVarBytes()
+	if r.Err != nil {
+		return
+	}
+	err := rlp.DecodeBytes(b, p)
 	if err != nil {
 		r.Err = fmt.Errorf("failed to decode PrepareRequest RLP: %w", err)
 	}

@@ -440,12 +440,13 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			if c.sealingProposal == nil {
 				panic("bug: sealing proposal is not initialized")
 			}
-			req.sealingProposal = c.sealingProposal
-			req.sealingReceipts = c.sealingReceipts
+			req.SealingProposal = c.sealingProposal
+			req.SealingReceipts = c.sealingReceipts
 			c.sealingLock.RUnlock()
 
-			req.parentSealHash = c.lastBlockSealHash
-			req.parentExtra = c.lastBlockExtra
+			req.ParentSealHash = c.lastBlockSealHash
+			req.ParentExtra = c.lastBlockExtra
+			req.TxHashes = make([]util.Uint256, 0)
 			return req
 		}),
 		dbft.WithNewCommit(func() payload.Commit { return new(commit) }),
@@ -456,22 +457,22 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		dbft.WithVerifyPrepareResponse(func(_ payload.ConsensusPayload) error { return nil }),
 		dbft.WithVerifyPrepareRequest(func(p payload.ConsensusPayload) error {
 			req := p.GetPrepareRequest().(*prepareRequest)
-			if req.sealingProposal == nil {
+			if req.SealingProposal == nil {
 				return errors.New("invalid PrepareRequest: sealing proposal is nil")
 			}
-			if req.sealingProposal.ParentHash.Uint256() != c.dbft.PrevHash {
+			if req.SealingProposal.ParentHash.Uint256() != c.dbft.PrevHash {
 				if c.dbft.BlockIndex <= 1 { // genesis block  is hard-coded, thus its hash (as a parent hash) must match the one that prepareRequest declares as a parent hash.
-					return fmt.Errorf("invalid parent: expected %s, got %s", c.dbft.PrevHash, req.sealingProposal.ParentHash)
+					return fmt.Errorf("invalid parent: expected %s, got %s", c.dbft.PrevHash, req.SealingProposal.ParentHash)
 				}
-				if req.parentSealHash != c.lastBlockSealHash {
-					return fmt.Errorf("parent seal hash doesn't match the last block seal hash: expected %s, got %s", c.lastBlockSealHash, req.parentSealHash)
+				if req.ParentSealHash != c.lastBlockSealHash {
+					return fmt.Errorf("parent seal hash doesn't match the last block seal hash: expected %s, got %s", c.lastBlockSealHash, req.ParentSealHash)
 				}
 				// TODO: to properly verify newly-provided witness of the parent block we need to
 				// fetch parent's parent NextConsensus. Or instead (if supported) just push the newly-constructed
 				// block to the chain and it will deal with the verification by itself.
 				// For simplicity, consider it as valid.
 				/*
-					err := c.verifyExtra(parentParentNextConsensus, req.parentSealHash, req.parentExtra)
+					err := c.verifyExtra(parentParentNextConsensus, req.ParentSealHash, req.ParentExtra)
 					if err != nil {
 						return err
 					}
@@ -481,19 +482,19 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 				// choose the right chain.
 
 				// TODO: lock it?
-				c.lastBlockHash = req.sealingProposal.ParentHash
-				c.dbft.PrevHash = req.sealingProposal.ParentHash.Uint256() // this may be skipped, we don't use context's prevHash.
+				c.lastBlockHash = req.SealingProposal.ParentHash
+				c.dbft.PrevHash = req.SealingProposal.ParentHash.Uint256() // this may be skipped, we don't use context's prevHash.
 			}
 			// Save lastProposal for getVerified().
-			// c.lastProposal = req.transactionHashes
+			// c.lastProposal = req.TxHashes
 
 			// TODO: properly initialize the rest of dBFT context from prepareRequest
 			//  to be able to properly create commit.
 
 			c.sealingLock.Lock()
 			c.isSealing = true // TODO: get rid of this after moving dbft timer to a separate routine.
-			c.sealingProposal = req.sealingProposal
-			c.sealingReceipts = req.sealingReceipts
+			c.sealingProposal = req.SealingProposal
+			c.sealingReceipts = req.SealingReceipts
 			// c.sealingTransactions? we can't get them directly from prepare request, need to store hashes and then provide callback to mempool
 			c.sealingLock.Unlock()
 			return nil

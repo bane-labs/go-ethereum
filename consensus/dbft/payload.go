@@ -116,14 +116,6 @@ func (p *Payload) SetHeight(h uint32) {
 	p.message.BlockIndex = uint64(h)
 }
 
-/*
-// EncodeBinary implements the io.Serializable interface.
-func (p *Payload) EncodeBinary(w *io.BinWriter) {
-	p.encodeData()
-	p.Message.EncodeBinary(w)
-}
-*/
-
 // Sign signs payload using the private key.
 // It also sets corresponding sender and witness.
 func (p *Payload) Sign(key *Signer) error {
@@ -164,16 +156,6 @@ func (p *Payload) Hash() util.Uint256 {
 	}
 	return p.Message.Hash().Uint256()
 }
-
-/*
-// DecodeBinary implements the io.Serializable interface.
-func (p *Payload) DecodeBinary(r *io.BinReader) {
-	p.Extensible.DecodeBinary(r)
-	if r.Err == nil {
-		r.Err = p.decodeData()
-	}
-}
-*/
 
 // EncodeBinary implements the io.Serializable interface.
 func (m *message) EncodeBinary(w *io.BinWriter) {
@@ -240,6 +222,9 @@ func (p *Payload) encodeData() {
 		p.Message.ValidBlockEnd = p.BlockIndex
 		bw := io.NewBufBinWriter()
 		p.message.EncodeBinary(bw.BinWriter)
+		if bw.Err != nil {
+			panic(fmt.Errorf("failed to encode payload: %w", bw.Err))
+		}
 		p.Message.Data = bw.Bytes()
 	}
 }
