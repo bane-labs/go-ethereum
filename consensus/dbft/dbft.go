@@ -1222,11 +1222,6 @@ func (c *DBFT) newPayload(ctx *dbft.Context, t payload.MessageType, msg any) pay
 	cp.SetValidatorIndex(uint16(ctx.MyIndex))
 	cp.SetViewNumber(ctx.ViewNumber)
 	cp.SetType(t)
-	if pr, ok := msg.(*prepareRequest); ok {
-		// TODO: take values from local context OR ensure that all dbft's context values set porperly!
-		pr.SetPrevHash(c.dbft.PrevHash)
-		pr.SetVersion(c.dbft.Version)
-	}
 	cp.SetPayload(msg)
 
 	cp.Message.ValidBlockStart = 0
