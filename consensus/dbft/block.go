@@ -1,10 +1,12 @@
 package dbft
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	ecrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/nspcc-dev/dbft/block"
 	"github.com/nspcc-dev/dbft/crypto"
 	"github.com/nspcc-dev/neo-go/pkg/util"
@@ -100,7 +102,15 @@ func (b *Block) Sign(key crypto.PrivateKey) error {
 
 // Verify implements Block interface.
 func (b *Block) Verify(pub crypto.PublicKey, sign []byte) error {
-	panic("TODO")
+	sealHash := HonestSealHash(b.Header())
+	pubkey, err := ecrypto.Ecrecover(sealHash.Bytes(), sign)
+	if err != nil {
+		return fmt.Errorf("failed to recover public key from signature: %w", err)
+	}
+	if pub.(*PublicKey).Account != ecrypto.PubkeyBytesToAddress(pubkey) {
+		return errors.New("invalid block signature")
+	}
+	return nil
 }
 
 // Hash implements Block interface. Hash returns unsealed block hash that doesn't
