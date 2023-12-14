@@ -192,7 +192,7 @@ type DBFT struct {
 	messages chan Payload
 
 	// various chain/mempool events and subscription management:
-	blockEvents  chan core.ChainHeadEvent
+	blockEvents  chan core.ChainHeadEvent // TODO: review the subscription type, maybe we need to subscribe not to Head, but to some other event. It depends on forks.
 	txpool       txPool
 	txsSub       event.Subscription
 	transactions chan core.NewTxsEvent
@@ -267,7 +267,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 
 		messages:     make(chan Payload, 100),
 		transactions: make(chan core.NewTxsEvent, 100),
-		blockEvents:  make(chan core.ChainHeadEvent),
+		blockEvents:  make(chan core.ChainHeadEvent, 1),
 		newtask:      make(chan struct{}),
 
 		quit:     make(chan struct{}),
