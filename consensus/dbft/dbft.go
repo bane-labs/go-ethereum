@@ -1187,7 +1187,7 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 	}
 
 	if c.dbft == nil || !c.dbftStarted.Load() {
-		log.Debug("dbft is inactive or not started yet", "hash", cp.Hash())
+		log.Info("dbft is inactive or not started yet", "hash", cp.Hash())
 		return nil
 	}
 
