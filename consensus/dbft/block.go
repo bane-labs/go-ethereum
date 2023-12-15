@@ -20,9 +20,10 @@ const NsInS = 1000_000_000
 // Block is a wrapper around Eth block that implements block.Block interface and is
 // sufficient for dBFT operations.
 type Block struct {
-	*types.Block
+	header              *types.Header
+	receipts            []*types.Receipt
+	transactions        []*types.Transaction
 	localSignatureBytes []byte
-	changeableExtra     []byte
 }
 
 // Version implements block.Block interface.
@@ -33,28 +34,28 @@ func (b *Block) Version() uint32 {
 
 // PrevHash implements block.Block interface.
 func (b *Block) PrevHash() util.Uint256 {
-	return b.ParentHash().Uint256()
+	return b.header.ParentHash.Uint256()
 }
 
 // Timestamp implements block.Block interface.
 func (b *Block) Timestamp() uint64 {
-	return b.Time() * NsInS
+	return b.header.Time * NsInS
 }
 
 // Index implements block.Block interface.
 func (b *Block) Index() uint32 {
-	return uint32(b.NumberU64())
+	return uint32(b.header.Number.Uint64())
 }
 
 // NextConsensus implements block.Block interface.
 func (b *Block) NextConsensus() (u util.Uint160) {
-	copy(u[:], b.MixDigest().Bytes()[common.HashLength-util.Uint160Size:])
+	copy(u[:], b.header.MixDigest.Bytes()[common.HashLength-util.Uint160Size:])
 	return
 }
 
 // MerkleRoot implements block.Block interface.
 func (b *Block) MerkleRoot() util.Uint256 {
-	return b.Root().Uint256()
+	return b.header.Root.Uint256()
 }
 
 // ConsensusData implements block.Block interface.
@@ -64,9 +65,8 @@ func (b *Block) ConsensusData() uint64 {
 
 // Transactions implements block.Block interface.
 func (b *Block) Transactions() []block.Transaction {
-	src := b.Body().Transactions
-	dst := make([]block.Transaction, len(src))
-	for i, tx := range src {
+	dst := make([]block.Transaction, len(b.transactions))
+	for i, tx := range b.transactions {
 		dst[i] = &Transaction{
 			Tx: tx,
 		}
@@ -81,7 +81,7 @@ func (b *Block) SetTransactions(txx []block.Transaction) {
 	for i, tx := range txx {
 		txs[i] = tx.(*Transaction).Tx
 	}
-	b.Block = b.Block.WithBody(txs, nil) // Uncles are always nil in Clique-like consensus.
+	b.transactions = txs
 }
 
 // Signature implements Block interface.
@@ -91,7 +91,7 @@ func (b *Block) Signature() []byte {
 
 // Sign implements Block interface.
 func (b *Block) Sign(key crypto.PrivateKey) error {
-	sighash, err := key.Sign(dbftRLP(b.Header()))
+	sighash, err := key.Sign(dbftRLP(b.header))
 	if err != nil {
 		return fmt.Errorf("failed to sign dbftRLP header: %w", err)
 	}
@@ -102,7 +102,7 @@ func (b *Block) Sign(key crypto.PrivateKey) error {
 
 // Verify implements Block interface.
 func (b *Block) Verify(pub crypto.PublicKey, sign []byte) error {
-	sealHash := HonestSealHash(b.Header())
+	sealHash := HonestSealHash(b.header)
 	pubkey, err := ecrypto.Ecrecover(sealHash.Bytes(), sign)
 	if err != nil {
 		return fmt.Errorf("failed to recover public key from signature: %w", err)
@@ -117,5 +117,5 @@ func (b *Block) Verify(pub crypto.PublicKey, sign []byte) error {
 // include Nonce, MixDigest fields and Extra's signature part, thus, can be used
 // only for worker's block identification and information purposes.
 func (b *Block) Hash() util.Uint256 {
-	return WorkerSealHash(b.Header()).Uint256()
+	return WorkerSealHash(b.header).Uint256()
 }

@@ -351,10 +351,17 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			if uint64(ethBlock.Index()) <= c.lastIndex { // TODO: lock lastIndex?
 				return
 			}
-			dBFTHeader := ethBlock.Header()
+
+			// Avoid copying and may safely change the block itself, as this part
+			// of code is guaranteed to be called once thanks to condition above,
+			// c.lastIndex is updated in postBlock callback every time new block
+			// with higher index is accepted.
+			dBFTHeader := ethBlock.header
 			dBFTHeader.Extra = append(dBFTHeader.Extra, c.getBlockWitness()...) // extraVanity isn't changed, validators addresses and signatures are added.
-			// Completely replace block proposed by miner with the dBFT's one and relay it to the network.
-			res := ethBlock.WithSeal(dBFTHeader)
+
+			res := types.NewBlockWithHeader(ethBlock.header)
+			// Uncles are always nil in dBFT-like consensus.
+			res = res.WithBody(ethBlock.transactions, nil)
 
 			// Firstly, allow new sealing tasks in order to avoid race between isSealing
 			// update and incoming new task after new block persist.
@@ -370,20 +377,13 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			}
 		}),
 		dbft.WithNewBlockFromContext(func(ctx *dbft.Context) block.Block {
-			var (
-				proposal *types.Header
-				receipts []*types.Receipt
-			)
-			c.sealingLock.RLock()
-			if c.sealingProposal == nil {
-				// Program bug.
-				panic("can't create new block from context: sealing proposal is not initialized")
+			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
+			if prepareReq == nil {
+				panic("can't create new block from context: prepare request is nil")
 			}
-			proposal = c.sealingProposal
-			receipts = c.sealingReceipts
-			c.sealingLock.RUnlock()
-
-			h := types.CopyHeader(proposal)
+			proposal := prepareReq.GetPrepareRequest().(*prepareRequest)
+			// Avoid changing PrepareRequest itself.
+			h := types.CopyHeader(proposal.SealingProposal)
 
 			// BlockIndex -> Number
 			h.Number = big.NewInt(int64(ctx.BlockIndex))
@@ -398,13 +398,15 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			}
 			h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
 
-			txs := make([]*types.Transaction, len(ctx.Transactions))
-			for i, txH := range ctx.TransactionHashes {
-				txs[i] = ctx.Transactions[txH].(*Transaction).Tx
-			}
-
+			// Do not fill block's transactions. First of all, transactions are not
+			// needed for block signing or block signature verification. Secondly, some
+			// transactions may be missing by the moment of call to NewBlockFromContext
+			// (dBFT has only the full set of their hashes). Once all transactions are
+			// fetched and the commits are collected, SetTransactions callback will be
+			// called by dBFT library to properly initialize block's transactions.
 			return &Block{
-				Block: types.NewBlock(h, txs, nil, receipts, trie.NewStackTrie(nil)),
+				header:   h,
+				receipts: proposal.SealingReceipts,
 			}
 		}),
 		dbft.WithWatchOnly(func() bool {
