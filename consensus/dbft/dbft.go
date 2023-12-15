@@ -398,10 +398,6 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			}
 			h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
 
-			// PrevHash -> ParentHash
-			// TODO: don't pay attention to context's hash, we have it in the sealing proposal.
-			// h.ParentHash.SetBytes(ctx.PrevHash.BytesBE())
-
 			txs := make([]*types.Transaction, len(ctx.Transactions))
 			for i, txH := range ctx.TransactionHashes {
 				txs[i] = ctx.Transactions[txH].(*Transaction).Tx
