@@ -15,11 +15,12 @@ import (
 type blockQueue struct {
 	chain     ChainHeaderWriter
 	tasksLock sync.RWMutex
-	tasks     map[common.Hash]task // TODO: consider restricting queue capacity and make it a real queue.
+	tasks     map[common.Hash]task
 }
 
 // task holds information about miner sealing task.
 type task struct {
+	height   uint64
 	resCh    chan<- *types.Block
 	cancelCh <-chan struct{}
 }
@@ -45,8 +46,10 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 	h := WorkerSealHash(b.Header())
 
 	bq.tasksLock.Lock()
-
 	task, ok := bq.tasks[h]
+
+	bq.clearStaleTasks(b.NumberU64())
+
 	if ok {
 		var (
 			err         error
@@ -107,8 +110,18 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 	return err
 }
 
+// clearStaleTasks removes all stale tasks up to the specified height (including
+// the height itself). It doesn't hold tasksLock, so it's the caller's responsibility.
+func (bq *blockQueue) clearStaleTasks(till uint64) {
+	for h, task := range bq.tasks {
+		if task.height <= till {
+			delete(bq.tasks, h)
+		}
+	}
+}
+
 // SubmitTask adds subsequent miner task to the blockqueue instance.
-func (bq *blockQueue) SubmitTask(sealHash common.Hash, resCh chan<- *types.Block, cancelCh <-chan struct{}) error {
+func (bq *blockQueue) SubmitTask(sealHash common.Hash, number uint64, resCh chan<- *types.Block, cancelCh <-chan struct{}) error {
 	bq.tasksLock.Lock()
 	defer bq.tasksLock.Unlock()
 
@@ -118,6 +131,7 @@ func (bq *blockQueue) SubmitTask(sealHash common.Hash, resCh chan<- *types.Block
 	}
 
 	bq.tasks[sealHash] = task{
+		height:   number,
 		resCh:    resCh,
 		cancelCh: cancelCh,
 	}

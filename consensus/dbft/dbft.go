@@ -1068,7 +1068,7 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		return errUnauthorizedSigner
 	}
 
-	err = c.blockQueue.SubmitTask(sealingHash, results, stop)
+	err = c.blockQueue.SubmitTask(sealingHash, b.NumberU64(), results, stop)
 	if err != nil {
 		return fmt.Errorf("failed to submit sealing task to dBFT: %w", err)
 	}
