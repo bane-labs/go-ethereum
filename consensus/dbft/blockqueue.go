@@ -21,7 +21,7 @@ type blockQueue struct {
 // task holds information about miner sealing task.
 type task struct {
 	resCh    chan<- *types.Block
-	cancalCh <-chan struct{}
+	cancelCh <-chan struct{}
 }
 
 // newBlockQueue creates an instance of blockQueue. It's not ready for usage until
@@ -53,7 +53,7 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 			readByMiner bool
 		)
 		select {
-		case <-task.cancalCh:
+		case <-task.cancelCh:
 		case task.resCh <- b:
 			readByMiner = true
 		default:
@@ -119,7 +119,7 @@ func (bq *blockQueue) SubmitTask(sealHash common.Hash, resCh chan<- *types.Block
 
 	bq.tasks[sealHash] = task{
 		resCh:    resCh,
-		cancalCh: cancelCh,
+		cancelCh: cancelCh,
 	}
 	return nil
 }
