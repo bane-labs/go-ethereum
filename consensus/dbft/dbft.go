@@ -352,6 +352,11 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			// Completely replace block proposed by miner with the dBFT's one and relay it to the network.
 			res := ethBlock.WithSeal(dBFTHeader)
 
+			// Firstly, allow new sealing tasks in order to avoid race between isSealing
+			// update and incoming new task after new block persist.
+			c.postBlock(res)
+
+			// After that notify chain about new block.
 			if err := c.blockQueue.PutBlock(res); err != nil {
 				// The block might already be added via the regular network
 				// interaction.
@@ -359,8 +364,6 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 					log.Warn("error on enqueue block", "error", err.Error())
 				}
 			}
-
-			c.postBlock(res)
 		}),
 		dbft.WithNewBlockFromContext(func(ctx *dbft.Context) block.Block {
 			var (
