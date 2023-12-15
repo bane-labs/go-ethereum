@@ -86,7 +86,11 @@ var (
 	diffNoTurn = big.NewInt(1) // Block difficulty for out-of-turn signatures
 )
 
-const extraSeal = crypto.SignatureLength // Fixed number of extra-data suffix bytes reserved for a single signer seal
+const (
+	extraSeal = crypto.SignatureLength // Fixed number of extra-data suffix bytes reserved for a single signer seal
+	// txSubCap is the capacity of channel that receives transaction notifications from mempool.
+	txSubCap = 100
+)
 
 // Various error messages to mark blocks invalid. These should be private to
 // prevent engine specific errors from being referenced in the remainder of the
@@ -266,7 +270,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		blockQueue: newBlockQueue(),
 
 		messages:     make(chan Payload, 100),
-		transactions: make(chan core.NewTxsEvent, 100),
+		transactions: make(chan core.NewTxsEvent, txSubCap),
 		blockEvents:  make(chan core.ChainHeadEvent, 1),
 		newtask:      make(chan struct{}),
 
@@ -410,10 +414,27 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		dbft.WithWatchOnly(func() bool {
 			return false
 		}),
+		dbft.WithGetTx(func(h util.Uint256) block.Transaction {
+			var hash common.Hash
+			hash.SetUint256(h)
+			tx := c.txpool.Get(hash)
+			// This check is needed, because in case of missing transaction dBFT
+			// expects a pure nil.
+			if tx != nil {
+				return &Transaction{
+					Tx: tx,
+				}
+			}
+
+			// Do not try to retrieve on-chain transaction.
+			return nil
+		}),
 		dbft.WithGetVerified(func() []block.Transaction {
 			var txs types.Transactions
 			c.sealingLock.RLock()
-			if c.sealingProposal == nil { // check the proposal, because c.sealingTransactions may be nil in case of empty transactions list.
+			// Check the sealing proposal, because c.sealingTransactions may be nil
+			// in case of missing pending transactions, and it's OK.
+			if c.sealingProposal == nil {
 				// Program bug.
 				panic("missing pending sealing work")
 			}
@@ -428,6 +449,9 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			}
 			return res
 		}),
+		dbft.WithRequestTx(func(h ...util.Uint256) {
+			// TODO: integrate with transaction fetcher.
+		}),
 		dbft.WithGetConsensusAddress(func(keys ...dbftCrypto.PublicKey) util.Uint160 {
 			// NextConsensus is filled manually in NewBlockFromContext.
 			return util.Uint160{}
@@ -439,13 +463,15 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			if c.sealingProposal == nil {
 				panic("bug: sealing proposal is not initialized")
 			}
+			// Fill in only proposal and receipts, transactions will be properly
+			// set from context later in SetTransactionHashes callback.
 			req.SealingProposal = c.sealingProposal
 			req.SealingReceipts = c.sealingReceipts
 			c.sealingLock.RUnlock()
 
 			req.ParentSealHash = c.lastBlockSealHash
 			req.ParentExtra = c.lastBlockExtra
-			req.TxHashes = make([]util.Uint256, 0)
+
 			return req
 		}),
 		dbft.WithNewCommit(func() payload.Commit { return new(commit) }),
