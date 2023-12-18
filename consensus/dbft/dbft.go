@@ -486,55 +486,66 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		dbft.WithVerifyPrepareResponse(func(_ payload.ConsensusPayload) error { return nil }),
 		dbft.WithVerifyPrepareRequest(func(p payload.ConsensusPayload) error {
 			req := p.GetPrepareRequest().(*prepareRequest)
+			c.sealingLock.Lock()
+			defer c.sealingLock.Unlock()
 			if req.SealingProposal == nil {
-				return errors.New("invalid PrepareRequest: sealing proposal is nil")
+				return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
 			}
 			if req.SealingProposal.ParentHash.Uint256() != c.dbft.PrevHash {
-				if c.dbft.BlockIndex <= 1 { // genesis block  is hard-coded, thus its hash (as a parent hash) must match the one that prepareRequest declares as a parent hash.
+				// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
+				// the one that prepareRequest declares as a parent hash, otherwise it's an error.
+				if c.dbft.BlockIndex <= 1 {
 					return fmt.Errorf("invalid parent: expected %s, got %s", c.dbft.PrevHash, req.SealingProposal.ParentHash)
 				}
 				if req.ParentSealHash != c.lastBlockSealHash {
 					return fmt.Errorf("parent seal hash doesn't match the last block seal hash: expected %s, got %s", c.lastBlockSealHash, req.ParentSealHash)
 				}
-				// TODO: to properly verify newly-provided witness of the parent block we need to
-				// fetch parent's parent NextConsensus. Or instead (if supported) just push the newly-constructed
-				// block to the chain and it will deal with the verification by itself.
-				// For simplicity, consider it as valid.
-				/*
-					err := c.verifyExtra(parentParentNextConsensus, req.ParentSealHash, req.ParentExtra)
-					if err != nil {
-						return err
-					}
-				*/
-				// After that we assume that parent block is valid and it can be sent to chain.
-				// For now, we'll hope that parent block will be fetched automatically and internal forks resolving mechanism will
-				// choose the right chain.
+				// Verify proposed parent's signature.
+				savedGrandparent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 2)
+				if savedGrandparent == nil {
+					return errors.New("failed to verify parent: failed to retrieve grandparent from storage")
+				}
+				err := c.verifyExtra(savedGrandparent.Header().NextConsensus(), req.ParentSealHash, req.ParentExtra)
+				if err != nil {
+					return fmt.Errorf("invalid parent: parent's witness verification failed: %w", err)
+				}
+
+				// After that we assume that parent block is totally valid, and it can be inserted to chain.
+				// Internal fork resolving mechanism will deal with forks.
 				savedParent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 1)
-				if savedParent != nil { // TODO: what if it's nil? Is it ever possible?
-					newHeader := savedParent.Header()
-					newHeader.Extra = req.ParentExtra
-					err := c.blockQueue.PutBlock(savedParent.WithSeal(newHeader)) // TODO: maybe send to a separate routine.
-					if err != nil {
-						// TODO: this error is very critical for further block processing.
-						log.Warn("failed to enqueue parent with updated extra: %w", err)
-					}
+				if savedParent == nil {
+					return fmt.Errorf("failed to put proposed parent to the storage: no parent found for height %d", req.SealingProposal.Number.Uint64()-1)
+				}
+				newHeader := savedParent.Header()
+				newHeader.Extra = req.ParentExtra
+				err = c.blockQueue.PutBlock(savedParent.WithSeal(newHeader))
+				if err != nil {
+					err = fmt.Errorf("failed to enqueue parent with updated extra for height %d (old hash %s, new hash %s): %w",
+						req.SealingProposal.Number.Uint64()-1,
+						savedParent.Hash(),
+						req.SealingProposal.ParentHash,
+						err)
+					// This error is critical for further dBFT functioning.
+					log.Warn(err.Error())
+					return err
 				}
 
 				c.lastBlockHash = req.SealingProposal.ParentHash
+				c.lastBlockExtra = req.ParentExtra
 				c.dbft.PrevHash = req.SealingProposal.ParentHash.Uint256()
 			}
-			// Save lastProposal for getVerified().
-			// c.lastProposal = req.TxHashes
 
-			// TODO: properly initialize the rest of dBFT context from prepareRequest
-			//  to be able to properly create commit.
-
-			c.sealingLock.Lock()
-			c.isSealing = true // TODO: get rid of this after moving dbft timer to a separate routine.
+			c.isSealing = true
 			c.sealingProposal = req.SealingProposal
 			c.sealingReceipts = req.SealingReceipts
-			// c.sealingTransactions? we can't get them directly from prepare request, need to store hashes and then provide callback to mempool
-			c.sealingLock.Unlock()
+
+			// Do not fill c.sealingTransactions. If the node is primary, then sealing txs must be
+			// properly filled by this moment from the new miner proposal in Seal (it happens even
+			// before the dBFT initialisation for this round). If the node is backup, then
+			// sealingTransactions are not needed for proper dBFT functioning (dBFT will collect
+			// transactions via internal mechanism in this consensus view).
+			c.sealingTransactions = nil
+
 			return nil
 		}),
 		dbft.WithBroadcast(func(p payload.ConsensusPayload) {
