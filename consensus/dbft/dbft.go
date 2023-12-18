@@ -1073,23 +1073,19 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		return errors.New("initialized pending sealing task mismatch with target sealing task")
 	}
 
-	c.sealingProposal = lastHeader
-	c.sealingTransactions = c.lastProposal.Transactions()
-	c.sealingReceipts = c.lastReceipts
-	c.lastProposalLock.RUnlock()
-
-	c.isSealing = true
-	c.sealingLock.Unlock()
-
 	header := b.Header()
+	number := header.Number.Uint64()
 
 	// Sealing the genesis block is not supported
-	number := header.Number.Uint64()
 	if number == 0 {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
 		return errUnknownBlock
 	}
 	// For 0-period chains, refuse to seal empty blocks (no reward but would spin sealing)
 	if c.config.SecondsPerBlock == 0 && len(b.Transactions()) == 0 {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
 		return errors.New("sealing paused while waiting for transactions")
 	}
 	// Don't hold the signer fields for the entire sealing procedure
@@ -1101,19 +1097,33 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	// TODO: replace with validators-based check and then don't need a snapshot.
 	snap, err := c.snapshot(chain, number-1, header.ParentHash, nil)
 	if err != nil {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
 		return err
 	}
 
 	// This check is duplicated in dBFT.WithGetKeyPair, but here we still need to
 	// keep it in order not to run the consensus if we're not the consensus node.
 	if _, authorized := snap.Signers[signer]; !authorized {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
 		return errUnauthorizedSigner
 	}
 
 	err = c.blockQueue.SubmitTask(sealingHash, b.NumberU64(), results, stop)
 	if err != nil {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
 		return fmt.Errorf("failed to submit sealing task to dBFT: %w", err)
 	}
+
+	c.sealingProposal = lastHeader
+	c.sealingTransactions = c.lastProposal.Transactions()
+	c.sealingReceipts = c.lastReceipts
+	c.isSealing = true
+
+	c.lastProposalLock.RUnlock()
+	c.sealingLock.Unlock()
 
 	// Start dBFT once and afterward reinitialize it every time new block should be accepted.
 	if c.dbftStarted.CompareAndSwap(false, true) {
