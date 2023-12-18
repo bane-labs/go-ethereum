@@ -217,7 +217,7 @@ type DBFT struct {
 	dbft        *dbft.DBFT
 	dbftStarted atomic.Bool
 	blockQueue  *blockQueue
-	newtask     chan struct{}
+	sealingTask chan sealingInfo
 
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
 	// received from dBFT or from chain. These fields have exactly those type
@@ -251,6 +251,12 @@ type DBFT struct {
 	fakeDiff bool // Skip difficulty verifications
 }
 
+type sealingInfo struct {
+	number      uint64
+	sealingHash common.Hash
+	parentHash  common.Hash
+}
+
 // New creates a DBFT proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
 func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
@@ -272,7 +278,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		messages:     make(chan Payload, 100),
 		transactions: make(chan core.NewTxsEvent, txSubCap),
 		blockEvents:  make(chan core.ChainHeadEvent, 1),
-		newtask:      make(chan struct{}),
+		sealingTask:  make(chan sealingInfo),
 
 		quit:     make(chan struct{}),
 		finished: make(chan struct{}),
@@ -1035,8 +1041,8 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		return fmt.Errorf("stale sealing task: invalid Number: expected %d, got %d", c.lastIndex+1, b.NumberU64())
 	}
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
-		// TODO: compare seal hash and check new witnesses provided by PrepareRequest then (if exists).
-		// If matches, then it's not an error.
+		// Deviation from latest saved lastBlockHash is not allowed, otherwise it may lead
+		// to multiple dBFT proposals for the same height, which will break the consensus.
 		c.sealingLock.Unlock()
 		return fmt.Errorf("stale sealing task: invalid ParentHash: expected %s, got %s", c.lastBlockHash, b.ParentHash())
 	}
@@ -1110,7 +1116,11 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
 	}
 
-	c.newtask <- struct{}{}
+	c.sealingTask <- sealingInfo{
+		number:      b.NumberU64(),
+		sealingHash: sealingHash,
+		parentHash:  b.ParentHash(),
+	}
 	return nil
 }
 
@@ -1129,8 +1139,12 @@ events:
 				"height", hv.Height,
 				"view", uint(hv.View))
 			c.dbft.OnTimeout(hv)
-		case <-c.newtask:
-
+		case t := <-c.sealingTask:
+			log.Info("Start dBFT process for new sealing work",
+				"number", t.number,
+				"sealhash", t.sealingHash,
+				"prev", t.parentHash,
+			)
 		case msg := <-c.messages:
 			fields := []any{
 				"from", msg.message.ValidatorIndex,
