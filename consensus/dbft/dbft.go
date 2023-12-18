@@ -462,7 +462,6 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			return res
 		}),
 		dbft.WithRequestTx(func(h ...util.Uint256) {
-			// TODO: integrate with transaction fetcher.
 		}),
 		dbft.WithGetConsensusAddress(func(keys ...dbftCrypto.PublicKey) util.Uint160 {
 			// NextConsensus is filled manually in NewBlockFromContext.
