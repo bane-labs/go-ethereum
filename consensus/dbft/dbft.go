@@ -1198,7 +1198,6 @@ events:
 			log.Debug("received message", fields...)
 			c.dbft.OnReceive(&msg)
 		case txs := <-c.transactions:
-			// TODO: we likely need to filter some of them out.
 			for _, tx := range txs.Txs {
 				c.dbft.OnTransaction(&Transaction{Tx: tx})
 			}
