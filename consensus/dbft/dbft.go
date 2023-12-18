@@ -264,6 +264,11 @@ type sealingInfo struct {
 func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 	// Set any missing consensus parameters to their defaults
 	conf := *config
+	// Sort validators once to reuse the sorted list in getNextConsensus.
+	// Do not change configured committee.
+	conf.StandByCommittee = make([]common.Address, len(conf.StandByCommittee))
+	copy(conf.StandByCommittee, config.StandByCommittee)
+	slices.SortFunc(conf.StandByCommittee, common.Address.Cmp)
 	// Allocate the snapshot caches and create the engine
 	recents := lru.NewCache[common.Hash, *Snapshot](inmemorySnapshots)
 	signatures := lru.NewCache[common.Hash, common.Address](inmemorySignatures)
@@ -284,6 +289,10 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 
 		quit:     make(chan struct{}),
 		finished: make(chan struct{}),
+
+		// Temporary omit difficulty checks, as currently we don't have proper mapping from
+		// dBFT primary to difficulty calculations.
+		fakeDiff: true,
 	}
 
 	logger, _ := zap.NewDevelopment()
@@ -344,9 +353,6 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 				panic(fmt.Errorf("failed to create snapshot while retrieving Validators: %w", err))
 			}
 			res := make([]dbftCrypto.PublicKey, len(pKeys))
-			// Once signers are properly fetched from the Neo contract, we need to
-			// sort them so that dBFT can rely on the validator's index. Currently,
-			// they are sorted in ascending order.
 			for i, s := range pKeys {
 				res[i] = &PublicKey{
 					Account: s,
@@ -507,7 +513,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 				if savedGrandparent == nil {
 					return errors.New("failed to verify parent: failed to retrieve grandparent from storage")
 				}
-				err := c.verifyExtra(savedGrandparent.Header().NextConsensus(), req.ParentSealHash, req.ParentExtra)
+				_, err := c.verifyExtra(req.ParentSealHash, req.ParentExtra, savedGrandparent.Header().NextConsensus())
 				if err != nil {
 					return fmt.Errorf("invalid parent: parent's witness verification failed: %w", err)
 				}
@@ -570,7 +576,7 @@ func (c *DBFT) getBlockWitness() []byte {
 	dctx := c.dbft.Context
 
 	// Validators sorting order is guaranteed by governance contract, they are sorted
-	// by their vote's weight, thus, no additional sorting here.
+	// by bytes order, thus, no additional sorting here.
 	vals := make([]common.Address, len(dctx.Validators))
 	for i := range dctx.Validators {
 		vals[i] = dctx.Validators[i].(*PublicKey).Account
@@ -586,7 +592,6 @@ func (c *DBFT) getBlockWitness() []byte {
 	m := c.dbft.Context.M()
 
 	// Signatures sorting order is the same as corresponding *sorted* validators order.
-	slices.SortFunc(vals, common.Address.Cmp)
 	for i, j := 0, 0; i < len(vals) && j < m; i++ {
 		if sig, ok := sigs[vals[i]]; ok {
 			res = append(res, sig...)
@@ -886,42 +891,39 @@ func (c *DBFT) verifySeal(snap *Snapshot, header *types.Header, parents []*types
 	if number == 0 {
 		return errUnknownBlock
 	}
-	err := c.verifyExtra(parent.NextConsensus(), HonestSealHash(header), header.Extra)
+	vals, err := c.verifyExtra(HonestSealHash(header), header.Extra, parent.NextConsensus())
 	if err != nil {
 		return fmt.Errorf("invalid Extra: %w", err)
 	}
-	/*
-		// TODO: get rid of difficulty?
-		// Ensure that the difficulty corresponds to the turn-ness of the signer
-		if !c.fakeDiff {
-			signer := vals[header.Primary()]
-			inturn := snap.inturn(header.Number.Uint64(), signer)
-			if inturn && header.Difficulty.Cmp(diffInTurn) != 0 {
-				return errWrongDifficulty
-			}
-			if !inturn && header.Difficulty.Cmp(diffNoTurn) != 0 {
-				return errWrongDifficulty
-			}
+	// Ensure that the difficulty corresponds to the turn-ness of the signer
+	if !c.fakeDiff {
+		signer := vals[header.Primary()]
+		inturn := snap.inturn(header.Number.Uint64(), signer)
+		if inturn && header.Difficulty.Cmp(diffInTurn) != 0 {
+			return errWrongDifficulty
 		}
-	*/
+		if !inturn && header.Difficulty.Cmp(diffNoTurn) != 0 {
+			return errWrongDifficulty
+		}
+	}
 	return nil
 }
 
-func (c *DBFT) verifyExtra(parentNextConsensus common.Hash, honestSealHash common.Hash, extra []byte) error {
+func (c *DBFT) verifyExtra(sealHash common.Hash, extra []byte, parentNextConsensus common.Hash) ([]common.Address, error) {
 	// Resolve the authorization key and check against signers.
 	vals, sigs, err := getSignersAndSigs(c.config, extra)
 	if err != nil {
-		return fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
+		return nil, fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
 	}
 	nextConsensus := dbftutil.GetNextConsensusHash(vals)
 	if parentNextConsensus != nextConsensus {
-		return fmt.Errorf("invalid NextConsensus retrieved from validators addresses: expected %s, got %s", parentNextConsensus, nextConsensus)
+		return nil, fmt.Errorf("invalid NextConsensus retrieved from validators addresses: expected %s, got %s", parentNextConsensus, nextConsensus)
 	}
-	err = crypto.VerifyMultiBFT(honestSealHash.Bytes(), vals, sigs)
+	err = crypto.VerifyMultiBFT(sealHash.Bytes(), vals, sigs)
 	if err != nil {
-		return fmt.Errorf("%w: %s", errUnauthorizedSigner, err)
+		return nil, fmt.Errorf("%w: %s", errUnauthorizedSigner, err)
 	}
-	return nil
+	return vals, nil
 }
 
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
@@ -1460,7 +1462,8 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 // a NextConsensus address for the next block accepted after block with blockHash
 // hash and blockNum height (if compute is true). It also returns validators of
 // the currently processing blocks to properly initialize dBFT context's Validators
-// field (if compute is false).
+// field (if compute is false). Validators returned from this method are always expected
+// to be sorted by bytes order (even if returned from governance contract).
 func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, compute bool) ([]common.Address, error) {
 	// Currently we don't have governance contract, thus, always return standby set.
 	if true {
