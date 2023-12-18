@@ -191,9 +191,10 @@ func getSignersAndSigs(cfg *params.DBFTConfig, extra []byte) ([]common.Address, 
 
 // DBFT is the proof-of-authority consensus engine.
 type DBFT struct {
-	// TODO: we use only BroadcastMessage, need to replace with callback like in NeoGo.
-	service  *dbftproto.Service
 	messages chan Payload
+	// Broadcast is a callback which is called to notify the dBFT service
+	// about a new consensus payload to be sent.
+	broadcast func(m *dbftproto.Message) error
 
 	// various chain/mempool events and subscription management:
 	blockEvents  chan core.ChainHeadEvent // TODO: review the subscription type, maybe we need to subscribe not to Head, but to some other event. It depends on forks.
@@ -554,7 +555,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			}
 
 			ep := &p.(*Payload).Message
-			err := c.service.BroadcastMessage(ep)
+			err := c.broadcast(ep)
 			if err != nil {
 				log.Warn("can't broadcast consensus message", "error", err)
 			}
@@ -600,8 +601,9 @@ func (c *DBFT) SetEthAPI(api *ethapi.BlockChainAPI) {
 	c.ethAPI = api
 }
 
-func (c *DBFT) SetService(srv *dbftproto.Service) {
-	c.service = srv
+// WithBroadcast sets callback to notify the caller about new consensus message.
+func (c *DBFT) WithBroadcast(f func(m *dbftproto.Message) error) {
+	c.broadcast = f
 }
 
 func (c *DBFT) SetTxPool(pool txPool) {

@@ -277,7 +277,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if bft != nil {
 		ethAPI := ethapi.NewBlockChainAPI(eth.APIBackend)
 		bft.SetEthAPI(ethAPI)
-		bft.SetService(eth.dbftSrv)
+		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
 		bft.SetTxPool(eth.txPool)
 	}
 
