@@ -276,9 +276,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.dbftSrv = dbftproto.New(ethapi.NewBlockChainAPI(eth.APIBackend), onPayload)
 	if bft != nil {
 		ethAPI := ethapi.NewBlockChainAPI(eth.APIBackend)
-		bft.SetEthAPI(ethAPI)
+		bft.WithEthAPI(ethAPI)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
-		bft.SetTxPool(eth.txPool)
+		bft.WithTxPool(eth.txPool)
 	}
 
 	// Setup DNS discovery iterators.

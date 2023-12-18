@@ -596,8 +596,8 @@ func (c *DBFT) getBlockWitness() []byte {
 	return res
 }
 
-// SetEthAPI initializes Eth blockchain API for proper consensus module work.
-func (c *DBFT) SetEthAPI(api *ethapi.BlockChainAPI) {
+// WithEthAPI initializes Eth blockchain API for proper consensus module work.
+func (c *DBFT) WithEthAPI(api *ethapi.BlockChainAPI) {
 	c.ethAPI = api
 }
 
@@ -606,7 +606,9 @@ func (c *DBFT) WithBroadcast(f func(m *dbftproto.Message) error) {
 	c.broadcast = f
 }
 
-func (c *DBFT) SetTxPool(pool txPool) {
+// WithTxPool initializes transaction pool API for DBFT interactions with memory pool
+// (fetching unknown transactions).
+func (c *DBFT) WithTxPool(pool txPool) {
 	c.txpool = pool
 }
 
