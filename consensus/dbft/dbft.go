@@ -1093,18 +1093,22 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	signer, _ := c.signer, c.signFn
 	c.lock.RUnlock()
 
-	// Bail out if we're unauthorized to sign a block
-	// TODO: replace with validators-based check and then don't need a snapshot.
-	snap, err := c.snapshot(chain, number-1, header.ParentHash, nil)
+	// Check that the signer is included into validators of the currently accepting block.
+	// Do not run consensus for this block if we're not a consensus node.
+	vals, err := c.getNextBlockValidators(header.ParentHash, number-1, true)
 	if err != nil {
 		c.lastProposalLock.RUnlock()
 		c.sealingLock.Unlock()
-		return err
+		return fmt.Errorf("faield to retrieve next block validators: %w", err)
 	}
-
-	// This check is duplicated in dBFT.WithGetKeyPair, but here we still need to
-	// keep it in order not to run the consensus if we're not the consensus node.
-	if _, authorized := snap.Signers[signer]; !authorized {
+	var isAuthorized bool
+	for _, v := range vals {
+		if signer == v {
+			isAuthorized = true
+			break
+		}
+	}
+	if !isAuthorized {
 		c.lastProposalLock.RUnlock()
 		c.sealingLock.Unlock()
 		return errUnauthorizedSigner
