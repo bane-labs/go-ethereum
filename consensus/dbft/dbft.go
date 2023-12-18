@@ -354,7 +354,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		}),
 		dbft.WithProcessBlock(func(b block.Block) {
 			ethBlock := b.(*Block)
-			if uint64(ethBlock.Index()) <= c.lastIndex { // TODO: lock lastIndex?
+			if uint64(ethBlock.Index()) <= c.lastIndex {
 				return
 			}
 
@@ -520,9 +520,8 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 					}
 				}
 
-				// TODO: lock it?
 				c.lastBlockHash = req.SealingProposal.ParentHash
-				c.dbft.PrevHash = req.SealingProposal.ParentHash.Uint256() // this may be skipped, we don't use context's prevHash.
+				c.dbft.PrevHash = req.SealingProposal.ParentHash.Uint256()
 			}
 			// Save lastProposal for getVerified().
 			// c.lastProposal = req.TxHashes
