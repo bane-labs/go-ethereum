@@ -197,10 +197,10 @@ type DBFT struct {
 	broadcast func(m *dbftproto.Message) error
 
 	// various chain/mempool events and subscription management:
-	blockEvents  chan core.ChainHeadEvent // TODO: review the subscription type, maybe we need to subscribe not to Head, but to some other event. It depends on forks.
-	txpool       txPool
-	txsSub       event.Subscription
-	transactions chan core.NewTxsEvent
+	chainHeadSub    event.Subscription
+	chainHeadEvents chan core.ChainHeadEvent
+	txSub           event.Subscription
+	txEvents        chan core.NewTxsEvent
 
 	config *params.DBFTConfig // Consensus engine configuration parameters
 	epoch  uint64             // Epoch duration left for backwards compatibility.
@@ -239,8 +239,9 @@ type DBFT struct {
 	sealingReceipts     []*types.Receipt
 	sealingTransactions types.Transactions
 
-	// chain instance needed for proper dBFT callbacks functioning.
+	// chain and mempool instances needed for proper dBFT callbacks functioning.
 	chain    ChainHeaderReader
+	txpool   txPool
 	quit     chan struct{}
 	finished chan struct{}
 
@@ -276,10 +277,10 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		proposals:  make(map[common.Address]bool),
 		blockQueue: newBlockQueue(),
 
-		messages:     make(chan Payload, 100),
-		transactions: make(chan core.NewTxsEvent, txSubCap),
-		blockEvents:  make(chan core.ChainHeadEvent, 2),
-		sealingTask:  make(chan sealingInfo),
+		messages:        make(chan Payload, 100),
+		txEvents:        make(chan core.NewTxsEvent, txSubCap),
+		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
+		sealingTask:     make(chan sealingInfo),
 
 		quit:     make(chan struct{}),
 		finished: make(chan struct{}),
@@ -1136,8 +1137,8 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.dbft.Start(c.lastTimestamp * NsInS)
 
 		// Subscribe for minted blocks and transactions from mempool.
-		c.txsSub = c.txpool.SubscribeNewTxsEvent(c.transactions)
-		c.chain.SubscribeChainHeadEvent(c.blockEvents)
+		c.txSub = c.txpool.SubscribeNewTxsEvent(c.txEvents)
+		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
 
 		go c.eventLoop()
 	} else {
@@ -1158,8 +1159,9 @@ events:
 		select {
 		case <-c.quit:
 			c.dbft.Timer.Stop()
-			// TODO: subscription and unsubscription.
-			// c.chain.UnsubscribeFromBlocks(c.blockEvents)
+
+			c.chainHeadSub.Unsubscribe()
+			c.txSub.Unsubscribe()
 			break events
 		case <-c.dbft.Timer.C():
 			hv := c.dbft.Timer.HV()
@@ -1199,12 +1201,18 @@ events:
 
 			log.Debug("received message", fields...)
 			c.dbft.OnReceive(&msg)
-		case txs := <-c.transactions:
+		case txs := <-c.txEvents:
 			for _, tx := range txs.Txs {
 				c.dbft.OnTransaction(&Transaction{Tx: tx})
 			}
-		case b := <-c.blockEvents:
+		case b := <-c.chainHeadEvents:
 			c.handleChainBlock(b.Block)
+		case <-c.txSub.Err():
+			// System has stopped.
+			break events
+		case <-c.chainHeadSub.Err():
+			// System has stopped.
+			break events
 		}
 		// Always process block event if there is any, we can add one above or external
 		// services can add several blocks during message processing.
@@ -1212,7 +1220,7 @@ events:
 	syncLoop:
 		for {
 			select {
-			case latestBlock = <-c.blockEvents:
+			case latestBlock = <-c.chainHeadEvents:
 			default:
 				break syncLoop
 			}
@@ -1225,15 +1233,15 @@ drainLoop:
 	for {
 		select {
 		case <-c.messages:
-		case <-c.transactions:
-		case <-c.blockEvents:
+		case <-c.txEvents:
+		case <-c.chainHeadEvents:
 		default:
 			break drainLoop
 		}
 	}
 	close(c.messages)
-	close(c.transactions)
-	close(c.blockEvents)
+	close(c.txEvents)
+	close(c.chainHeadEvents)
 	close(c.finished)
 }
 
