@@ -277,7 +277,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 
 		messages:     make(chan Payload, 100),
 		transactions: make(chan core.NewTxsEvent, txSubCap),
-		blockEvents:  make(chan core.ChainHeadEvent, 1),
+		blockEvents:  make(chan core.ChainHeadEvent, 2),
 		sealingTask:  make(chan sealingInfo),
 
 		quit:     make(chan struct{}),
