@@ -13,10 +13,7 @@ import (
 
 // prepareRequest represents dBFT prepareRequest message.
 type prepareRequest struct {
-	// TODO: we don't need the whole structures, in future we need to exclude those
-	// that are not used for consensus agreement.
 	SealingProposal *types.Header
-	SealingReceipts []*types.Receipt
 	TxHashes        []util.Uint256
 
 	// Fields that should be included into PrepareRequest for its verification:

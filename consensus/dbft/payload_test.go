@@ -53,10 +53,9 @@ func TestPayloadSerializable(t *testing.T) {
 					ExcessBlobGas:    nil,
 					ParentBeaconRoot: nil,
 				},
-				SealingReceipts: []*types.Receipt{},
-				TxHashes:        []util.Uint256{},
-				ParentSealHash:  common.Hash{1, 2, 3},
-				ParentExtra:     []byte{1, 2, 3},
+				TxHashes:       []util.Uint256{},
+				ParentSealHash: common.Hash{1, 2, 3},
+				ParentExtra:    []byte{1, 2, 3},
 			},
 		},
 	}

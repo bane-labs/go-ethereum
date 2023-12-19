@@ -21,7 +21,6 @@ const NsInS = 1000_000_000
 // sufficient for dBFT operations.
 type Block struct {
 	header              *types.Header
-	receipts            []*types.Receipt
 	transactions        []*types.Transaction
 	localSignatureBytes []byte
 }

@@ -419,8 +419,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			// fetched and the commits are collected, SetTransactions callback will be
 			// called by dBFT library to properly initialize block's transactions.
 			return &Block{
-				header:   h,
-				receipts: proposal.SealingReceipts,
+				header: h,
 			}
 		}),
 		dbft.WithWatchOnly(func() bool {
@@ -477,7 +476,6 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			// Fill in only proposal and receipts, transactions will be properly
 			// set from context later in SetTransactionHashes callback.
 			req.SealingProposal = c.sealingProposal
-			req.SealingReceipts = c.sealingReceipts
 			c.sealingLock.RUnlock()
 
 			req.ParentSealHash = c.lastBlockSealHash
@@ -544,7 +542,6 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 
 			c.isSealing = true
 			c.sealingProposal = req.SealingProposal
-			c.sealingReceipts = req.SealingReceipts
 
 			// Do not fill c.sealingTransactions. If the node is primary, then sealing txs must be
 			// properly filled by this moment from the new miner proposal in Seal (it happens even
