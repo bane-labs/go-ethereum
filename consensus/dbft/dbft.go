@@ -1312,7 +1312,6 @@ func (c *DBFT) handleChainBlock(b *types.Block) {
 			"chain index", c.chain.CurrentHeader().Number.Uint64())
 		c.postBlock(b)
 		// No dBFT initialisation, leave this to Seal, as we don't have new proposal here anyway.
-		// c.dbft.InitializeConsensus(0, b.Timestamp*nsInMs)
 	}
 }
 
