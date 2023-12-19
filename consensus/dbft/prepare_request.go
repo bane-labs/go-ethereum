@@ -88,5 +88,4 @@ func (p *prepareRequest) DecodeBinary(r *io.BinReader) {
 	if err != nil {
 		r.Err = fmt.Errorf("failed to decode PrepareRequest RLP: %w", err)
 	}
-	// TODO: restrict MaxTransactionsPerBlock.
 }
