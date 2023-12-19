@@ -90,6 +90,9 @@ const (
 	extraSeal = crypto.SignatureLength // Fixed number of extra-data suffix bytes reserved for a single signer seal
 	// txSubCap is the capacity of channel that receives transaction notifications from mempool.
 	txSubCap = 100
+	// msgsChCap is a capacity of channel that accepts consensus messages from
+	// dBFT protocol.
+	msgsChCap = 100
 )
 
 // Various error messages to mark blocks invalid. These should be private to
@@ -284,7 +287,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		proposals:  make(map[common.Address]bool),
 		blockQueue: newBlockQueue(),
 
-		messages:        make(chan Payload, 100),
+		messages:        make(chan Payload, msgsChCap),
 		txEvents:        make(chan core.NewTxsEvent, txSubCap),
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
 		sealingTask:     make(chan sealingInfo),
