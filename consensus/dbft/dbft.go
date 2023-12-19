@@ -172,7 +172,9 @@ func getSignersAndSigs(cfg *params.DBFTConfig, extra []byte) ([]common.Address, 
 		return nil, nil, errMissingSignature
 	}
 
-	// Recover Ethereum addresses of validators and their signatures.
+	// Recover Ethereum addresses of validators and their signatures, preserve
+	// the order that was specified in the source extra, because validators are
+	// sorted and NextConsensus depends on it.
 	var (
 		addrs = make([]common.Address, n)
 		sigs  = make([][]byte, m)
