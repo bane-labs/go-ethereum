@@ -22,5 +22,5 @@ type Signer struct {
 // In case of block, msg is expected to be dbftRLP(header) that must be
 // guaranteed by Block.Sign method.
 func (s *Signer) Sign(msg []byte) ([]byte, error) {
-	return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeClique, msg) // TODO: replace this accounts.MimetypeClique?
+	return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeClique, msg)
 }
