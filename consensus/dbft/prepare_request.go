@@ -48,12 +48,7 @@ func (p *prepareRequest) SetPrevHash(h util.Uint256) {
 func (p *prepareRequest) Timestamp() uint64 { return p.SealingProposal.Time * NsInS }
 
 // SetTimestamp implements the payload.PrepareRequest interface.
-func (p *prepareRequest) SetTimestamp(ts uint64) {
-	// @roman, we don't explicitly set timestamp in prepare request, instead we use
-	// exactly those timestamp that was provided via latest sealing proposal.
-	// TODO: we need to inspect how it may affect dBFT, on the server side this
-	// leads to subsequent deviations in blocks timestamps (need to check).
-}
+func (p *prepareRequest) SetTimestamp(ts uint64) {}
 
 // Nonce implements the payload.PrepareRequest interface.
 func (p *prepareRequest) Nonce() uint64 { return 0 }
