@@ -18,7 +18,7 @@ type prepareRequest struct {
 
 	// Fields that should be included into PrepareRequest for its verification:
 	ParentSealHash common.Hash
-	ParentExtra    []byte // TODO: optimize to exclude hashable part.
+	ParentExtra    []byte
 }
 
 var _ payload.PrepareRequest = (*prepareRequest)(nil)
