@@ -107,7 +107,6 @@ func (p *Payload) SetValidatorIndex(i uint16) {
 
 // Height implements the payload.ConsensusPayload interface.
 func (p Payload) Height() uint32 {
-	// TODO: uint32 is dBFT restriction, maybe extend dBFT interface?
 	return uint32(p.message.BlockIndex)
 }
 
