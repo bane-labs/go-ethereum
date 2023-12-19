@@ -91,17 +91,6 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 		return nil
 	}
 
-	// TODO: it's a very invasive way, we must be VERY careful about it, we MUST
-	// review all the consequences of such insertion, because standard syncing
-	// mechanism currently doesn't allow P2P blocks sync for the current consensus
-	// nodes, see the code around:
-	// log.Warn("Snap syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
-	//
-	// and event if snap sync is off, then read the comment starting with:
-	// // The blocks from the p2p network is regarded as untrusted
-	//
-	// So we may use either `h.chain.InsertBlockWithoutSetHead(block)` or bq.chain.InsertChain(types.Blocks{b}):
-	// err := bq.chain.InsertBlockWithoutSetHead(b)
 	_, err := bq.chain.InsertChain(types.Blocks{b})
 	if err != nil {
 		return fmt.Errorf("failed to insert block into chain: %w", err)
