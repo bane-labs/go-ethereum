@@ -39,11 +39,14 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -53,6 +56,7 @@ import (
 	"github.com/nspcc-dev/dbft"
 	"github.com/nspcc-dev/dbft/block"
 	dbftCrypto "github.com/nspcc-dev/dbft/crypto"
+	"github.com/nspcc-dev/dbft/payload"
 	"github.com/nspcc-dev/neo-go/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/sha3"
@@ -82,7 +86,14 @@ var (
 	diffNoTurn = big.NewInt(1) // Block difficulty for out-of-turn signatures
 )
 
-const extraSeal = crypto.SignatureLength // Fixed number of extra-data suffix bytes reserved for a single signer seal
+const (
+	extraSeal = crypto.SignatureLength // Fixed number of extra-data suffix bytes reserved for a single signer seal
+	// txSubCap is the capacity of channel that receives transaction notifications from mempool.
+	txSubCap = 100
+	// msgsChCap is a capacity of channel that accepts consensus messages from
+	// dBFT protocol.
+	msgsChCap = 100
+)
 
 // Various error messages to mark blocks invalid. These should be private to
 // prevent engine specific errors from being referenced in the remainder of the
@@ -148,15 +159,11 @@ var (
 
 	// errUnauthorizedSigner is returned if a header is signed by a non-authorized entity.
 	errUnauthorizedSigner = errors.New("unauthorized signer")
-
-	// errRecentlySigned is returned if a header is signed by an authorized entity
-	// that already signed a header recently, thus is temporarily not allowed to.
-	errRecentlySigned = errors.New("recently signed")
 )
 
 // getSignersAndSigs extracts the set of validators addresses (ValidatorsCount number of them)
 // and a set of validators signatures (BFT number of them) from a signed header.
-func getSignersAndSigs(cfg *params.DBFTConfig, header *types.Header) ([]common.Address, [][]byte, error) {
+func getSignersAndSigs(cfg *params.DBFTConfig, extra []byte) ([]common.Address, [][]byte, error) {
 	// Retrieve the signature from the header extra-data
 	var (
 		n             = int(cfg.ValidatorsCount)
@@ -164,22 +171,24 @@ func getSignersAndSigs(cfg *params.DBFTConfig, header *types.Header) ([]common.A
 		addrsBytesLen = common.AddressLength * n
 		sigsBytesLen  = extraSeal * m
 	)
-	if len(header.Extra) < extraVanity+addrsBytesLen+sigsBytesLen {
+	if len(extra) < extraVanity+addrsBytesLen+sigsBytesLen {
 		return nil, nil, errMissingSignature
 	}
 
-	// Recover Ethereum addresses of validators and their signatures.
+	// Recover Ethereum addresses of validators and their signatures, preserve
+	// the order that was specified in the source extra, because validators are
+	// sorted and NextConsensus depends on it.
 	var (
 		addrs = make([]common.Address, n)
 		sigs  = make([][]byte, m)
 	)
 	for i := range addrs {
 		addrOffset := extraVanity + i*common.AddressLength
-		copy(addrs[i][:], header.Extra[addrOffset:addrOffset+common.AddressLength])
+		copy(addrs[i][:], extra[addrOffset:addrOffset+common.AddressLength])
 	}
 	for i := range sigs {
-		sigOffset := len(header.Extra) - sigsBytesLen + i*extraSeal
-		sigs[i] = header.Extra[sigOffset : sigOffset+extraSeal]
+		sigOffset := len(extra) - sigsBytesLen + i*extraSeal
+		sigs[i] = extra[sigOffset : sigOffset+extraSeal]
 	}
 
 	return addrs, sigs, nil
@@ -187,6 +196,17 @@ func getSignersAndSigs(cfg *params.DBFTConfig, header *types.Header) ([]common.A
 
 // DBFT is the proof-of-authority consensus engine.
 type DBFT struct {
+	messages chan Payload
+	// Broadcast is a callback which is called to notify the dBFT service
+	// about a new consensus payload to be sent.
+	broadcast func(m *dbftproto.Message) error
+
+	// various chain/mempool events and subscription management:
+	chainHeadSub    event.Subscription
+	chainHeadEvents chan core.ChainHeadEvent
+	txSub           event.Subscription
+	txEvents        chan core.NewTxsEvent
+
 	config *params.DBFTConfig // Consensus engine configuration parameters
 	epoch  uint64             // Epoch duration left for backwards compatibility.
 	db     ethdb.Database     // Database to store and retrieve snapshot checkpoints
@@ -202,26 +222,31 @@ type DBFT struct {
 
 	dbft        *dbft.DBFT
 	dbftStarted atomic.Bool
-	blockQueue  chan *Block
+	blockQueue  *blockQueue
+	sealingTask chan sealingInfo
 
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
 	// received from dBFT or from chain. These fields have exactly those type
 	// that Eth offers, thus, they need to be converted before feeding to dBFT.
-	lastTimestamp uint64 // in seconds, like Eth requires.
-	lastIndex     uint64
-	lastBlockHash common.Hash
+	lastTimestamp     uint64 // in seconds, like Eth requires.
+	lastIndex         uint64
+	lastBlockHash     common.Hash
+	lastBlockSealHash common.Hash
+	lastBlockExtra    []byte
 
 	lastProposalLock sync.RWMutex
 	lastProposal     *types.Block
 	lastReceipts     []*types.Receipt
 
-	sealingLock     sync.RWMutex
-	isSealing       bool
-	sealingProposal *types.Block
-	sealingReceipts []*types.Receipt
+	sealingLock         sync.RWMutex
+	isSealing           bool
+	sealingProposal     *types.Header
+	sealingReceipts     []*types.Receipt
+	sealingTransactions types.Transactions
 
-	// chain instance needed for proper dBFT callbacks functioning.
-	chain    consensus.ChainHeaderReader
+	// chain and mempool instances needed for proper dBFT callbacks functioning.
+	chain    ChainHeaderReader
+	txpool   txPool
 	quit     chan struct{}
 	finished chan struct{}
 
@@ -233,11 +258,22 @@ type DBFT struct {
 	fakeDiff bool // Skip difficulty verifications
 }
 
+type sealingInfo struct {
+	number      uint64
+	sealingHash common.Hash
+	parentHash  common.Hash
+}
+
 // New creates a DBFT proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
 func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 	// Set any missing consensus parameters to their defaults
 	conf := *config
+	// Sort validators once to reuse the sorted list in getNextConsensus.
+	// Do not change configured committee.
+	conf.StandByCommittee = make([]common.Address, len(conf.StandByCommittee))
+	copy(conf.StandByCommittee, config.StandByCommittee)
+	slices.SortFunc(conf.StandByCommittee, common.Address.Cmp)
 	// Allocate the snapshot caches and create the engine
 	recents := lru.NewCache[common.Hash, *Snapshot](inmemorySnapshots)
 	signatures := lru.NewCache[common.Hash, common.Address](inmemorySignatures)
@@ -249,12 +285,22 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		recents:    recents,
 		signatures: signatures,
 		proposals:  make(map[common.Address]bool),
-		quit:       make(chan struct{}),
-		finished:   make(chan struct{}),
+		blockQueue: newBlockQueue(),
+
+		messages:        make(chan Payload, msgsChCap),
+		txEvents:        make(chan core.NewTxsEvent, txSubCap),
+		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
+		sealingTask:     make(chan sealingInfo),
+
+		quit:     make(chan struct{}),
+		finished: make(chan struct{}),
+
+		// Temporary omit difficulty checks, as currently we don't have proper mapping from
+		// dBFT primary to difficulty calculations.
+		fakeDiff: true,
 	}
 
 	logger, _ := zap.NewDevelopment()
-	c.blockQueue = make(chan *Block)
 	c.dbft = dbft.New(
 		dbft.WithLogger(logger),
 		dbft.WithSecondsPerBlock(time.Duration(conf.SecondsPerBlock)*time.Second),
@@ -312,9 +358,6 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 				panic(fmt.Errorf("failed to create snapshot while retrieving Validators: %w", err))
 			}
 			res := make([]dbftCrypto.PublicKey, len(pKeys))
-			// Once signers are properly fetched from the Neo contract, we need to
-			// sort them so that dBFT can rely on the validator's index. Currently,
-			// they are sorted in ascending order.
 			for i, s := range pKeys {
 				res[i] = &PublicKey{
 					Account: s,
@@ -324,27 +367,42 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		}),
 		dbft.WithProcessBlock(func(b block.Block) {
 			ethBlock := b.(*Block)
-			ethBlock.changeableExtra = c.getBlockWitness()
+			if uint64(ethBlock.Index()) <= c.lastIndex {
+				return
+			}
 
-			c.blockQueue <- ethBlock
-			// Do not call postBlock here to avoid race between the next pending sealing request that
-			// wants to update the same values as postBlock. Call postBlock in Seal instead.
+			// Avoid copying and may safely change the block itself, as this part
+			// of code is guaranteed to be called once thanks to condition above,
+			// c.lastIndex is updated in postBlock callback every time new block
+			// with higher index is accepted.
+			dBFTHeader := ethBlock.header
+			dBFTHeader.Extra = append(dBFTHeader.Extra, c.getBlockWitness()...) // extraVanity isn't changed, validators addresses and signatures are added.
+
+			res := types.NewBlockWithHeader(ethBlock.header)
+			// Uncles are always nil in dBFT-like consensus.
+			res = res.WithBody(ethBlock.transactions, nil)
+
+			// Firstly, allow new sealing tasks in order to avoid race between isSealing
+			// update and incoming new task after new block persist.
+			c.postBlock(res)
+
+			// After that notify chain about new block.
+			if err := c.blockQueue.PutBlock(res); err != nil {
+				// The block might already be added via the regular network
+				// interaction.
+				if h := c.chain.GetHeaderByNumber(res.Number().Uint64()); h == nil {
+					log.Warn("error on enqueue block", "error", err.Error())
+				}
+			}
 		}),
 		dbft.WithNewBlockFromContext(func(ctx *dbft.Context) block.Block {
-			var (
-				proposal *types.Block
-				receipts []*types.Receipt
-			)
-			c.sealingLock.RLock()
-			if c.sealingProposal == nil {
-				// Program bug.
-				panic("can't create new block from context: sealing proposal is not initialized")
+			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
+			if prepareReq == nil {
+				panic("can't create new block from context: prepare request is nil")
 			}
-			proposal = c.sealingProposal
-			receipts = c.sealingReceipts
-			c.sealingLock.RUnlock()
-
-			h := types.CopyHeader(proposal.Header())
+			proposal := prepareReq.GetPrepareRequest().(*prepareRequest)
+			// Avoid changing PrepareRequest itself.
+			h := types.CopyHeader(proposal.SealingProposal)
 
 			// BlockIndex -> Number
 			h.Number = big.NewInt(int64(ctx.BlockIndex))
@@ -359,29 +417,44 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			}
 			h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
 
-			// PrevHash -> ParentHash
-			h.ParentHash.SetBytes(ctx.PrevHash.BytesBE())
-
-			txs := make([]*types.Transaction, len(ctx.Transactions))
-			for i, txH := range ctx.TransactionHashes {
-				txs[i] = ctx.Transactions[txH].(*Transaction).Tx
-			}
-
+			// Do not fill block's transactions. First of all, transactions are not
+			// needed for block signing or block signature verification. Secondly, some
+			// transactions may be missing by the moment of call to NewBlockFromContext
+			// (dBFT has only the full set of their hashes). Once all transactions are
+			// fetched and the commits are collected, SetTransactions callback will be
+			// called by dBFT library to properly initialize block's transactions.
 			return &Block{
-				Block: types.NewBlock(h, txs, nil, receipts, trie.NewStackTrie(nil)),
+				header: h,
 			}
 		}),
 		dbft.WithWatchOnly(func() bool {
 			return false
 		}),
+		dbft.WithGetTx(func(h util.Uint256) block.Transaction {
+			var hash common.Hash
+			hash.SetUint256(h)
+			tx := c.txpool.Get(hash)
+			// This check is needed, because in case of missing transaction dBFT
+			// expects a pure nil.
+			if tx != nil {
+				return &Transaction{
+					Tx: tx,
+				}
+			}
+
+			// Do not try to retrieve on-chain transaction.
+			return nil
+		}),
 		dbft.WithGetVerified(func() []block.Transaction {
 			var txs types.Transactions
 			c.sealingLock.RLock()
+			// Check the sealing proposal, because c.sealingTransactions may be nil
+			// in case of missing pending transactions, and it's OK.
 			if c.sealingProposal == nil {
 				// Program bug.
 				panic("missing pending sealing work")
 			}
-			txs = c.sealingProposal.Transactions()
+			txs = c.sealingTransactions
 			c.sealingLock.RUnlock()
 
 			res := make([]block.Transaction, len(txs))
@@ -392,9 +465,108 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			}
 			return res
 		}),
+		dbft.WithRequestTx(func(h ...util.Uint256) {
+		}),
 		dbft.WithGetConsensusAddress(func(keys ...dbftCrypto.PublicKey) util.Uint160 {
 			// NextConsensus is filled manually in NewBlockFromContext.
 			return util.Uint160{}
+		}),
+		dbft.WithNewConsensusPayload(c.newPayload),
+		dbft.WithNewPrepareRequest(func() payload.PrepareRequest {
+			var req = new(prepareRequest)
+			c.sealingLock.RLock()
+			if c.sealingProposal == nil {
+				panic("bug: sealing proposal is not initialized")
+			}
+			// Fill in only proposal and receipts, transactions will be properly
+			// set from context later in SetTransactionHashes callback.
+			req.SealingProposal = c.sealingProposal
+			c.sealingLock.RUnlock()
+
+			req.ParentSealHash = c.lastBlockSealHash
+			req.ParentExtra = c.lastBlockExtra
+
+			return req
+		}),
+		dbft.WithNewCommit(func() payload.Commit { return new(commit) }),
+		dbft.WithNewPrepareResponse(func() payload.PrepareResponse { return new(prepareResponse) }),
+		dbft.WithNewChangeView(func() payload.ChangeView { return new(changeView) }),
+		dbft.WithNewRecoveryRequest(func() payload.RecoveryRequest { return new(recoveryRequest) }),
+		dbft.WithNewRecoveryMessage(func() payload.RecoveryMessage { return new(recoveryMessage) }),
+		dbft.WithVerifyPrepareResponse(func(_ payload.ConsensusPayload) error { return nil }),
+		dbft.WithVerifyPrepareRequest(func(p payload.ConsensusPayload) error {
+			req := p.GetPrepareRequest().(*prepareRequest)
+			c.sealingLock.Lock()
+			defer c.sealingLock.Unlock()
+			if req.SealingProposal == nil {
+				return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
+			}
+			if req.SealingProposal.ParentHash.Uint256() != c.dbft.PrevHash {
+				// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
+				// the one that prepareRequest declares as a parent hash, otherwise it's an error.
+				if c.dbft.BlockIndex <= 1 {
+					return fmt.Errorf("invalid parent: expected %s, got %s", c.dbft.PrevHash, req.SealingProposal.ParentHash)
+				}
+				if req.ParentSealHash != c.lastBlockSealHash {
+					return fmt.Errorf("parent seal hash doesn't match the last block seal hash: expected %s, got %s", c.lastBlockSealHash, req.ParentSealHash)
+				}
+				// Verify proposed parent's signature.
+				savedGrandparent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 2)
+				if savedGrandparent == nil {
+					return errors.New("failed to verify parent: failed to retrieve grandparent from storage")
+				}
+				_, err := c.verifyExtra(req.ParentSealHash, req.ParentExtra, savedGrandparent.Header().NextConsensus())
+				if err != nil {
+					return fmt.Errorf("invalid parent: parent's witness verification failed: %w", err)
+				}
+
+				// After that we assume that parent block is totally valid, and it can be inserted to chain.
+				// Internal fork resolving mechanism will deal with forks.
+				savedParent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 1)
+				if savedParent == nil {
+					return fmt.Errorf("failed to put proposed parent to the storage: no parent found for height %d", req.SealingProposal.Number.Uint64()-1)
+				}
+				newHeader := savedParent.Header()
+				newHeader.Extra = req.ParentExtra
+				err = c.blockQueue.PutBlock(savedParent.WithSeal(newHeader))
+				if err != nil {
+					err = fmt.Errorf("failed to enqueue parent with updated extra for height %d (old hash %s, new hash %s): %w",
+						req.SealingProposal.Number.Uint64()-1,
+						savedParent.Hash(),
+						req.SealingProposal.ParentHash,
+						err)
+					// This error is critical for further dBFT functioning.
+					log.Warn(err.Error())
+					return err
+				}
+
+				c.lastBlockHash = req.SealingProposal.ParentHash
+				c.lastBlockExtra = req.ParentExtra
+				c.dbft.PrevHash = req.SealingProposal.ParentHash.Uint256()
+			}
+
+			c.isSealing = true
+			c.sealingProposal = req.SealingProposal
+
+			// Do not fill c.sealingTransactions. If the node is primary, then sealing txs must be
+			// properly filled by this moment from the new miner proposal in Seal (it happens even
+			// before the dBFT initialisation for this round). If the node is backup, then
+			// sealingTransactions are not needed for proper dBFT functioning (dBFT will collect
+			// transactions via internal mechanism in this consensus view).
+			c.sealingTransactions = nil
+
+			return nil
+		}),
+		dbft.WithBroadcast(func(p payload.ConsensusPayload) {
+			if err := p.(*Payload).Sign(c.dbft.Priv.(*Signer)); err != nil {
+				log.Warn("can't sign consensus payload", "error", err)
+			}
+
+			ep := &p.(*Payload).Message
+			err := c.broadcast(ep)
+			if err != nil {
+				log.Warn("can't broadcast consensus message", "error", err)
+			}
 		}),
 	)
 
@@ -405,7 +577,7 @@ func (c *DBFT) getBlockWitness() []byte {
 	dctx := c.dbft.Context
 
 	// Validators sorting order is guaranteed by governance contract, they are sorted
-	// by their vote's weight, thus, no additional sorting here.
+	// by bytes order, thus, no additional sorting here.
 	vals := make([]common.Address, len(dctx.Validators))
 	for i := range dctx.Validators {
 		vals[i] = dctx.Validators[i].(*PublicKey).Account
@@ -421,7 +593,6 @@ func (c *DBFT) getBlockWitness() []byte {
 	m := c.dbft.Context.M()
 
 	// Signatures sorting order is the same as corresponding *sorted* validators order.
-	slices.SortFunc(vals, common.Address.Cmp)
 	for i, j := 0, 0; i < len(vals) && j < m; i++ {
 		if sig, ok := sigs[vals[i]]; ok {
 			res = append(res, sig...)
@@ -432,9 +603,20 @@ func (c *DBFT) getBlockWitness() []byte {
 	return res
 }
 
-// SetEthAPI initializes Eth blockchain API for proper consensus module work.
-func (c *DBFT) SetEthAPI(api *ethapi.BlockChainAPI) {
+// WithEthAPI initializes Eth blockchain API for proper consensus module work.
+func (c *DBFT) WithEthAPI(api *ethapi.BlockChainAPI) {
 	c.ethAPI = api
+}
+
+// WithBroadcast sets callback to notify the caller about new consensus message.
+func (c *DBFT) WithBroadcast(f func(m *dbftproto.Message) error) {
+	c.broadcast = f
+}
+
+// WithTxPool initializes transaction pool API for DBFT interactions with memory pool
+// (fetching unknown transactions).
+func (c *DBFT) WithTxPool(pool txPool) {
+	c.txpool = pool
 }
 
 // postBlock is a callback that updates latest accepted block data and resets
@@ -442,13 +624,18 @@ func (c *DBFT) SetEthAPI(api *ethapi.BlockChainAPI) {
 // or from consensus.
 func (c *DBFT) postBlock(b *types.Block) {
 	if c.lastIndex < b.NumberU64() {
-		c.lastTimestamp = b.Time()
-		c.lastIndex = b.Number().Uint64()
+		h := b.Header()
+		c.lastTimestamp = h.Time
+		c.lastIndex = h.Number.Uint64()
 		c.lastBlockHash = b.Hash()
+		c.lastBlockSealHash = HonestSealHash(h)
+		c.lastBlockExtra = h.Extra
 
 		c.sealingLock.Lock()
+		c.isSealing = false
 		c.sealingProposal = nil
 		c.sealingReceipts = nil
+		c.sealingTransactions = nil
 		c.sealingLock.Unlock()
 	}
 }
@@ -456,7 +643,7 @@ func (c *DBFT) postBlock(b *types.Block) {
 // Author implements consensus.Engine, returning the Ethereum address recovered
 // from the signature in the header's extra-data section.
 func (c *DBFT) Author(header *types.Header) (common.Address, error) {
-	vals, _, err := getSignersAndSigs(c.config, header)
+	vals, _, err := getSignersAndSigs(c.config, header.Extra)
 	if err != nil {
 		return common.Address{}, fmt.Errorf("failed to retrieve validators addresses and signatures from header: %w", err)
 	}
@@ -705,18 +892,9 @@ func (c *DBFT) verifySeal(snap *Snapshot, header *types.Header, parents []*types
 	if number == 0 {
 		return errUnknownBlock
 	}
-	// Resolve the authorization key and check against signers.
-	vals, sigs, err := getSignersAndSigs(c.config, header)
+	vals, err := c.verifyExtra(HonestSealHash(header), header.Extra, parent.NextConsensus())
 	if err != nil {
-		return fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
-	}
-	nextConsensus := dbftutil.GetNextConsensusHash(vals)
-	if parent.NextConsensus() != nextConsensus {
-		return fmt.Errorf("invalid NextConsensus address retrieved from validators addresses: expected %s, got %s", parent.NextConsensus(), nextConsensus)
-	}
-	err = crypto.VerifyMultiBFT(HonestSealHash(header).Bytes(), vals, sigs)
-	if err != nil {
-		return fmt.Errorf("%w: %s", errUnauthorizedSigner, err)
+		return fmt.Errorf("invalid Extra: %w", err)
 	}
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
 	if !c.fakeDiff {
@@ -730,6 +908,23 @@ func (c *DBFT) verifySeal(snap *Snapshot, header *types.Header, parents []*types
 		}
 	}
 	return nil
+}
+
+func (c *DBFT) verifyExtra(sealHash common.Hash, extra []byte, parentNextConsensus common.Hash) ([]common.Address, error) {
+	// Resolve the authorization key and check against signers.
+	vals, sigs, err := getSignersAndSigs(c.config, extra)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
+	}
+	nextConsensus := dbftutil.GetNextConsensusHash(vals)
+	if parentNextConsensus != nextConsensus {
+		return nil, fmt.Errorf("invalid NextConsensus retrieved from validators addresses: expected %s, got %s", parentNextConsensus, nextConsensus)
+	}
+	err = crypto.VerifyMultiBFT(sealHash.Bytes(), vals, sigs)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", errUnauthorizedSigner, err)
+	}
+	return vals, nil
 }
 
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
@@ -835,38 +1030,19 @@ func (c *DBFT) Authorize(signer common.Address, signFn SignerFn) {
 	c.signFn = signFn
 }
 
-func (c *DBFT) Initialize(chain consensus.ChainHeaderReader) {
+func (c *DBFT) Initialize(chain ChainHeaderWriter) {
 	c.chain = chain
+	c.blockQueue.chain = chain
 
 	currHeader := chain.CurrentHeader()
 	c.lastIndex = currHeader.Number.Uint64()
 	c.lastTimestamp = currHeader.Time
 	c.lastBlockHash = currHeader.Hash()
+	c.lastBlockSealHash = HonestSealHash(currHeader)
+	c.lastBlockExtra = currHeader.Extra
 
 	// Do not start consensus immediately, we don't yet have sealing work.
 	// Start it once we have new sealing work in Seal.
-	c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
-
-	go c.eventLoop()
-}
-
-func (c *DBFT) eventLoop() {
-events:
-	for {
-		select {
-		case <-c.quit:
-			c.dbft.Timer.Stop()
-			break events
-		}
-	}
-drainLoop:
-	for {
-		select {
-		default:
-			break drainLoop
-		}
-	}
-	close(c.finished)
 }
 
 // Seal implements consensus.Engine, attempting to create a sealed block using
@@ -882,6 +1058,8 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		return fmt.Errorf("stale sealing task: invalid Number: expected %d, got %d", c.lastIndex+1, b.NumberU64())
 	}
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
+		// Deviation from latest saved lastBlockHash is not allowed, otherwise it may lead
+		// to multiple dBFT proposals for the same height, which will break the consensus.
 		c.sealingLock.Unlock()
 		return fmt.Errorf("stale sealing task: invalid ParentHash: expected %s, got %s", c.lastBlockHash, b.ParentHash())
 	}
@@ -892,22 +1070,27 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.sealingLock.Unlock()
 		return errors.New("no initialized pending sealing task")
 	}
-	c.sealingProposal = c.lastProposal
-	c.sealingReceipts = c.lastReceipts
-	c.lastProposalLock.RUnlock()
-
-	c.isSealing = true
-	c.sealingLock.Unlock()
+	lastHeader := c.lastProposal.Header()
+	sealingHash := c.SealHash(lastHeader)
+	if sealingHash != c.SealHash(b.Header()) {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
+		return errors.New("initialized pending sealing task mismatch with target sealing task")
+	}
 
 	header := b.Header()
+	number := header.Number.Uint64()
 
 	// Sealing the genesis block is not supported
-	number := header.Number.Uint64()
 	if number == 0 {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
 		return errUnknownBlock
 	}
 	// For 0-period chains, refuse to seal empty blocks (no reward but would spin sealing)
 	if c.config.SecondsPerBlock == 0 && len(b.Transactions()) == 0 {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
 		return errors.New("sealing paused while waiting for transactions")
 	}
 	// Don't hold the signer fields for the entire sealing procedure
@@ -915,79 +1098,223 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	signer, _ := c.signer, c.signFn
 	c.lock.RUnlock()
 
-	// Bail out if we're unauthorized to sign a block
-	snap, err := c.snapshot(chain, number-1, header.ParentHash, nil)
+	// Check that the signer is included into validators of the currently accepting block.
+	// Do not run consensus for this block if we're not a consensus node.
+	vals, err := c.getNextBlockValidators(header.ParentHash, number-1, true)
 	if err != nil {
-		return err
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
+		return fmt.Errorf("faield to retrieve next block validators: %w", err)
 	}
-
-	// This check is duplicated in dBFT.WithGetKeyPair, but here we still need to
-	// keep it in order not to run the consensus if we're not the consensus node.
-	if _, authorized := snap.Signers[signer]; !authorized {
+	var isAuthorized bool
+	for _, v := range vals {
+		if signer == v {
+			isAuthorized = true
+			break
+		}
+	}
+	if !isAuthorized {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
 		return errUnauthorizedSigner
 	}
 
-	// If we're amongst the recent signers, wait for the next block
-	for seen, recent := range snap.Recents {
-		if recent == signer {
-			// Signer is among recents, only wait if the current block doesn't shift it out
-			if limit := uint64(len(snap.Signers)/2 + 1); number < limit || seen > number-limit {
-				return errors.New("signed recently, must wait for others")
-			}
-		}
+	err = c.blockQueue.SubmitTask(sealingHash, b.NumberU64(), results, stop)
+	if err != nil {
+		c.lastProposalLock.RUnlock()
+		c.sealingLock.Unlock()
+		return fmt.Errorf("failed to submit sealing task to dBFT: %w", err)
 	}
+
+	c.sealingProposal = lastHeader
+	c.sealingTransactions = c.lastProposal.Transactions()
+	c.sealingReceipts = c.lastReceipts
+	c.isSealing = true
+
+	c.lastProposalLock.RUnlock()
+	c.sealingLock.Unlock()
 
 	// Start dBFT once and afterward reinitialize it every time new block should be accepted.
 	if c.dbftStarted.CompareAndSwap(false, true) {
-		go c.dbft.Start(c.lastTimestamp * NsInS)
+		c.dbft.Start(c.lastTimestamp * NsInS)
+
+		// Subscribe for minted blocks and transactions from mempool.
+		c.txSub = c.txpool.SubscribeNewTxsEvent(c.txEvents)
+		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
+
+		go c.eventLoop()
 	} else {
 		c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
-		go func() {
-			<-c.dbft.Timer.C()
+	}
+
+	c.sealingTask <- sealingInfo{
+		number:      b.NumberU64(),
+		sealingHash: sealingHash,
+		parentHash:  b.ParentHash(),
+	}
+	return nil
+}
+
+func (c *DBFT) eventLoop() {
+events:
+	for {
+		select {
+		case <-c.quit:
+			c.dbft.Timer.Stop()
+
+			c.chainHeadSub.Unsubscribe()
+			c.txSub.Unsubscribe()
+			break events
+		case <-c.dbft.Timer.C():
 			hv := c.dbft.Timer.HV()
-			log.Info("dBFT timer fired",
+			log.Debug("timer fired",
 				"height", hv.Height,
 				"view", uint(hv.View))
 			c.dbft.OnTimeout(hv)
-		}()
-	}
-
-	var (
-		sigBytes  []byte
-		dBFTBlock *types.Block
-	)
-blocksLoop:
-	for {
-		select {
-		case n3B := <-c.blockQueue:
-			if uint64(n3B.Index()) <= c.lastIndex {
-				continue blocksLoop
+		case t := <-c.sealingTask:
+			log.Info("Start dBFT process for new sealing work",
+				"number", t.number,
+				"sealhash", t.sealingHash,
+				"prev", t.parentHash,
+			)
+		case msg := <-c.messages:
+			fields := []any{
+				"from", msg.message.ValidatorIndex,
+				"type", msg.Type().String(),
 			}
-			sigBytes = n3B.changeableExtra
-			dBFTBlock = n3B.Block // this block is completely different from the one that FinalizeAndAssemble proposed.
-			break blocksLoop
+
+			if msg.Type() == payload.RecoveryMessageType {
+				rec := msg.GetRecoveryMessage().(*recoveryMessage)
+				if rec.preparationHash == nil {
+					req := rec.GetPrepareRequest(&msg, c.dbft.Validators, uint16(c.dbft.PrimaryIndex))
+					if req != nil {
+						h := req.Hash()
+						rec.preparationHash = &h
+					}
+				}
+
+				fields = append(fields,
+					"#preparation", len(rec.preparationPayloads),
+					"#commit", len(rec.commitPayloads),
+					"#changeview", len(rec.changeViewPayloads),
+					"#request", rec.prepareRequest != nil,
+					"#hash", rec.preparationHash != nil)
+			}
+
+			log.Debug("received message", fields...)
+			c.dbft.OnReceive(&msg)
+		case txs := <-c.txEvents:
+			for _, tx := range txs.Txs {
+				c.dbft.OnTransaction(&Transaction{Tx: tx})
+			}
+		case b := <-c.chainHeadEvents:
+			c.handleChainBlock(b.Block)
+		case <-c.txSub.Err():
+			// System has stopped.
+			break events
+		case <-c.chainHeadSub.Err():
+			// System has stopped.
+			break events
+		}
+		// Always process block event if there is any, we can add one above or external
+		// services can add several blocks during message processing.
+		var latestBlock core.ChainHeadEvent
+	syncLoop:
+		for {
+			select {
+			case latestBlock = <-c.chainHeadEvents:
+			default:
+				break syncLoop
+			}
+		}
+		if latestBlock.Block != nil {
+			c.handleChainBlock(latestBlock.Block)
 		}
 	}
-	dBFTHeader := dBFTBlock.Header()
-	dBFTHeader.Extra = append(dBFTHeader.Extra, sigBytes...) // extraVanity isn't changed, validators addresses and signatures are added.
+drainLoop:
+	for {
+		select {
+		case <-c.messages:
+		case <-c.txEvents:
+		case <-c.chainHeadEvents:
+		default:
+			break drainLoop
+		}
+	}
+	close(c.messages)
+	close(c.txEvents)
+	close(c.chainHeadEvents)
+	close(c.finished)
+}
 
-	// Completely replace proposed block with dBFT's one and relay it to the network.
-	res := dBFTBlock.WithSeal(dBFTHeader)
-	c.postBlock(res)
-
-	// Seal interrupt is not possible with dBFT, thus, ignore stop channel and don't
-	// wait for any delay, because dBFT provides proper block timing.
-	select {
-	case results <- res:
-	default:
-		log.Warn("Sealing result is not read by miner", "sealhash", WorkerSealHash(dBFTHeader))
+// OnPayload handles Payload receive.
+func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
+	p := payloadFromMessage(cp)
+	// decode payload data into message
+	if err := p.decodeData(); err != nil {
+		log.Info("can't decode payload data", "hash", cp.Hash(), "error", err)
+		return nil
 	}
 
-	c.sealingLock.Lock()
-	c.isSealing = false
-	c.sealingLock.Unlock()
+	if !c.validatePayload(p) {
+		log.Info("can't validate payload", "hash", cp.Hash())
+		return nil
+	}
 
+	if c.dbft == nil || !c.dbftStarted.Load() {
+		log.Info("dbft is inactive or not started yet", "hash", cp.Hash())
+		return nil
+	}
+
+	c.messages <- *p
 	return nil
+}
+
+func payloadFromMessage(ep *dbftproto.Message) *Payload {
+	return &Payload{
+		Message: *ep,
+		message: message{},
+	}
+}
+
+func (c *DBFT) validatePayload(p *Payload) bool {
+	h := c.chain.CurrentHeader()
+	validators, err := c.getNextBlockValidators(h.Hash(), h.Number.Uint64(), false)
+	if err != nil {
+		return false
+	}
+	if int(p.message.ValidatorIndex) >= len(validators) {
+		return false
+	}
+
+	val := validators[p.message.ValidatorIndex]
+	return p.Sender == val
+}
+
+func (c *DBFT) newPayload(ctx *dbft.Context, t payload.MessageType, msg any) payload.ConsensusPayload {
+	cp := &Payload{}
+	cp.SetHeight(ctx.BlockIndex)
+	cp.SetValidatorIndex(uint16(ctx.MyIndex))
+	cp.SetViewNumber(ctx.ViewNumber)
+	cp.SetType(t)
+	cp.SetPayload(msg)
+
+	cp.Message.ValidBlockStart = 0
+	cp.Message.ValidBlockEnd = uint64(ctx.BlockIndex)
+	cp.Message.Sender = ctx.Validators[ctx.MyIndex].(*PublicKey).Account
+
+	return cp
+}
+
+func (c *DBFT) handleChainBlock(b *types.Block) {
+	// We can get our own block here, so check for index.
+	if uint32(b.Number().Uint64()) >= c.dbft.BlockIndex {
+		log.Debug("new block in the chain",
+			"dbft index", c.dbft.BlockIndex,
+			"chain index", c.chain.CurrentHeader().Number.Uint64())
+		c.postBlock(b)
+		// No dBFT initialisation, leave this to Seal, as we don't have new proposal here anyway.
+	}
 }
 
 // CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
@@ -1134,7 +1461,8 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 // a NextConsensus address for the next block accepted after block with blockHash
 // hash and blockNum height (if compute is true). It also returns validators of
 // the currently processing blocks to properly initialize dBFT context's Validators
-// field (if compute is false).
+// field (if compute is false). Validators returned from this method are always expected
+// to be sorted by bytes order (even if returned from governance contract).
 func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, compute bool) ([]common.Address, error) {
 	// Currently we don't have governance contract, thus, always return standby set.
 	if true {

@@ -1,0 +1,239 @@
+package dbft
+
+import (
+	"bytes"
+	"fmt"
+
+	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
+	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/nspcc-dev/dbft/payload"
+	"github.com/nspcc-dev/neo-go/pkg/io"
+	"github.com/nspcc-dev/neo-go/pkg/util"
+)
+
+type (
+	messageType byte
+
+	message struct {
+		Type           messageType
+		BlockIndex     uint64
+		ValidatorIndex byte
+		ViewNumber     byte
+
+		payload io.Serializable
+	}
+
+	// Payload is a type for consensus-related messages.
+	Payload struct {
+		dbftproto.Message
+		message
+	}
+)
+
+const (
+	changeViewType      messageType = 0x00
+	prepareRequestType  messageType = 0x20
+	prepareResponseType messageType = 0x21
+	commitType          messageType = 0x30
+	recoveryRequestType messageType = 0x40
+	recoveryMessageType messageType = 0x41
+)
+
+// ViewNumber implements the payload.ConsensusPayload interface.
+func (p Payload) ViewNumber() byte {
+	return p.message.ViewNumber
+}
+
+// SetViewNumber implements the payload.ConsensusPayload interface.
+func (p *Payload) SetViewNumber(view byte) {
+	p.message.ViewNumber = view
+}
+
+// Type implements the payload.ConsensusPayload interface.
+func (p Payload) Type() payload.MessageType {
+	return payload.MessageType(p.message.Type)
+}
+
+// SetType implements the payload.ConsensusPayload interface.
+func (p *Payload) SetType(t payload.MessageType) {
+	p.message.Type = messageType(t)
+}
+
+// Payload implements the payload.ConsensusPayload interface.
+func (p Payload) Payload() any {
+	return p.payload
+}
+
+// SetPayload implements the payload.ConsensusPayload interface.
+func (p *Payload) SetPayload(pl any) {
+	p.payload = pl.(io.Serializable)
+}
+
+// GetChangeView implements the payload.ConsensusPayload interface.
+func (p Payload) GetChangeView() payload.ChangeView { return p.payload.(payload.ChangeView) }
+
+// GetPrepareRequest implements the payload.ConsensusPayload interface.
+func (p Payload) GetPrepareRequest() payload.PrepareRequest {
+	return p.payload.(payload.PrepareRequest)
+}
+
+// GetPrepareResponse implements the payload.ConsensusPayload interface.
+func (p Payload) GetPrepareResponse() payload.PrepareResponse {
+	return p.payload.(payload.PrepareResponse)
+}
+
+// GetCommit implements the payload.ConsensusPayload interface.
+func (p Payload) GetCommit() payload.Commit { return p.payload.(payload.Commit) }
+
+// GetRecoveryRequest implements the payload.ConsensusPayload interface.
+func (p Payload) GetRecoveryRequest() payload.RecoveryRequest {
+	return p.payload.(payload.RecoveryRequest)
+}
+
+// GetRecoveryMessage implements the payload.ConsensusPayload interface.
+func (p Payload) GetRecoveryMessage() payload.RecoveryMessage {
+	return p.payload.(payload.RecoveryMessage)
+}
+
+// ValidatorIndex implements the payload.ConsensusPayload interface.
+func (p Payload) ValidatorIndex() uint16 {
+	return uint16(p.message.ValidatorIndex)
+}
+
+// SetValidatorIndex implements the payload.ConsensusPayload interface.
+func (p *Payload) SetValidatorIndex(i uint16) {
+	p.message.ValidatorIndex = byte(i)
+}
+
+// Height implements the payload.ConsensusPayload interface.
+func (p Payload) Height() uint32 {
+	return uint32(p.message.BlockIndex)
+}
+
+// SetHeight implements the payload.ConsensusPayload interface.
+func (p *Payload) SetHeight(h uint32) {
+	p.message.BlockIndex = uint64(h)
+}
+
+// Sign signs payload using the private key.
+// It also sets corresponding sender and witness.
+func (p *Payload) Sign(key *Signer) error {
+	if key.Signer != p.Sender {
+		return fmt.Errorf("can't sign payload with invalid sender: payload sender must be %s, address for signing is %s", p.Sender, key.Signer)
+	}
+	p.encodeData()
+
+	b, err := p.rlp()
+	if err != nil {
+		return fmt.Errorf("failed to calculate RLP: %w", err)
+	}
+	sig, err := key.Sign(b)
+	if err != nil {
+		return err
+	}
+
+	p.Witness = sig
+	return nil
+}
+
+// rlp returns serialized hashable payload fields that should be signed.
+func (p *Payload) rlp() ([]byte, error) {
+	cp := p.Message
+	cp.Witness = nil // cp is a copy and witness is not included into hash.
+
+	b := new(bytes.Buffer)
+	if err := rlp.Encode(b, cp); err != nil {
+		return nil, fmt.Errorf("failed to encode message: %w", err)
+	}
+	return b.Bytes(), nil
+}
+
+// Hash implements the payload.ConsensusPayload interface.
+func (p *Payload) Hash() util.Uint256 {
+	if p.Message.Data == nil {
+		p.encodeData()
+	}
+	return p.Message.Hash().Uint256()
+}
+
+// EncodeBinary implements the io.Serializable interface.
+func (m *message) EncodeBinary(w *io.BinWriter) {
+	w.WriteB(byte(m.Type))
+	w.WriteU64LE(m.BlockIndex)
+	w.WriteB(m.ValidatorIndex)
+	w.WriteB(m.ViewNumber)
+	m.payload.EncodeBinary(w)
+}
+
+// DecodeBinary implements the io.Serializable interface.
+func (m *message) DecodeBinary(r *io.BinReader) {
+	m.Type = messageType(r.ReadB())
+	m.BlockIndex = r.ReadU64LE()
+	m.ValidatorIndex = r.ReadB()
+	m.ViewNumber = r.ReadB()
+
+	switch m.Type {
+	case changeViewType:
+		cv := new(changeView)
+		// newViewNumber is not marshaled
+		cv.newViewNumber = m.ViewNumber + 1
+		m.payload = cv
+	case prepareRequestType:
+		m.payload = new(prepareRequest)
+	case prepareResponseType:
+		m.payload = new(prepareResponse)
+	case commitType:
+		m.payload = new(commit)
+	case recoveryRequestType:
+		m.payload = new(recoveryRequest)
+	case recoveryMessageType:
+		m.payload = new(recoveryMessage)
+	default:
+		r.Err = fmt.Errorf("invalid type: 0x%02x", byte(m.Type))
+		return
+	}
+	m.payload.DecodeBinary(r)
+}
+
+// String implements fmt.Stringer interface.
+func (t messageType) String() string {
+	switch t {
+	case changeViewType:
+		return "ChangeView"
+	case prepareRequestType:
+		return "PrepareRequest"
+	case prepareResponseType:
+		return "PrepareResponse"
+	case commitType:
+		return "Commit"
+	case recoveryRequestType:
+		return "RecoveryRequest"
+	case recoveryMessageType:
+		return "RecoveryMessage"
+	default:
+		return fmt.Sprintf("UNKNOWN(0x%02x)", byte(t))
+	}
+}
+
+func (p *Payload) encodeData() {
+	if p.Message.Data == nil {
+		p.Message.ValidBlockStart = 0
+		p.Message.ValidBlockEnd = p.BlockIndex
+		bw := io.NewBufBinWriter()
+		p.message.EncodeBinary(bw.BinWriter)
+		if bw.Err != nil {
+			panic(fmt.Errorf("failed to encode payload: %w", bw.Err))
+		}
+		p.Message.Data = bw.Bytes()
+	}
+}
+
+// decode data of payload into its message.
+func (p *Payload) decodeData() error {
+	br := io.NewBinReaderFromBuf(p.Message.Data)
+	p.message.DecodeBinary(br)
+	if br.Err != nil {
+		return fmt.Errorf("can't decode message: %w", br.Err)
+	}
+	return nil
+}

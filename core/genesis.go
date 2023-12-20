@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"golang.org/x/exp/slices"
 )
 
 //go:generate go run github.com/fjl/gencodec -type Genesis -field-override genesisSpecMarshaling -out gen_genesis.go
@@ -483,6 +484,10 @@ func (g *Genesis) ToBlock() *types.Block {
 		if g.Config.DBFT.ValidatorsCount == 0 {
 			panic("ValidatorsCount is not specified in the dBFT config")
 		}
+		// Do not change configured committee.
+		sb := make([]common.Address, len(g.Config.DBFT.StandByCommittee))
+		copy(sb, g.Config.DBFT.StandByCommittee)
+		slices.SortFunc(sb, common.Address.Cmp)
 		var (
 			n           = int(g.Config.DBFT.ValidatorsCount)
 			m           = crypto.GetBFTHonestNodeCount(n)
@@ -490,14 +495,14 @@ func (g *Genesis) ToBlock() *types.Block {
 		)
 		if len(g.ExtraData) == 0 {
 			extra := make([]byte, extraVanity+n*common.AddressLength+m*crypto.SignatureLength)
-			for i, v := range g.Config.DBFT.StandByCommittee[:n] {
+			for i, v := range sb[:n] {
 				offset := extraVanity + i*common.AddressLength
 				copy(extra[offset:offset+common.AddressLength], v.Bytes())
 			}
 			head.Extra = extra
 		}
 		if g.Mixhash == (common.Hash{}) {
-			head.MixDigest = dbftutil.GetNextConsensusHash(g.Config.DBFT.StandByCommittee[:n])
+			head.MixDigest = dbftutil.GetNextConsensusHash(sb[:n])
 		}
 	}
 	var withdrawals []*types.Withdrawal

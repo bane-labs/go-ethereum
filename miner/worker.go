@@ -70,7 +70,7 @@ const (
 	intervalAdjustBias = 200 * 1000.0 * 1000.0
 
 	// staleThreshold is the maximum depth of the acceptable stale block.
-	staleThreshold = 7
+	staleThreshold = 0
 )
 
 var (

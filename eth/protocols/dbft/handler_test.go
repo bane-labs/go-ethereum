@@ -28,9 +28,9 @@ func TestHandling(t *testing.T) {
 		key, _         = crypto.GenerateKey()
 		addr           = crypto.PubkeyToAddress(key.PublicKey)
 		bc             = &testBC{height: 10}
-		s1             = New(bc)
-		s2             = New(bc)
-		s3             = New(bc)
+		s1             = New(bc, nil)
+		s2             = New(bc, nil)
+		s3             = New(bc, nil)
 		p1             = p2p.NewPeer(enode.ID{1}, "peer1", nil)
 		p2             = p2p.NewPeer(enode.ID{2}, "peer2", nil)
 		p3             = p2p.NewPeer(enode.ID{3}, "peer3", nil)

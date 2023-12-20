@@ -30,15 +30,18 @@ type Service struct {
 	peers map[enode.ID]*Peer
 
 	pool *Pool
+
+	onPayload func(message *Message) error
 }
 
 // New creates a new instance of [Service].
-func New(bc BlockChainAPI) *Service {
+func New(bc BlockChainAPI, onPayload func(*Message) error) *Service {
 	poolLedger := newLedger(bc)
 	return &Service{
-		bc:    bc,
-		peers: make(map[enode.ID]*Peer),
-		pool:  NewPool(poolLedger, defaultSenderPoolSize),
+		bc:        bc,
+		onPayload: onPayload,
+		peers:     make(map[enode.ID]*Peer),
+		pool:      NewPool(poolLedger, defaultSenderPoolSize),
 	}
 }
 
@@ -79,8 +82,9 @@ func (s *Service) BroadcastMessage(m *Message) error {
 		return err
 	}
 	var peers = s.grabPeers()
+	h := m.Hash()
 	for _, p := range peers {
-		err := p.SendAnnounceMsg(m.Hash())
+		err := p.SendAnnounceMsg(h)
 		if err != nil {
 			return err
 		}

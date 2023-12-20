@@ -101,6 +101,12 @@ func (s *Service) HandleMessage(peer *Peer) error {
 		if err := msg.Decode(&m); err != nil {
 			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 		}
+		if s.onPayload != nil {
+			err := s.onPayload(&m)
+			if err != nil {
+				return fmt.Errorf("failed to handle dBFT message: %w", err)
+			}
+		}
 		return s.BroadcastMessage(&m)
 	default:
 		return fmt.Errorf("%w: %v", errInvalidMsgCode, msg.Code)
