@@ -1043,7 +1043,6 @@ func (c *DBFT) Initialize(chain ChainHeaderWriter) {
 
 	// Do not start consensus immediately, we don't yet have sealing work.
 	// Start it once we have new sealing work in Seal.
-	// c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
 }
 
 // Seal implements consensus.Engine, attempting to create a sealed block using
