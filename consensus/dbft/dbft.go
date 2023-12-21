@@ -1113,17 +1113,15 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 			break
 		}
 	}
-	if !isAuthorized {
-		c.lastProposalLock.RUnlock()
-		c.sealingLock.Unlock()
-		return errUnauthorizedSigner
-	}
-
-	err = c.blockQueue.SubmitTask(sealingHash, b.NumberU64(), results, stop)
-	if err != nil {
-		c.lastProposalLock.RUnlock()
-		c.sealingLock.Unlock()
-		return fmt.Errorf("failed to submit sealing task to dBFT: %w", err)
+	// Submit task to blockQueue only if we're a member of validators set, otherwise it's
+	// useless to expect that out proposal will be accepted for the current height.
+	if isAuthorized {
+		err = c.blockQueue.SubmitTask(sealingHash, b.NumberU64(), results, stop)
+		if err != nil {
+			c.lastProposalLock.RUnlock()
+			c.sealingLock.Unlock()
+			return fmt.Errorf("failed to submit sealing task to dBFT: %w", err)
+		}
 	}
 
 	c.sealingProposal = lastHeader
@@ -1249,6 +1247,11 @@ drainLoop:
 
 // OnPayload handles Payload receive.
 func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
+	if c.dbft == nil || !c.dbftStarted.Load() {
+		log.Debug("skip dBFT payload handling: dbft is inactive or not started yet", "hash", cp.Hash())
+		return nil
+	}
+
 	p := payloadFromMessage(cp)
 	// decode payload data into message
 	if err := p.decodeData(); err != nil {
@@ -1258,11 +1261,6 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 
 	if !c.validatePayload(p) {
 		log.Info("can't validate payload", "hash", cp.Hash())
-		return nil
-	}
-
-	if c.dbft == nil || !c.dbftStarted.Load() {
-		log.Info("dbft is inactive or not started yet", "hash", cp.Hash())
 		return nil
 	}
 
