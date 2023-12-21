@@ -347,12 +347,11 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 				// block's validators, thus should return validators from the current
 				// epoch without recalculation.
 				pKeys, err = c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, false)
-			} else {
-				// getValidators with non-empty args is used by dbft to fill block's
-				// NextConsensus field, ComputeNextBlockValidators will return proper
-				// value for NextConsensus wrt dBFT epoch start/end.
-				pKeys, err = c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true)
 			}
+			// getValidators with non-empty args is used by dbft to fill block's
+			// NextConsensus field, but DBFT doesn't provide WithGetConsensusAddress
+			// callback and fills NextConsensus by itself via WithNewBlockFromContext
+			// callback. Thus, leave pKeys empty if txes != nil.
 			if err != nil {
 				// Program bug.
 				panic(fmt.Errorf("failed to create snapshot while retrieving Validators: %w", err))
