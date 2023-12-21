@@ -1249,6 +1249,11 @@ drainLoop:
 
 // OnPayload handles Payload receive.
 func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
+	if c.dbft == nil || !c.dbftStarted.Load() {
+		log.Debug("skip dBFT payload handling: dbft is inactive or not started yet", "hash", cp.Hash())
+		return nil
+	}
+
 	p := payloadFromMessage(cp)
 	// decode payload data into message
 	if err := p.decodeData(); err != nil {
@@ -1258,11 +1263,6 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 
 	if !c.validatePayload(p) {
 		log.Info("can't validate payload", "hash", cp.Hash())
-		return nil
-	}
-
-	if c.dbft == nil || !c.dbftStarted.Load() {
-		log.Info("dbft is inactive or not started yet", "hash", cp.Hash())
 		return nil
 	}
 
