@@ -114,11 +114,8 @@ func (bq *blockQueue) SubmitTask(sealHash common.Hash, number uint64, resCh chan
 	bq.tasksLock.Lock()
 	defer bq.tasksLock.Unlock()
 
-	if _, ok := bq.tasks[sealHash]; ok {
-		// Likely a program bug (incorrect Seal proposal verification), should never happen.
-		return fmt.Errorf("duplicating sealing task is not allowed for dBFT: %s", sealHash)
-	}
-
+	// Do not check the existing task with the same hash. It could happen that new
+	// sealing task has the same hash after ChangeView sealing proposal initialisation.
 	bq.tasks[sealHash] = task{
 		height:   number,
 		resCh:    resCh,
