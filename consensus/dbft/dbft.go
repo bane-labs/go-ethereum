@@ -1051,7 +1051,7 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	c.sealingLock.Lock()
 	if c.isSealing {
 		c.sealingLock.Unlock()
-		return errors.New("previous sealing is not yet finished")
+		return nil
 	}
 	if b.NumberU64() != c.lastIndex+1 {
 		c.sealingLock.Unlock()
