@@ -115,7 +115,8 @@ func (bq *blockQueue) SubmitTask(sealHash common.Hash, number uint64, resCh chan
 	defer bq.tasksLock.Unlock()
 
 	// Do not check the existing task with the same hash. It could happen that new
-	// sealing task has the same hash after ChangeView sealing proposal initialisation.
+	// sealing task has the same hash after ChangeView sealing proposal initialisation,
+	// and if that's the case, then just update the result/cancel channel.
 	bq.tasks[sealHash] = task{
 		height:   number,
 		resCh:    resCh,
