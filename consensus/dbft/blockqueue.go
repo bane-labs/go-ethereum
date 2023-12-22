@@ -10,6 +10,12 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
+// blockQueueCap is the number of tasks blockQueue can fit at once. It's OK for
+// the blockQueue not to have a proper task for the newly-created block, and
+// normally a single task is expected to be present in blockQueue. But we still
+// need blockQueueCap restriction for the case of endless change views.
+const blockQueueCap = 100
+
 // blockQueue is an entity that collects sealed blocks from dBFT and routs these
 // blocks to a proper place (either to miner or directly to chain).
 type blockQueue struct {
@@ -48,7 +54,7 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 	bq.tasksLock.Lock()
 	task, ok := bq.tasks[h]
 
-	bq.clearStaleTasks(b.NumberU64())
+	bq.clearStaleTasks(b.NumberU64(), -1)
 
 	if ok {
 		var (
@@ -101,10 +107,14 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 
 // clearStaleTasks removes all stale tasks up to the specified height (including
 // the height itself). It doesn't hold tasksLock, so it's the caller's responsibility.
-func (bq *blockQueue) clearStaleTasks(till uint64) {
+func (bq *blockQueue) clearStaleTasks(till uint64, count int) {
 	for h, task := range bq.tasks {
 		if task.height <= till {
 			delete(bq.tasks, h)
+			count--
+			if count <= 0 {
+				break
+			}
 		}
 	}
 }
@@ -113,6 +123,13 @@ func (bq *blockQueue) clearStaleTasks(till uint64) {
 func (bq *blockQueue) SubmitTask(sealHash common.Hash, number uint64, resCh chan<- *types.Block, cancelCh <-chan struct{}) error {
 	bq.tasksLock.Lock()
 	defer bq.tasksLock.Unlock()
+
+	// We're OK with the fact that capacity is reached, remove random outdated seal
+	// task (it's likely won't be completed, and if it will, then the block will be
+	// inserted to the chain directly).
+	if len(bq.tasks) == blockQueueCap {
+		bq.clearStaleTasks(number, 1)
+	}
 
 	// Do not check the existing task with the same hash. It could happen that new
 	// sealing task has the same hash after ChangeView sealing proposal initialisation,
