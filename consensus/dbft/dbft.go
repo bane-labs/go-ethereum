@@ -238,11 +238,12 @@ type DBFT struct {
 	lastProposal     *types.Block
 	lastReceipts     []*types.Receipt
 
-	sealingLock         sync.RWMutex
-	isSealing           bool
-	sealingProposal     *types.Header
-	sealingReceipts     []*types.Receipt
-	sealingTransactions types.Transactions
+	sealingLock                  sync.RWMutex
+	isSealing                    bool
+	sealingProposal              *types.Header
+	sealingReceipts              []*types.Receipt
+	sealingTransactions          types.Transactions
+	sealingWaitingForNewProposal bool
 
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
 	chain    ChainHeaderReader
@@ -1050,7 +1051,7 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	c.sealingLock.Lock()
 	if c.isSealing {
 		c.sealingLock.Unlock()
-		return errors.New("previous sealing is not yet finished")
+		return nil
 	}
 	if b.NumberU64() != c.lastIndex+1 {
 		c.sealingLock.Unlock()
@@ -1129,19 +1130,25 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	c.isSealing = true
 
 	c.lastProposalLock.RUnlock()
-	c.sealingLock.Unlock()
 
-	// Start dBFT once and afterward reinitialize it every time new block should be accepted.
-	if c.dbftStarted.CompareAndSwap(false, true) {
-		c.dbft.Start(c.lastTimestamp * NsInS)
-
-		// Subscribe for minted blocks and transactions from mempool.
-		c.txSub = c.txpool.SubscribeNewTxsEvent(c.txEvents)
-		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
-
-		go c.eventLoop()
+	// If ChangeView happened, then no dBFT reinitialization is expected.
+	if c.sealingWaitingForNewProposal {
+		c.sealingWaitingForNewProposal = false
+		c.sealingLock.Unlock()
 	} else {
-		c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
+		c.sealingLock.Unlock()
+		// Start dBFT once and afterward reinitialize it every time new block should be accepted.
+		if c.dbftStarted.CompareAndSwap(false, true) {
+			c.dbft.Start(c.lastTimestamp * NsInS)
+
+			// Subscribe for minted blocks and transactions from mempool.
+			c.txSub = c.txpool.SubscribeNewTxsEvent(c.txEvents)
+			c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
+
+			go c.eventLoop()
+		} else {
+			c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
+		}
 	}
 
 	c.sealingTask <- sealingInfo{
@@ -1197,9 +1204,30 @@ events:
 					"#request", rec.prepareRequest != nil,
 					"#hash", rec.preparationHash != nil)
 			}
-
 			log.Debug("received message", fields...)
+			oldView := c.dbft.ViewNumber
 			c.dbft.OnReceive(&msg)
+			newView := c.dbft.ViewNumber
+			// If ChangeView has happened, we need to wait for the new proposal
+			// from miner.
+			if newView > oldView {
+				log.Info("Change view detected, waiting for new sealing task to be submitted by miner", "old view", oldView, "new view", newView)
+				c.sealingLock.Lock()
+				c.isSealing = false
+				c.sealingProposal = nil
+				c.sealingReceipts = nil
+				c.sealingTransactions = nil
+				c.sealingWaitingForNewProposal = true
+				c.sealingLock.Unlock()
+
+				t := <-c.sealingTask
+				log.Info("Start dBFT process for updated sealing work",
+					"view", newView,
+					"number", t.number,
+					"sealhash", t.sealingHash,
+					"prev", t.parentHash,
+				)
+			}
 		case txs := <-c.txEvents:
 			for _, tx := range txs.Txs {
 				c.dbft.OnTransaction(&Transaction{Tx: tx})
