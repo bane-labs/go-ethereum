@@ -2,30 +2,19 @@ package dbft
 
 import (
 	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/io"
 )
 
 // commit represents dBFT Commit message.
 type commit struct {
-	signature [extraSeal]byte
+	SignatureExt [extraSeal]byte
 }
 
 var _ payload.Commit = (*commit)(nil)
 
-// EncodeBinary implements the io.Serializable interface.
-func (c *commit) EncodeBinary(w *io.BinWriter) {
-	w.WriteBytes(c.signature[:])
-}
-
-// DecodeBinary implements the io.Serializable interface.
-func (c *commit) DecodeBinary(r *io.BinReader) {
-	r.ReadBytes(c.signature[:])
-}
-
 // Signature implements the payload.Commit interface.
-func (c commit) Signature() []byte { return c.signature[:] }
+func (c commit) Signature() []byte { return c.SignatureExt[:] }
 
 // SetSignature implements the payload.Commit interface.
 func (c *commit) SetSignature(signature []byte) {
-	copy(c.signature[:], signature)
+	copy(c.SignatureExt[:], signature)
 }

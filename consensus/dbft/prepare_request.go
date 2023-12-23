@@ -1,13 +1,9 @@
 package dbft
 
 import (
-	"fmt"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/io"
 	"github.com/nspcc-dev/neo-go/pkg/util"
 )
 
@@ -67,25 +63,3 @@ func (p *prepareRequest) NextConsensus() util.Uint160 { return util.Uint160{} }
 
 // SetNextConsensus implements the payload.PrepareRequest interface.
 func (p *prepareRequest) SetNextConsensus(_ util.Uint160) {}
-
-// EncodeBinary implements the io.Serializable interface.
-func (p *prepareRequest) EncodeBinary(w *io.BinWriter) {
-	b, err := rlp.EncodeToBytes(p)
-	if err != nil {
-		w.Err = fmt.Errorf("failed to encode PrepareRequest to RLP: %w", err)
-		return
-	}
-	w.WriteVarBytes(b)
-}
-
-// DecodeBinary implements the io.Serializable interface.
-func (p *prepareRequest) DecodeBinary(r *io.BinReader) {
-	b := r.ReadVarBytes()
-	if r.Err != nil {
-		return
-	}
-	err := rlp.DecodeBytes(b, p)
-	if err != nil {
-		r.Err = fmt.Errorf("failed to decode PrepareRequest RLP: %w", err)
-	}
-}

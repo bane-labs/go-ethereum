@@ -3,11 +3,11 @@ package dbft
 import (
 	"bytes"
 	"fmt"
+	"io"
 
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/io"
 	"github.com/nspcc-dev/neo-go/pkg/util"
 )
 
@@ -19,8 +19,17 @@ type (
 		BlockIndex     uint64
 		ValidatorIndex byte
 		ViewNumber     byte
+		msgPayload     interface{}
+	}
 
-		payload io.Serializable
+	// messageAux is an auxiliary structure for message RLP encoding.
+	messageAux struct {
+		Type           messageType
+		BlockIndex     uint64
+		ValidatorIndex byte
+		ViewNumber     byte
+		// rlp encoded bytes of msgPayload
+		MsgPayload rlp.RawValue
 	}
 
 	// Payload is a type for consensus-related messages.
@@ -61,38 +70,42 @@ func (p *Payload) SetType(t payload.MessageType) {
 
 // Payload implements the payload.ConsensusPayload interface.
 func (p Payload) Payload() any {
-	return p.payload
+	return p.msgPayload
 }
 
 // SetPayload implements the payload.ConsensusPayload interface.
 func (p *Payload) SetPayload(pl any) {
-	p.payload = pl.(io.Serializable)
+	p.msgPayload = pl
 }
 
 // GetChangeView implements the payload.ConsensusPayload interface.
-func (p Payload) GetChangeView() payload.ChangeView { return p.payload.(payload.ChangeView) }
+func (p Payload) GetChangeView() payload.ChangeView {
+	return p.msgPayload.(*changeView)
+}
 
 // GetPrepareRequest implements the payload.ConsensusPayload interface.
 func (p Payload) GetPrepareRequest() payload.PrepareRequest {
-	return p.payload.(payload.PrepareRequest)
+	return p.msgPayload.(*prepareRequest)
 }
 
 // GetPrepareResponse implements the payload.ConsensusPayload interface.
 func (p Payload) GetPrepareResponse() payload.PrepareResponse {
-	return p.payload.(payload.PrepareResponse)
+	return p.msgPayload.(*prepareResponse)
 }
 
 // GetCommit implements the payload.ConsensusPayload interface.
-func (p Payload) GetCommit() payload.Commit { return p.payload.(payload.Commit) }
+func (p Payload) GetCommit() payload.Commit {
+	return p.msgPayload.(*commit)
+}
 
 // GetRecoveryRequest implements the payload.ConsensusPayload interface.
 func (p Payload) GetRecoveryRequest() payload.RecoveryRequest {
-	return p.payload.(payload.RecoveryRequest)
+	return p.msgPayload.(*recoveryRequest)
 }
 
 // GetRecoveryMessage implements the payload.ConsensusPayload interface.
 func (p Payload) GetRecoveryMessage() payload.RecoveryMessage {
-	return p.payload.(payload.RecoveryMessage)
+	return p.msgPayload.(*recoveryMessage)
 }
 
 // ValidatorIndex implements the payload.ConsensusPayload interface.
@@ -156,45 +169,6 @@ func (p *Payload) Hash() util.Uint256 {
 	return p.Message.Hash().Uint256()
 }
 
-// EncodeBinary implements the io.Serializable interface.
-func (m *message) EncodeBinary(w *io.BinWriter) {
-	w.WriteB(byte(m.Type))
-	w.WriteU64LE(m.BlockIndex)
-	w.WriteB(m.ValidatorIndex)
-	w.WriteB(m.ViewNumber)
-	m.payload.EncodeBinary(w)
-}
-
-// DecodeBinary implements the io.Serializable interface.
-func (m *message) DecodeBinary(r *io.BinReader) {
-	m.Type = messageType(r.ReadB())
-	m.BlockIndex = r.ReadU64LE()
-	m.ValidatorIndex = r.ReadB()
-	m.ViewNumber = r.ReadB()
-
-	switch m.Type {
-	case changeViewType:
-		cv := new(changeView)
-		// newViewNumber is not marshaled
-		cv.newViewNumber = m.ViewNumber + 1
-		m.payload = cv
-	case prepareRequestType:
-		m.payload = new(prepareRequest)
-	case prepareResponseType:
-		m.payload = new(prepareResponse)
-	case commitType:
-		m.payload = new(commit)
-	case recoveryRequestType:
-		m.payload = new(recoveryRequest)
-	case recoveryMessageType:
-		m.payload = new(recoveryMessage)
-	default:
-		r.Err = fmt.Errorf("invalid type: 0x%02x", byte(m.Type))
-		return
-	}
-	m.payload.DecodeBinary(r)
-}
-
 // String implements fmt.Stringer interface.
 func (t messageType) String() string {
 	switch t {
@@ -215,25 +189,65 @@ func (t messageType) String() string {
 	}
 }
 
+// DecodeRLP decodes a message from RLP.
+func (m *message) DecodeRLP(s *rlp.Stream) error {
+	var em messageAux
+	if err := s.Decode(&em); err != nil {
+		return err
+	}
+	m.Type, m.BlockIndex, m.ValidatorIndex, m.ViewNumber = em.Type, em.BlockIndex, em.ValidatorIndex, em.ViewNumber
+	switch m.Type {
+	case changeViewType:
+		m.msgPayload = &changeView{
+			// newViewNumber is not marshaled
+			newViewNumber: m.ViewNumber + 1,
+		}
+	case prepareRequestType:
+		m.msgPayload = new(prepareRequest)
+	case prepareResponseType:
+		m.msgPayload = new(prepareResponse)
+	case commitType:
+		m.msgPayload = &commit{}
+	case recoveryRequestType:
+		m.msgPayload = new(recoveryRequest)
+	case recoveryMessageType:
+		m.msgPayload = new(recoveryMessage)
+	default:
+		err := fmt.Errorf("invalid type: 0x%02x", byte(m.Type))
+		return err
+	}
+	return rlp.DecodeBytes(em.MsgPayload, m.msgPayload)
+}
+
+// EncodeRLP serializes a message as RLP.
+func (m *message) EncodeRLP(w io.Writer) error {
+	bytes, err := rlp.EncodeToBytes(m.msgPayload)
+	if err != nil {
+		return err
+	}
+
+	return rlp.Encode(w, &messageAux{
+		Type:           m.Type,
+		BlockIndex:     m.BlockIndex,
+		ValidatorIndex: m.ValidatorIndex,
+		ViewNumber:     m.ViewNumber,
+		MsgPayload:     bytes,
+	})
+}
+
 func (p *Payload) encodeData() {
 	if p.Message.Data == nil {
 		p.Message.ValidBlockStart = 0
 		p.Message.ValidBlockEnd = p.BlockIndex
-		bw := io.NewBufBinWriter()
-		p.message.EncodeBinary(bw.BinWriter)
-		if bw.Err != nil {
-			panic(fmt.Errorf("failed to encode payload: %w", bw.Err))
+		data, err := rlp.EncodeToBytes(&p.message)
+		if err != nil {
+			panic(fmt.Errorf("failed to encode payload: %w", err))
 		}
-		p.Message.Data = bw.Bytes()
+		p.Message.Data = data
 	}
 }
 
 // decode data of payload into its message.
 func (p *Payload) decodeData() error {
-	br := io.NewBinReaderFromBuf(p.Message.Data)
-	p.message.DecodeBinary(br)
-	if br.Err != nil {
-		return fmt.Errorf("can't decode message: %w", br.Err)
-	}
-	return nil
+	return rlp.DecodeBytes(p.Message.Data, &p.message)
 }

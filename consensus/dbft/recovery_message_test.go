@@ -1,22 +1,23 @@
 package dbft
 
 import (
-	"crypto/rand"
 	"math/big"
+	"math/rand"
 	"testing"
+	"time"
 
-	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
-	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/nspcc-dev/neo-go/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPayloadSerializable(t *testing.T) {
-	gk, _ := crypto.GenerateKey()
+func TestRecoverMessage_RLP(t *testing.T) {
+	var sign [extraSeal]byte
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r.Read(sign[:])
+
 	pr := &prepareRequest{
 		SealingProposal: &types.Header{
 			ParentHash:       common.Hash{1, 2, 3},
@@ -40,19 +41,18 @@ func TestPayloadSerializable(t *testing.T) {
 			ExcessBlobGas:    nil,
 			ParentBeaconRoot: nil,
 		},
-		TxHashes:       []util.Uint256{},
+		TxHashes:       []util.Uint256{util.Uint256{}},
 		ParentSealHash: common.Hash{1, 2, 3},
 		ParentExtra:    []byte{1, 2, 3},
 	}
-	expected := &Payload{
-		Message: dbftproto.Message{
-			ValidBlockStart: 0,
-			ValidBlockEnd:   1,
-			Sender:          crypto.PubkeyToAddress(gk.PublicKey),
-			Data:            nil,
-			Witness:         nil,
-		},
-		message: message{
+
+	rm := &recoveryMessage{
+		PreparationHashExt: &util.Uint256{1, 2},
+		PreparationPayloads: []*preparationCompact{
+			{ValidatorIndex: 1, InvocationScript: []byte{1, 2, 3}}},
+		CommitPayloads:     []*commitCompact{{ViewNumber: 1, ValidatorIndex: 1, Signature: sign, InvocationScript: []byte{1, 2, 3, 4, 5}}},
+		ChangeViewPayloads: []*changeViewCompact{{ValidatorIndex: 1, OriginalViewNumber: 2, Timestamp: 3, InvocationScript: []byte{1, 2, 3, 4, 5, 6}}},
+		PrepareRequest: &message{
 			Type:           prepareRequestType,
 			BlockIndex:     1,
 			ValidatorIndex: 2,
@@ -61,29 +61,11 @@ func TestPayloadSerializable(t *testing.T) {
 		},
 	}
 
-	err := expected.Sign(&Signer{
-		Signer: crypto.PubkeyToAddress(gk.PublicKey),
-		SignFn: func(signer accounts.Account, mimeType string, message []byte) ([]byte, error) {
-			return gk.Sign(rand.Reader, crypto.Keccak256(message), nil)
-		},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, expected.Data)
-	require.NotNil(t, expected.Witness)
-
-	m := expected.Message
-	h := m.Hash()
-	require.NotNil(t, h)
-
-	b, err := rlp.EncodeToBytes(m)
+	bytes, err := rlp.EncodeToBytes(rm)
 	require.NoError(t, err)
 
-	var actual = new(dbftproto.Message)
-	require.NoError(t, rlp.DecodeBytes(b, actual))
-	require.Equal(t, expected.Message, *actual)
-
-	actualP := payloadFromMessage(actual)
-	require.NoError(t, actualP.decodeData())
-
-	require.Equal(t, expected, actualP)
+	decoded := &recoveryMessage{}
+	err = rlp.DecodeBytes(bytes, decoded)
+	require.NoError(t, err)
+	require.Equal(t, rm, decoded)
 }
