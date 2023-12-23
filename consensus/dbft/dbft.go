@@ -1162,6 +1162,7 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 func (c *DBFT) eventLoop() {
 events:
 	for {
+		oldView := c.dbft.ViewNumber
 		select {
 		case <-c.quit:
 			c.dbft.Timer.Stop()
@@ -1205,29 +1206,7 @@ events:
 					"#hash", rec.preparationHash != nil)
 			}
 			log.Debug("received message", fields...)
-			oldView := c.dbft.ViewNumber
 			c.dbft.OnReceive(&msg)
-			newView := c.dbft.ViewNumber
-			// If ChangeView has happened, we need to wait for the new proposal
-			// from miner.
-			if newView > oldView {
-				log.Info("Change view detected, waiting for new sealing task to be submitted by miner", "old view", oldView, "new view", newView)
-				c.sealingLock.Lock()
-				c.isSealing = false
-				c.sealingProposal = nil
-				c.sealingReceipts = nil
-				c.sealingTransactions = nil
-				c.sealingWaitingForNewProposal = true
-				c.sealingLock.Unlock()
-
-				t := <-c.sealingTask
-				log.Info("Start dBFT process for updated sealing work",
-					"view", newView,
-					"number", t.number,
-					"sealhash", t.sealingHash,
-					"prev", t.parentHash,
-				)
-			}
 		case txs := <-c.txEvents:
 			for _, tx := range txs.Txs {
 				c.dbft.OnTransaction(&Transaction{Tx: tx})
@@ -1240,6 +1219,27 @@ events:
 		case <-c.chainHeadSub.Err():
 			// System has stopped.
 			break events
+		}
+		newView := c.dbft.ViewNumber
+		// If ChangeView has happened, we always need to wait for the new proposal
+		// from miner.
+		if newView > oldView {
+			log.Info("Change view detected, waiting for new sealing task to be submitted by miner", "old view", oldView, "new view", newView)
+			c.sealingLock.Lock()
+			c.isSealing = false
+			c.sealingProposal = nil
+			c.sealingReceipts = nil
+			c.sealingTransactions = nil
+			c.sealingWaitingForNewProposal = true
+			c.sealingLock.Unlock()
+
+			t := <-c.sealingTask
+			log.Info("Start dBFT process for updated sealing work",
+				"view", newView,
+				"number", t.number,
+				"sealhash", t.sealingHash,
+				"prev", t.parentHash,
+			)
 		}
 		// Always process block event if there is any, we can add one above or external
 		// services can add several blocks during message processing.
