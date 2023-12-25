@@ -19,6 +19,7 @@ package ethconfig
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -178,7 +179,11 @@ func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database) (conse
 		return beacon.New(clique.New(config.Clique, db)), nil
 	}
 	if config.DBFT != nil {
-		return beacon.New(dbft.New(config.DBFT, db)), nil
+		bft, err := dbft.New(config.DBFT, db)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create dBFT engine: %w", err)
+		}
+		return beacon.New(bft), nil
 	}
 	// If defaulting to proof-of-work, enforce an already merged network since
 	// we cannot run PoW algorithms and more, so we cannot even follow a chain

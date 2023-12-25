@@ -267,7 +267,10 @@ type sealingInfo struct {
 
 // New creates a DBFT proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
+func New(config *params.DBFTConfig, db ethdb.Database) (*DBFT, error) {
+	if config.SecondsPerBlock == 0 {
+		return nil, errors.New("zero-period dBFT chain is not supported")
+	}
 	// Set any missing consensus parameters to their defaults
 	conf := *config
 	// Sort validators once to reuse the sorted list in getNextConsensus.
@@ -571,7 +574,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		}),
 	)
 
-	return c
+	return c, nil
 }
 
 func (c *DBFT) getBlockWitness() []byte {
@@ -1103,12 +1106,6 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.lastProposalLock.RUnlock()
 		c.sealingLock.Unlock()
 		return errUnknownBlock
-	}
-	// For 0-period chains, refuse to seal empty blocks (no reward but would spin sealing)
-	if c.config.SecondsPerBlock == 0 && len(b.Transactions()) == 0 {
-		c.lastProposalLock.RUnlock()
-		c.sealingLock.Unlock()
-		return errors.New("sealing paused while waiting for transactions")
 	}
 	// Don't hold the signer fields for the entire sealing procedure
 	c.lock.RLock()
