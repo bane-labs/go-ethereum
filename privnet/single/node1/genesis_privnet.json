@@ -18,8 +18,7 @@
       "period": 5,
       "standbyValidators": [
         "0xd40110de287c8d55e72a28600630a40283e4b8aa"
-      ],
-      "validatorsCount": 1
+      ]
     }
   },
   "difficulty": "1",

@@ -161,12 +161,12 @@ var (
 	errUnauthorizedSigner = errors.New("unauthorized signer")
 )
 
-// getSignersAndSigs extracts the set of validators addresses (ValidatorsCount number of them)
+// getSignersAndSigs extracts the set of validators addresses (len(cfg.StandByValidators) number of them)
 // and a set of validators signatures (BFT number of them) from a signed header.
 func getSignersAndSigs(cfg *params.DBFTConfig, extra []byte) ([]common.Address, [][]byte, error) {
 	// Retrieve the signature from the header extra-data
 	var (
-		n             = int(cfg.ValidatorsCount)
+		n             = len(cfg.StandByValidators)
 		m             = crypto.GetBFTHonestNodeCount(n)
 		addrsBytesLen = common.AddressLength * n
 		sigsBytesLen  = extraSeal * m
@@ -703,7 +703,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if len(header.Extra) < extraVanity {
 		return errMissingVanity
 	}
-	m := crypto.GetBFTHonestNodeCount(int(c.config.ValidatorsCount))
+	m := crypto.GetBFTHonestNodeCount(len(c.config.StandByValidators))
 	sigBytesLen := m * extraSeal
 	if len(header.Extra) < extraVanity+sigBytesLen {
 		return errMissingSignature
@@ -821,7 +821,7 @@ func (c *DBFT) snapshot(chain consensus.ChainHeaderReader, number uint64, hash c
 			checkpoint := chain.GetHeaderByNumber(number)
 			if checkpoint != nil {
 				hash := checkpoint.Hash()
-				sigsBytesLen := extraSeal * crypto.GetBFTHonestNodeCount(int(c.config.ValidatorsCount))
+				sigsBytesLen := extraSeal * crypto.GetBFTHonestNodeCount(len(c.config.StandByValidators))
 				signers := make([]common.Address, (len(checkpoint.Extra)-extraVanity-sigsBytesLen)/common.AddressLength)
 				for i := 0; i < len(signers); i++ {
 					copy(signers[i][:], checkpoint.Extra[extraVanity+i*common.AddressLength:])

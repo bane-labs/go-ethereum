@@ -18,8 +18,7 @@
       "period": 5,
       "standbyValidators": [
         "0xnode1"
-      ],
-      "validatorsCount": 1
+      ]
     }
   },
   "difficulty": "1",

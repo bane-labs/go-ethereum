@@ -481,15 +481,12 @@ func (g *Genesis) ToBlock() *types.Block {
 		if len(g.Config.DBFT.StandByValidators) == 0 {
 			panic("StandByValidators is not specified in the dBFT config")
 		}
-		if g.Config.DBFT.ValidatorsCount == 0 {
-			panic("ValidatorsCount is not specified in the dBFT config")
-		}
 		// Do not change configured committee.
 		sb := make([]common.Address, len(g.Config.DBFT.StandByValidators))
 		copy(sb, g.Config.DBFT.StandByValidators)
 		slices.SortFunc(sb, common.Address.Cmp)
 		var (
-			n           = int(g.Config.DBFT.ValidatorsCount)
+			n           = len(g.Config.DBFT.StandByValidators)
 			m           = crypto.GetBFTHonestNodeCount(n)
 			extraVanity = 32
 		)
@@ -550,7 +547,7 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *trie.Database) (*types.Block
 	}
 	if config.DBFT != nil {
 		var (
-			n           = int(config.DBFT.ValidatorsCount)
+			n           = len(config.DBFT.StandByValidators)
 			m           = crypto.GetBFTHonestNodeCount(n)
 			extra       = block.Extra()
 			extraVanity = 32
