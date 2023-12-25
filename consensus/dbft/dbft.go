@@ -1062,27 +1062,6 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.sealingLock.Unlock()
 		return fmt.Errorf("stale sealing task: invalid Number: expected %d, got %d", c.lastIndex+1, b.NumberU64())
 	}
-	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
-		// In case of chain reorg it may happen that DBFT last block cache stores
-		// outdated parent hash and Extra, thus, if the rest of new parent information
-		// is valid, then use it to construct new sealing proposal.
-		parent := chain.GetHeaderByHash(b.ParentHash())
-		if parent == nil {
-			c.sealingLock.Unlock()
-			return fmt.Errorf("can't verify sealing task: failed to get parent from chain: expected %s, got %s", c.lastBlockHash, b.ParentHash())
-		}
-		if actual := HonestSealHash(parent); c.lastBlockSealHash != actual {
-			c.sealingLock.Unlock()
-			return fmt.Errorf("invalid sealing task: invalid Parent honest seal hash: expected %s, got %s", c.lastBlockSealHash, actual)
-		}
-		log.Info("Update cached dBFT last block information",
-			"number", c.lastIndex,
-			"old hash", c.lastBlockHash,
-			"new hash", b.ParentHash(),
-			"seal hash", c.lastBlockSealHash)
-		c.lastBlockHash = parent.Hash()
-		c.lastBlockExtra = parent.Extra
-	}
 
 	c.lastProposalLock.RLock()
 	if c.lastProposal == nil {
@@ -1096,6 +1075,29 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.lastProposalLock.RUnlock()
 		c.sealingLock.Unlock()
 		return errors.New("initialized pending sealing task mismatch with target sealing task")
+	}
+	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
+		// In case of chain reorg it may happen that DBFT last block cache stores
+		// outdated parent hash and Extra, thus, if the rest of new parent information
+		// is valid, then use it to construct new sealing proposal.
+		parent := chain.GetHeaderByHash(b.ParentHash())
+		if parent == nil {
+			c.lastProposalLock.RUnlock()
+			c.sealingLock.Unlock()
+			return fmt.Errorf("can't verify sealing task: failed to get parent from chain: expected %s, got %s", c.lastBlockHash, b.ParentHash())
+		}
+		if actual := HonestSealHash(parent); c.lastBlockSealHash != actual {
+			c.lastProposalLock.RUnlock()
+			c.sealingLock.Unlock()
+			return fmt.Errorf("invalid sealing task: invalid Parent honest seal hash: expected %s, got %s", c.lastBlockSealHash, actual)
+		}
+		log.Info("Update cached dBFT last block information",
+			"number", c.lastIndex,
+			"old hash", c.lastBlockHash,
+			"new hash", b.ParentHash(),
+			"seal hash", c.lastBlockSealHash)
+		c.lastBlockHash = parent.Hash()
+		c.lastBlockExtra = parent.Extra
 	}
 
 	header := b.Header()
