@@ -502,11 +502,11 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			if req.SealingProposal == nil {
 				return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
 			}
-			if req.SealingProposal.ParentHash.Uint256() != c.dbft.PrevHash {
+			if req.SealingProposal.ParentHash != c.lastBlockHash {
 				// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
 				// the one that prepareRequest declares as a parent hash, otherwise it's an error.
 				if c.dbft.BlockIndex <= 1 {
-					return fmt.Errorf("invalid parent: expected %s, got %s", c.dbft.PrevHash, req.SealingProposal.ParentHash)
+					return fmt.Errorf("invalid parent: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
 				}
 				if req.ParentSealHash != c.lastBlockSealHash {
 					return fmt.Errorf("parent seal hash doesn't match the last block seal hash: expected %s, got %s", c.lastBlockSealHash, req.ParentSealHash)
