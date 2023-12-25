@@ -1107,7 +1107,8 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	c.lock.RUnlock()
 
 	// Check that the signer is included into validators of the currently accepting block.
-	// Do not run consensus for this block if we're not a consensus node.
+	// Do not submit sealing task to blockQueue if we're not a consensus node, the consensus
+	// will be run in WatchOnly mode.
 	vals, err := c.getNextBlockValidators(header.ParentHash, number-1, true)
 	if err != nil {
 		c.lastProposalLock.RUnlock()
