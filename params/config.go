@@ -357,9 +357,9 @@ func (c *CliqueConfig) String() string {
 
 // DBFTConfig is the consensus engine configs for proof-of-stake based sealing.
 type DBFTConfig struct {
-	SecondsPerBlock  uint64           `json:"period"`           // Number of seconds between blocks to enforce
-	StandByCommittee []common.Address `json:"standbyCommittee"` // Stand by validators.
-	ValidatorsCount  uint32           `json:"validatorsCount"`
+	SecondsPerBlock   uint64           `json:"period"`            // Number of seconds between blocks to enforce
+	StandByValidators []common.Address `json:"standbyValidators"` // Stand by validators.
+	ValidatorsCount   uint32           `json:"validatorsCount"`
 }
 
 // String implements the stringer interface, returning the consensus engine details.
