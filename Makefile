@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth android ios evm all test clean privnet_init privnet_nodes_stop privnet_bootnode_stop privnet_stop privnet_clean privnet_start
+.PHONY: geth android ios evm all test clean privnet_init privnet_nodes_stop privnet_bootnode_stop privnet_stop privnet_clean privnet_start privnet_start_four privnet_start_seven
 
 GETHBIN = ./build/bin
 GO ?= latest
@@ -11,6 +11,7 @@ GORUN = go run
 MAIN_DIR = ./privnet
 SINGLE_DIR = $(MAIN_DIR)/single
 FOUR_DIR = $(MAIN_DIR)/four
+SEVEN_DIR = $(MAIN_DIR)/seven
 
 NODE1 = node1
 NODE1_PORT = 30306
@@ -31,6 +32,18 @@ NODE4_RPC_PORT = 8555
 NODE5 = node5
 NODE5_PORT = 30310
 NODE5_RPC_PORT = 8556
+
+NODE6 = node6
+NODE6_PORT = 30311
+NODE6_RPC_PORT = 8557
+
+NODE7 = node7
+NODE7_PORT = 30312
+NODE7_RPC_PORT = 8558
+
+NODE8 = node8
+NODE8_PORT = 30313
+NODE8_RPC_PORT = 8559
 
 PASSWORD_LEN = 32
 GENESIS_WORK_JSON = genesis_privnet.json
@@ -176,6 +189,37 @@ privnet_init_four: privnet_clean
 	@rm $(FOUR_DIR)/$(GENESIS_WORK_JSON)
 	@echo "OK! For starting use 'make privnet_start_four'"
 
+privnet_init_seven: privnet_clean
+	@find $(SEVEN_DIR)/* -type d -name 'keystore' -exec rm -rf {} +
+	@mkdir -p $(SEVEN_DIR)
+	@echo "Generate  $(GENESIS_WORK_JSON) file"
+	@cp $(SEVEN_DIR)/genesis_template.json $(SEVEN_DIR)/$(GENESIS_WORK_JSON)
+	@echo $$(date +'%y%m%d%H%M') > $(SEVEN_DIR)/networkid.txt
+	@echo "Network ID is "$$(cat $(SEVEN_DIR)/networkid.txt)
+	@echo "Generate bootnode"
+	$(call generate_bootnode,$(SEVEN_DIR))
+	$(call replace_chainid,$(SEVEN_DIR))
+	@echo "Create accounts"
+	$(call create_account,$(SEVEN_DIR),$(NODE1))
+	$(call create_account,$(SEVEN_DIR),$(NODE2))
+	$(call create_account,$(SEVEN_DIR),$(NODE3))
+	$(call create_account,$(SEVEN_DIR),$(NODE4))
+	$(call create_account,$(SEVEN_DIR),$(NODE5))
+	$(call create_account,$(SEVEN_DIR),$(NODE6))
+	$(call create_account,$(SEVEN_DIR),$(NODE7))
+	$(call create_account,$(SEVEN_DIR),$(NODE8))
+	@echo "Copy genesis_privnet.json into nodes"
+	$(call copy_genesis,$(SEVEN_DIR),$(NODE1))
+	$(call copy_genesis,$(SEVEN_DIR),$(NODE2))
+	$(call copy_genesis,$(SEVEN_DIR),$(NODE3))
+	$(call copy_genesis,$(SEVEN_DIR),$(NODE4))
+	$(call copy_genesis,$(SEVEN_DIR),$(NODE5))
+	$(call copy_genesis,$(SEVEN_DIR),$(NODE6))
+	$(call copy_genesis,$(SEVEN_DIR),$(NODE7))
+	$(call copy_genesis,$(SEVEN_DIR),$(NODE8))
+	@rm $(SEVEN_DIR)/$(GENESIS_WORK_JSON)
+	@echo "OK! For starting use 'make privnet_start_seven'"
+
 privnet_nodes_stop:
 	@echo "Killing nodes processes"
 	@killall -w -v -9 geth || :
@@ -219,6 +263,38 @@ $(FOUR_DIR)/$(NODE5)/geth:
 	@echo "Initializing $(NODE5) from genesis"
 	$(call init_node,$(FOUR_DIR),$(NODE5))
 
+$(SEVEN_DIR)/$(NODE1)/geth:
+	@echo "Initializing $(NODE1) from genesis"
+	$(call init_node,$(SEVEN_DIR),$(NODE1))
+
+$(SEVEN_DIR)/$(NODE2)/geth:
+	@echo "Initializing $(NODE2) from genesis"
+	$(call init_node,$(SEVEN_DIR),$(NODE2))
+
+$(SEVEN_DIR)/$(NODE3)/geth:
+	@echo "Initializing $(NODE3) from genesis"
+	$(call init_node,$(SEVEN_DIR),$(NODE3))
+
+$(SEVEN_DIR)/$(NODE4)/geth:
+	@echo "Initializing $(NODE4) from genesis"
+	$(call init_node,$(SEVEN_DIR),$(NODE4))
+
+$(SEVEN_DIR)/$(NODE5)/geth:
+	@echo "Initializing $(NODE5) from genesis"
+	$(call init_node,$(SEVEN_DIR),$(NODE5))
+
+$(SEVEN_DIR)/$(NODE6)/geth:
+	@echo "Initializing $(NODE6) from genesis"
+	$(call init_node,$(SEVEN_DIR),$(NODE6))
+
+$(SEVEN_DIR)/$(NODE7)/geth:
+	@echo "Initializing $(NODE7) from genesis"
+	$(call init_node,$(SEVEN_DIR),$(NODE7))
+
+$(SEVEN_DIR)/$(NODE8)/geth:
+	@echo "Initializing $(NODE8) from genesis"
+	$(call init_node,$(SEVEN_DIR),$(NODE8))
+
 privnet_start: $(SINGLE_DIR)/$(NODE1)/geth $(SINGLE_DIR)/$(NODE2)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode,$(SINGLE_DIR))
@@ -235,3 +311,16 @@ privnet_start_four: $(FOUR_DIR)/$(NODE1)/geth $(FOUR_DIR)/$(NODE2)/geth $(FOUR_D
 	$(call run_miner_node,$(FOUR_DIR),$(NODE4),$(NODE4_PORT),$(NODE4_RPC_PORT),$(NODE4))
 	$(call run_node,$(FOUR_DIR),$(NODE5),$(NODE5_PORT),$(NODE5_RPC_PORT))
 	@echo "OK! Check logs in $(FOUR_DIR)/<node_dir>/geth_node.log"
+
+privnet_start_seven: $(SEVEN_DIR)/$(NODE1)/geth $(SEVEN_DIR)/$(NODE2)/geth $(SEVEN_DIR)/$(NODE3)/geth $(SEVEN_DIR)/$(NODE4)/geth $(SEVEN_DIR)/$(NODE5)/geth $(SEVEN_DIR)/$(NODE6)/geth $(SEVEN_DIR)/$(NODE7)/geth $(SEVEN_DIR)/$(NODE8)/geth
+	@echo "Starting nodes..."
+	$(call run_bootnode,$(SEVEN_DIR))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_RPC_PORT),$(NODE1))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_RPC_PORT),$(NODE2))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE3),$(NODE3_PORT),$(NODE3_RPC_PORT),$(NODE3))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE4),$(NODE4_PORT),$(NODE4_RPC_PORT),$(NODE4))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE5),$(NODE5_PORT),$(NODE5_RPC_PORT),$(NODE5))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE6),$(NODE6_PORT),$(NODE6_RPC_PORT),$(NODE6))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE7),$(NODE7_PORT),$(NODE7_RPC_PORT),$(NODE7))
+	$(call run_node,$(SEVEN_DIR),$(NODE8),$(NODE8_PORT),$(NODE8_RPC_PORT))
+	@echo "OK! Check logs in $(SEVEN_DIR)/<node_dir>/geth_node.log"
