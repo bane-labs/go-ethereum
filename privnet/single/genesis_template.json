@@ -16,7 +16,7 @@
     "grayGlacierBlock": 0,
     "dbft": {
       "period": 5,
-      "standbyCommittee": [
+      "standbyValidators": [
         "0xnode1"
       ],
       "validatorsCount": 1
