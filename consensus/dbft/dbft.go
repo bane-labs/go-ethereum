@@ -272,9 +272,9 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 	conf := *config
 	// Sort validators once to reuse the sorted list in getNextConsensus.
 	// Do not change configured committee.
-	conf.StandByCommittee = make([]common.Address, len(conf.StandByCommittee))
-	copy(conf.StandByCommittee, config.StandByCommittee)
-	slices.SortFunc(conf.StandByCommittee, common.Address.Cmp)
+	conf.StandByValidators = make([]common.Address, len(conf.StandByValidators))
+	copy(conf.StandByValidators, config.StandByValidators)
+	slices.SortFunc(conf.StandByValidators, common.Address.Cmp)
 	// Allocate the snapshot caches and create the engine
 	recents := lru.NewCache[common.Hash, *Snapshot](inmemorySnapshots)
 	signatures := lru.NewCache[common.Hash, common.Address](inmemorySignatures)
@@ -1491,14 +1491,14 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, compute bool) ([]common.Address, error) {
 	// Currently we don't have governance contract, thus, always return standby set.
 	if true {
-		return c.config.StandByCommittee, nil
+		return c.config.StandByValidators, nil
 	}
 
 	if c.ethAPI == nil {
 		return nil, errors.New("eth blockchain API is not initialized, dBFT can't function properly")
 	}
 
-	// Once we have governance contract, we don't need StandByCommittee in the dBFT's
+	// Once we have governance contract, we don't need StandByValidators in the dBFT's
 	// config, governance contract will handle it internally.
 	blockNr := rpc.BlockNumberOrHashWithHash(blockHash, false)
 
@@ -1535,5 +1535,5 @@ func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, co
 }
 
 func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
-	return blockNum%uint64(len(c.config.StandByCommittee)) == 0
+	return blockNum%uint64(len(c.config.StandByValidators)) == 0
 }

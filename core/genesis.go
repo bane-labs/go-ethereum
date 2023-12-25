@@ -478,15 +478,15 @@ func (g *Genesis) ToBlock() *types.Block {
 		}
 	}
 	if g.Config != nil && g.Config.DBFT != nil {
-		if len(g.Config.DBFT.StandByCommittee) == 0 {
-			panic("StandByCommittee is not specified in the dBFT config")
+		if len(g.Config.DBFT.StandByValidators) == 0 {
+			panic("StandByValidators is not specified in the dBFT config")
 		}
 		if g.Config.DBFT.ValidatorsCount == 0 {
 			panic("ValidatorsCount is not specified in the dBFT config")
 		}
 		// Do not change configured committee.
-		sb := make([]common.Address, len(g.Config.DBFT.StandByCommittee))
-		copy(sb, g.Config.DBFT.StandByCommittee)
+		sb := make([]common.Address, len(g.Config.DBFT.StandByValidators))
+		copy(sb, g.Config.DBFT.StandByValidators)
 		slices.SortFunc(sb, common.Address.Cmp)
 		var (
 			n           = int(g.Config.DBFT.ValidatorsCount)
