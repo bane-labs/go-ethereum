@@ -120,7 +120,7 @@ func (bq *blockQueue) clearStaleTasks(till uint64, count int) {
 }
 
 // SubmitTask adds subsequent miner task to the blockqueue instance.
-func (bq *blockQueue) SubmitTask(sealHash common.Hash, number uint64, resCh chan<- *types.Block, cancelCh <-chan struct{}) error {
+func (bq *blockQueue) SubmitTask(sealHash common.Hash, number uint64, resCh chan<- *types.Block, cancelCh <-chan struct{}) {
 	bq.tasksLock.Lock()
 	defer bq.tasksLock.Unlock()
 
@@ -139,5 +139,4 @@ func (bq *blockQueue) SubmitTask(sealHash common.Hash, number uint64, resCh chan
 		resCh:    resCh,
 		cancelCh: cancelCh,
 	}
-	return nil
 }

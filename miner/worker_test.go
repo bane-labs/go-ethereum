@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -229,7 +230,8 @@ func TestGenerateAndImportBlockDBFT(t *testing.T) {
 		config = *params.AllCliqueProtocolChanges
 	)
 	config.DBFT = &params.DBFTConfig{SecondsPerBlock: 1}
-	engine := dbft.New(config.DBFT, db)
+	engine, err := dbft.New(config.DBFT, db)
+	require.NoError(t, err)
 
 	w, b := newTestWorker(t, &config, engine, db, 0)
 	defer w.close()
@@ -274,7 +276,9 @@ func TestEmptyWorkClique(t *testing.T) {
 	testEmptyWork(t, cliqueChainConfig, clique.New(cliqueChainConfig.Clique, rawdb.NewMemoryDatabase()))
 }
 func TestEmptyWorkDBFT(t *testing.T) {
-	testEmptyWork(t, dbftChainConfig, dbft.New(dbftChainConfig.DBFT, rawdb.NewMemoryDatabase()))
+	bft, err := dbft.New(dbftChainConfig.DBFT, rawdb.NewMemoryDatabase())
+	require.NoError(t, err)
+	testEmptyWork(t, dbftChainConfig, bft)
 }
 
 func testEmptyWork(t *testing.T, chainConfig *params.ChainConfig, engine consensus.Engine) {

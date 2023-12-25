@@ -267,7 +267,10 @@ type sealingInfo struct {
 
 // New creates a DBFT proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
+func New(config *params.DBFTConfig, db ethdb.Database) (*DBFT, error) {
+	if config.SecondsPerBlock == 0 {
+		return nil, errors.New("zero-period dBFT chain is not supported")
+	}
 	// Set any missing consensus parameters to their defaults
 	conf := *config
 	// Sort validators once to reuse the sorted list in getNextConsensus.
@@ -481,10 +484,11 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			// Fill in only proposal and receipts, transactions will be properly
 			// set from context later in SetTransactionHashes callback.
 			req.SealingProposal = c.sealingProposal
-			c.sealingLock.RUnlock()
 
 			req.ParentSealHash = c.lastBlockSealHash
 			req.ParentExtra = c.lastBlockExtra
+
+			c.sealingLock.RUnlock()
 
 			return req
 		}),
@@ -501,11 +505,11 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 			if req.SealingProposal == nil {
 				return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
 			}
-			if req.SealingProposal.ParentHash.Uint256() != c.dbft.PrevHash {
+			if req.SealingProposal.ParentHash != c.lastBlockHash {
 				// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
 				// the one that prepareRequest declares as a parent hash, otherwise it's an error.
 				if c.dbft.BlockIndex <= 1 {
-					return fmt.Errorf("invalid parent: expected %s, got %s", c.dbft.PrevHash, req.SealingProposal.ParentHash)
+					return fmt.Errorf("invalid parent: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
 				}
 				if req.ParentSealHash != c.lastBlockSealHash {
 					return fmt.Errorf("parent seal hash doesn't match the last block seal hash: expected %s, got %s", c.lastBlockSealHash, req.ParentSealHash)
@@ -570,7 +574,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) *DBFT {
 		}),
 	)
 
-	return c
+	return c, nil
 }
 
 func (c *DBFT) getBlockWitness() []byte {
@@ -625,13 +629,14 @@ func (c *DBFT) WithTxPool(pool txPool) {
 func (c *DBFT) postBlock(b *types.Block) {
 	if c.lastIndex < b.NumberU64() {
 		h := b.Header()
+
+		c.sealingLock.Lock()
 		c.lastTimestamp = h.Time
 		c.lastIndex = h.Number.Uint64()
 		c.lastBlockHash = b.Hash()
 		c.lastBlockSealHash = HonestSealHash(h)
 		c.lastBlockExtra = h.Extra
 
-		c.sealingLock.Lock()
 		c.isSealing = false
 		c.sealingProposal = nil
 		c.sealingReceipts = nil
@@ -1057,12 +1062,6 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.sealingLock.Unlock()
 		return fmt.Errorf("stale sealing task: invalid Number: expected %d, got %d", c.lastIndex+1, b.NumberU64())
 	}
-	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
-		// Deviation from latest saved lastBlockHash is not allowed, otherwise it may lead
-		// to multiple dBFT proposals for the same height, which will break the consensus.
-		c.sealingLock.Unlock()
-		return fmt.Errorf("stale sealing task: invalid ParentHash: expected %s, got %s", c.lastBlockHash, b.ParentHash())
-	}
 
 	c.lastProposalLock.RLock()
 	if c.lastProposal == nil {
@@ -1077,29 +1076,41 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 		c.sealingLock.Unlock()
 		return errors.New("initialized pending sealing task mismatch with target sealing task")
 	}
+	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
+		// In case of chain reorg it may happen that DBFT last block cache stores
+		// outdated parent hash and Extra, thus, if the rest of new parent information
+		// is valid, then use it to construct new sealing proposal.
+		parent := chain.GetHeaderByHash(b.ParentHash())
+		if parent == nil {
+			c.lastProposalLock.RUnlock()
+			c.sealingLock.Unlock()
+			return fmt.Errorf("can't verify sealing task: failed to get parent from chain: expected %s, got %s", c.lastBlockHash, b.ParentHash())
+		}
+		if actual := HonestSealHash(parent); c.lastBlockSealHash != actual {
+			c.lastProposalLock.RUnlock()
+			c.sealingLock.Unlock()
+			return fmt.Errorf("invalid sealing task: invalid Parent honest seal hash: expected %s, got %s", c.lastBlockSealHash, actual)
+		}
+		log.Info("Update cached dBFT last block information",
+			"number", c.lastIndex,
+			"old hash", c.lastBlockHash,
+			"new hash", b.ParentHash(),
+			"seal hash", c.lastBlockSealHash)
+		c.lastBlockHash = parent.Hash()
+		c.lastBlockExtra = parent.Extra
+	}
 
 	header := b.Header()
 	number := header.Number.Uint64()
 
-	// Sealing the genesis block is not supported
-	if number == 0 {
-		c.lastProposalLock.RUnlock()
-		c.sealingLock.Unlock()
-		return errUnknownBlock
-	}
-	// For 0-period chains, refuse to seal empty blocks (no reward but would spin sealing)
-	if c.config.SecondsPerBlock == 0 && len(b.Transactions()) == 0 {
-		c.lastProposalLock.RUnlock()
-		c.sealingLock.Unlock()
-		return errors.New("sealing paused while waiting for transactions")
-	}
 	// Don't hold the signer fields for the entire sealing procedure
 	c.lock.RLock()
 	signer, _ := c.signer, c.signFn
 	c.lock.RUnlock()
 
 	// Check that the signer is included into validators of the currently accepting block.
-	// Do not run consensus for this block if we're not a consensus node.
+	// Do not submit sealing task to blockQueue if we're not a consensus node, the consensus
+	// will be run in WatchOnly mode.
 	vals, err := c.getNextBlockValidators(header.ParentHash, number-1, true)
 	if err != nil {
 		c.lastProposalLock.RUnlock()
@@ -1116,12 +1127,7 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	// Submit task to blockQueue only if we're a member of validators set, otherwise it's
 	// useless to expect that out proposal will be accepted for the current height.
 	if isAuthorized {
-		err = c.blockQueue.SubmitTask(sealingHash, b.NumberU64(), results, stop)
-		if err != nil {
-			c.lastProposalLock.RUnlock()
-			c.sealingLock.Unlock()
-			return fmt.Errorf("failed to submit sealing task to dBFT: %w", err)
-		}
+		c.blockQueue.SubmitTask(sealingHash, b.NumberU64(), results, stop)
 	}
 
 	c.sealingProposal = lastHeader
@@ -1133,6 +1139,11 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 
 	// If ChangeView happened, then no dBFT reinitialization is expected.
 	if c.sealingWaitingForNewProposal {
+		// dBFT can't update its PrevHash in the middle of consensus process, thus,
+		// update it manually to keep it in sync with the actual last block hash in
+		// case of chain reorgs (it's thread-safe to perform it here, because eventLoop
+		// is waiting for the end of Seal in this case).
+		c.dbft.Context.PrevHash = c.lastBlockHash.Uint256()
 		c.sealingWaitingForNewProposal = false
 		c.sealingLock.Unlock()
 	} else {
@@ -1334,9 +1345,11 @@ func (c *DBFT) newPayload(ctx *dbft.Context, t payload.MessageType, msg any) pay
 func (c *DBFT) handleChainBlock(b *types.Block) {
 	// We can get our own block here, so check for index.
 	if uint32(b.Number().Uint64()) >= c.dbft.BlockIndex {
-		log.Debug("new block in the chain",
+		log.Info("New block in the chain",
 			"dbft index", c.dbft.BlockIndex,
-			"chain index", c.chain.CurrentHeader().Number.Uint64())
+			"chain index", c.chain.CurrentHeader().Number.Uint64(),
+			"hash", b.Hash().String(),
+			"parent hash", b.ParentHash().String())
 		c.postBlock(b)
 		// No dBFT initialisation, leave this to Seal, as we don't have new proposal here anyway.
 	}
