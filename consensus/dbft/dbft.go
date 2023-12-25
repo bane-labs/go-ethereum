@@ -1139,6 +1139,11 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 
 	// If ChangeView happened, then no dBFT reinitialization is expected.
 	if c.sealingWaitingForNewProposal {
+		// dBFT can't update its PrevHash in the middle of consensus process, thus,
+		// update it manually to keep it in sync with the actual last block hash in
+		// case of chain reorgs (it's thread-safe to perform it here, because eventLoop
+		// is waiting for the end of Seal in this case).
+		c.dbft.Context.PrevHash = c.lastBlockHash.Uint256()
 		c.sealingWaitingForNewProposal = false
 		c.sealingLock.Unlock()
 	} else {
