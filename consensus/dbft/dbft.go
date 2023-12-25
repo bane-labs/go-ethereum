@@ -1101,12 +1101,6 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	header := b.Header()
 	number := header.Number.Uint64()
 
-	// Sealing the genesis block is not supported
-	if number == 0 {
-		c.lastProposalLock.RUnlock()
-		c.sealingLock.Unlock()
-		return errUnknownBlock
-	}
 	// Don't hold the signer fields for the entire sealing procedure
 	c.lock.RLock()
 	signer, _ := c.signer, c.signFn
