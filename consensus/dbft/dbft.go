@@ -1125,12 +1125,7 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	// Submit task to blockQueue only if we're a member of validators set, otherwise it's
 	// useless to expect that out proposal will be accepted for the current height.
 	if isAuthorized {
-		err = c.blockQueue.SubmitTask(sealingHash, b.NumberU64(), results, stop)
-		if err != nil {
-			c.lastProposalLock.RUnlock()
-			c.sealingLock.Unlock()
-			return fmt.Errorf("failed to submit sealing task to dBFT: %w", err)
-		}
+		c.blockQueue.SubmitTask(sealingHash, b.NumberU64(), results, stop)
 	}
 
 	c.sealingProposal = lastHeader
