@@ -30,10 +30,10 @@ based on the specifications mentioned above:
    If running with an existing database, no initialization is being performed.
    This command further runs the privnet with the described configuration.
 
-   Now you can look into the files `privnet/node1/geth_node.log` and
-   `privnet/node2/geth_node.log` to see the logs. Or you can use the next command:
+   Now you can look into the files `privnet/single/node1/geth_node.log` and
+   `privnet/single/node2/geth_node.log` to see the logs. Or you can use the next command:
    ```
-   tail -f ./privnet/node1/geth_node.log
+   tail -f ./privnet/single/node1/geth_node.log
    ```
    Expected node logs looks like the following:
    <details>
@@ -43,22 +43,22 @@ based on the specifications mentioned above:
    INFO [09-26|10:58:04.027] Maximum peer count                       ETH=50 LES=0 total=50
    INFO [09-26|10:58:04.029] Smartcard socket not found, disabling    err="stat /run/pcscd/pcscd.comm: no such file or directory"
    INFO [09-26|10:58:04.030] Defaulting to pebble as the backing database 
-   INFO [09-26|10:58:04.030] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/chaindata cache=512.00MiB handles=2048
-   INFO [09-26|10:58:04.045] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/chaindata/ancient/chain readonly=false
+   INFO [09-26|10:58:04.030] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/chaindata cache=512.00MiB handles=2048
+   INFO [09-26|10:58:04.045] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/chaindata/ancient/chain readonly=false
    INFO [09-26|10:58:04.045] State schema set to default              scheme=hash
    INFO [09-26|10:58:04.045] Freezer shutting down 
    INFO [09-26|10:58:04.047] Set global gas cap                       cap=50,000,000
    INFO [09-26|10:58:04.047] Initializing the KZG library             backend=gokzg
    INFO [09-26|10:58:04.077] Using pebble as the backing database 
-   INFO [09-26|10:58:04.077] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/chaindata cache=16.00MiB  handles=16
-   INFO [09-26|10:58:04.088] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/chaindata/ancient/chain readonly=false
+   INFO [09-26|10:58:04.077] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/chaindata cache=16.00MiB  handles=16
+   INFO [09-26|10:58:04.088] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/chaindata/ancient/chain readonly=false
    INFO [09-26|10:58:04.088] State schema set to default              scheme=hash
    INFO [09-26|10:58:04.088] Writing custom genesis block 
    INFO [09-26|10:58:04.089] Persisted trie from memory database      nodes=3 size=411.00B time="879.578µs" gcnodes=0 gcsize=0.00B gctime=0s livenodes=0 livesize=0.00B
    INFO [09-26|10:58:04.100] Successfully wrote genesis state         database=chaindata hash=70ce01..8d4317
    INFO [09-26|10:58:04.100] Defaulting to pebble as the backing database 
-   INFO [09-26|10:58:04.100] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/lightchaindata cache=16.00MiB  handles=16
-   INFO [09-26|10:58:04.119] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/lightchaindata/ancient/chain readonly=false
+   INFO [09-26|10:58:04.100] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/lightchaindata cache=16.00MiB  handles=16
+   INFO [09-26|10:58:04.119] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/lightchaindata/ancient/chain readonly=false
    INFO [09-26|10:58:04.119] State schema set to default              scheme=hash
    INFO [09-26|10:58:04.119] Writing custom genesis block 
    INFO [09-26|10:58:04.120] Persisted trie from memory database      nodes=3 size=411.00B time="692.049µs" gcnodes=0 gcsize=0.00B gctime=0s livenodes=0 livesize=0.00B
@@ -73,15 +73,15 @@ based on the specifications mentioned above:
    INFO [09-26|10:58:04.348] Maximum peer count                       ETH=50 LES=0 total=50
    INFO [09-26|10:58:04.349] Smartcard socket not found, disabling    err="stat /run/pcscd/pcscd.comm: no such file or directory"
    INFO [09-26|10:58:04.351] Using pebble as the backing database 
-   INFO [09-26|10:58:04.351] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/chaindata cache=512.00MiB handles=2048
-   INFO [09-26|10:58:04.351] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/chaindata/ancient/chain readonly=true
+   INFO [09-26|10:58:04.351] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/chaindata cache=512.00MiB handles=2048
+   INFO [09-26|10:58:04.351] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/chaindata/ancient/chain readonly=true
    INFO [09-26|10:58:04.352] State scheme set to already existing     scheme=hash
    INFO [09-26|10:58:04.352] Set global gas cap                       cap=50,000,000
    INFO [09-26|10:58:04.352] Initializing the KZG library             backend=gokzg
    INFO [09-26|10:58:04.406] Allocated trie memory caches             clean=154.00MiB dirty=256.00MiB
    INFO [09-26|10:58:04.406] Using pebble as the backing database 
-   INFO [09-26|10:58:04.406] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/chaindata cache=512.00MiB handles=2048
-   INFO [09-26|10:58:04.416] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/chaindata/ancient/chain readonly=false
+   INFO [09-26|10:58:04.406] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/chaindata cache=512.00MiB handles=2048
+   INFO [09-26|10:58:04.416] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/chaindata/ancient/chain readonly=false
    INFO [09-26|10:58:04.416] Initialising Ethereum protocol           network=2,309,242,216 dbversion=<nil>
    INFO [09-26|10:58:04.418]  
    INFO [09-26|10:58:04.418] --------------------------------------------------------------------------------------------------------------------------------------------------------- 
@@ -124,8 +124,8 @@ based on the specifications mentioned above:
    INFO [09-26|10:58:04.440] Stored checkpoint snapshot to disk       number=0 hash=70ce01..8d4317
    INFO [09-26|10:58:04.511] New local node record                    seq=1,695,715,084,511 id=dcde4c3bacc6934f ip=127.0.0.1 udp=30306 tcp=30306
    INFO [09-26|10:58:04.512] Started P2P networking                   self=enode://ea80ec1bd9241833d6738d919d89a31bedeb9e65cc47018516e8a75f859d601f6431be5980a284be914ce739c33a5eaaa38b09e8c2d653fc09744ed83e37a050@127.0.0.1:30306
-   INFO [09-26|10:58:04.512] IPC endpoint opened                      url=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth.ipc
-   INFO [09-26|10:58:04.512] Generated JWT secret                     path=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node1/geth/jwtsecret
+   INFO [09-26|10:58:04.512] IPC endpoint opened                      url=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth.ipc
+   INFO [09-26|10:58:04.512] Generated JWT secret                     path=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node1/geth/jwtsecret
    INFO [09-26|10:58:04.513] WebSocket enabled                        url=ws://127.0.0.1:8552
    INFO [09-26|10:58:04.513] HTTP server started                      endpoint=127.0.0.1:8552 auth=true prefix= cors=localhost vhosts=localhost
    INFO [09-26|10:58:05.251] Unlocked account                         address=0x625eAFa3473492007C0dD331E23B1035f6a7FB64
@@ -164,15 +164,15 @@ based on the specifications mentioned above:
    INFO [09-26|10:58:04.345] Maximum peer count                       ETH=50 LES=0 total=50
    INFO [09-26|10:58:04.346] Smartcard socket not found, disabling    err="stat /run/pcscd/pcscd.comm: no such file or directory"
    INFO [09-26|10:58:04.347] Using pebble as the backing database 
-   INFO [09-26|10:58:04.348] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node2/geth/chaindata cache=512.00MiB handles=2048
-   INFO [09-26|10:58:04.348] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node2/geth/chaindata/ancient/chain readonly=true
+   INFO [09-26|10:58:04.348] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node2/geth/chaindata cache=512.00MiB handles=2048
+   INFO [09-26|10:58:04.348] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node2/geth/chaindata/ancient/chain readonly=true
    INFO [09-26|10:58:04.348] State scheme set to already existing     scheme=hash
    INFO [09-26|10:58:04.348] Set global gas cap                       cap=50,000,000
    INFO [09-26|10:58:04.349] Initializing the KZG library             backend=gokzg
    INFO [09-26|10:58:04.400] Allocated trie memory caches             clean=154.00MiB dirty=256.00MiB
    INFO [09-26|10:58:04.400] Using pebble as the backing database 
-   INFO [09-26|10:58:04.400] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node2/geth/chaindata cache=512.00MiB handles=2048
-   INFO [09-26|10:58:04.408] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node2/geth/chaindata/ancient/chain readonly=false
+   INFO [09-26|10:58:04.400] Allocated cache and file handles         database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node2/geth/chaindata cache=512.00MiB handles=2048
+   INFO [09-26|10:58:04.408] Opened ancient database                  database=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node2/geth/chaindata/ancient/chain readonly=false
    INFO [09-26|10:58:04.408] Initialising Ethereum protocol           network=2,309,242,216 dbversion=<nil>
    INFO [09-26|10:58:04.410]  
    INFO [09-26|10:58:04.410] --------------------------------------------------------------------------------------------------------------------------------------------------------- 
@@ -215,8 +215,8 @@ based on the specifications mentioned above:
    INFO [09-26|10:58:04.428] Stored checkpoint snapshot to disk       number=0 hash=70ce01..8d4317
    INFO [09-26|10:58:04.464] New local node record                    seq=1,695,715,084,464 id=997395d56a658731 ip=127.0.0.1 udp=30307 tcp=30307
    INFO [09-26|10:58:04.465] Started P2P networking                   self=enode://4670b6104e5a3bcacf40d64bbf922ca6ad8bb7a06c5b511e354cd1fc00325b4602420a222fe1e338c97724f3a1fb795532aaabc10af30b6a87c9d252be08034a@127.0.0.1:30307
-   INFO [09-26|10:58:04.465] IPC endpoint opened                      url=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node2/geth.ipc
-   INFO [09-26|10:58:04.465] Generated JWT secret                     path=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/node2/geth/jwtsecret
+   INFO [09-26|10:58:04.465] IPC endpoint opened                      url=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node2/geth.ipc
+   INFO [09-26|10:58:04.465] Generated JWT secret                     path=/home/anna/Documents/GitProjects/bane-labs/go-ethereum/privnet/single/node2/geth/jwtsecret
    INFO [09-26|10:58:04.466] WebSocket enabled                        url=ws://127.0.0.1:8553
    INFO [09-26|10:58:04.466] HTTP server started                      endpoint=127.0.0.1:8553 auth=true prefix= cors=localhost vhosts=localhost
    INFO [09-26|10:58:05.192] Unlocked account                         address=0x745c8f1AF649651f46DcAEc2C6EB94068843AE96
@@ -305,7 +305,7 @@ based on the specifications mentioned above:
 While privnet is started, it is now possible to attach a Javascript console 
 to either node to query the network properties:
 ```
-./build/bin/geth attach privnet/node1/geth.ipc
+./build/bin/geth attach privnet/single/node1/geth.ipc
 ```
 Once the Javascript console is running, check that the node is connected 
 to one other peer. It should be equal 1.
@@ -330,18 +330,18 @@ gas: 30000
 });
 ```
 
-# Reinitialize privnet
+## Reinitialize privnet
 
 Privnet configuration includes a set of solid files containing network settings and
 nodes accounts/passwords. To simplify development process, it is supposed not to
 change these configuration files from run to run to keep the privnet as stable
 as possible in development environment. However, it's possible to reinitialize
 all configuration information if needed. Privnet reinitialization includes:
- * Node accounts/passwords regeneration (`privnet/node[1,2]/node_address.txt`,
-   `privnet/node[1,2]/password.txt`, `privnet/node[1,2]/keystore`, `privnet/bootnode/bootnode.key`, `privnet/bootnode/bootnode_address.txt`);
- * Network ID regeneration (`privnet/networkid.txt`);
- * Genesis block settings regeneration (`privnet/node[1,2]/genesis_privnet.json`);
- * Corresponding network configuration file update (`privnet/config.json`).
+ * Node accounts/passwords regeneration (`privnet/single/node[1,2]/node_address.txt`,
+   `privnet/single/node[1,2]/password.txt`, `privnet/single/node[1,2]/keystore`, `privnet/single/bootnode/bootnode.key`, `privnet/single/bootnode/bootnode_address.txt`);
+ * Network ID regeneration (`privnet/single/networkid.txt`);
+ * Genesis block settings regeneration (`privnet/single/node[1,2]/genesis_privnet.json`);
+ * Corresponding network configuration file update (`privnet/single/config.json`).
 
 Note, that the reinitialisation operation is not supposed to be used during
 standard development flow. To reinitialize the entire private network, please
@@ -369,7 +369,7 @@ follow the steps below:
    Your new key was generated
    
    Public address of the key:   0x9F32FE98fFe189139500Fa10b7A42bD384F3dd19
-   Path of the secret key file: privnet/node1/keystore/UTC--2023-09-26T10-57-21.036319562Z--9f32fe98ffe189139500fa10b7a42bd384f3dd19
+   Path of the secret key file: privnet/single/node1/keystore/UTC--2023-09-26T10-57-21.036319562Z--9f32fe98ffe189139500fa10b7a42bd384f3dd19
    
    - You can share your public address with anyone. Others need it to interact with you.
    - You must NEVER share the secret key with anyone! The key controls access to your funds!
@@ -383,7 +383,7 @@ follow the steps below:
    Your new key was generated
    
    Public address of the key:   0xD44cB7Ecf44C3878DD1028FD658501427Bd2728D
-   Path of the secret key file: privnet/node2/keystore/UTC--2023-09-26T10-57-22.284551374Z--d44cb7ecf44c3878dd1028fd658501427bd2728d
+   Path of the secret key file: privnet/single/node2/keystore/UTC--2023-09-26T10-57-22.284551374Z--d44cb7ecf44c3878dd1028fd658501427bd2728d
    
    - You can share your public address with anyone. Others need it to interact with you.
    - You must NEVER share the secret key with anyone! The key controls access to your funds!
@@ -397,3 +397,13 @@ follow the steps below:
    </details>
 
 2. Commit changes.
+
+## Privnet setups
+
+There are several configurations of privnet:
+1. Single consensus (AKA miner) node + one non-miner RPC node. Can be run with `make privnet_start` and stopped with `make privnet_stop`.
+2. Four consensus nodes + one PPC node. Can be run with `make privnet_start_four` and stopped with `make privnet_stop`.
+3. Seven consensus nodes + one RPC node. Can be run with `make privnet_start_seven` and stopped with `make privnet_stop`.
+
+Node's databases, accounts and logs can be found in the setup-specific path, i.e. `./privnet/single/node[1,2]` for single-node consensus setup,
+`./privnet/four/node[1-5]` for four-nodes consensus setup and `./privnet/seven/node[1-8]` for seven-node consensus setup.
