@@ -1345,9 +1345,11 @@ func (c *DBFT) newPayload(ctx *dbft.Context, t payload.MessageType, msg any) pay
 func (c *DBFT) handleChainBlock(b *types.Block) {
 	// We can get our own block here, so check for index.
 	if uint32(b.Number().Uint64()) >= c.dbft.BlockIndex {
-		log.Debug("new block in the chain",
+		log.Info("New block in the chain",
 			"dbft index", c.dbft.BlockIndex,
-			"chain index", c.chain.CurrentHeader().Number.Uint64())
+			"chain index", c.chain.CurrentHeader().Number.Uint64(),
+			"hash", b.Hash().String(),
+			"parent hash", b.ParentHash().String())
 		c.postBlock(b)
 		// No dBFT initialisation, leave this to Seal, as we don't have new proposal here anyway.
 	}
