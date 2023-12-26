@@ -1186,6 +1186,20 @@ events:
 				"err", err.Error())
 			break events
 		}
+		// Always process block event if there is any, we can add one above or external
+		// services can add several blocks during message processing.
+		var latestBlock core.ChainHeadEvent
+	syncLoop:
+		for {
+			select {
+			case latestBlock = <-c.chainHeadEvents:
+			default:
+				break syncLoop
+			}
+		}
+		if latestBlock.Block != nil {
+			c.handleChainBlock(latestBlock.Block)
+		}
 		newView := c.dbft.ViewNumber
 		// If ChangeView has happened, we always need to wait for the new proposal
 		// from miner.
@@ -1201,20 +1215,6 @@ events:
 				"index", c.dbft.Context.BlockIndex,
 				"view", newView,
 			)
-		}
-		// Always process block event if there is any, we can add one above or external
-		// services can add several blocks during message processing.
-		var latestBlock core.ChainHeadEvent
-	syncLoop:
-		for {
-			select {
-			case latestBlock = <-c.chainHeadEvents:
-			default:
-				break syncLoop
-			}
-		}
-		if latestBlock.Block != nil {
-			c.handleChainBlock(latestBlock.Block)
 		}
 	}
 drainLoop:
