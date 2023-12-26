@@ -1175,11 +1175,15 @@ events:
 			}
 		case b := <-c.chainHeadEvents:
 			c.handleChainBlock(b.Block)
-		case <-c.txSub.Err():
+		case err := <-c.txSub.Err():
 			// System has stopped.
+			log.Info("Stopping dBFT service since transaction subscriptions are stopped",
+				"err", err.Error())
 			break events
-		case <-c.chainHeadSub.Err():
+		case err := <-c.chainHeadSub.Err():
 			// System has stopped.
+			log.Info("Stopping dBFT service since block subscriptions are stopped",
+				"err", err.Error())
 			break events
 		}
 		newView := c.dbft.ViewNumber
