@@ -11,6 +11,7 @@ import (
 // ChainHeaderReader is a Blockchain API abstraction needed for proper dBFT work.
 type ChainHeaderReader interface {
 	consensus.ChainHeaderReader
+	CurrentBlock() *types.Header
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	HasBlock(hash common.Hash, number uint64) bool
 	GetBlockByNumber(uint64) *types.Block

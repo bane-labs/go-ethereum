@@ -1018,7 +1018,10 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chain = chain
 		c.blockQueue.chain = chain
 
-		currHeader := chain.CurrentHeader()
+		// Current head of the header chain may be above the block chain, whereas
+		// dBFT must always be based on the latest state data (i.e. blocks), exactly
+		// like miner does. Thus, retrieve current chain block to initialize context.
+		currHeader := chain.CurrentBlock()
 		c.lastIndex = currHeader.Number.Uint64()
 		c.lastTimestamp = currHeader.Time
 		c.lastBlockHash = currHeader.Hash()
@@ -1268,7 +1271,7 @@ func payloadFromMessage(ep *dbftproto.Message) *Payload {
 }
 
 func (c *DBFT) validatePayload(p *Payload) bool {
-	h := c.chain.CurrentHeader()
+	h := c.chain.CurrentBlock()
 	validators, err := c.getNextBlockValidators(h.Hash(), h.Number.Uint64(), false)
 	if err != nil {
 		return false
@@ -1301,7 +1304,7 @@ func (c *DBFT) handleChainBlock(b *types.Block) {
 	if uint32(b.Number().Uint64()) >= c.dbft.BlockIndex {
 		log.Info("New block in the chain",
 			"dbft index", c.dbft.BlockIndex,
-			"chain index", c.chain.CurrentHeader().Number.Uint64(),
+			"chain index", c.chain.CurrentBlock().Number.Uint64(),
 			"hash", b.Hash().String(),
 			"parent hash", b.ParentHash().String())
 		c.postBlock(b)
