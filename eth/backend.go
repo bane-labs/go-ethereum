@@ -488,7 +488,7 @@ func (s *Ethereum) StartMining() error {
 
 		go s.miner.Start()
 		if bft != nil {
-			bft.Start(s.blockchain)
+			go bft.Start(s.blockchain)
 		}
 	}
 	return nil
