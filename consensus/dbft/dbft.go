@@ -1084,8 +1084,12 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 
 	// And then retrieve proposal and check it.
 	b := lastProposal
-	if b.NumberU64() != c.lastIndex+1 {
-		return fmt.Errorf("stale sealing task: invalid Number: expected %d, got %d", c.lastIndex+1, b.NumberU64())
+	if b.NumberU64() > c.lastIndex+1 {
+		log.Info("New chain segment detected",
+			"dBFT latest block index", c.lastIndex,
+			"sealing proposal index", b.NumberU64())
+		ltstBlock := c.chain.GetBlockByNumber(b.NumberU64() - 1)
+		c.postBlock(ltstBlock)
 	}
 
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
