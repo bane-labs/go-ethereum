@@ -1188,13 +1188,19 @@ events:
 			c.handleChainBlock(b.Block)
 		case err := <-c.txSub.Err():
 			// System has stopped.
-			log.Info("Stopping dBFT service since transaction subscriptions are stopped",
-				"err", err.Error())
+			log.Info("Stopping dBFT service since transaction subscriptions are stopped")
+			if err != nil {
+				log.Info("Transaction subscriptions error",
+					"error", err.Error())
+			}
 			break events
 		case err := <-c.chainHeadSub.Err():
 			// System has stopped.
-			log.Info("Stopping dBFT service since block subscriptions are stopped",
-				"err", err.Error())
+			log.Info("Stopping dBFT service since block subscriptions are stopped")
+			if err != nil {
+				log.Info("Block subscriptions error",
+					"error", err.Error())
+			}
 			break events
 		}
 		// Always process block event if there is any, we can add one above or external
@@ -1242,6 +1248,7 @@ drainLoop:
 	close(c.txEvents)
 	close(c.chainHeadEvents)
 	close(c.finished)
+	log.Info("dBFT service event loop finished")
 }
 
 // OnPayload handles Payload receive.
