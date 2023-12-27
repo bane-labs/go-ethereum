@@ -480,7 +480,6 @@ func (s *Ethereum) StartMining() error {
 			if bft != nil {
 				log.Info("initializing BFT consensus")
 				bft.Authorize(eb, wallet.SignData)
-				bft.Initialize(s.blockchain)
 			}
 		}
 		// If mining is started, we can disable the transaction rejection mechanism
@@ -488,6 +487,9 @@ func (s *Ethereum) StartMining() error {
 		s.handler.enableSyncedFeatures()
 
 		go s.miner.Start()
+		if bft != nil {
+			go bft.Start(s.blockchain)
+		}
 	}
 	return nil
 }

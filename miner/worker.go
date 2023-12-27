@@ -462,10 +462,8 @@ func (w *worker) newWorkLoop(recommit time.Duration) {
 			// If sealing is running resubmit a new work cycle periodically to pull in
 			// higher priced transactions. Disable this overhead for pending blocks.
 			if w.isRunning() && (w.chainConfig.Clique == nil || w.chainConfig.Clique.Period > 0) {
-				// Short circuit if no new transaction arrives except dBFT consensus. For
-				// dBFT we always need a fresh proposal with an updated block timestamp even
-				// if no new transactions received.
-				if w.newTxs.Load() == 0 && w.chainConfig.DBFT == nil {
+				// Short circuit if no new transaction arrives.
+				if w.newTxs.Load() == 0 {
 					timer.Reset(recommit)
 					continue
 				}
