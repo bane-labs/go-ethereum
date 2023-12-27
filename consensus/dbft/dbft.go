@@ -1018,10 +1018,11 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chain = chain
 		c.blockQueue.chain = chain
 
-		// Current head of the header chain may be above the block chain, whereas
-		// dBFT must always be based on the latest state data (i.e. blocks), exactly
-		// like miner does. Thus, retrieve current chain block to initialize context.
-		currHeader := chain.CurrentBlock()
+		// Current head of the header chain may be above the block chain, and
+		// dBFT must always be based on the latest state data (i.e. blocks), thus,
+		// retrieve current chain header to initialize context and wait until chain
+		// will recover and process blocks up to the known and most fresh header.
+		currHeader := chain.CurrentHeader()
 		c.lastIndex = currHeader.Number.Uint64()
 		c.lastTimestamp = currHeader.Time
 		c.lastBlockHash = currHeader.Hash()
