@@ -1060,6 +1060,9 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	c.lastProposal = b
 	c.lastProposalLock.Unlock()
 
+	sealHash := c.SealHash(b.Header())
+	c.blockQueue.SubmitTask(sealHash, b.NumberU64(), results, stop)
+
 	return nil
 }
 
