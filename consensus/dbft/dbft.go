@@ -201,6 +201,10 @@ type DBFT struct {
 	// about a new consensus payload to be sent.
 	broadcast func(m *dbftproto.Message) error
 
+	// requestTxs is a callback which is called to request the missing
+	// transactions from neighbor nodes.
+	requestTxs func(hashed []common.Hash)
+
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
 	chainHeadEvents chan core.ChainHeadEvent
@@ -465,6 +469,14 @@ func New(config *params.DBFTConfig, db ethdb.Database) (*DBFT, error) {
 			return res
 		}),
 		dbft.WithRequestTx(func(h ...util.Uint256) {
+			if len(h) == 0 {
+				return
+			}
+			hashes := make([]common.Hash, len(h))
+			for i := range h {
+				hashes = append(hashes, common.Hash(h[i]))
+			}
+			c.requestTxs(hashes)
 		}),
 		dbft.WithGetConsensusAddress(func(keys ...dbftCrypto.PublicKey) util.Uint160 {
 			// NextConsensus is filled manually in NewBlockFromContext.
@@ -605,6 +617,11 @@ func (c *DBFT) WithEthAPI(api *ethapi.BlockChainAPI) {
 // WithBroadcast sets callback to notify the caller about new consensus message.
 func (c *DBFT) WithBroadcast(f func(m *dbftproto.Message) error) {
 	c.broadcast = f
+}
+
+// WithRequestTxs sets callback to request the missing transactions from neighbor nodese.
+func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
+	c.requestTxs = f
 }
 
 // WithTxPool initializes transaction pool API for DBFT interactions with memory pool

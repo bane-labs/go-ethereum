@@ -53,6 +53,9 @@ const (
 	// All transactions with a higher size will be announced and need to be fetched
 	// by the peer.
 	txMaxBroadcastSize = 4096
+
+	// maxHashCount is the max count of hashes in one batch to RequestTxs
+	maxHashesCount = 500
 )
 
 var (
@@ -683,5 +686,32 @@ func (h *handler) enableSyncedFeatures() {
 	h.acceptTxs.Store(true)
 	if h.chain.TrieDB().Scheme() == rawdb.PathScheme {
 		h.chain.TrieDB().SetBufferSize(pathdb.DefaultBufferSize)
+	}
+}
+
+// BroadcastRequestTxs will send GetPooledTransactionsMsg to neighbor peers
+func (h *handler) BroadcastRequestTxs(txHashes []common.Hash) {
+	if len(txHashes) == 0 {
+		return
+	}
+	peers := h.peers.allPeers()
+	for i := 0; i <= len(txHashes)/maxHashesCount; i++ {
+		start := i * maxHashesCount
+		stop := (i + 1) * maxHashesCount
+		if stop > len(txHashes) {
+			stop = len(txHashes)
+		}
+		if start == stop {
+			break
+		}
+		// Broadcast RequestTxs
+		for _, peer := range peers {
+			err := peer.RequestTxs(txHashes)
+			if err != nil {
+				log.Error("BroadcastRequestTxs", "txHashes", txHashes,
+					"peer", peer.ID(),
+					"error", err)
+			}
+		}
 	}
 }
