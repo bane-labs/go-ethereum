@@ -15,6 +15,7 @@ type ChainHeaderReader interface {
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	HasBlock(hash common.Hash, number uint64) bool
 	GetBlockByNumber(uint64) *types.Block
+	VerifyBlock(block *types.Block) error
 }
 
 // ChainHeaderWriter is a Blockchain API abstraction needed for proper blockQueue
