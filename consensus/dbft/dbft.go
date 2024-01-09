@@ -508,6 +508,24 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			return nil
 		}),
+		dbft.WithVerifyBlock(func(b block.Block) bool {
+			ethBlock, ok := b.(*Block)
+			if !ok {
+				return false
+			}
+
+			res := types.NewBlockWithHeader(ethBlock.header)
+			// Uncles are always nil in dBFT-like consensus.
+			res = res.WithBody(ethBlock.transactions, nil)
+
+			err := c.chain.VerifyBlock(res)
+			if err != nil {
+				err = fmt.Errorf("VerifyBlock failed: %w", err)
+				log.Warn(err.Error())
+				return false
+			}
+			return true
+		}),
 		dbft.WithBroadcast(func(p payload.ConsensusPayload) {
 			if err := p.(*Payload).Sign(c.dbft.Priv.(*Signer)); err != nil {
 				log.Warn("can't sign consensus payload", "error", err)

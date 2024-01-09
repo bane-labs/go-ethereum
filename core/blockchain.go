@@ -2605,3 +2605,21 @@ func (bc *BlockChain) SetTrieFlushInterval(interval time.Duration) {
 func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 	return time.Duration(bc.flushInterval.Load())
 }
+
+// VerifyBlock checks block state
+func (bc *BlockChain) VerifyBlock(block *types.Block) error {
+	parent := bc.GetBlockByHash(block.ParentHash())
+	statedb, err := bc.StateAt(parent.Root())
+	if err != nil {
+		return err
+	}
+
+	receipts, _, usedGas, err := bc.processor.Process(block, statedb, bc.vmConfig)
+	if err != nil {
+		return err
+	}
+	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
+		return err
+	}
+	return nil
+}
