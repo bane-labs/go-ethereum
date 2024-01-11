@@ -26,7 +26,6 @@ import (
 	"io"
 	"math"
 	"math/big"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -415,6 +414,13 @@ func New(config *params.DBFTConfig, db ethdb.Database) (*DBFT, error) {
 			// PrimaryIndex -> Nonce
 			binary.BigEndian.PutUint64(h.Nonce[:], uint64(ctx.PrimaryIndex))
 
+			// PrimaryAddress -> Coinbase
+			// TODO: @roman-khimov, @chenquanyu we need to decide about this: do we need a
+			// custom address corresponding to every consensus node to be set as Coinbase
+			// or it's OK to have the consensus node address itself be set as Coinbase?
+			// Currently, the second option is implemented.
+			h.Coinbase = ctx.Validators[ctx.PrimaryIndex].(*PublicKey).Account
+
 			// NextConsensus -> MixHash
 			nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true) // always compute as it's NextConsensus.
 			if err != nil {
@@ -695,11 +701,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if header.Time > uint64(time.Now().Unix()) {
 		return consensus.ErrFutureBlock
 	}
-	// Checkpoint blocks need to enforce zero beneficiary
-	checkpoint := (number % c.epoch) == 0
-	if checkpoint && header.Coinbase != (common.Address{}) {
-		return errInvalidCheckpointBeneficiary
-	}
+
 	// Nonces contain Primary index, so it's not required for them to be 0x00..0
 	// ([nonceAuthVote]) or 0xff..f ([nonceDropVote]), thus, skip Nonce check.
 	// It's not bound to checkpoint anymore.
@@ -713,7 +715,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if len(header.Extra) < extraVanity+sigBytesLen {
 		return errMissingSignature
 	}
-	// Ensure that the extra-data contains a signer list on checkpoint, but none otherwise
+	// Ensure that the extra-data contains validators list.
 	signersBytes := len(header.Extra) - extraVanity - sigBytesLen
 	if signersBytes == 0 {
 		return fmt.Errorf("missing validators addresses")
@@ -901,6 +903,12 @@ func (c *DBFT) verifySeal(snap *Snapshot, header *types.Header, parents []*types
 	if err != nil {
 		return fmt.Errorf("invalid Extra: %w", err)
 	}
+
+	// Ensure Primary address is set according to Primary index.
+	if header.Coinbase != vals[header.Primary()] {
+		return fmt.Errorf("invalid Coinbase: declared %s, aactual %s", header.Coinbase.String(), vals[header.Primary()].String())
+	}
+
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
 	if !c.fakeDiff {
 		signer := vals[header.Primary()]
@@ -935,37 +943,20 @@ func (c *DBFT) verifyExtra(sealHash common.Hash, extra []byte, parentNextConsens
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
-	// If the block isn't a checkpoint, cast a random vote (good enough for now)
+	// Coinbase (primary) and Nonce (primary index) will be filled during consensus process,
+	// leave them empty for now.
 	header.Coinbase = common.Address{}
 	header.Nonce = types.BlockNonce{}
 
 	number := header.Number.Uint64()
-	// Assemble the voting snapshot to check which votes make sense
+	// Assemble the voting snapshot to calculate difficulty.
 	snap, err := c.snapshot(chain, number-1, header.ParentHash, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create snapshot for voting calculations: %w", err)
-	}
-	c.lock.RLock()
-	if number%c.epoch != 0 {
-		// Gather all the proposals that make sense voting on
-		addresses := make([]common.Address, 0, len(c.proposals))
-		for address, authorize := range c.proposals {
-			if snap.validVote(address, authorize) {
-				addresses = append(addresses, address)
-			}
-		}
-		// If there's pending proposals, cast a vote on them
-		if len(addresses) > 0 {
-			header.Coinbase = addresses[rand.Intn(len(addresses))]
-			if c.proposals[header.Coinbase] {
-				copy(header.Nonce[:], nonceAuthVote)
-			} else {
-				copy(header.Nonce[:], nonceDropVote)
-			}
-		}
+		return fmt.Errorf("failed to create snapshot for difficulty calculations: %w", err)
 	}
 
 	// Copy signer protected by mutex to avoid race condition
+	c.lock.RLock()
 	signer := c.signer
 	c.lock.RUnlock()
 
@@ -1389,13 +1380,12 @@ func WorkerSealHash(header *types.Header) (hash common.Hash) {
 }
 
 // encodeUnchangeableHeader encodes those header fields that won't be changed by
-// dBFT during block sealing: every header field except MixDigest, Nonce and last
-// [crypto.SignatureLength] bytes of Extra.
+// dBFT during block sealing: every header field except MixDigest, Nonce, Coinbase
+// and last [crypto.SignatureLength] bytes of Extra.
 func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 	enc := []interface{}{
 		header.ParentHash,
 		header.UncleHash,
-		header.Coinbase,
 		header.Root,
 		header.TxHash,
 		header.ReceiptHash,
