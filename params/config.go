@@ -359,7 +359,6 @@ func (c *CliqueConfig) String() string {
 type DBFTConfig struct {
 	SecondsPerBlock   uint64           `json:"period"`            // Number of seconds between blocks to enforce
 	StandByValidators []common.Address `json:"standbyValidators"` // Stand by validators.
-	ValidatorsCount   uint32           `json:"validatorsCount"`
 }
 
 // String implements the stringer interface, returning the consensus engine details.
