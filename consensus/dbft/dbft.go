@@ -299,10 +299,6 @@ func New(config *params.DBFTConfig, db ethdb.Database) (*DBFT, error) {
 
 		quit:     make(chan struct{}),
 		finished: make(chan struct{}),
-
-		// Temporary omit difficulty checks, as currently we don't have proper mapping from
-		// dBFT primary to difficulty calculations.
-		fakeDiff: true,
 	}
 
 	logger, _ := zap.NewDevelopment()
