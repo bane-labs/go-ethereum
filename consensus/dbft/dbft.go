@@ -652,13 +652,29 @@ func (c *DBFT) postBlock(b *types.Block) {
 }
 
 // Author implements consensus.Engine, returning the Ethereum address recovered
-// from the signature in the header's extra-data section.
+// from the header's Coinbase.
 func (c *DBFT) Author(header *types.Header) (common.Address, error) {
-	vals, _, err := getSignersAndSigs(c.config, header.Extra)
-	if err != nil {
-		return common.Address{}, fmt.Errorf("failed to retrieve validators addresses and signatures from header: %w", err)
-	}
-	return vals[header.Primary()], nil
+	// TODO: we must agree on this with @roman-khimov and @chenquanyu. Block author
+	// must be defined by the moment of WithVerifyBlock dBFT callback call, thus,
+	// can't depend on changeable block's Extra field. At the same time, block author
+	// must correspond to miner.etherbase setting used to run node for proper block
+	// verification and reward distribution. From my POW, we have two options to
+	// provide these constraints:
+	// 1. For each consensus node, in the node config enforce miner.etherbase be
+	//    a corresponding consensus node address, make different miner.etherbase
+	//    no-op for DBFT engine. Then, miner will submit task with coinbase (that's
+	//    the same as miner.coinbase) to dBFT and dBFT will manage coinbase internally
+	//    and set it to the Primary of the current dBFT round. WithNewBlockFromContext
+	//    will provide this. Given this fact, Coinbase is always the address of Primary
+	//    that was the block's author or the accepted block at the current height. And
+	//    then Coinbase then can be used for reward calculations.
+	// 2. If Coinbase is expected to have another meaning (i.e. it's expected to be
+	//    some side address), then we must share the rules of Coinbase detection between
+	//    consensus nodes. In this case we need to decide what's the desired meaning of Coinbase.
+	//
+	// Currently option 1 is implemented, but without enforced miner.etherbase check. Please,
+	// write your thoughts on this.
+	return header.Coinbase, nil
 }
 
 // VerifyHeader checks whether a header conforms to the consensus rules.
