@@ -81,6 +81,7 @@ var (
 
 	uncleHash = types.CalcUncleHash(nil) // Always Keccak256(RLP([])) as uncles are meaningless outside of PoW.
 
+	diffStub   = big.NewInt(3) // Block difficulty stub that is used for miner's task preparation.
 	diffInTurn = big.NewInt(2) // Block difficulty for in-turn signatures
 	diffNoTurn = big.NewInt(1) // Block difficulty for out-of-turn signatures
 )
@@ -957,11 +958,14 @@ func (c *DBFT) verifyExtra(sealHash common.Hash, extra []byte, parentNextConsens
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
-	// Coinbase (primary), Nonce (primary index) and Difficulty (depends on Primary in-turn)
-	// will be filled during consensus process, leave them empty for now.
+	// Coinbase (primary) and Nonce (primary index) will be filled during consensus
+	// process, leave them empty for now.
 	header.Coinbase = common.Address{}
 	header.Nonce = types.BlockNonce{}
-	header.Difficulty = nil
+
+	// Use difficulty stub to let the Beacon engine know that sealing task should be handled
+	// by PoA engine. This stub will be overridden during further dBFT process anyway.
+	header.Difficulty = diffStub
 
 	// Ensure the extra data has all its components
 	if len(header.Extra) < extraVanity {
