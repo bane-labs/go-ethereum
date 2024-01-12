@@ -421,6 +421,8 @@ func New(config *params.DBFTConfig, db ethdb.Database) (*DBFT, error) {
 			// Currently, the second option is implemented.
 			h.Coinbase = ctx.Validators[ctx.PrimaryIndex].(*PublicKey).Account
 
+			h.Difficulty = c.getDifficulty(int(ctx.PrimaryIndex), uint64(ctx.BlockIndex))
+
 			// NextConsensus -> MixHash
 			nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true) // always compute as it's NextConsensus.
 			if err != nil {
@@ -927,8 +929,7 @@ func (c *DBFT) verifySeal(snap *Snapshot, header *types.Header, parents []*types
 
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
 	if !c.fakeDiff {
-		signer := vals[header.Primary()]
-		inturn := snap.inturn(header.Number.Uint64(), signer)
+		inturn := c.inturn(header.Primary(), header.Number.Uint64())
 		if inturn && header.Difficulty.Cmp(diffInTurn) != 0 {
 			return errWrongDifficulty
 		}
@@ -937,6 +938,12 @@ func (c *DBFT) verifySeal(snap *Snapshot, header *types.Header, parents []*types
 		}
 	}
 	return nil
+}
+
+// inturn returns whether specified consensus node was the first designated dBFT
+// speaker for the specified block height.
+func (c *DBFT) inturn(validatorIndex byte, blockNum uint64) bool {
+	return blockNum%uint64(len(c.config.StandByValidators)) == uint64(validatorIndex)
 }
 
 func (c *DBFT) verifyExtra(sealHash common.Hash, extra []byte, parentNextConsensus common.Hash) ([]common.Address, error) {
@@ -959,25 +966,11 @@ func (c *DBFT) verifyExtra(sealHash common.Hash, extra []byte, parentNextConsens
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
-	// Coinbase (primary) and Nonce (primary index) will be filled during consensus process,
-	// leave them empty for now.
+	// Coinbase (primary), Nonce (primary index) and Difficulty (depends on Primary in-turn)
+	// will be filled during consensus process, leave them empty for now.
 	header.Coinbase = common.Address{}
 	header.Nonce = types.BlockNonce{}
-
-	number := header.Number.Uint64()
-	// Assemble the voting snapshot to calculate difficulty.
-	snap, err := c.snapshot(chain, number-1, header.ParentHash, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create snapshot for difficulty calculations: %w", err)
-	}
-
-	// Copy signer protected by mutex to avoid race condition
-	c.lock.RLock()
-	signer := c.signer
-	c.lock.RUnlock()
-
-	// Set the correct difficulty
-	header.Difficulty = calcDifficulty(snap, signer)
+	header.Difficulty = nil
 
 	// Ensure the extra data has all its components
 	if len(header.Extra) < extraVanity {
@@ -993,7 +986,7 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	header.MixDigest = common.Hash{}
 
 	// Ensure the timestamp has the correct delay
-	parent := chain.GetHeader(header.ParentHash, number-1)
+	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
@@ -1355,22 +1348,36 @@ func (c *DBFT) handleChainBlock(b *types.Block) {
 }
 
 // CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
-// that a new block should have:
+// that a new block should have assuming that the authorized node will be a speaker
+// in the consensus round when the new block is accepted. And thus, the returned
+// value may be different from the actual new block difficulty. The difficulty
+// adjustment algorithm is the following:
 // * DIFF_NOTURN(2) if BLOCK_NUMBER % SIGNER_COUNT != SIGNER_INDEX
 // * DIFF_INTURN(1) if BLOCK_NUMBER % SIGNER_COUNT == SIGNER_INDEX
 func (c *DBFT) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
-	snap, err := c.snapshot(chain, parent.Number.Uint64(), parent.Hash(), nil)
-	if err != nil {
-		return nil
-	}
 	c.lock.RLock()
 	signer := c.signer
 	c.lock.RUnlock()
-	return calcDifficulty(snap, signer)
+	return c.calcDifficulty(signer, parent)
 }
 
-func calcDifficulty(snap *Snapshot, signer common.Address) *big.Int {
-	if snap.inturn(snap.Number+1, signer) {
+func (c *DBFT) calcDifficulty(signer common.Address, parent *types.Header) *big.Int {
+	vals, err := c.getNextBlockValidators(parent.Hash(), parent.Number.Uint64(), false)
+	if err != nil {
+		return nil
+	}
+	var signerIdx = -1
+	for i, v := range vals {
+		if v == signer {
+			signerIdx = i
+			break
+		}
+	}
+	return c.getDifficulty(signerIdx, parent.Number.Uint64()+1)
+}
+
+func (c *DBFT) getDifficulty(signerIdx int, blockNum uint64) *big.Int {
+	if signerIdx != -1 && c.inturn(byte(signerIdx), blockNum) {
 		return new(big.Int).Set(diffInTurn)
 	}
 	return new(big.Int).Set(diffNoTurn)
@@ -1406,7 +1413,6 @@ func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 		header.TxHash,
 		header.ReceiptHash,
 		header.Bloom,
-		header.Difficulty,
 		header.Number,
 		header.GasLimit,
 		header.GasUsed,
