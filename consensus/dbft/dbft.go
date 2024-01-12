@@ -355,7 +355,7 @@ func New(config *params.DBFTConfig, db ethdb.Database) (*DBFT, error) {
 			// callback. Thus, leave pKeys empty if txes != nil.
 			if err != nil {
 				// Program bug.
-				panic(fmt.Errorf("failed to create snapshot while retrieving Validators: %w", err))
+				panic(fmt.Errorf("failed to retrieve next block validators: %w", err))
 			}
 			res := make([]dbftCrypto.PublicKey, len(pKeys))
 			for i, s := range pKeys {
@@ -804,13 +804,8 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 		// Verify the header's EIP-1559 attributes.
 		return err
 	}
-	// Retrieve the snapshot needed to verify this header and cache it
-	snap, err := c.snapshot(chain, number-1, header.ParentHash, parents)
-	if err != nil {
-		return err
-	}
 	// All basic checks passed, verify the seal and return
-	return c.verifySeal(snap, header, parents, parent)
+	return c.verifySeal(header, parents, parent)
 }
 
 // snapshot retrieves the authorization snapshot at a given point in time.
@@ -907,7 +902,7 @@ func (c *DBFT) VerifyUncles(chain consensus.ChainReader, block *types.Block) err
 // consensus protocol requirements. The method accepts an optional list of parent
 // headers that aren't yet part of the local blockchain to generate the snapshots
 // from.
-func (c *DBFT) verifySeal(snap *Snapshot, header *types.Header, parents []*types.Header, parent *types.Header) error {
+func (c *DBFT) verifySeal(header *types.Header, parents []*types.Header, parent *types.Header) error {
 	// Verifying the genesis block is not supported
 	number := header.Number.Uint64()
 	if number == 0 {
