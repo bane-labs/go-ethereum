@@ -411,13 +411,6 @@ func New(config *params.DBFTConfig, db ethdb.Database) (*DBFT, error) {
 			// PrimaryIndex -> Nonce
 			binary.BigEndian.PutUint64(h.Nonce[:], uint64(ctx.PrimaryIndex))
 
-			// PrimaryAddress -> Coinbase
-			// TODO: @roman-khimov, @chenquanyu we need to decide about this: do we need a
-			// custom address corresponding to every consensus node to be set as Coinbase
-			// or it's OK to have the consensus node address itself be set as Coinbase?
-			// Currently, the second option is implemented.
-			h.Coinbase = ctx.Validators[ctx.PrimaryIndex].(*PublicKey).Account
-
 			h.Difficulty = c.getDifficulty(int(ctx.PrimaryIndex), uint64(ctx.BlockIndex))
 
 			// NextConsensus -> MixHash
@@ -651,28 +644,10 @@ func (c *DBFT) postBlock(b *types.Block) {
 }
 
 // Author implements consensus.Engine, returning the Ethereum address recovered
-// from the header's Coinbase.
+// from the header's Coinbase. Engine API expects Author to be the address to send
+// reward for in-block transactions to, and thus, Author differs from the Primary
+// node that actually was the block's author.
 func (c *DBFT) Author(header *types.Header) (common.Address, error) {
-	// TODO: we must agree on this with @roman-khimov and @chenquanyu. Block author
-	// must be defined by the moment of WithVerifyBlock dBFT callback call, thus,
-	// can't depend on changeable block's Extra field. At the same time, block author
-	// must correspond to miner.etherbase setting used to run node for proper block
-	// verification and reward distribution. From my POW, we have two options to
-	// provide these constraints:
-	// 1. For each consensus node, in the node config enforce miner.etherbase be
-	//    a corresponding consensus node address, make different miner.etherbase
-	//    no-op for DBFT engine. Then, miner will submit task with coinbase (that's
-	//    the same as miner.coinbase) to dBFT and dBFT will manage coinbase internally
-	//    and set it to the Primary of the current dBFT round. WithNewBlockFromContext
-	//    will provide this. Given this fact, Coinbase is always the address of Primary
-	//    that was the block's author or the accepted block at the current height. And
-	//    then Coinbase then can be used for reward calculations.
-	// 2. If Coinbase is expected to have another meaning (i.e. it's expected to be
-	//    some side address), then we must share the rules of Coinbase detection between
-	//    consensus nodes. In this case we need to decide what's the desired meaning of Coinbase.
-	//
-	// Currently option 1 is implemented, but without enforced miner.etherbase check. Please,
-	// write your thoughts on this.
 	return header.Coinbase, nil
 }
 
@@ -805,6 +780,10 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 		// Verify the header's EIP-1559 attributes.
 		return err
 	}
+	// TODO: ensure Coinbase is valid. If Coinbase is a Governance (or some other) contract, then ensure that
+	// Coinbase matches the contract address. If it's a validator address, then ensure Coinbase matches the
+	// Speaker address for the corresponding PrimaryIndex.
+
 	// All basic checks passed, verify the seal and return
 	return c.verifySeal(header, parents, parent)
 }
@@ -909,14 +888,9 @@ func (c *DBFT) verifySeal(header *types.Header, parents []*types.Header, parent 
 	if number == 0 {
 		return errUnknownBlock
 	}
-	vals, err := c.verifyExtra(HonestSealHash(header), header.Extra, parent.NextConsensus())
+	_, err := c.verifyExtra(HonestSealHash(header), header.Extra, parent.NextConsensus())
 	if err != nil {
 		return fmt.Errorf("invalid Extra: %w", err)
-	}
-
-	// Ensure Primary address is set according to Primary index.
-	if header.Coinbase != vals[header.Primary()] {
-		return fmt.Errorf("invalid Coinbase: declared %s, aactual %s", header.Coinbase.String(), vals[header.Primary()].String())
 	}
 
 	// Ensure that the difficulty corresponds to the turn-ness of the signer
@@ -958,9 +932,8 @@ func (c *DBFT) verifyExtra(sealHash common.Hash, extra []byte, parentNextConsens
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
-	// Coinbase (primary) and Nonce (primary index) will be filled during consensus
-	// process, leave them empty for now.
-	header.Coinbase = common.Address{}
+	// Nonce (primary index) will be filled during consensus process, leave it empty
+	// for now.
 	header.Nonce = types.BlockNonce{}
 
 	// Use difficulty stub to let the Beacon engine know that sealing task should be handled
@@ -1066,6 +1039,11 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 // Seal implements consensus.Engine, attempting to create a sealed block using
 // the local signing credentials.
 func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+	// Coinbase must be configured by miner and fetched from the node's config, do not change it.
+	if b.Coinbase().Cmp(common.Address{}) == 0 {
+		return errors.New("unexpected empty Coinbase in sealing task")
+	}
+
 	// Save proposal so that the most fresh data will be available for dBFT once
 	// the new block should be created.
 	c.lastProposalLock.Lock()
@@ -1398,12 +1376,13 @@ func WorkerSealHash(header *types.Header) (hash common.Hash) {
 }
 
 // encodeUnchangeableHeader encodes those header fields that won't be changed by
-// dBFT during block sealing: every header field except MixDigest, Nonce, Coinbase
+// dBFT during block sealing: every header field except MixDigest, Nonce
 // and last [crypto.SignatureLength] bytes of Extra.
 func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 	enc := []interface{}{
 		header.ParentHash,
 		header.UncleHash,
+		header.Coinbase,
 		header.Root,
 		header.TxHash,
 		header.ReceiptHash,
