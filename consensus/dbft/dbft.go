@@ -645,10 +645,23 @@ func (c *DBFT) postBlock(b *types.Block) {
 
 // Author implements consensus.Engine, returning the Ethereum address recovered
 // from the header's Coinbase. Engine API expects Author to be the address to send
-// reward for in-block transactions to, and thus, Author differs from the Primary
-// node that actually was the block's author.
+// reward for in-block transactions to, and thus, in common case Author differs
+// from the Primary node that actually was the block's author.
 func (c *DBFT) Author(header *types.Header) (common.Address, error) {
 	return header.Coinbase, nil
+}
+
+// Primary returns the Ethereum address of block's Primary validator. It's the node
+// that was the author of accepted block's proposal. For beneficiary (in-block
+// transactions reward receiver) please, refer to Author. This method expects block's
+// Extra to be properly filled with at least a set of validators for the corresponding
+// consensus round.
+func (c *DBFT) Primary(header *types.Header) (common.Address, error) {
+	vals, _, err := getSignersAndSigs(c.config, header.Extra)
+	if err != nil {
+		return common.Address{}, fmt.Errorf("failed to retrieve validators addresses and signatures from header: %w", err)
+	}
+	return vals[header.Primary()], nil
 }
 
 // VerifyHeader checks whether a header conforms to the consensus rules.
