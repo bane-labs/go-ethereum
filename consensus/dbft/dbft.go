@@ -664,6 +664,39 @@ func (c *DBFT) Primary(header *types.Header) (common.Address, error) {
 	return vals[header.Primary()], nil
 }
 
+// Signers returns the set of Ethereum consensus node addresses that committed the
+// given header. Note that for the block of same height there might be different
+// set of signers returned by different nodes depending on the set of block's signatures.
+func (c *DBFT) Signers(header *types.Header) ([]common.Address, error) {
+	_, sigs, err := getSignersAndSigs(c.config, header.Extra)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve validators addresses and signatures from header: %w", err)
+	}
+	var (
+		signers = make([]common.Address, len(sigs))
+		h       = HonestSealHash(header).Bytes()
+	)
+	for i := range sigs {
+		pubkey, err := crypto.Ecrecover(h, sigs[i])
+		if err != nil {
+			return nil, fmt.Errorf("failed to recover signer from signature %d: %w", i, err)
+		}
+		signers[i] = crypto.PubkeyBytesToAddress(pubkey)
+	}
+	return signers, nil
+}
+
+// Validators returns the set of Ethereum consensus node addresses that are validators
+// of the given header. Note that for the block of same height the set of validators is
+// always the same.
+func (c *DBFT) Validators(header *types.Header) ([]common.Address, error) {
+	vals, _, err := getSignersAndSigs(c.config, header.Extra)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve validators addresses and signatures from header: %w", err)
+	}
+	return vals, nil
+}
+
 // VerifyHeader checks whether a header conforms to the consensus rules.
 func (c *DBFT) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
 	return c.verifyHeader(chain, header, nil)
@@ -1484,7 +1517,7 @@ func (c *DBFT) Close() error {
 func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	return []rpc.API{{
 		Namespace: "dbft",
-		Service:   &API{chain: chain, clique: c},
+		Service:   &API{chain: chain, bft: c},
 	}}
 }
 
