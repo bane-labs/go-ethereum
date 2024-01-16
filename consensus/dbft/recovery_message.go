@@ -17,7 +17,6 @@ type (
 		preparationPayloads []*preparationCompact
 		commitPayloads      []*commitCompact
 		changeViewPayloads  []*changeViewCompact
-		stateRootEnabled    bool
 		prepareRequest      *message
 	}
 
