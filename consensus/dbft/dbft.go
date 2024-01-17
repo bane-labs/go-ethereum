@@ -1456,8 +1456,10 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 
 // Close implements consensus.Engine.
 func (c *DBFT) Close() error {
-	close(c.quit)
-	<-c.finished
+	if c.dbftStarted.Load() {
+		close(c.quit)
+		<-c.finished
+	}
 	return nil
 }
 
