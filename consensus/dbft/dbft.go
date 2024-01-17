@@ -450,6 +450,9 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			if req.SealingProposal == nil {
 				return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
 			}
+			if req.SealingProposal.Coinbase != c.config.Coinbase {
+				return fmt.Errorf("invalid Coinbase: expected %s, got %s", c.config.Coinbase, req.SealingProposal.Coinbase)
+			}
 			if req.SealingProposal.ParentHash != c.lastBlockHash {
 				// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
 				// the one that prepareRequest declares as a parent hash, otherwise it's an error.
@@ -770,9 +773,10 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 		// Verify the header's EIP-1559 attributes.
 		return err
 	}
-	// TODO: ensure Coinbase is valid. If Coinbase is a Governance (or some other) contract, then ensure that
-	// Coinbase matches the contract address. If it's a validator address, then ensure Coinbase matches the
-	// Speaker address for the corresponding PrimaryIndex.
+	// This check forces Coinbase to be the same among all consensus nodes.
+	if header.Coinbase != c.config.Coinbase {
+		return fmt.Errorf("invalid Coinbase: expected %s, got %s", c.config.Coinbase, header.Coinbase)
+	}
 
 	// All basic checks passed, verify the seal and return
 	return c.verifySeal(header, parents, parent)
