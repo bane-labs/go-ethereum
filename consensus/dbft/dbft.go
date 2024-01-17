@@ -223,6 +223,9 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 	if config.SecondsPerBlock == 0 {
 		return nil, errors.New("zero-period dBFT chain is not supported")
 	}
+	if config.Coinbase == (common.Address{}) {
+		return nil, errors.New("empty dBFT Coinbase is not allowed, need to specify mining rewards receiver")
+	}
 	// Set any missing consensus parameters to their defaults
 	conf := *config
 	// Sort validators once to reuse the sorted list in getNextConsensus.
@@ -1213,7 +1216,8 @@ func (c *DBFT) handleChainBlock(b *types.Block) {
 			"dbft index", c.dbft.BlockIndex,
 			"chain index", c.chain.CurrentBlock().Number.Uint64(),
 			"hash", b.Hash().String(),
-			"parent hash", b.ParentHash().String())
+			"parent hash", b.ParentHash().String(),
+			"coinbase", b.Coinbase())
 		c.postBlock(b)
 
 		err := c.waitForNewSealingProposal(c.lastIndex+1, false)

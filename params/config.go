@@ -359,6 +359,7 @@ func (c *CliqueConfig) String() string {
 type DBFTConfig struct {
 	SecondsPerBlock   uint64           `json:"period"`            // Number of seconds between blocks to enforce
 	StandByValidators []common.Address `json:"standbyValidators"` // Stand by validators.
+	Coinbase          common.Address   `json:"coinbase"`          // The address mining rewards will be sent to. May differ from the CN address and is supposed to be a Governance contract address.
 }
 
 // String implements the stringer interface, returning the consensus engine details.

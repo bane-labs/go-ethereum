@@ -75,8 +75,7 @@ func (api *MinerAPI) SetGasLimit(gasLimit hexutil.Uint64) bool {
 
 // SetEtherbase sets the etherbase of the miner.
 func (api *MinerAPI) SetEtherbase(etherbase common.Address) bool {
-	api.e.SetEtherbase(etherbase)
-	return true
+	return api.e.SetEtherbase(etherbase)
 }
 
 // SetRecommitInterval updates the interval for miner sealing work recommitting.

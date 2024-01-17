@@ -24,7 +24,8 @@
         "0xc5bbd9652546bc96be3dec97a38ee335f7873dfa",
         "0x26f1794b81df2b832545b8b6bbca196b82e4feb1",
         "0x0b51369d02e47ee3f143391b837aa08c31aaa19b"
-      ]
+      ],
+      "coinbase": "0x1212100000000000000000000000000000000001"
     }
   },
   "difficulty": "1",
