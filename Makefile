@@ -222,7 +222,7 @@ privnet_init_seven: privnet_clean
 
 privnet_nodes_stop:
 	@echo "Killing nodes processes"
-	@killall -w -v -9 geth || :
+	@killall -w -v -INT geth || :
 
 privnet_bootnode_stop:
 	@echo "Killing bootnode processes"
