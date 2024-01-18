@@ -389,6 +389,10 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *trie.Database, gen
 	if compatErr != nil && ((head.Number.Uint64() != 0 && compatErr.RewindToBlock != 0) || (head.Time != 0 && compatErr.RewindToTime != 0)) {
 		return newcfg, stored, compatErr
 	}
+	engineCompatErr := storedcfg.CheckConsensusEngineCompatible(newcfg)
+	if engineCompatErr != nil {
+		return newcfg, stored, engineCompatErr
+	}
 	// Don't overwrite if the old is identical to the new
 	if newData, _ := json.Marshal(newcfg); !bytes.Equal(storedData, newData) {
 		rawdb.WriteChainConfig(db, stored, newcfg)
