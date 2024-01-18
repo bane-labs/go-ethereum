@@ -1221,6 +1221,7 @@ func (c *DBFT) handleChainBlock(b *types.Block) {
 			"chain index", c.chain.CurrentBlock().Number.Uint64(),
 			"hash", b.Hash().String(),
 			"parent hash", b.ParentHash().String(),
+			"primary", b.Primary(),
 			"coinbase", b.Coinbase())
 		c.postBlock(b)
 
