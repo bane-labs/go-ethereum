@@ -1066,20 +1066,20 @@ events:
 
 			if msg.Type() == payload.RecoveryMessageType {
 				rec := msg.GetRecoveryMessage().(*recoveryMessage)
-				if rec.preparationHash == nil {
+				if rec.PreparationHashExt == nil {
 					req := rec.GetPrepareRequest(&msg, c.dbft.Validators, uint16(c.dbft.PrimaryIndex))
 					if req != nil {
 						h := req.Hash()
-						rec.preparationHash = &h
+						rec.PreparationHashExt = &h
 					}
 				}
 
 				fields = append(fields,
-					"#preparation", len(rec.preparationPayloads),
-					"#commit", len(rec.commitPayloads),
-					"#changeview", len(rec.changeViewPayloads),
-					"#request", rec.prepareRequest != nil,
-					"#hash", rec.preparationHash != nil)
+					"#preparation", len(rec.PreparationPayloads),
+					"#commit", len(rec.CommitPayloads),
+					"#changeview", len(rec.ChangeViewPayloads),
+					"#request", rec.PrepareRequest != nil,
+					"#hash", rec.PreparationHashExt != nil)
 			}
 			log.Debug("received message", fields...)
 			c.dbft.OnReceive(&msg)
