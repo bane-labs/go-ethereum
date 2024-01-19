@@ -167,6 +167,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		p2pServer:         stack.Server(),
 		shutdownTracker:   shutdowncheck.NewShutdownTracker(chainDb),
 	}
+	// Override the address that mining rewards will be sent to.
+	if chainConfig.DBFT != nil {
+		eth.etherbase = chainConfig.DBFT.Coinbase
+	}
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
 	var dbVer = "<nil>"
 	if bcVersion != nil {
@@ -377,6 +381,8 @@ func (s *Ethereum) Etherbase() (eb common.Address, err error) {
 // We regard two types of accounts as local miner account: etherbase
 // and accounts specified via `txpool.locals` flag.
 func (s *Ethereum) isLocalBlock(header *types.Header) bool {
+	// For dBFT engine all blocks are "local" since consensus agrees on their content
+	// and Primary/Coinbase will be the same among all accepted blocks for the given height.
 	author, err := s.engine.Author(header)
 	if err != nil {
 		log.Warn("Failed to retrieve block author", "number", header.Number.Uint64(), "hash", header.Hash(), "err", err)
@@ -426,12 +432,17 @@ func (s *Ethereum) shouldPreserve(header *types.Header) bool {
 }
 
 // SetEtherbase sets the mining reward address.
-func (s *Ethereum) SetEtherbase(etherbase common.Address) {
+func (s *Ethereum) SetEtherbase(etherbase common.Address) bool {
+	if s.config.Genesis.Config.DBFT != nil {
+		// dBFT's Coinbase change is not supported on running Geth node.
+		return false
+	}
 	s.lock.Lock()
 	s.etherbase = etherbase
 	s.lock.Unlock()
 
 	s.miner.SetEtherbase(etherbase)
+	return true
 }
 
 // StartMining starts the miner with the given number of CPU threads. If mining
@@ -447,8 +458,9 @@ func (s *Ethereum) StartMining() error {
 		s.txPool.SetGasTip(price)
 
 		// Configure the local mining address
-		eb, err := s.Etherbase()
-		if err != nil {
+		eb := s.config.Miner.Etherbase
+		if eb == (common.Address{}) {
+			err := errors.New("etherbase must be explicitly specified")
 			log.Error("Cannot start mining without etherbase", "err", err)
 			return fmt.Errorf("etherbase missing: %v", err)
 		}

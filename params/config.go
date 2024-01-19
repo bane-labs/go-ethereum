@@ -359,6 +359,7 @@ func (c *CliqueConfig) String() string {
 type DBFTConfig struct {
 	SecondsPerBlock   uint64           `json:"period"`            // Number of seconds between blocks to enforce
 	StandByValidators []common.Address `json:"standbyValidators"` // Stand by validators.
+	Coinbase          common.Address   `json:"coinbase"`          // The address mining rewards will be sent to. May differ from the CN address and is supposed to be a Governance contract address.
 }
 
 // String implements the stringer interface, returning the consensus engine details.
@@ -720,6 +721,30 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	}
 	if isForkTimestampIncompatible(c.VerkleTime, newcfg.VerkleTime, headTimestamp) {
 		return newTimestampCompatError("Verkle fork timestamp", c.VerkleTime, newcfg.VerkleTime)
+	}
+	return nil
+}
+
+// CheckConsensusEngineCompatible ensures that consensus engine configuration is
+// compatible with the old one and returns an error if not.
+func (c *ChainConfig) CheckConsensusEngineCompatible(newcfg *ChainConfig) error {
+	if c.DBFT == nil && newcfg.DBFT == nil {
+		return nil
+	}
+	if (c.DBFT != nil && newcfg.DBFT == nil) || (c.DBFT == nil && newcfg.DBFT != nil) {
+		return fmt.Errorf("consensus engine has been changed to/from dBFT")
+	}
+	if c.DBFT.Coinbase != newcfg.DBFT.Coinbase {
+		return fmt.Errorf("coinbase mismatch: expected %s, got %s", c.DBFT.Coinbase, newcfg.DBFT.Coinbase)
+	}
+	if len(c.DBFT.StandByValidators) != len(newcfg.DBFT.StandByValidators) {
+		return fmt.Errorf("standByValidators lenght mismatch: expected %d, got %d", len(c.DBFT.StandByValidators), len(newcfg.DBFT.StandByValidators))
+	}
+	// Do not sort StandByValidators in case to check their initial order.
+	for i := range c.DBFT.StandByValidators {
+		if c.DBFT.StandByValidators[i] != newcfg.DBFT.StandByValidators[i] {
+			return fmt.Errorf("standByValidator #%d mismatch: expected %s, got %s", i, c.DBFT.StandByValidators[i], newcfg.DBFT.StandByValidators[i])
+		}
 	}
 	return nil
 }

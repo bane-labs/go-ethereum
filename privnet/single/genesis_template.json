@@ -18,7 +18,8 @@
       "period": 5,
       "standbyValidators": [
         "0xnode1"
-      ]
+      ],
+      "coinbase": "0x1212100000000000000000000000000000000001"
     }
   },
   "difficulty": "1",

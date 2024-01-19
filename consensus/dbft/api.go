@@ -28,36 +28,20 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-// API is a user facing RPC API to allow controlling the signer and voting
-// mechanisms of the proof-of-authority scheme.
+const (
+	// defaultStatisticsPeriod is the default number of blocks to be taken into
+	// account during dBFT statistics calculation.
+	defaultStatisticsPeriod = uint64(64)
+	// maxStatisticsPeriod is the maximum number of blocks to be taken into
+	// account during dBFT statistics calculation.
+	maxStatisticsPeriod = uint64(1000)
+)
+
+// API is a user facing RPC API to allow retrieve some information from the DBFT
+// consensus engine.
 type API struct {
-	chain  consensus.ChainHeaderReader
-	clique *DBFT
-}
-
-// GetSnapshot retrieves the state snapshot at a given block.
-func (api *API) GetSnapshot(number *rpc.BlockNumber) (*Snapshot, error) {
-	// Retrieve the requested block number (or current if none requested)
-	var header *types.Header
-	if number == nil || *number == rpc.LatestBlockNumber {
-		header = api.chain.CurrentHeader()
-	} else {
-		header = api.chain.GetHeaderByNumber(uint64(number.Int64()))
-	}
-	// Ensure we have an actually valid block and return its snapshot
-	if header == nil {
-		return nil, errUnknownBlock
-	}
-	return api.clique.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
-}
-
-// GetSnapshotAtHash retrieves the state snapshot at a given block.
-func (api *API) GetSnapshotAtHash(hash common.Hash) (*Snapshot, error) {
-	header := api.chain.GetHeaderByHash(hash)
-	if header == nil {
-		return nil, errUnknownBlock
-	}
-	return api.clique.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
+	chain consensus.ChainHeaderReader
+	bft   *DBFT
 }
 
 // GetSigners retrieves the list of authorized signers at the specified block.
@@ -69,15 +53,35 @@ func (api *API) GetSigners(number *rpc.BlockNumber) ([]common.Address, error) {
 	} else {
 		header = api.chain.GetHeaderByNumber(uint64(number.Int64()))
 	}
-	// Ensure we have an actually valid block and return the signers from its snapshot
+	// Ensure we have an actually valid block and parse the signers from it.
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snap, err := api.clique.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
-	if err != nil {
-		return nil, err
+
+	// Genesis block doesn't have validators signatures set, only validators addresses
+	// are filled in.
+	if header.Number.Uint64() == 0 {
+		return []common.Address{}, nil
 	}
-	return snap.signers(), nil
+
+	return api.bft.Signers(header)
+}
+
+// GetValidators retrieves the list of block validators.
+func (api *API) GetValidators(number *rpc.BlockNumber) ([]common.Address, error) {
+	// Retrieve the requested block number (or current if none requested)
+	var header *types.Header
+	if number == nil || *number == rpc.LatestBlockNumber {
+		header = api.chain.CurrentHeader()
+	} else {
+		header = api.chain.GetHeaderByNumber(uint64(number.Int64()))
+	}
+	// Ensure we have an actually valid block and parse the signers from it.
+	if header == nil {
+		return nil, errUnknownBlock
+	}
+
+	return api.bft.Validators(header)
 }
 
 // GetSignersAtHash retrieves the list of authorized signers at the specified block.
@@ -86,41 +90,21 @@ func (api *API) GetSignersAtHash(hash common.Hash) ([]common.Address, error) {
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snap, err := api.clique.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
-	if err != nil {
-		return nil, err
+	// Genesis block doesn't have validators signatures set, only validators addresses
+	// are filled in.
+	if header.Number.Uint64() == 0 {
+		return []common.Address{}, nil
 	}
-	return snap.signers(), nil
+	return api.bft.Signers(header)
 }
 
-// Proposals returns the current proposals the node tries to uphold and vote on.
-func (api *API) Proposals() map[common.Address]bool {
-	api.clique.lock.RLock()
-	defer api.clique.lock.RUnlock()
-
-	proposals := make(map[common.Address]bool)
-	for address, auth := range api.clique.proposals {
-		proposals[address] = auth
+// GetValidatorsAtHash retrieves the list of block validators.
+func (api *API) GetValidatorsAtHash(hash common.Hash) ([]common.Address, error) {
+	header := api.chain.GetHeaderByHash(hash)
+	if header == nil {
+		return nil, errUnknownBlock
 	}
-	return proposals
-}
-
-// Propose injects a new authorization proposal that the signer will attempt to
-// push through.
-func (api *API) Propose(address common.Address, auth bool) {
-	api.clique.lock.Lock()
-	defer api.clique.lock.Unlock()
-
-	api.clique.proposals[address] = auth
-}
-
-// Discard drops a currently running proposal, stopping the signer from casting
-// further votes (either for or against).
-func (api *API) Discard(address common.Address) {
-	api.clique.lock.Lock()
-	defer api.clique.lock.Unlock()
-
-	delete(api.clique.proposals, address)
+	return api.bft.Validators(header)
 }
 
 type status struct {
@@ -129,34 +113,33 @@ type status struct {
 	NumBlocks     uint64                 `json:"numBlocks"`
 }
 
-// Status returns the status of the last N blocks,
-// - the number of active signers,
-// - the number of signers,
-// - the percentage of in-turn blocks
-func (api *API) Status() (*status, error) {
+// Status returns the status of the last N blocks:
+// - the number of blocks,
+// - the sealer activity,
+// - the percentage of in-turn blocks.
+func (api *API) Status(n *uint64) (*status, error) {
 	var (
-		numBlocks = uint64(64)
+		numBlocks = defaultStatisticsPeriod
 		header    = api.chain.CurrentHeader()
 		diff      = uint64(0)
 		optimals  = 0
 	)
-	snap, err := api.clique.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
-	if err != nil {
-		return nil, err
+	if n != nil {
+		if *n <= maxStatisticsPeriod {
+			numBlocks = *n
+		} else {
+			numBlocks = maxStatisticsPeriod
+		}
 	}
 	var (
-		signers = snap.signers()
-		end     = header.Number.Uint64()
-		start   = end - numBlocks
+		end   = header.Number.Uint64()
+		start = end - numBlocks
 	)
 	if numBlocks > end {
 		start = 1
 		numBlocks = end - start
 	}
 	signStatus := make(map[common.Address]int)
-	for _, s := range signers {
-		signStatus[s] = 0
-	}
 	for n := start; n < end; n++ {
 		h := api.chain.GetHeaderByNumber(n)
 		if h == nil {
@@ -166,7 +149,7 @@ func (api *API) Status() (*status, error) {
 			optimals++
 		}
 		diff += h.Difficulty.Uint64()
-		sealer, err := api.clique.Author(h)
+		sealer, err := api.bft.Primary(h)
 		if err != nil {
 			return nil, err
 		}
@@ -204,32 +187,51 @@ func (sb *blockNumberOrHashOrRLP) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// GetSigner returns the signer for a specific clique block.
+// GetPrimary returns the primary Ethereum address for a specific dBFT block.
 // Can be called with a block number, a block hash or a rlp encoded blob.
 // The RLP encoded blob can either be a block or a header.
-func (api *API) GetSigner(rlpOrBlockNr *blockNumberOrHashOrRLP) (common.Address, error) {
+func (api *API) GetPrimary(rlpOrBlockNr *blockNumberOrHashOrRLP) (common.Address, error) {
+	header, err := getHeader(rlpOrBlockNr, api.chain)
+	if err != nil {
+		return common.Address{}, err
+	}
+	return api.bft.Primary(header)
+}
+
+// GetCoinbase returns the beneficiary address for a specific dBFT block.
+// Can be called with a block number, a block hash or a rlp encoded blob.
+// The RLP encoded blob can either be a block or a header.
+func (api *API) GetCoinbase(rlpOrBlockNr *blockNumberOrHashOrRLP) (common.Address, error) {
+	header, err := getHeader(rlpOrBlockNr, api.chain)
+	if err != nil {
+		return common.Address{}, err
+	}
+	return api.bft.Author(header)
+}
+
+func getHeader(rlpOrBlockNr *blockNumberOrHashOrRLP, chain consensus.ChainHeaderReader) (*types.Header, error) {
 	if len(rlpOrBlockNr.RLP) == 0 {
 		blockNrOrHash := rlpOrBlockNr.BlockNumberOrHash
 		var header *types.Header
 		if blockNrOrHash == nil {
-			header = api.chain.CurrentHeader()
+			header = chain.CurrentHeader()
 		} else if hash, ok := blockNrOrHash.Hash(); ok {
-			header = api.chain.GetHeaderByHash(hash)
+			header = chain.GetHeaderByHash(hash)
 		} else if number, ok := blockNrOrHash.Number(); ok {
-			header = api.chain.GetHeaderByNumber(uint64(number.Int64()))
+			header = chain.GetHeaderByNumber(uint64(number.Int64()))
 		}
 		if header == nil {
-			return common.Address{}, fmt.Errorf("missing block %v", blockNrOrHash.String())
+			return nil, fmt.Errorf("missing block %v", blockNrOrHash.String())
 		}
-		return api.clique.Author(header)
+		return header, nil
 	}
 	block := new(types.Block)
 	if err := rlp.DecodeBytes(rlpOrBlockNr.RLP, block); err == nil {
-		return api.clique.Author(block.Header())
+		return block.Header(), nil
 	}
 	header := new(types.Header)
 	if err := rlp.DecodeBytes(rlpOrBlockNr.RLP, header); err != nil {
-		return common.Address{}, err
+		return nil, err
 	}
-	return api.clique.Author(header)
+	return header, nil
 }
