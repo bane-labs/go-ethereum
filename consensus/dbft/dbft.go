@@ -931,7 +931,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		// initialised by miner. Start consensus once we have new sealing work in Seal.
 		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
 		if err != nil {
-			log.Warn("Filed to fetch latest sealing proposal",
+			log.Warn("Failed to fetch latest sealing proposal",
 				"index", c.lastIndex+1,
 				"err", err.Error())
 		}
@@ -1127,7 +1127,7 @@ events:
 			log.Info("Change view detected, waiting for new sealing task to be submitted by miner", "old view", oldView, "new view", newView)
 			err := c.waitForNewSealingProposal(uint64(c.dbft.Context.BlockIndex), true)
 			if err != nil {
-				log.Warn("Filed to fetch latest sealing proposal",
+				log.Warn("Failed to fetch latest sealing proposal",
 					"index", c.dbft.Context.BlockIndex,
 					"err", err.Error())
 			}
@@ -1227,7 +1227,7 @@ func (c *DBFT) handleChainBlock(b *types.Block) {
 
 		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
 		if err != nil {
-			log.Warn("Filed to fetch latest sealing proposal",
+			log.Warn("Failed to fetch latest sealing proposal",
 				"index", c.lastIndex+1,
 				"err", err.Error())
 		}
