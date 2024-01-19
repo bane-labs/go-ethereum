@@ -14,9 +14,18 @@
     "londonBlock": 0,
     "arrowGlacierBlock": 0,
     "grayGlacierBlock": 0,
-    "clique": {
-      "period": 5,
-      "epoch": 30000
+    "dbft": {
+      "period": 15,
+      "standbyValidators":[
+        "0xnode1",
+        "0xnode2",
+        "0xnode3",
+        "0xnode4",
+        "0xnode5",
+        "0xnode6",
+        "0xnode7"
+      ],
+      "coinbase": "0x1212100000000000000000000000000000000001"
     }
   },
   "difficulty": "1",
