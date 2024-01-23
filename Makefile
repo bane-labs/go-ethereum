@@ -106,12 +106,8 @@ define run_node
 		$(5) >  $(1)/$(2)/geth_node.log 2>&1 &
 endef
 
-define copy_genesis
-	@cp $(1)/$(GENESIS_WORK_JSON) $(1)/$(2)/$(GENESIS_WORK_JSON)
-endef
-
 define init_node
-    @$(GETHBIN)/geth init --datadir $(1)/$(2) $(1)/$(2)/$(GENESIS_WORK_JSON) > $(1)/$(2)/geth_init.log 2>&1
+    @$(GETHBIN)/geth init --datadir $(1)/$(2) $(1)/$(GENESIS_WORK_JSON) > $(1)/$(2)/geth_init.log 2>&1
 endef
 
 geth:
@@ -158,10 +154,6 @@ privnet_init: privnet_clean
 	@echo "Create accounts"
 	$(call create_account,$(SINGLE_DIR),$(NODE1))
 	$(call create_account,$(SINGLE_DIR),$(NODE2))
-	@echo "Copy genesis_privnet.json into nodes"
-	$(call copy_genesis,$(SINGLE_DIR),$(NODE1))
-	$(call copy_genesis,$(SINGLE_DIR),$(NODE2))
-	@rm $(SINGLE_DIR)/$(GENESIS_WORK_JSON)
 	@echo "OK! For starting use 'make privnet_start'"
 
 privnet_init_four: privnet_clean
@@ -180,13 +172,6 @@ privnet_init_four: privnet_clean
 	$(call create_account,$(FOUR_DIR),$(NODE3))
 	$(call create_account,$(FOUR_DIR),$(NODE4))
 	$(call create_account,$(FOUR_DIR),$(NODE5))
-	@echo "Copy genesis_privnet.json into nodes"
-	$(call copy_genesis,$(FOUR_DIR),$(NODE1))
-	$(call copy_genesis,$(FOUR_DIR),$(NODE2))
-	$(call copy_genesis,$(FOUR_DIR),$(NODE3))
-	$(call copy_genesis,$(FOUR_DIR),$(NODE4))
-	$(call copy_genesis,$(FOUR_DIR),$(NODE5))
-	@rm $(FOUR_DIR)/$(GENESIS_WORK_JSON)
 	@echo "OK! For starting use 'make privnet_start_four'"
 
 privnet_init_seven: privnet_clean
@@ -208,16 +193,6 @@ privnet_init_seven: privnet_clean
 	$(call create_account,$(SEVEN_DIR),$(NODE6))
 	$(call create_account,$(SEVEN_DIR),$(NODE7))
 	$(call create_account,$(SEVEN_DIR),$(NODE8))
-	@echo "Copy genesis_privnet.json into nodes"
-	$(call copy_genesis,$(SEVEN_DIR),$(NODE1))
-	$(call copy_genesis,$(SEVEN_DIR),$(NODE2))
-	$(call copy_genesis,$(SEVEN_DIR),$(NODE3))
-	$(call copy_genesis,$(SEVEN_DIR),$(NODE4))
-	$(call copy_genesis,$(SEVEN_DIR),$(NODE5))
-	$(call copy_genesis,$(SEVEN_DIR),$(NODE6))
-	$(call copy_genesis,$(SEVEN_DIR),$(NODE7))
-	$(call copy_genesis,$(SEVEN_DIR),$(NODE8))
-	@rm $(SEVEN_DIR)/$(GENESIS_WORK_JSON)
 	@echo "OK! For starting use 'make privnet_start_seven'"
 
 privnet_nodes_stop:
