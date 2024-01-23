@@ -62,9 +62,9 @@ interface IGovernance {
 }
 
 interface IGovReward {
-    function withdrawERC20(address to, address token, uint256 amount) external;
+    function withdrawERC20(address to, address token, uint amount) external;
 
-    function withdraw(address to, uint256 amount) external;
+    function withdraw(address to, uint amount) external;
 }
 
 contract Governance is IGovernance {
@@ -103,11 +103,16 @@ contract Governance is IGovernance {
     // total withdrawed reward
     uint public totalWithdrawedReward;
 
-    uint256 private constant _NOT_ENTERED = 1;
-    uint256 private constant _ENTERED = 2;
+    uint private constant _NOT_ENTERED = 1;
+    uint private constant _ENTERED = 2;
 
     // status for nonReentrant modifier
-    uint256 private _status;
+    uint private _status;
+
+    // ratio base
+    uint public constant RatioBase = 10000;
+    // vote reward ratio
+    uint public constant RatioVote = 5000;
 
     /**
      * @dev Prevents a contract from calling itself, directly or indirectly.
@@ -126,10 +131,8 @@ contract Governance is IGovernance {
         _status = _NOT_ENTERED;
     }
 
-    receive() external payable {}
-
     modifier onlyConsensus() {
-        require(isMiner(msg.sender), "Not Consensus");
+        require(isMiner(msg.sender), "sender is not a consensus member");
         _;
     }
 
@@ -158,7 +161,7 @@ contract Governance is IGovernance {
 
         require(
             block.number > lastStartHeight,
-            "propose should after last phase active"
+            "propose should be called after last phase start"
         );
 
         endDraftId++;
@@ -180,8 +183,8 @@ contract Governance is IGovernance {
     }
 
     function vote(
-        uint256 draftId,
-        uint256 amount
+        uint draftId,
+        uint amount
     ) external payable override nonReentrant {
         require(
             draftId >= startDraftId && draftId <= endDraftId,
@@ -234,7 +237,7 @@ contract Governance is IGovernance {
         }
     }
 
-    function safeTransferETH(address to, uint256 value) internal {
+    function safeTransferETH(address to, uint value) internal {
         (bool success, ) = to.call{value: value}(new bytes(0));
         require(success, "safeTransferETH: ETH transfer failed");
     }
@@ -274,8 +277,22 @@ contract Governance is IGovernance {
                 // for pre phases, we get by rewardRecord
                 currentReward = preReward;
             }
-            // sum all the reward for msg.sender
-            reward += (currentReward * share) / current.voteAmount;
+            // sum all the vote reward for addr
+            reward +=
+                (currentReward * share * RatioVote) /
+                current.voteAmount /
+                RatioBase;
+
+            // sum all the consensus reward
+            for (uint i = 0; i < current.miners.length; i++) {
+                if (addr == current.miners[i]) {
+                    reward +=
+                        (currentReward * (RatioBase - RatioVote)) /
+                        current.miners.length /
+                        RatioBase;
+                    break;
+                }
+            }
 
             // calculate the reward for pre phase
             preReward =
