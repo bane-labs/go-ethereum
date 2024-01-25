@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -479,6 +480,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					return fmt.Errorf("failed to put proposed parent to the storage: no parent found for height %d", req.SealingProposal.Number.Uint64()-1)
 				}
 				newHeader := savedParent.Header()
+				oldHash := c.lastBlockHash
+				oldExtra := c.lastBlockExtra
 				newHeader.Extra = req.ParentExtra
 				err = c.blockQueue.PutBlock(savedParent.WithSeal(newHeader))
 				if err != nil {
@@ -495,6 +498,14 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				c.lastBlockHash = req.SealingProposal.ParentHash
 				c.lastBlockExtra = req.ParentExtra
 				c.dbft.PrevHash = req.SealingProposal.ParentHash.Uint256()
+
+				log.Info("New parent stored",
+					"number", newHeader.Number,
+					"old hash", oldHash.String(),
+					"new hash", req.SealingProposal.ParentHash.String(),
+					"sealhash", req.ParentSealHash.String(),
+					"old extra", hex.EncodeToString(oldExtra),
+					"new extra", hex.EncodeToString(req.ParentExtra))
 			}
 
 			c.sealingProposal = req.SealingProposal
