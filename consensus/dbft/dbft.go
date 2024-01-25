@@ -577,7 +577,8 @@ func (c *DBFT) WithTxPool(pool txPool) {
 
 // postBlock is a callback that updates latest accepted block data and resets
 // last proposal data. It must be called every time new block arrives from chain
-// or from consensus.
+// or from consensus. It also clears all BlockQueue tasks up to the accepted block
+// height.
 func (c *DBFT) postBlock(b *types.Block) {
 	if c.lastIndex < b.NumberU64() {
 		h := b.Header()
@@ -587,6 +588,8 @@ func (c *DBFT) postBlock(b *types.Block) {
 		c.lastBlockHash = b.Hash()
 		c.lastBlockSealHash = HonestSealHash(h)
 		c.lastBlockExtra = h.Extra
+
+		c.blockQueue.ClearStaleTasks(b.NumberU64())
 	}
 }
 

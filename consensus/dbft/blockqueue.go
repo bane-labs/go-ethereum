@@ -10,11 +10,15 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-// blockQueueCap is the number of tasks blockQueue can fit at once. It's OK for
-// the blockQueue not to have a proper task for the newly-created block, and
-// normally a single task is expected to be present in blockQueue. But we still
-// need blockQueueCap restriction for the case of endless change views.
-const blockQueueCap = 100
+const (
+	// blockQueueCap is the number of tasks blockQueue can fit at once. It's OK for
+	// the blockQueue not to have a proper task for the newly-created block, and
+	// normally a single task is expected to be present in blockQueue. But we still
+	// need blockQueueCap restriction for the case of endless change views.
+	blockQueueCap = 100
+
+	clearAllMatchingTasks = -1
+)
 
 // blockQueue is an entity that collects sealed blocks from dBFT and routs these
 // blocks to a proper place (either to miner or directly to chain).
@@ -54,7 +58,7 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 	bq.tasksLock.Lock()
 	task, ok := bq.tasks[h]
 
-	bq.clearStaleTasks(b.NumberU64(), -1)
+	bq.clearStaleTasks(b.NumberU64(), clearAllMatchingTasks)
 
 	if ok {
 		var (
@@ -105,15 +109,26 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 	return err
 }
 
+// ClearStaleTasks removes all stale tasks up to the specified height (including
+// the height itself).
+func (bq *blockQueue) ClearStaleTasks(till uint64) {
+	bq.tasksLock.Lock()
+	defer bq.tasksLock.Unlock()
+
+	bq.clearStaleTasks(till, clearAllMatchingTasks)
+}
+
 // clearStaleTasks removes all stale tasks up to the specified height (including
 // the height itself). It doesn't hold tasksLock, so it's the caller's responsibility.
 func (bq *blockQueue) clearStaleTasks(till uint64, count int) {
 	for h, task := range bq.tasks {
 		if task.height <= till {
 			delete(bq.tasks, h)
-			count--
-			if count <= 0 {
-				break
+			if count != clearAllMatchingTasks {
+				count--
+				if count <= 0 {
+					break
+				}
 			}
 		}
 	}
