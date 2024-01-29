@@ -5,6 +5,12 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
+const (
+	// ExtraVersionLen is a fixed number of extra-data prefix bytes reserved for dFBT block's
+	// Extra versioning.
+	ExtraVersionLen = 32
+)
+
 // GetNextConsensusHash returns hash of the given next consensus members. nextBlockVals
 // must be sorted by their consensus weight.
 func GetNextConsensusHash(nextBlockVals []common.Address) common.Hash {

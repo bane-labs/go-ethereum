@@ -490,14 +490,13 @@ func (g *Genesis) ToBlock() *types.Block {
 		copy(sb, g.Config.DBFT.StandByValidators)
 		slices.SortFunc(sb, common.Address.Cmp)
 		var (
-			n           = len(g.Config.DBFT.StandByValidators)
-			m           = crypto.GetBFTHonestNodeCount(n)
-			extraVanity = 32
+			n = len(g.Config.DBFT.StandByValidators)
+			m = crypto.GetBFTHonestNodeCount(n)
 		)
 		if len(g.ExtraData) == 0 {
-			extra := make([]byte, extraVanity+n*common.AddressLength+m*crypto.SignatureLength)
+			extra := make([]byte, dbftutil.ExtraVersionLen+n*common.AddressLength+m*crypto.SignatureLength)
 			for i, v := range sb[:n] {
-				offset := extraVanity + i*common.AddressLength
+				offset := dbftutil.ExtraVersionLen + i*common.AddressLength
 				copy(extra[offset:offset+common.AddressLength], v.Bytes())
 			}
 			head.Extra = extra
