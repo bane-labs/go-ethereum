@@ -18,6 +18,8 @@
 package miner
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"math/big"
 	"sync"
@@ -26,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
@@ -192,6 +195,9 @@ func (miner *Miner) Hashrate() uint64 {
 func (miner *Miner) SetExtra(extra []byte) error {
 	if uint64(len(extra)) > params.MaximumExtraDataSize {
 		return fmt.Errorf("extra exceeds max length. %d > %v", len(extra), params.MaximumExtraDataSize)
+	}
+	if miner.worker.chainConfig.DBFT != nil && bytes.Compare(extra, []byte{dbftutil.ExtraV0}) != 0 {
+		return errors.New("custom extra is not supported by dBFT")
 	}
 	miner.worker.setExtra(extra)
 	return nil
