@@ -495,6 +495,7 @@ func (g *Genesis) ToBlock() *types.Block {
 		)
 		if len(g.ExtraData) == 0 {
 			extra := make([]byte, dbftutil.ExtraVersionLen+n*common.AddressLength+m*crypto.SignatureLength)
+			extra[0] = dbftutil.ExtraV0
 			for i, v := range sb[:n] {
 				offset := dbftutil.ExtraVersionLen + i*common.AddressLength
 				copy(extra[offset:offset+common.AddressLength], v.Bytes())
@@ -550,22 +551,26 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *trie.Database) (*types.Block
 	}
 	if config.DBFT != nil {
 		var (
-			n           = len(config.DBFT.StandByValidators)
-			m           = crypto.GetBFTHonestNodeCount(n)
-			extra       = block.Extra()
-			extraVanity = 32
+			n     = len(config.DBFT.StandByValidators)
+			m     = crypto.GetBFTHonestNodeCount(n)
+			extra = block.Extra()
 		)
-		if len(extra) < extraVanity+n*common.AddressLength+m*crypto.SignatureLength {
-			return nil, errors.New("can't start dBFT chain without validators addresses/signatures set in the genesis")
-		}
-		vals := make([]common.Address, n)
-		for i := range vals {
-			offset := extraVanity + i*common.AddressLength
-			vals[i] = common.BytesToAddress(extra[offset : offset+common.AddressLength])
-		}
-		expected := dbftutil.GetNextConsensusHash(vals)
-		if block.MixDigest() != expected {
-			return nil, fmt.Errorf("inconsistent MixHash (NextConsensus) genesis block setting: expected %s, got %s", expected, block.MixDigest())
+		switch extra[0] {
+		case dbftutil.ExtraV0:
+			if len(extra) < dbftutil.ExtraVersionLen+n*common.AddressLength+m*crypto.SignatureLength {
+				return nil, errors.New("can't start dBFT chain without validators addresses/signatures set in the genesis")
+			}
+			vals := make([]common.Address, n)
+			for i := range vals {
+				offset := dbftutil.ExtraVersionLen + i*common.AddressLength
+				vals[i] = common.BytesToAddress(extra[offset : offset+common.AddressLength])
+			}
+			expected := dbftutil.GetNextConsensusHash(vals)
+			if block.MixDigest() != expected {
+				return nil, fmt.Errorf("inconsistent MixHash (NextConsensus) genesis block setting: expected %s, got %s", expected, block.MixDigest())
+			}
+		default:
+			return nil, fmt.Errorf("can't validate Extra genesis field: unexpected Extra version: %d", extra[0])
 		}
 	}
 	// All the checks has passed, flush the states derived from the genesis

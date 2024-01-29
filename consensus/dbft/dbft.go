@@ -131,25 +131,27 @@ func getSignersAndSigs(cfg *params.DBFTConfig, extra []byte) ([]common.Address, 
 		m             = crypto.GetBFTHonestNodeCount(n)
 		addrsBytesLen = common.AddressLength * n
 		sigsBytesLen  = extraSeal * m
+		addrs         = make([]common.Address, n)
+		sigs          = make([][]byte, m)
 	)
-	if len(extra) < dbftutil.ExtraVersionLen+addrsBytesLen+sigsBytesLen {
-		return nil, nil, errMissingSignature
-	}
-
-	// Recover Ethereum addresses of validators and their signatures, preserve
-	// the order that was specified in the source extra, because validators are
-	// sorted and NextConsensus depends on it.
-	var (
-		addrs = make([]common.Address, n)
-		sigs  = make([][]byte, m)
-	)
-	for i := range addrs {
-		addrOffset := dbftutil.ExtraVersionLen + i*common.AddressLength
-		copy(addrs[i][:], extra[addrOffset:addrOffset+common.AddressLength])
-	}
-	for i := range sigs {
-		sigOffset := len(extra) - sigsBytesLen + i*extraSeal
-		sigs[i] = extra[sigOffset : sigOffset+extraSeal]
+	switch extra[0] {
+	case dbftutil.ExtraV0:
+		if len(extra) < dbftutil.ExtraVersionLen+addrsBytesLen+sigsBytesLen {
+			return nil, nil, errMissingSignature
+		}
+		// Recover Ethereum addresses of validators and their signatures, preserve
+		// the order that was specified in the source extra, because validators are
+		// sorted and NextConsensus depends on it.
+		for i := range addrs {
+			addrOffset := dbftutil.ExtraVersionLen + i*common.AddressLength
+			copy(addrs[i][:], extra[addrOffset:addrOffset+common.AddressLength])
+		}
+		for i := range sigs {
+			sigOffset := len(extra) - sigsBytesLen + i*extraSeal
+			sigs[i] = extra[sigOffset : sigOffset+extraSeal]
+		}
+	default:
+		return nil, nil, fmt.Errorf("unexpected Extra version: %d", extra[0])
 	}
 
 	return addrs, sigs, nil
@@ -865,9 +867,10 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	// by PoA engine. This stub will be overridden during further dBFT process anyway.
 	header.Difficulty = diffStub
 
-	// Ensure the extra data has all its components
+	// Ensure the extra data has all its components. Set default Extra version if not
+	// provided by miner.
 	if len(header.Extra) < dbftutil.ExtraVersionLen {
-		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, dbftutil.ExtraVersionLen-len(header.Extra))...)
+		header.Extra = []byte{dbftutil.ExtraV0}
 	}
 	// Fill only Extra version. The rest components of Header's Extra (validators
 	// addresses and BFT number of validators signatures) are treated as changeable
