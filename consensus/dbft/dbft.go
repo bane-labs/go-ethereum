@@ -99,9 +99,9 @@ var (
 	// to contain a 65 byte secp256k1 signature.
 	errMissingSignature = errors.New("extra-data 65 byte signature suffix missing")
 
-	// errInvalidCheckpointSigners is returned if a checkpoint block contains an
-	// invalid list of signers (i.e. non divisible by 20 bytes).
-	errInvalidCheckpointSigners = errors.New("invalid signer list on checkpoint block")
+	// errInvalidExtraSigners is returned if a block extra contains an invalid list of
+	// signers (i.e. non divisible by 20 bytes)
+	errInvalidExtraSigners = errors.New("invalid validators list in extra-data")
 
 	// errInvalidMixDigest is returned if a block's mix digest is non-zero.
 	errInvalidMixDigest = errors.New("zero mix digest (NextConsensus)")
@@ -718,7 +718,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 		return fmt.Errorf("missing validators addresses")
 	}
 	if signersBytes%common.AddressLength != 0 {
-		return errInvalidCheckpointSigners
+		return errInvalidExtraSigners
 	}
 	// Ensure that the mix digest is not zero.
 	if header.MixDigest == (common.Hash{}) {
