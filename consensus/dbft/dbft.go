@@ -64,8 +64,6 @@ import (
 
 // DBFT proof-of-authority protocol constants.
 var (
-	extraVanity = 32 // Fixed number of extra-data prefix bytes reserved for signer vanity
-
 	uncleHash = types.CalcUncleHash(nil) // Always Keccak256(RLP([])) as uncles are meaningless outside of PoW.
 
 	diffStub   = big.NewInt(3) // Block difficulty stub that is used for miner's task preparation.
@@ -99,9 +97,9 @@ var (
 	// to contain a 65 byte secp256k1 signature.
 	errMissingSignature = errors.New("extra-data 65 byte signature suffix missing")
 
-	// errInvalidCheckpointSigners is returned if a checkpoint block contains an
-	// invalid list of signers (i.e. non divisible by 20 bytes).
-	errInvalidCheckpointSigners = errors.New("invalid signer list on checkpoint block")
+	// errInvalidExtraSigners is returned if a block extra contains an invalid list of
+	// signers (i.e. non divisible by 20 bytes)
+	errInvalidExtraSigners = errors.New("invalid validators list in extra-data")
 
 	// errInvalidMixDigest is returned if a block's mix digest is non-zero.
 	errInvalidMixDigest = errors.New("zero mix digest (NextConsensus)")
@@ -133,25 +131,27 @@ func getSignersAndSigs(cfg *params.DBFTConfig, extra []byte) ([]common.Address, 
 		m             = crypto.GetBFTHonestNodeCount(n)
 		addrsBytesLen = common.AddressLength * n
 		sigsBytesLen  = extraSeal * m
+		addrs         = make([]common.Address, n)
+		sigs          = make([][]byte, m)
 	)
-	if len(extra) < extraVanity+addrsBytesLen+sigsBytesLen {
-		return nil, nil, errMissingSignature
-	}
-
-	// Recover Ethereum addresses of validators and their signatures, preserve
-	// the order that was specified in the source extra, because validators are
-	// sorted and NextConsensus depends on it.
-	var (
-		addrs = make([]common.Address, n)
-		sigs  = make([][]byte, m)
-	)
-	for i := range addrs {
-		addrOffset := extraVanity + i*common.AddressLength
-		copy(addrs[i][:], extra[addrOffset:addrOffset+common.AddressLength])
-	}
-	for i := range sigs {
-		sigOffset := len(extra) - sigsBytesLen + i*extraSeal
-		sigs[i] = extra[sigOffset : sigOffset+extraSeal]
+	switch extra[0] {
+	case dbftutil.ExtraV0:
+		if len(extra) < dbftutil.ExtraVersionLen+addrsBytesLen+sigsBytesLen {
+			return nil, nil, errMissingSignature
+		}
+		// Recover Ethereum addresses of validators and their signatures, preserve
+		// the order that was specified in the source extra, because validators are
+		// sorted and NextConsensus depends on it.
+		for i := range addrs {
+			addrOffset := dbftutil.ExtraVersionLen + i*common.AddressLength
+			copy(addrs[i][:], extra[addrOffset:addrOffset+common.AddressLength])
+		}
+		for i := range sigs {
+			sigOffset := len(extra) - sigsBytesLen + i*extraSeal
+			sigs[i] = extra[sigOffset : sigOffset+extraSeal]
+		}
+	default:
+		return nil, nil, fmt.Errorf("unexpected Extra version: %d", extra[0])
 	}
 
 	return addrs, sigs, nil
@@ -322,7 +322,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			// c.lastIndex is updated in postBlock callback every time new block
 			// with higher index is accepted.
 			dBFTHeader := ethBlock.header
-			dBFTHeader.Extra = append(dBFTHeader.Extra, c.getBlockWitness()...) // extraVanity isn't changed, validators addresses and signatures are added.
+			dBFTHeader.Extra = append(dBFTHeader.Extra, c.getBlockWitness()...) // Extra version isn't changed, validators addresses and signatures are added.
 
 			res := types.NewBlockWithHeader(ethBlock.header)
 			// Uncles are always nil in dBFT-like consensus.
@@ -704,21 +704,21 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	// It's not bound to checkpoint anymore.
 
 	// Check that the extra-data contains both the vanity and signature
-	if len(header.Extra) < extraVanity {
+	if len(header.Extra) < dbftutil.ExtraVersionLen {
 		return errMissingVanity
 	}
 	m := crypto.GetBFTHonestNodeCount(len(c.config.StandByValidators))
 	sigBytesLen := m * extraSeal
-	if len(header.Extra) < extraVanity+sigBytesLen {
+	if len(header.Extra) < dbftutil.ExtraVersionLen+sigBytesLen {
 		return errMissingSignature
 	}
 	// Ensure that the extra-data contains validators list.
-	signersBytes := len(header.Extra) - extraVanity - sigBytesLen
+	signersBytes := len(header.Extra) - dbftutil.ExtraVersionLen - sigBytesLen
 	if signersBytes == 0 {
 		return fmt.Errorf("missing validators addresses")
 	}
 	if signersBytes%common.AddressLength != 0 {
-		return errInvalidCheckpointSigners
+		return errInvalidExtraSigners
 	}
 	// Ensure that the mix digest is not zero.
 	if header.MixDigest == (common.Hash{}) {
@@ -867,15 +867,16 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	// by PoA engine. This stub will be overridden during further dBFT process anyway.
 	header.Difficulty = diffStub
 
-	// Ensure the extra data has all its components
-	if len(header.Extra) < extraVanity {
-		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-len(header.Extra))...)
+	// Ensure the extra data has all its components. Set default Extra version if not
+	// provided by miner.
+	if len(header.Extra) < dbftutil.ExtraVersionLen {
+		header.Extra = []byte{dbftutil.ExtraV0}
 	}
-	// Fill only extraVanity. The rest components of Header's Extra (validators
+	// Fill only Extra version. The rest components of Header's Extra (validators
 	// addresses and BFT number of validators signatures) are treated as changeable
 	// and are not filled in during Prepare. These data will be set after block
 	// sealing in processBlock dBFT callback.
-	header.Extra = header.Extra[:extraVanity]
+	header.Extra = header.Extra[:dbftutil.ExtraVersionLen]
 
 	// Mix digest is reserved for now, set to empty
 	header.MixDigest = common.Hash{}
@@ -1321,7 +1322,7 @@ func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 		header.GasUsed,
 		header.Time,
 		// Do not include validators addresses into hashable part.
-		header.Extra[:extraVanity], // Yes, this will panic if extra is too short.
+		header.Extra[:dbftutil.ExtraVersionLen], // Yes, this will panic if extra is too short.
 	}
 	if header.BaseFee != nil {
 		enc = append(enc, header.BaseFee)
@@ -1371,7 +1372,7 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 		header.GasLimit,
 		header.GasUsed,
 		header.Time,
-		header.Extra[:extraVanity], // Yes, this will panic if extra is too short
+		header.Extra[:dbftutil.ExtraVersionLen], // Yes, this will panic if extra is too short
 		header.MixDigest,
 		header.Nonce,
 	}

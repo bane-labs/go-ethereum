@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/dbft"
+	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -249,7 +250,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 
 	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, eth.isLocalBlock)
-	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
+	if chainConfig.DBFT != nil && len(config.Miner.ExtraData) != 0 {
+		return nil, fmt.Errorf("custom miner Extra is not supported by dBFT")
+	}
+	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData, chainConfig.DBFT != nil))
 
 	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
 	if eth.APIBackend.allowUnprotectedTxs {
@@ -311,15 +315,19 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	return eth, nil
 }
 
-func makeExtraData(extra []byte) []byte {
+func makeExtraData(extra []byte, isBFT bool) []byte {
 	if len(extra) == 0 {
 		// create default extradata
-		extra, _ = rlp.EncodeToBytes([]interface{}{
-			uint(params.VersionMajor<<16 | params.VersionMinor<<8 | params.VersionPatch),
-			"geth",
-			runtime.Version(),
-			runtime.GOOS,
-		})
+		if isBFT {
+			extra = []byte{dbftutil.ExtraV0}
+		} else {
+			extra, _ = rlp.EncodeToBytes([]interface{}{
+				uint(params.VersionMajor<<16 | params.VersionMinor<<8 | params.VersionPatch),
+				"geth",
+				runtime.Version(),
+				runtime.GOOS,
+			})
+		}
 	}
 	if uint64(len(extra)) > params.MaximumExtraDataSize {
 		log.Warn("Miner extra data exceed limit", "extra", hexutil.Bytes(extra), "limit", params.MaximumExtraDataSize)
