@@ -69,6 +69,8 @@ var (
 	diffStub   = big.NewInt(3) // Block difficulty stub that is used for miner's task preparation.
 	diffInTurn = big.NewInt(2) // Block difficulty for in-turn signatures
 	diffNoTurn = big.NewInt(1) // Block difficulty for out-of-turn signatures
+
+	emptyWithdrawals = make([]*types.Withdrawal, 0)
 )
 
 const (
@@ -327,6 +329,9 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			res := types.NewBlockWithHeader(ethBlock.header)
 			// Uncles are always nil in dBFT-like consensus.
 			res = res.WithBody(ethBlock.transactions, nil)
+			if ethBlock.withdrawals != nil {
+				res = res.WithWithdrawals(ethBlock.withdrawals)
+			}
 
 			// Firstly, notify chain about new block.
 			if err := c.blockQueue.PutBlock(res); err != nil {
@@ -371,9 +376,14 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			// (dBFT has only the full set of their hashes). Once all transactions are
 			// fetched and the commits are collected, SetTransactions callback will be
 			// called by dBFT library to properly initialize block's transactions.
-			return &Block{
+			res := &Block{
 				header: h,
 			}
+			// Withdrawals are temporary empty if Shanghai is passed.
+			if c.chain.Config().IsShanghai(h.Number, h.Time) {
+				res.withdrawals = emptyWithdrawals
+			}
+			return res
 		}),
 		dbft.WithWatchOnly(func() bool {
 			return false
@@ -738,8 +748,21 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if header.GasLimit > params.MaxGasLimit {
 		return fmt.Errorf("invalid gasLimit: have %v, max %v", header.GasLimit, params.MaxGasLimit)
 	}
-	if chain.Config().IsShanghai(header.Number, header.Time) {
-		return errors.New("dbft does not support shanghai fork")
+	shanghai := chain.Config().IsShanghai(header.Number, header.Time)
+	if shanghai {
+		if header.WithdrawalsHash == nil {
+			return errors.New("missing withdrawalsHash")
+		}
+		// For now, only empty withdrawals are supported. Once non-empty withdrawals are allowed,
+		// we need to ensure that withdrawals hash matches withdrawals, it's done at the level of
+		// WithVerifyBlock dBFT callback during the consensus process and at the blockchain level
+		// for real (accepted) blocks.
+		if header.WithdrawalsHash.Cmp(types.EmptyWithdrawalsHash) != 0 {
+			return errors.New("dBFT supports only empty withdrawals")
+		}
+	}
+	if !shanghai && header.WithdrawalsHash != nil {
+		return fmt.Errorf("invalid withdrawalsHash: have %x, expected nil", header.WithdrawalsHash)
 	}
 	if chain.Config().IsCancun(header.Number, header.Time) {
 		return errors.New("dbft does not support cancun fork")
@@ -890,27 +913,41 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	return nil
 }
 
-// Finalize implements consensus.Engine. There is no post-transaction
-// consensus rules in dbft, do nothing here.
+// Finalize implements consensus.Engine. For now, it only manages block withdrawals.
 func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
+	// Withdrawals processing.
+	for _, w := range withdrawals {
+		// Convert amount from gwei to wei.
+		amount := new(big.Int).SetUint64(w.Amount)
+		amount = amount.Mul(amount, big.NewInt(params.GWei))
+		state.AddBalance(w.Address, amount)
+	}
 	// No block rewards in PoA, so the state remains as is
 }
 
 // FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
 // nor block rewards given, and returns the final block.
 func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, error) {
-	if len(withdrawals) > 0 {
-		return nil, errors.New("dbft does not support withdrawals")
+	shanghai := chain.Config().IsShanghai(header.Number, header.Time)
+	if shanghai {
+		// All blocks after Shanghai must include a withdrawals root.
+		if withdrawals == nil {
+			withdrawals = make([]*types.Withdrawal, 0)
+		}
+	} else {
+		if len(withdrawals) > 0 {
+			return nil, errors.New("withdrawals set before Shanghai activation")
+		}
 	}
+
 	// Finalize block
-	c.Finalize(chain, header, state, txs, uncles, nil)
+	c.Finalize(chain, header, state, txs, uncles, withdrawals)
 
 	// Assign the final state root to header.
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 
 	// Assemble and return the final block for sealing.
-	b := types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil))
-
+	b := types.NewBlockWithWithdrawals(header, txs, nil, receipts, withdrawals, trie.NewStackTrie(nil))
 	return b, nil
 }
 
@@ -1328,7 +1365,7 @@ func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 		enc = append(enc, header.BaseFee)
 	}
 	if header.WithdrawalsHash != nil {
-		panic("unexpected withdrawal hash value in dbft")
+		enc = append(enc, header.WithdrawalsHash)
 	}
 	if err := rlp.Encode(w, enc); err != nil {
 		panic("can't encode: " + err.Error())
@@ -1380,7 +1417,7 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 		enc = append(enc, header.BaseFee)
 	}
 	if header.WithdrawalsHash != nil {
-		panic("unexpected withdrawal hash value in dbft")
+		enc = append(enc, header.WithdrawalsHash)
 	}
 	if err := rlp.Encode(w, enc); err != nil {
 		panic("can't encode: " + err.Error())
