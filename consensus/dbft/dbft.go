@@ -718,6 +718,9 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if len(header.Extra) < dbftutil.ExtraVersionLen {
 		return errMissingVanity
 	}
+	if header.Extra[0] != dbftutil.ExtraV0 {
+		return fmt.Errorf("unknown Extra version: %d", header.Extra[0])
+	}
 	m := crypto.GetBFTHonestNodeCount(len(c.config.StandByValidators))
 	sigBytesLen := m * extraSeal
 	if len(header.Extra) < dbftutil.ExtraVersionLen+sigBytesLen {
