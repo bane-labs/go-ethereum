@@ -462,8 +462,14 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			if req.SealingProposal == nil {
 				return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
 			}
-			if req.SealingProposal.Coinbase != c.config.Coinbase {
-				return fmt.Errorf("invalid Coinbase: expected %s, got %s", c.config.Coinbase, req.SealingProposal.Coinbase)
+			parent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 1)
+			if parent == nil {
+				return fmt.Errorf("no parent found for height %d", req.SealingProposal.Number.Uint64()-1)
+			}
+			parentHeader := parent.Header()
+			err := c.verifyHeader(c.chain, req.SealingProposal, []*types.Header{parentHeader}, false)
+			if err != nil {
+				return fmt.Errorf("invalid header: %w", err)
 			}
 			if req.SealingProposal.ParentHash != c.lastBlockHash {
 				// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
@@ -486,19 +492,14 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 				// After that we assume that parent block is totally valid, and it can be inserted to chain.
 				// Internal fork resolving mechanism will deal with forks.
-				savedParent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 1)
-				if savedParent == nil {
-					return fmt.Errorf("failed to put proposed parent to the storage: no parent found for height %d", req.SealingProposal.Number.Uint64()-1)
-				}
-				newHeader := savedParent.Header()
 				oldHash := c.lastBlockHash
 				oldExtra := c.lastBlockExtra
-				newHeader.Extra = req.ParentExtra
-				err = c.blockQueue.PutBlock(savedParent.WithSeal(newHeader))
+				parentHeader.Extra = req.ParentExtra
+				err = c.blockQueue.PutBlock(parent.WithSeal(parentHeader))
 				if err != nil {
 					err = fmt.Errorf("failed to enqueue parent with updated extra for height %d (old hash %s, new hash %s): %w",
 						req.SealingProposal.Number.Uint64()-1,
-						savedParent.Hash(),
+						parent.Hash(),
 						req.SealingProposal.ParentHash,
 						err)
 					// This error is critical for further dBFT functioning.
@@ -511,7 +512,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				c.dbft.PrevHash = req.SealingProposal.ParentHash.Uint256()
 
 				log.Info("New parent stored",
-					"number", newHeader.Number,
+					"number", parentHeader.Number,
 					"old hash", oldHash.String(),
 					"new hash", req.SealingProposal.ParentHash.String(),
 					"sealhash", req.ParentSealHash.String(),
@@ -671,7 +672,7 @@ func (c *DBFT) Validators(header *types.Header) ([]common.Address, error) {
 
 // VerifyHeader checks whether a header conforms to the consensus rules.
 func (c *DBFT) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
-	return c.verifyHeader(chain, header, nil)
+	return c.verifyHeader(chain, header, nil, true)
 }
 
 // VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers. The
@@ -683,7 +684,7 @@ func (c *DBFT) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types
 
 	go func() {
 		for i, header := range headers {
-			err := c.verifyHeader(chain, header, headers[:i])
+			err := c.verifyHeader(chain, header, headers[:i], true)
 
 			select {
 			case <-abort:
@@ -699,14 +700,14 @@ func (c *DBFT) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types
 // caller may optionally pass in a batch of parents (ascending order) to avoid
 // looking those up from the database. This is useful for concurrently verifying
 // a batch of new headers.
-func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
+func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header, isSealed bool) error {
 	if header.Number == nil {
 		return errUnknownBlock
 	}
 	number := header.Number.Uint64()
 
-	// Don't waste time checking blocks from the future
-	if header.Time > uint64(time.Now().Unix()) {
+	// Don't waste time checking blocks from the future.
+	if isSealed && header.Time > uint64(time.Now().Unix()) {
 		return consensus.ErrFutureBlock
 	}
 
@@ -721,29 +722,32 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if header.Extra[0] != dbftutil.ExtraV0 {
 		return fmt.Errorf("unknown Extra version: %d", header.Extra[0])
 	}
-	m := crypto.GetBFTHonestNodeCount(len(c.config.StandByValidators))
-	sigBytesLen := m * extraSeal
-	if len(header.Extra) < dbftutil.ExtraVersionLen+sigBytesLen {
-		return errMissingSignature
-	}
-	// Ensure that the extra-data contains validators list.
-	signersBytes := len(header.Extra) - dbftutil.ExtraVersionLen - sigBytesLen
-	if signersBytes == 0 {
-		return fmt.Errorf("missing validators addresses")
-	}
-	if signersBytes%common.AddressLength != 0 {
-		return errInvalidExtraSigners
-	}
-	// Ensure that the mix digest is not zero.
-	if header.MixDigest == (common.Hash{}) {
-		return errInvalidMixDigest
+	if isSealed {
+		m := crypto.GetBFTHonestNodeCount(len(c.config.StandByValidators))
+		sigBytesLen := m * extraSeal
+		if len(header.Extra) < dbftutil.ExtraVersionLen+sigBytesLen {
+			return errMissingSignature
+		}
+		// Ensure that the extra-data contains validators list.
+		signersBytes := len(header.Extra) - dbftutil.ExtraVersionLen - sigBytesLen
+		if signersBytes == 0 {
+			return fmt.Errorf("missing validators addresses")
+		}
+		if signersBytes%common.AddressLength != 0 {
+			return errInvalidExtraSigners
+		}
+
+		// Ensure that the mix digest is not zero.
+		if header.MixDigest == (common.Hash{}) {
+			return errInvalidMixDigest
+		}
 	}
 	// Ensure that the block doesn't contain any uncles which are meaningless in PoA
 	if header.UncleHash != uncleHash {
 		return errInvalidUncleHash
 	}
 	// Ensure that the block's difficulty is meaningful (may not be correct at this point)
-	if number > 0 {
+	if number > 0 && isSealed {
 		if header.Difficulty == nil || (header.Difficulty.Cmp(diffInTurn) != 0 && header.Difficulty.Cmp(diffNoTurn) != 0) {
 			return errInvalidDifficulty
 		}
@@ -772,14 +776,14 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 		return errors.New("dbft does not support cancun fork")
 	}
 	// All basic checks passed, verify cascading fields
-	return c.verifyCascadingFields(chain, header, parents)
+	return c.verifyCascadingFields(chain, header, parents, isSealed)
 }
 
 // verifyCascadingFields verifies all the header fields that are not standalone,
 // rather depend on a batch of previous headers. The caller may optionally pass
 // in a batch of parents (ascending order) to avoid looking those up from the
 // database. This is useful for concurrently verifying a batch of new headers.
-func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
+func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header, isSealed bool) error {
 	// The genesis block is the always valid dead-end
 	number := header.Number.Uint64()
 	if number == 0 {
@@ -792,7 +796,9 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 	} else {
 		parent = chain.GetHeader(header.ParentHash, number-1)
 	}
-	if parent == nil || parent.Number.Uint64() != number-1 || parent.Hash() != header.ParentHash {
+	if parent == nil ||
+		parent.Number.Uint64() != number-1 ||
+		(isSealed && parent.Hash() != header.ParentHash) {
 		return consensus.ErrUnknownAncestor
 	}
 	if parent.Time > header.Time {
@@ -819,7 +825,10 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 		return fmt.Errorf("invalid Coinbase: expected %s, got %s", c.config.Coinbase, header.Coinbase)
 	}
 
-	// All basic checks passed, verify the seal and return
+	// All basic checks passed, verify the seal and return.
+	if !isSealed {
+		return nil
+	}
 	return c.verifySeal(header, parents, parent)
 }
 
