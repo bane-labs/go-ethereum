@@ -4,6 +4,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 )
@@ -15,7 +16,7 @@ type ChainHeaderReader interface {
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	HasBlock(hash common.Hash, number uint64) bool
 	GetBlockByNumber(uint64) *types.Block
-	VerifyBlock(block *types.Block) error
+	VerifyBlock(block *types.Block) (types.Receipts, *state.StateDB, error)
 }
 
 // ChainHeaderWriter is a Blockchain API abstraction needed for proper blockQueue
@@ -24,4 +25,5 @@ type ChainHeaderWriter interface {
 	ChainHeaderReader
 	InsertChain(chain types.Blocks) (int, error)
 	InsertBlockWithoutSetHead(b *types.Block) error
+	WriteBlockAndSetHead(block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB, emitHeadEvent bool) (status core.WriteStatus, err error)
 }

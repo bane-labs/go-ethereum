@@ -328,7 +328,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			res = res.WithBody(ethBlock.transactions, nil)
 
 			// Firstly, notify chain about new block.
-			if err := c.blockQueue.PutBlock(res); err != nil {
+			if err := c.blockQueue.PutBlock(res, ethBlock.receipts, ethBlock.state); err != nil {
 				// The block might already be added via the regular network
 				// interaction.
 				if h := c.chain.GetHeaderByNumber(res.Number().Uint64()); h == nil {
@@ -480,7 +480,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				}
 				newHeader := savedParent.Header()
 				newHeader.Extra = req.ParentExtra
-				err = c.blockQueue.PutBlock(savedParent.WithSeal(newHeader))
+				err = c.blockQueue.PutBlock(savedParent.WithSeal(newHeader), nil, nil)
 				if err != nil {
 					err = fmt.Errorf("failed to enqueue parent with updated extra for height %d (old hash %s, new hash %s): %w",
 						req.SealingProposal.Number.Uint64()-1,
@@ -530,12 +530,15 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			// Uncles are always nil in dBFT-like consensus.
 			res = res.WithBody(ethBlock.transactions, nil)
 
-			err := c.chain.VerifyBlock(res)
+			receipts, st, err := c.chain.VerifyBlock(res)
 			if err != nil {
 				log.Warn("proposed block verification failed",
 					"err", err.Error())
 				return false
 			}
+
+			ethBlock.receipts = receipts
+			ethBlock.state = st
 			return true
 		}),
 		dbft.WithBroadcast(func(p payload.ConsensusPayload) {

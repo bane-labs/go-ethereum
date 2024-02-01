@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -48,7 +49,7 @@ func (bq *blockQueue) SetChain(chain ChainHeaderWriter) {
 // PutBlock routs block either to miner or (if there's no suitable sealing task)
 // directly to blockchain. No block verification is performed, it is assumed that
 // provided block is sealed and valid.
-func (bq *blockQueue) PutBlock(b *types.Block) error {
+func (bq *blockQueue) PutBlock(b *types.Block, taskReceipts []*types.Receipt, taskState *state.StateDB) error {
 	h := WorkerSealHash(b.Header())
 
 	bq.tasksLock.Lock()
@@ -97,12 +98,52 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 		return nil
 	}
 
-	_, err := bq.chain.InsertChain(types.Blocks{b})
-	if err != nil {
-		return fmt.Errorf("failed to insert block into chain: %w", err)
+	if taskState == nil {
+		_, err := bq.chain.InsertChain(types.Blocks{b})
+		if err != nil {
+			return fmt.Errorf("failed to insert block into chain: %w", err)
+		}
+		return nil
 	}
 
-	return err
+	// Different block could share same sealhash, deep copy here to prevent write-write conflict.
+	var (
+		receipts = make([]*types.Receipt, len(taskReceipts))
+		logs     []*types.Log
+		hash     = b.Hash()
+	)
+	for i, taskReceipt := range taskReceipts {
+		receipt := new(types.Receipt)
+		receipts[i] = receipt
+		*receipt = *taskReceipt
+
+		// add block location fields
+		receipt.BlockHash = hash
+		receipt.BlockNumber = b.Number()
+		receipt.TransactionIndex = uint(i)
+
+		// Update the block hash in all logs since it is now available and not when the
+		// receipt/log of individual transactions were created.
+		receipt.Logs = make([]*types.Log, len(taskReceipt.Logs))
+		for i, taskLog := range taskReceipt.Logs {
+			log := new(types.Log)
+			receipt.Logs[i] = log
+			*log = *taskLog
+			log.BlockHash = hash
+		}
+		logs = append(logs, receipt.Logs...)
+	}
+	// Commit block and state to database.
+	_, err := bq.chain.WriteBlockAndSetHead(b, receipts, logs, taskState, true)
+	if err != nil {
+		log.Error("Failed writing block to chain and set head",
+			"number", b.NumberU64(),
+			"err", err)
+		return fmt.Errorf("failed to write block into chain: %w", err)
+	}
+	log.Info("Successfully enqueued new block", "number", b.Number(), "hash", hash)
+
+	return nil
 }
 
 // clearStaleTasks removes all stale tasks up to the specified height (including

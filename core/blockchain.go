@@ -2607,19 +2607,20 @@ func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 }
 
 // VerifyBlock checks block state
-func (bc *BlockChain) VerifyBlock(block *types.Block) error {
+func (bc *BlockChain) VerifyBlock(block *types.Block) (types.Receipts, *state.StateDB, error) {
 	parent := bc.GetBlockByHash(block.ParentHash())
 	statedb, err := bc.StateAt(parent.Root())
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
+	// TODO: make statedb copy before transaction execution?
 	receipts, _, usedGas, err := bc.processor.Process(block, statedb, bc.vmConfig)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
-		return err
+		return nil, nil, err
 	}
-	return nil
+	return receipts, statedb, nil
 }
