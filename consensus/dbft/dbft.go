@@ -950,6 +950,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 			log.Warn("Failed to fetch latest sealing proposal",
 				"index", c.lastIndex+1,
 				"err", err.Error())
+			return
 		}
 
 		log.Info("Starting dBFT engine",
@@ -1112,7 +1113,13 @@ events:
 				c.dbft.OnTransaction(&Transaction{Tx: tx})
 			}
 		case b := <-c.chainHeadEvents:
-			c.handleChainBlock(b.Block)
+			err := c.handleChainBlock(b.Block)
+			if err != nil {
+				log.Warn("Failed to handle chain block",
+					"index", b.Block.NumberU64(),
+					"err", err.Error())
+				break events
+			}
 		case err := <-c.txSub.Err():
 			// System has stopped.
 			log.Info("Stopping dBFT service since transaction subscriptions are stopped")
@@ -1142,7 +1149,13 @@ events:
 			}
 		}
 		if latestBlock.Block != nil {
-			c.handleChainBlock(latestBlock.Block)
+			err := c.handleChainBlock(latestBlock.Block)
+			if err != nil {
+				log.Warn("Failed to handle latest chain block",
+					"index", latestBlock.Block.NumberU64(),
+					"err", err.Error())
+				break events
+			}
 		}
 		newView := c.dbft.ViewNumber
 		// If ChangeView has happened, we always need to wait for the new proposal
@@ -1154,6 +1167,7 @@ events:
 				log.Warn("Failed to fetch latest sealing proposal",
 					"index", c.dbft.Context.BlockIndex,
 					"err", err.Error())
+				break events
 			}
 			log.Info("Start dBFT process for updated sealing work",
 				"index", c.dbft.Context.BlockIndex,
@@ -1237,7 +1251,7 @@ func (c *DBFT) newPayload(ctx *dbft.Context, t payload.MessageType, msg any) pay
 	return cp
 }
 
-func (c *DBFT) handleChainBlock(b *types.Block) {
+func (c *DBFT) handleChainBlock(b *types.Block) error {
 	// We can get our own block here, so check for index.
 	if uint32(b.Number().Uint64()) >= c.dbft.BlockIndex {
 		log.Info("New block in the chain",
@@ -1254,9 +1268,11 @@ func (c *DBFT) handleChainBlock(b *types.Block) {
 			log.Warn("Failed to fetch latest sealing proposal",
 				"index", c.lastIndex+1,
 				"err", err.Error())
+			return err
 		}
 		c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
 	}
+	return nil
 }
 
 // CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
