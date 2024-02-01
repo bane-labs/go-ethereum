@@ -499,7 +499,8 @@ func (s *Ethereum) StartMining() error {
 				cli.Authorize(eb, wallet.SignData)
 			}
 			if bft != nil {
-				log.Info("initializing BFT consensus")
+				log.Info("Initializing BFT consensus",
+					"account", eb.String())
 				bft.Authorize(eb, wallet.SignData)
 			}
 		}
