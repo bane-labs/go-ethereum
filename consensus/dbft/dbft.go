@@ -180,9 +180,10 @@ type DBFT struct {
 	signFn SignerFn       // Signer function to authorize hashes with
 	lock   sync.RWMutex   // Protects the signer field
 
-	dbft        *dbft.DBFT
-	dbftStarted atomic.Bool
-	blockQueue  *blockQueue
+	dbft             *dbft.DBFT
+	dbftStarted      atomic.Bool
+	eventLoopStarted atomic.Bool
+	blockQueue       *blockQueue
 
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
 	// received from dBFT or from chain. These fields have exactly those type
@@ -1004,6 +1005,11 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 		if ok {
 			break
 		}
+		select {
+		case <-c.quit:
+			return errors.New("shutdown detected")
+		default:
+		}
 		time.Sleep(time.Second)
 	}
 
@@ -1057,11 +1063,14 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 }
 
 func (c *DBFT) eventLoop() {
+	c.eventLoopStarted.Store(true)
+	log.Info("dBFT event loop started")
 events:
 	for {
 		oldView := c.dbft.ViewNumber
 		select {
 		case <-c.quit:
+			log.Info("shutting down dBFT event loop")
 			c.dbft.Timer.Stop()
 
 			c.chainHeadSub.Unsubscribe()
@@ -1166,7 +1175,7 @@ drainLoop:
 	close(c.txEvents)
 	close(c.chainHeadEvents)
 	close(c.finished)
-	log.Info("dBFT service event loop finished")
+	log.Info("dBFT event loop finished")
 }
 
 // OnPayload handles Payload receive.
@@ -1389,10 +1398,14 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 
 // Close implements consensus.Engine.
 func (c *DBFT) Close() error {
-	if c.dbftStarted.Load() {
+	if c.dbftStarted.CompareAndSwap(true, false) {
+		log.Info("Shutting down dBFT engine")
 		close(c.quit)
-		<-c.finished
+		if c.eventLoopStarted.CompareAndSwap(true, false) {
+			<-c.finished
+		}
 	}
+	log.Info("dBFT engine stopped")
 	return nil
 }
 
