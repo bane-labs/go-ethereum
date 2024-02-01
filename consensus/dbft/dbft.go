@@ -513,7 +513,19 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			if !ok {
 				return false
 			}
-
+			parent := c.chain.CurrentBlock()
+			if parent.Number.Cmp(ethBlock.header.Number) >= 0 {
+				log.Warn("proposed block has already outdated",
+					"current block number", parent.Number.Uint64(),
+					"proposed block number", ethBlock.header.Number)
+				return false
+			}
+			if c.lastTimestamp > ethBlock.header.Time {
+				log.Warn("proposed block has small timestamp",
+					"ts", ethBlock.header.Time,
+					"last", c.lastTimestamp)
+				return false
+			}
 			res := types.NewBlockWithHeader(ethBlock.header)
 			// Uncles are always nil in dBFT-like consensus.
 			res = res.WithBody(ethBlock.transactions, nil)
