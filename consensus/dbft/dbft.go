@@ -520,8 +520,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			err := c.chain.VerifyBlock(res)
 			if err != nil {
-				err = fmt.Errorf("VerifyBlock failed: %w", err)
-				log.Warn(err.Error())
+				log.Warn("proposed block verification failed",
+					"err", err.Error())
 				return false
 			}
 			return true
