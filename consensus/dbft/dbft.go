@@ -190,11 +190,12 @@ type DBFT struct {
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
 	// received from dBFT or from chain. These fields have exactly those type
 	// that Eth offers, thus, they need to be converted before feeding to dBFT.
-	lastTimestamp     uint64 // in seconds, like Eth requires.
-	lastIndex         uint64
-	lastBlockHash     common.Hash
-	lastBlockSealHash common.Hash
-	lastBlockExtra    []byte
+	lastTimestamp              uint64 // in seconds, like Eth requires.
+	lastIndex                  uint64
+	lastBlockHash              common.Hash
+	lastBlockSealHash          common.Hash
+	lastBlockExtra             []byte
+	lastBlockNextNextConsensus common.Hash // ready-to-use NextConsensus field for the next accepted block.
 
 	// lastProposal holds the latest proposal submitted to dBFT by miner. It is updated
 	// irrespectively and concurrently to dBFT process, thus, access should be protected
@@ -364,13 +365,6 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			h.Difficulty = c.getDifficulty(int(ctx.PrimaryIndex), uint64(ctx.BlockIndex))
 
-			// NextConsensus -> MixHash
-			nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true) // always compute as it's NextConsensus.
-			if err != nil {
-				panic(fmt.Errorf("failed to retrieve next block validators: %w", err))
-			}
-			h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
-
 			// Do not fill block's transactions. First of all, transactions are not
 			// needed for block signing or block signature verification. Secondly, some
 			// transactions may be missing by the moment of call to NewBlockFromContext
@@ -433,7 +427,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			c.requestTxs(hashes)
 		}),
 		dbft.WithGetConsensusAddress(func(keys ...dbftCrypto.PublicKey) util.Uint160 {
-			// NextConsensus is filled manually in NewBlockFromContext.
+			// NextConsensus is filled manually in WithNewPrepareRequest callback.
 			return util.Uint160{}
 		}),
 		dbft.WithNewConsensusPayload(c.newPayload),
@@ -442,6 +436,10 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			if c.sealingProposal == nil {
 				panic("bug: sealing proposal is not initialized")
 			}
+
+			// NextConsensus -> MixHash
+			c.sealingProposal.MixDigest = c.lastBlockNextNextConsensus
+
 			// Fill in only proposal and receipts, transactions will be properly
 			// set from context later in SetTransactionHashes callback.
 			req.SealingProposal = c.sealingProposal
@@ -461,6 +459,11 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			req := p.GetPrepareRequest().(*prepareRequest)
 			if req.SealingProposal == nil {
 				return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
+			}
+			// Verify MixDigest separately from header verification below since header verification
+			// doesn't check the correctness of NextConsensus wrt storage state.
+			if req.SealingProposal.MixDigest != c.lastBlockNextNextConsensus {
+				return fmt.Errorf("invalid MixDigest (NextConsensus): expected %s, got %s", c.lastBlockNextNextConsensus, req.SealingProposal.MixDigest)
 			}
 			parent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 1)
 			if parent == nil {
@@ -600,8 +603,9 @@ func (c *DBFT) WithTxPool(pool txPool) {
 
 // postBlock is a callback that updates latest accepted block data and resets
 // last proposal data. It must be called every time new block arrives from chain
-// or from consensus. It also clears all BlockQueue tasks up to the accepted block
-// height.
+// or from consensus. It must be called strictly after new block persist since
+// NextConsensus calculation depends on the storage state. It also clears all
+// BlockQueue tasks up to the accepted block height.
 func (c *DBFT) postBlock(b *types.Block) {
 	if c.lastIndex < b.NumberU64() {
 		h := b.Header()
@@ -613,6 +617,14 @@ func (c *DBFT) postBlock(b *types.Block) {
 		c.lastBlockExtra = h.Extra
 
 		c.blockQueue.ClearStaleTasks(b.NumberU64())
+
+		// Calculate NextConsensus field for the next block based on the accepted lastBlock state.
+		nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true) // always compute as it's NextConsensus.
+		if err != nil {
+			log.Crit("failed to compute next block validators",
+				"err", err.Error())
+		}
+		c.lastBlockNextNextConsensus = dbftutil.GetNextConsensusHash(nextVals)
 	}
 }
 
@@ -991,10 +1003,17 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.lastBlockHash = currHeader.Hash()
 		c.lastBlockSealHash = HonestSealHash(currHeader)
 		c.lastBlockExtra = currHeader.Extra
+		nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true) // always compute as it's NextConsensus.
+		if err != nil {
+			log.Warn("failed to compute next block validators while initializing dBFT",
+				"err", err.Error())
+			return
+		}
+		c.lastBlockNextNextConsensus = dbftutil.GetNextConsensusHash(nextVals)
 
 		// Before consensus start we should wait for initial sealing proposal to be
 		// initialised by miner. Start consensus once we have new sealing work in Seal.
-		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
+		err = c.waitForNewSealingProposal(c.lastIndex+1, false)
 		if err != nil {
 			log.Warn("Failed to fetch latest sealing proposal",
 				"index", c.lastIndex+1,
