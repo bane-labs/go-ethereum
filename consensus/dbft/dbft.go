@@ -52,6 +52,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/holiman/uint256"
 	"github.com/nspcc-dev/dbft"
 	"github.com/nspcc-dev/dbft/block"
 	dbftCrypto "github.com/nspcc-dev/dbft/crypto"
@@ -943,8 +944,8 @@ func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header,
 	// Withdrawals processing.
 	for _, w := range withdrawals {
 		// Convert amount from gwei to wei.
-		amount := new(big.Int).SetUint64(w.Amount)
-		amount = amount.Mul(amount, big.NewInt(params.GWei))
+		amount := new(uint256.Int).SetUint64(w.Amount)
+		amount = amount.Mul(amount, uint256.NewInt(params.GWei))
 		state.AddBalance(w.Address, amount)
 	}
 	// No block rewards in PoA, so the state remains as is
