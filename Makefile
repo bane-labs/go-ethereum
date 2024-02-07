@@ -103,6 +103,7 @@ define run_node
 		--metrics \
 		--nat $(NAT_POLICY) \
 		--netrestrict $(RESTRICTED_NETWORK) \
+		--verbosity 5 \
 		$(5) >  $(1)/$(2)/geth_node.log 2>&1 &
 endef
 
