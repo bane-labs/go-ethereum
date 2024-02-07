@@ -1027,8 +1027,9 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 			"last timestamp", c.lastTimestamp)
 		c.dbft.Start(c.lastTimestamp * NsInS)
 
-		// Subscribe for minted blocks and transactions from mempool.
-		c.txSub = c.txpool.SubscribeNewTxsEvent(c.txEvents)
+		// Subscribe for minted blocks and transactions (both new and resurrected)
+		// from mempool.
+		c.txSub = c.txpool.SubscribeTransactions(c.txEvents, true)
 		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
 
 		go c.eventLoop()

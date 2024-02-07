@@ -294,7 +294,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		ethAPI := ethapi.NewBlockChainAPI(eth.APIBackend)
 		bft.WithEthAPI(ethAPI)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
-		bft.WithTxPool(eth.txPool)
+		bft.WithTxPool(eth.TxPool())
 		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
 	}
 
