@@ -1545,7 +1545,7 @@ func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, co
 		Gas:  &gas,
 		To:   &toAddress,
 		Data: &msgData,
-	}, blockNr, nil, nil)
+	}, &blockNr, nil, nil)
 	if err != nil {
 		return nil, err
 	}
