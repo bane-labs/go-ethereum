@@ -114,7 +114,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		if sidecar == nil {
 			return fmt.Errorf("missing sidecar in blob transaction")
 		}
-		// Ensure the number of items in the blob transaction and vairous side
+		// Ensure the number of items in the blob transaction and various side
 		// data match up before doing any expensive validations
 		hashes := tx.BlobHashes()
 		if len(hashes) == 0 {
@@ -143,17 +143,10 @@ func validateBlobSidecar(hashes []common.Hash, sidecar *types.BlobTxSidecar) err
 	// Blob quantities match up, validate that the provers match with the
 	// transaction hash before getting to the cryptography
 	hasher := sha256.New()
-	for i, want := range hashes {
-		hasher.Write(sidecar.Commitments[i][:])
-		hash := hasher.Sum(nil)
-		hasher.Reset()
-
-		var vhash common.Hash
-		vhash[0] = params.BlobTxHashVersion
-		copy(vhash[1:], hash[1:])
-
-		if vhash != want {
-			return fmt.Errorf("blob %d: computed hash %#x mismatches transaction one %#x", i, vhash, want)
+	for i, vhash := range hashes {
+		computed := kzg4844.CalcBlobHashV1(hasher, &sidecar.Commitments[i])
+		if vhash != computed {
+			return fmt.Errorf("blob %d: computed hash %#x mismatches transaction one %#x", i, computed, vhash)
 		}
 	}
 	// Blob commitments match with the hashes in the transaction, verify the
@@ -182,7 +175,7 @@ type ValidationOptionsWithState struct {
 	// be rejected once the number of remaining slots reaches zero.
 	UsedAndLeftSlots func(addr common.Address) (int, int)
 
-	// ExistingExpenditure is a mandatory callback to retrieve the cummulative
+	// ExistingExpenditure is a mandatory callback to retrieve the cumulative
 	// cost of the already pooled transactions to check for overdrafts.
 	ExistingExpenditure func(addr common.Address) *big.Int
 
@@ -216,7 +209,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	}
 	// Ensure the transactor has enough funds to cover the transaction costs
 	var (
-		balance = opts.State.GetBalance(from)
+		balance = opts.State.GetBalance(from).ToBig()
 		cost    = tx.Cost()
 	)
 	if balance.Cmp(cost) < 0 {
@@ -237,7 +230,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 			return fmt.Errorf("%w: balance %v, queued cost %v, tx cost %v, overshot %v", core.ErrInsufficientFunds, balance, spent, cost, new(big.Int).Sub(need, balance))
 		}
 		// Transaction takes a new nonce value out of the pool. Ensure it doesn't
-		// overflow the number of permitted transactions from a single accoun
+		// overflow the number of permitted transactions from a single account
 		// (i.e. max cancellable via out-of-bound transaction).
 		if used, left := opts.UsedAndLeftSlots(from); left <= 0 {
 			return fmt.Errorf("%w: pooled %d txs", ErrAccountLimitExceeded, used)

@@ -27,7 +27,6 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/accounts/scwallet"
 	"github.com/ethereum/go-ethereum/common"
@@ -40,6 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/eth/gasestimator"
 	"github.com/ethereum/go-ethereum/eth/tracers/logger"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -47,8 +47,15 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/holiman/uint256"
 	"github.com/tyler-smith/go-bip39"
 )
+
+// estimateGasErrorRatio is the amount of overestimation eth_estimateGas is
+// allowed to produce in order to speed up calculations.
+const estimateGasErrorRatio = 0.015
+
+var errBlobTxNotSupported = errors.New("signing blob transactions not supported")
 
 // EthereumAPI provides an API to access Ethereum related information.
 type EthereumAPI struct {
@@ -127,26 +134,28 @@ func (s *EthereumAPI) Syncing() (interface{}, error) {
 	progress := s.b.SyncProgress()
 
 	// Return not syncing if the synchronisation already completed
-	if progress.CurrentBlock >= progress.HighestBlock {
+	if progress.Done() {
 		return false, nil
 	}
 	// Otherwise gather the block sync stats
 	return map[string]interface{}{
-		"startingBlock":       hexutil.Uint64(progress.StartingBlock),
-		"currentBlock":        hexutil.Uint64(progress.CurrentBlock),
-		"highestBlock":        hexutil.Uint64(progress.HighestBlock),
-		"syncedAccounts":      hexutil.Uint64(progress.SyncedAccounts),
-		"syncedAccountBytes":  hexutil.Uint64(progress.SyncedAccountBytes),
-		"syncedBytecodes":     hexutil.Uint64(progress.SyncedBytecodes),
-		"syncedBytecodeBytes": hexutil.Uint64(progress.SyncedBytecodeBytes),
-		"syncedStorage":       hexutil.Uint64(progress.SyncedStorage),
-		"syncedStorageBytes":  hexutil.Uint64(progress.SyncedStorageBytes),
-		"healedTrienodes":     hexutil.Uint64(progress.HealedTrienodes),
-		"healedTrienodeBytes": hexutil.Uint64(progress.HealedTrienodeBytes),
-		"healedBytecodes":     hexutil.Uint64(progress.HealedBytecodes),
-		"healedBytecodeBytes": hexutil.Uint64(progress.HealedBytecodeBytes),
-		"healingTrienodes":    hexutil.Uint64(progress.HealingTrienodes),
-		"healingBytecode":     hexutil.Uint64(progress.HealingBytecode),
+		"startingBlock":          hexutil.Uint64(progress.StartingBlock),
+		"currentBlock":           hexutil.Uint64(progress.CurrentBlock),
+		"highestBlock":           hexutil.Uint64(progress.HighestBlock),
+		"syncedAccounts":         hexutil.Uint64(progress.SyncedAccounts),
+		"syncedAccountBytes":     hexutil.Uint64(progress.SyncedAccountBytes),
+		"syncedBytecodes":        hexutil.Uint64(progress.SyncedBytecodes),
+		"syncedBytecodeBytes":    hexutil.Uint64(progress.SyncedBytecodeBytes),
+		"syncedStorage":          hexutil.Uint64(progress.SyncedStorage),
+		"syncedStorageBytes":     hexutil.Uint64(progress.SyncedStorageBytes),
+		"healedTrienodes":        hexutil.Uint64(progress.HealedTrienodes),
+		"healedTrienodeBytes":    hexutil.Uint64(progress.HealedTrienodeBytes),
+		"healedBytecodes":        hexutil.Uint64(progress.HealedBytecodes),
+		"healedBytecodeBytes":    hexutil.Uint64(progress.HealedBytecodeBytes),
+		"healingTrienodes":       hexutil.Uint64(progress.HealingTrienodes),
+		"healingBytecode":        hexutil.Uint64(progress.HealingBytecode),
+		"txIndexFinishedBlocks":  hexutil.Uint64(progress.TxIndexFinishedBlocks),
+		"txIndexRemainingBlocks": hexutil.Uint64(progress.TxIndexRemainingBlocks),
 	}, nil
 }
 
@@ -463,6 +472,9 @@ func (s *PersonalAccountAPI) SendTransaction(ctx context.Context, args Transacti
 		s.nonceLock.LockAddr(args.from())
 		defer s.nonceLock.UnlockAddr(args.from())
 	}
+	if args.IsEIP4844() {
+		return common.Hash{}, errBlobTxNotSupported
+	}
 	signed, err := s.signTransaction(ctx, &args, passwd)
 	if err != nil {
 		log.Warn("Failed transaction send attempt", "from", args.from(), "to", args.To, "value", args.Value.ToInt(), "err", err)
@@ -486,6 +498,9 @@ func (s *PersonalAccountAPI) SignTransaction(ctx context.Context, args Transacti
 	}
 	if args.GasPrice == nil && (args.MaxFeePerGas == nil || args.MaxPriorityFeePerGas == nil) {
 		return nil, errors.New("missing gasPrice or maxFeePerGas/maxPriorityFeePerGas")
+	}
+	if args.IsEIP4844() {
+		return nil, errBlobTxNotSupported
 	}
 	if args.Nonce == nil {
 		return nil, errors.New("nonce not specified")
@@ -636,7 +651,8 @@ func (s *BlockChainAPI) GetBalance(ctx context.Context, address common.Address, 
 	if state == nil || err != nil {
 		return nil, err
 	}
-	return (*hexutil.Big)(state.GetBalance(address)), state.Error()
+	b := state.GetBalance(address).ToBig()
+	return (*hexutil.Big)(b), state.Error()
 }
 
 // Result structs for GetProof
@@ -675,10 +691,6 @@ func (s *BlockChainAPI) GetProof(ctx context.Context, address common.Address, st
 		keys         = make([]common.Hash, len(storageKeys))
 		keyLengths   = make([]int, len(storageKeys))
 		storageProof = make([]StorageResult, len(storageKeys))
-
-		storageTrie state.Trie
-		storageHash = types.EmptyRootHash
-		codeHash    = types.EmptyCodeHash
 	)
 	// Deserialize all keys. This prevents state access on invalid input.
 	for i, hexKey := range storageKeys {
@@ -688,51 +700,49 @@ func (s *BlockChainAPI) GetProof(ctx context.Context, address common.Address, st
 			return nil, err
 		}
 	}
-	state, header, err := s.b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
-	if state == nil || err != nil {
+	statedb, header, err := s.b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
+	if statedb == nil || err != nil {
 		return nil, err
 	}
-	if storageRoot := state.GetStorageRoot(address); storageRoot != types.EmptyRootHash && storageRoot != (common.Hash{}) {
-		id := trie.StorageTrieID(header.Root, crypto.Keccak256Hash(address.Bytes()), storageRoot)
-		tr, err := trie.NewStateTrie(id, state.Database().TrieDB())
-		if err != nil {
-			return nil, err
-		}
-		storageTrie = tr
-	}
-	// If we have a storageTrie, the account exists and we must update
-	// the storage root hash and the code hash.
-	if storageTrie != nil {
-		storageHash = storageTrie.Hash()
-		codeHash = state.GetCodeHash(address)
-	}
-	// Create the proofs for the storageKeys.
-	for i, key := range keys {
-		// Output key encoding is a bit special: if the input was a 32-byte hash, it is
-		// returned as such. Otherwise, we apply the QUANTITY encoding mandated by the
-		// JSON-RPC spec for getProof. This behavior exists to preserve backwards
-		// compatibility with older client versions.
-		var outputKey string
-		if keyLengths[i] != 32 {
-			outputKey = hexutil.EncodeBig(key.Big())
-		} else {
-			outputKey = hexutil.Encode(key[:])
-		}
+	codeHash := statedb.GetCodeHash(address)
+	storageRoot := statedb.GetStorageRoot(address)
 
-		if storageTrie == nil {
-			storageProof[i] = StorageResult{outputKey, &hexutil.Big{}, []string{}}
-			continue
+	if len(keys) > 0 {
+		var storageTrie state.Trie
+		if storageRoot != types.EmptyRootHash && storageRoot != (common.Hash{}) {
+			id := trie.StorageTrieID(header.Root, crypto.Keccak256Hash(address.Bytes()), storageRoot)
+			st, err := trie.NewStateTrie(id, statedb.Database().TrieDB())
+			if err != nil {
+				return nil, err
+			}
+			storageTrie = st
 		}
-		var proof proofList
-		if err := storageTrie.Prove(crypto.Keccak256(key.Bytes()), &proof); err != nil {
-			return nil, err
+		// Create the proofs for the storageKeys.
+		for i, key := range keys {
+			// Output key encoding is a bit special: if the input was a 32-byte hash, it is
+			// returned as such. Otherwise, we apply the QUANTITY encoding mandated by the
+			// JSON-RPC spec for getProof. This behavior exists to preserve backwards
+			// compatibility with older client versions.
+			var outputKey string
+			if keyLengths[i] != 32 {
+				outputKey = hexutil.EncodeBig(key.Big())
+			} else {
+				outputKey = hexutil.Encode(key[:])
+			}
+			if storageTrie == nil {
+				storageProof[i] = StorageResult{outputKey, &hexutil.Big{}, []string{}}
+				continue
+			}
+			var proof proofList
+			if err := storageTrie.Prove(crypto.Keccak256(key.Bytes()), &proof); err != nil {
+				return nil, err
+			}
+			value := (*hexutil.Big)(statedb.GetState(address, key).Big())
+			storageProof[i] = StorageResult{outputKey, value, proof}
 		}
-		value := (*hexutil.Big)(state.GetState(address, key).Big())
-		storageProof[i] = StorageResult{outputKey, value, proof}
 	}
-
 	// Create the accountProof.
-	tr, err := trie.NewStateTrie(trie.StateTrieID(header.Root), state.Database().TrieDB())
+	tr, err := trie.NewStateTrie(trie.StateTrieID(header.Root), statedb.Database().TrieDB())
 	if err != nil {
 		return nil, err
 	}
@@ -740,15 +750,16 @@ func (s *BlockChainAPI) GetProof(ctx context.Context, address common.Address, st
 	if err := tr.Prove(crypto.Keccak256(address.Bytes()), &accountProof); err != nil {
 		return nil, err
 	}
+	balance := statedb.GetBalance(address).ToBig()
 	return &AccountResult{
 		Address:      address,
 		AccountProof: accountProof,
-		Balance:      (*hexutil.Big)(state.GetBalance(address)),
+		Balance:      (*hexutil.Big)(balance),
 		CodeHash:     codeHash,
-		Nonce:        hexutil.Uint64(state.GetNonce(address)),
-		StorageHash:  storageHash,
+		Nonce:        hexutil.Uint64(statedb.GetNonce(address)),
+		StorageHash:  storageRoot,
 		StorageProof: storageProof,
-	}, state.Error()
+	}, statedb.Error()
 }
 
 // decodeHash parses a hex-encoded 32-byte hash. The input may optionally
@@ -966,7 +977,8 @@ func (diff *StateOverride) Apply(state *state.StateDB) error {
 		}
 		// Override account balance.
 		if account.Balance != nil {
-			state.SetBalance(addr, (*big.Int)(*account.Balance))
+			u256Balance, _ := uint256.FromBig((*big.Int)(*account.Balance))
+			state.SetBalance(addr, u256Balance)
 		}
 		if account.State != nil && account.StateDiff != nil {
 			return fmt.Errorf("account %s has both 'state' and 'stateDiff'", addr.Hex())
@@ -991,13 +1003,14 @@ func (diff *StateOverride) Apply(state *state.StateDB) error {
 
 // BlockOverrides is a set of header fields to override.
 type BlockOverrides struct {
-	Number     *hexutil.Big
-	Difficulty *hexutil.Big
-	Time       *hexutil.Uint64
-	GasLimit   *hexutil.Uint64
-	Coinbase   *common.Address
-	Random     *common.Hash
-	BaseFee    *hexutil.Big
+	Number      *hexutil.Big
+	Difficulty  *hexutil.Big
+	Time        *hexutil.Uint64
+	GasLimit    *hexutil.Uint64
+	Coinbase    *common.Address
+	Random      *common.Hash
+	BaseFee     *hexutil.Big
+	BlobBaseFee *hexutil.Big
 }
 
 // Apply overrides the given header fields into the given block context.
@@ -1025,6 +1038,9 @@ func (diff *BlockOverrides) Apply(blockCtx *vm.BlockContext) {
 	}
 	if diff.BaseFee != nil {
 		blockCtx.BaseFee = diff.BaseFee.ToInt()
+	}
+	if diff.BlobBaseFee != nil {
+		blockCtx.BlobBaseFee = diff.BlobBaseFee.ToInt()
 	}
 }
 
@@ -1085,7 +1101,7 @@ func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.S
 	if blockOverrides != nil {
 		blockOverrides.Apply(&blockCtx)
 	}
-	evm, vmError := b.GetEVM(ctx, msg, state, header, &vm.Config{NoBaseFee: true}, &blockCtx)
+	evm := b.GetEVM(ctx, msg, state, header, &vm.Config{NoBaseFee: true}, &blockCtx)
 
 	// Wait for the context to be done and cancel the evm. Even if the
 	// EVM has finished, cancelling may be done (repeatedly)
@@ -1097,7 +1113,7 @@ func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.S
 	// Execute the message.
 	gp := new(core.GasPool).AddGas(math.MaxUint64)
 	result, err := core.ApplyMessage(evm, msg, gp)
-	if err := vmError(); err != nil {
+	if err := state.Error(); err != nil {
 		return nil, err
 	}
 
@@ -1122,67 +1138,26 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 	return doCall(ctx, b, args, state, header, overrides, blockOverrides, timeout, globalGasCap)
 }
 
-func newRevertError(result *core.ExecutionResult) *revertError {
-	reason, errUnpack := abi.UnpackRevert(result.Revert())
-	err := errors.New("execution reverted")
-	if errUnpack == nil {
-		err = fmt.Errorf("execution reverted: %v", reason)
-	}
-	return &revertError{
-		error:  err,
-		reason: hexutil.Encode(result.Revert()),
-	}
-}
-
-// revertError is an API error that encompasses an EVM revertal with JSON error
-// code and a binary data blob.
-type revertError struct {
-	error
-	reason string // revert reason hex encoded
-}
-
-// ErrorCode returns the JSON error code for a revertal.
-// See: https://github.com/ethereum/wiki/wiki/JSON-RPC-Error-Codes-Improvement-Proposal
-func (e *revertError) ErrorCode() int {
-	return 3
-}
-
-// ErrorData returns the hex encoded revert reason.
-func (e *revertError) ErrorData() interface{} {
-	return e.reason
-}
-
 // Call executes the given transaction on the state for the given block number.
 //
 // Additionally, the caller can specify a batch of contract for fields overriding.
 //
 // Note, this function doesn't make and changes in the state/blockchain and is
 // useful to execute and retrieve values.
-func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride, blockOverrides *BlockOverrides) (hexutil.Bytes, error) {
-	result, err := DoCall(ctx, s.b, args, blockNrOrHash, overrides, blockOverrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
+func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash, overrides *StateOverride, blockOverrides *BlockOverrides) (hexutil.Bytes, error) {
+	if blockNrOrHash == nil {
+		latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+		blockNrOrHash = &latest
+	}
+	result, err := DoCall(ctx, s.b, args, *blockNrOrHash, overrides, blockOverrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
 	if err != nil {
 		return nil, err
 	}
 	// If the result contains a revert reason, try to unpack and return it.
 	if len(result.Revert()) > 0 {
-		return nil, newRevertError(result)
+		return nil, newRevertError(result.Revert())
 	}
 	return result.Return(), result.Err
-}
-
-// executeEstimate is a helper that executes the transaction under a given gas limit and returns
-// true if the transaction fails for a reason that might be related to not enough gas. A non-nil
-// error means execution failed due to reasons unrelated to the gas limit.
-func executeEstimate(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, header *types.Header, gasCap uint64, gasLimit uint64) (bool, *core.ExecutionResult, error) {
-	args.Gas = (*hexutil.Uint64)(&gasLimit)
-	result, err := doCall(ctx, b, args, state, header, nil, nil, 0, gasCap)
-	if err != nil {
-		if errors.Is(err, core.ErrIntrinsicGas) {
-			return true, nil, nil // Special case, raise gas limit
-		}
-		return true, nil, err // Bail out
-	}
-	return result.Failed(), result, nil
 }
 
 // DoEstimateGas returns the lowest possible gas limit that allows the transaction to run
@@ -1190,122 +1165,35 @@ func executeEstimate(ctx context.Context, b Backend, args TransactionArgs, state
 // there are unexpected failures. The gas limit is capped by both `args.Gas` (if non-nil &
 // non-zero) and `gasCap` (if non-zero).
 func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride, gasCap uint64) (hexutil.Uint64, error) {
-	// Binary search the gas limit, as it may need to be higher than the amount used
-	var (
-		lo uint64 // lowest-known gas limit where tx execution fails
-		hi uint64 // lowest-known gas limit where tx execution succeeds
-	)
-	// Use zero address if sender unspecified.
-	if args.From == nil {
-		args.From = new(common.Address)
-	}
-	// Determine the highest gas limit can be used during the estimation.
-	if args.Gas != nil && uint64(*args.Gas) >= params.TxGas {
-		hi = uint64(*args.Gas)
-	} else {
-		// Retrieve the block to act as the gas ceiling
-		block, err := b.BlockByNumberOrHash(ctx, blockNrOrHash)
-		if err != nil {
-			return 0, err
-		}
-		if block == nil {
-			return 0, errors.New("block not found")
-		}
-		hi = block.GasLimit()
-	}
-	// Normalize the max fee per gas the call is willing to spend.
-	var feeCap *big.Int
-	if args.GasPrice != nil && (args.MaxFeePerGas != nil || args.MaxPriorityFeePerGas != nil) {
-		return 0, errors.New("both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified")
-	} else if args.GasPrice != nil {
-		feeCap = args.GasPrice.ToInt()
-	} else if args.MaxFeePerGas != nil {
-		feeCap = args.MaxFeePerGas.ToInt()
-	} else {
-		feeCap = common.Big0
-	}
-
+	// Retrieve the base state and mutate it with any overrides
 	state, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
 	if state == nil || err != nil {
 		return 0, err
 	}
-	if err := overrides.Apply(state); err != nil {
+	if err = overrides.Apply(state); err != nil {
 		return 0, err
 	}
-
-	// Recap the highest gas limit with account's available balance.
-	if feeCap.BitLen() != 0 {
-		balance := state.GetBalance(*args.From) // from can't be nil
-		available := new(big.Int).Set(balance)
-		if args.Value != nil {
-			if args.Value.ToInt().Cmp(available) >= 0 {
-				return 0, core.ErrInsufficientFundsForTransfer
-			}
-			available.Sub(available, args.Value.ToInt())
-		}
-		allowance := new(big.Int).Div(available, feeCap)
-
-		// If the allowance is larger than maximum uint64, skip checking
-		if allowance.IsUint64() && hi > allowance.Uint64() {
-			transfer := args.Value
-			if transfer == nil {
-				transfer = new(hexutil.Big)
-			}
-			log.Warn("Gas estimation capped by limited funds", "original", hi, "balance", balance,
-				"sent", transfer.ToInt(), "maxFeePerGas", feeCap, "fundable", allowance)
-			hi = allowance.Uint64()
-		}
+	// Construct the gas estimator option from the user input
+	opts := &gasestimator.Options{
+		Config:     b.ChainConfig(),
+		Chain:      NewChainContext(ctx, b),
+		Header:     header,
+		State:      state,
+		ErrorRatio: estimateGasErrorRatio,
 	}
-	// Recap the highest gas allowance with specified gascap.
-	if gasCap != 0 && hi > gasCap {
-		log.Warn("Caller gas above allowance, capping", "requested", hi, "cap", gasCap)
-		hi = gasCap
-	}
-
-	// We first execute the transaction at the highest allowable gas limit, since if this fails we
-	// can return error immediately.
-	failed, result, err := executeEstimate(ctx, b, args, state.Copy(), header, gasCap, hi)
+	// Run the gas estimation andwrap any revertals into a custom return
+	call, err := args.ToMessage(gasCap, header.BaseFee)
 	if err != nil {
 		return 0, err
 	}
-	if failed {
-		if result != nil && result.Err != vm.ErrOutOfGas {
-			if len(result.Revert()) > 0 {
-				return 0, newRevertError(result)
-			}
-			return 0, result.Err
+	estimate, revert, err := gasestimator.Estimate(ctx, call, opts, gasCap)
+	if err != nil {
+		if len(revert) > 0 {
+			return 0, newRevertError(revert)
 		}
-		return 0, fmt.Errorf("gas required exceeds allowance (%d)", hi)
+		return 0, err
 	}
-	// For almost any transaction, the gas consumed by the unconstrained execution above
-	// lower-bounds the gas limit required for it to succeed. One exception is those txs that
-	// explicitly check gas remaining in order to successfully execute within a given limit, but we
-	// probably don't want to return a lowest possible gas limit for these cases anyway.
-	lo = result.UsedGas - 1
-
-	// Binary search for the smallest gas limit that allows the tx to execute successfully.
-	for lo+1 < hi {
-		mid := (hi + lo) / 2
-		if mid > lo*2 {
-			// Most txs don't need much higher gas limit than their gas used, and most txs don't
-			// require near the full block limit of gas, so the selection of where to bisect the
-			// range here is skewed to favor the low side.
-			mid = lo * 2
-		}
-		failed, _, err = executeEstimate(ctx, b, args, state.Copy(), header, gasCap, mid)
-		if err != nil {
-			// This should not happen under normal conditions since if we make it this far the
-			// transaction had run without error at least once before.
-			log.Error("execution error in estimate gas", "err", err)
-			return 0, err
-		}
-		if failed {
-			lo = mid
-		} else {
-			hi = mid
-		}
-	}
-	return hexutil.Uint64(hi), nil
+	return hexutil.Uint64(estimate), nil
 }
 
 // EstimateGas returns the lowest possible gas limit that allows the transaction to run
@@ -1313,6 +1201,7 @@ func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNr
 // returns error if the transaction would revert or if there are unexpected failures. The returned
 // value is capped by both `args.Gas` (if non-nil & non-zero) and the backend's RPCGasCap
 // configuration (if non-zero).
+// Note: Required blob gas is not computed in this method.
 func (s *BlockChainAPI) EstimateGas(ctx context.Context, args TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Uint64, error) {
 	bNrOrHash := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
 	if blockNrOrHash != nil {
@@ -1572,7 +1461,7 @@ type accessListResult struct {
 // CreateAccessList creates an EIP-2930 type AccessList for the given transaction.
 // Reexec and BlockNrOrHash can be specified to create the accessList on top of a certain state.
 func (s *BlockChainAPI) CreateAccessList(ctx context.Context, args TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash) (*accessListResult, error) {
-	bNrOrHash := rpc.BlockNumberOrHashWithNumber(rpc.PendingBlockNumber)
+	bNrOrHash := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
 	if blockNrOrHash != nil {
 		bNrOrHash = *blockNrOrHash
 	}
@@ -1638,7 +1527,7 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 		// Apply the transaction with the access list tracer
 		tracer := logger.NewAccessListTracer(accessList, args.from(), to, precompiles)
 		config := vm.Config{Tracer: tracer, NoBaseFee: true}
-		vmenv, _ := b.GetEVM(ctx, msg, statedb, header, &config, nil)
+		vmenv := b.GetEVM(ctx, msg, statedb, header, &config, nil)
 		res, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.GasLimit))
 		if err != nil {
 			return nil, 0, nil, fmt.Errorf("failed to apply transaction: %v err: %v", args.toTransaction().Hash(), err)
@@ -1737,50 +1626,48 @@ func (s *TransactionAPI) GetTransactionCount(ctx context.Context, address common
 // GetTransactionByHash returns the transaction for the given hash
 func (s *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.Hash) (*RPCTransaction, error) {
 	// Try to return an already finalized transaction
-	tx, blockHash, blockNumber, index, err := s.b.GetTransaction(ctx, hash)
+	found, tx, blockHash, blockNumber, index, err := s.b.GetTransaction(ctx, hash)
+	if !found {
+		// No finalized transaction, try to retrieve it from the pool
+		if tx := s.b.GetPoolTransaction(hash); tx != nil {
+			return NewRPCPendingTransaction(tx, s.b.CurrentHeader(), s.b.ChainConfig()), nil
+		}
+		if err == nil {
+			return nil, nil
+		}
+		return nil, NewTxIndexingError()
+	}
+	header, err := s.b.HeaderByHash(ctx, blockHash)
 	if err != nil {
 		return nil, err
 	}
-	if tx != nil {
-		header, err := s.b.HeaderByHash(ctx, blockHash)
-		if err != nil {
-			return nil, err
-		}
-		return newRPCTransaction(tx, blockHash, blockNumber, header.Time, index, header.BaseFee, s.b.ChainConfig()), nil
-	}
-	// No finalized transaction, try to retrieve it from the pool
-	if tx := s.b.GetPoolTransaction(hash); tx != nil {
-		return NewRPCPendingTransaction(tx, s.b.CurrentHeader(), s.b.ChainConfig()), nil
-	}
-
-	// Transaction unknown, return as such
-	return nil, nil
+	return newRPCTransaction(tx, blockHash, blockNumber, header.Time, index, header.BaseFee, s.b.ChainConfig()), nil
 }
 
 // GetRawTransactionByHash returns the bytes of the transaction for the given hash.
 func (s *TransactionAPI) GetRawTransactionByHash(ctx context.Context, hash common.Hash) (hexutil.Bytes, error) {
 	// Retrieve a finalized transaction, or a pooled otherwise
-	tx, _, _, _, err := s.b.GetTransaction(ctx, hash)
-	if err != nil {
-		return nil, err
-	}
-	if tx == nil {
-		if tx = s.b.GetPoolTransaction(hash); tx == nil {
-			// Transaction not found anywhere, abort
+	found, tx, _, _, _, err := s.b.GetTransaction(ctx, hash)
+	if !found {
+		if tx = s.b.GetPoolTransaction(hash); tx != nil {
+			return tx.MarshalBinary()
+		}
+		if err == nil {
 			return nil, nil
 		}
+		return nil, NewTxIndexingError()
 	}
-	// Serialize to RLP and return
 	return tx.MarshalBinary()
 }
 
 // GetTransactionReceipt returns the transaction receipt for the given transaction hash.
 func (s *TransactionAPI) GetTransactionReceipt(ctx context.Context, hash common.Hash) (map[string]interface{}, error) {
-	tx, blockHash, blockNumber, index, err := s.b.GetTransaction(ctx, hash)
-	if tx == nil || err != nil {
-		// When the transaction doesn't exist, the RPC method should return JSON null
-		// as per specification.
-		return nil, nil
+	found, tx, blockHash, blockNumber, index, err := s.b.GetTransaction(ctx, hash)
+	if err != nil {
+		return nil, NewTxIndexingError() // transaction is not fully indexed
+	}
+	if !found {
+		return nil, nil // transaction is not existent or reachable
 	}
 	header, err := s.b.HeaderByHash(ctx, blockHash)
 	if err != nil {
@@ -1903,6 +1790,9 @@ func (s *TransactionAPI) SendTransaction(ctx context.Context, args TransactionAr
 		s.nonceLock.LockAddr(args.from())
 		defer s.nonceLock.UnlockAddr(args.from())
 	}
+	if args.IsEIP4844() {
+		return common.Hash{}, errBlobTxNotSupported
+	}
 
 	// Set some sanity defaults and terminate on failure
 	if err := args.setDefaults(ctx, s.b); err != nil {
@@ -1928,6 +1818,7 @@ func (s *TransactionAPI) FillTransaction(ctx context.Context, args TransactionAr
 	}
 	// Assemble the transaction and obtain rlp
 	tx := args.toTransaction()
+	// TODO(s1na): fill in blob proofs, commitments
 	data, err := tx.MarshalBinary()
 	if err != nil {
 		return nil, err
@@ -1985,6 +1876,9 @@ func (s *TransactionAPI) SignTransaction(ctx context.Context, args TransactionAr
 	}
 	if args.GasPrice == nil && (args.MaxPriorityFeePerGas == nil || args.MaxFeePerGas == nil) {
 		return nil, errors.New("missing gasPrice or maxFeePerGas/maxPriorityFeePerGas")
+	}
+	if args.IsEIP4844() {
+		return nil, errBlobTxNotSupported
 	}
 	if args.Nonce == nil {
 		return nil, errors.New("nonce not specified")
@@ -2163,15 +2057,15 @@ func (api *DebugAPI) GetRawReceipts(ctx context.Context, blockNrOrHash rpc.Block
 // GetRawTransaction returns the bytes of the transaction for the given hash.
 func (s *DebugAPI) GetRawTransaction(ctx context.Context, hash common.Hash) (hexutil.Bytes, error) {
 	// Retrieve a finalized transaction, or a pooled otherwise
-	tx, _, _, _, err := s.b.GetTransaction(ctx, hash)
-	if err != nil {
-		return nil, err
-	}
-	if tx == nil {
-		if tx = s.b.GetPoolTransaction(hash); tx == nil {
-			// Transaction not found anywhere, abort
+	found, tx, _, _, _, err := s.b.GetTransaction(ctx, hash)
+	if !found {
+		if tx = s.b.GetPoolTransaction(hash); tx != nil {
+			return tx.MarshalBinary()
+		}
+		if err == nil {
 			return nil, nil
 		}
+		return nil, NewTxIndexingError()
 	}
 	return tx.MarshalBinary()
 }
@@ -2187,20 +2081,23 @@ func (api *DebugAPI) PrintBlock(ctx context.Context, number uint64) (string, err
 
 // ChaindbProperty returns leveldb properties of the key-value database.
 func (api *DebugAPI) ChaindbProperty(property string) (string, error) {
-	if property == "" {
-		property = "leveldb.stats"
-	} else if !strings.HasPrefix(property, "leveldb.") {
-		property = "leveldb." + property
-	}
 	return api.b.ChainDb().Stat(property)
 }
 
 // ChaindbCompact flattens the entire key-value database into a single level,
 // removing all unused slots and merging all keys.
 func (api *DebugAPI) ChaindbCompact() error {
-	for b := byte(0); b < 255; b++ {
-		log.Info("Compacting chain database", "range", fmt.Sprintf("0x%0.2X-0x%0.2X", b, b+1))
-		if err := api.b.ChainDb().Compact([]byte{b}, []byte{b + 1}); err != nil {
+	cstart := time.Now()
+	for b := 0; b <= 255; b++ {
+		var (
+			start = []byte{byte(b)}
+			end   = []byte{byte(b + 1)}
+		)
+		if b == 255 {
+			end = nil
+		}
+		log.Info("Compacting database", "range", fmt.Sprintf("%#X-%#X", start, end), "elapsed", common.PrettyDuration(time.Since(cstart)))
+		if err := api.b.ChainDb().Compact(start, end); err != nil {
 			log.Error("Database compaction failed", "err", err)
 			return err
 		}
