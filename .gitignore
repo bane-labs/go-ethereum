@@ -52,3 +52,5 @@ logs/
 # privnet
 /privnet/**/*.log
 /privnet/**/geth/
+
+tests/spec-tests/
