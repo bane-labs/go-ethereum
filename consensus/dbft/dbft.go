@@ -27,6 +27,7 @@ import (
 	"io"
 	"math"
 	"math/big"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -168,14 +169,17 @@ type DBFT struct {
 	broadcast func(m *dbftproto.Message) error
 
 	// requestTxs is a callback which is called to request the missing
-	// transactions from neighbor nodes.
+	// transactions from neighbor nodes. Requested transactions hashes are
+	// stored in txCbList and checked against the incoming transactions. If
+	// subsequent incoming transaction was requested then it'll be sent to the
+	// buffered txs channel.
 	requestTxs func(hashed []common.Hash)
+	txCbList   atomic.Value
+	txs        chan *types.Transaction
 
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
 	chainHeadEvents chan core.ChainHeadEvent
-	txSub           event.Subscription
-	txEvents        chan core.NewTxsEvent
 
 	config *params.DBFTConfig // Consensus engine configuration parameters
 
@@ -245,7 +249,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		blockQueue: newBlockQueue(),
 
 		messages:        make(chan Payload, msgsChCap),
-		txEvents:        make(chan core.NewTxsEvent, txSubCap),
+		txs:             make(chan *types.Transaction, txSubCap),
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
 
 		quit:     make(chan struct{}),
@@ -417,15 +421,26 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 			return res
 		}),
-		dbft.WithRequestTx(func(h ...util.Uint256) {
-			if len(h) == 0 {
+		dbft.WithRequestTx(func(hashes ...util.Uint256) {
+			if len(hashes) == 0 {
 				return
 			}
-			hashes := make([]common.Hash, len(h))
-			for i := range h {
-				hashes = append(hashes, common.Hash(h[i]))
+
+			var sorted = make([]common.Hash, len(hashes))
+			for i := range hashes {
+				sorted[i] = common.Hash(hashes[i])
 			}
-			c.requestTxs(hashes)
+			sort.Slice(sorted, func(i, j int) bool {
+				return sorted[i].Cmp(sorted[j]) < 0
+			})
+
+			c.txCbList.Store(sorted)
+
+			c.requestTxs(sorted)
+		}),
+		dbft.WithStopTxFlow(func() {
+			var hashes []common.Hash
+			c.txCbList.Store(hashes)
 		}),
 		dbft.WithGetConsensusAddress(func(keys ...dbftCrypto.PublicKey) util.Uint160 {
 			// NextConsensus is filled manually in WithNewPrepareRequest callback.
@@ -1027,9 +1042,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 			"last timestamp", c.lastTimestamp)
 		c.dbft.Start(c.lastTimestamp * NsInS)
 
-		// Subscribe for minted blocks and transactions (both new and resurrected)
-		// from mempool.
-		c.txSub = c.txpool.SubscribeTransactions(c.txEvents, true)
+		// Subscribe for minted blocks.
 		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
 
 		go c.eventLoop()
@@ -1145,7 +1158,6 @@ events:
 			c.dbft.Timer.Stop()
 
 			c.chainHeadSub.Unsubscribe()
-			c.txSub.Unsubscribe()
 			break events
 		case <-c.dbft.Timer.C():
 			hv := c.dbft.Timer.HV()
@@ -1178,10 +1190,8 @@ events:
 			}
 			log.Debug("received message", fields...)
 			c.dbft.OnReceive(&msg)
-		case txs := <-c.txEvents:
-			for _, tx := range txs.Txs {
-				c.dbft.OnTransaction(&Transaction{Tx: tx})
-			}
+		case tx := <-c.txs:
+			c.dbft.OnTransaction(&Transaction{Tx: tx})
 		case b := <-c.chainHeadEvents:
 			err := c.handleChainBlock(b.Block)
 			if err != nil {
@@ -1190,14 +1200,6 @@ events:
 					"err", err.Error())
 				break events
 			}
-		case err := <-c.txSub.Err():
-			// System has stopped.
-			log.Info("Stopping dBFT service since transaction subscriptions are stopped")
-			if err != nil {
-				log.Info("Transaction subscriptions error",
-					"error", err.Error())
-			}
-			break events
 		case err := <-c.chainHeadSub.Err():
 			// System has stopped.
 			log.Info("Stopping dBFT service since block subscriptions are stopped")
@@ -1249,14 +1251,14 @@ drainLoop:
 	for {
 		select {
 		case <-c.messages:
-		case <-c.txEvents:
+		case <-c.txs:
 		case <-c.chainHeadEvents:
 		default:
 			break drainLoop
 		}
 	}
 	close(c.messages)
-	close(c.txEvents)
+	close(c.txs)
 	close(c.chainHeadEvents)
 	close(c.finished)
 	log.Info("dBFT event loop finished")
@@ -1265,7 +1267,7 @@ drainLoop:
 // OnPayload handles Payload receive.
 func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 	if c.dbft == nil || !c.dbftStarted.Load() {
-		log.Debug("skip dBFT payload handling: dbft is inactive or not started yet", "hash", cp.Hash())
+		log.Debug("Skip dBFT payload handling: dbft is inactive or not started yet", "hash", cp.Hash())
 		return nil
 	}
 
@@ -1283,6 +1285,29 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 
 	c.messages <- *p
 	return nil
+}
+
+// OnTransaction is a dBFT callback that reacts on new incoming transaction arrived
+// via P2P. It's important to call this callback on every incoming transaction
+// skipping mempool filtering for proper dBFT functioning.
+func (c *DBFT) OnTransaction(txs []*types.Transaction) {
+	if c.dbft == nil || !c.dbftStarted.Load() {
+		log.Debug("Skip txs batch handling: dbft is inactive or not started yet")
+		return
+	}
+
+	var cbList = c.txCbList.Load()
+	if cbList != nil {
+		for _, tx := range txs {
+			var list = cbList.([]common.Hash)
+			var i = sort.Search(len(list), func(i int) bool {
+				return list[i].Cmp(tx.Hash()) >= 0
+			})
+			if i < len(list) && list[i].Cmp(tx.Hash()) == 0 {
+				c.txs <- tx
+			}
+		}
+	}
 }
 
 func payloadFromMessage(ep *dbftproto.Message) *Payload {

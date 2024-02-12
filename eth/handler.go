@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
+	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -281,7 +282,20 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 		return p.RequestTxs(hashes)
 	}
+	var bft *dbft.DBFT
+	switch t := h.chain.Engine().(type) {
+	case *dbft.DBFT:
+		bft = t
+	case *beacon.Beacon:
+		switch inner := t.InnerEngine().(type) {
+		case *dbft.DBFT:
+			bft = inner
+		}
+	}
 	addTxs := func(txs []*types.Transaction) []error {
+		if bft != nil {
+			bft.OnTransaction(txs)
+		}
 		return h.txpool.Add(txs, false, false)
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
