@@ -118,6 +118,7 @@ define run_node
 		--http \
 		--http.port $(5) \
 		--http.addr 0.0.0.0 \
+		--http.vhosts "*" \
 		--ws \
 		--ws.addr 0.0.0.0 \
 		--ws.port $(6) \
