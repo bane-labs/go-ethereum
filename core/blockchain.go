@@ -2605,3 +2605,46 @@ func (bc *BlockChain) SetTrieFlushInterval(interval time.Duration) {
 func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 	return time.Duration(bc.flushInterval.Load())
 }
+
+// VerifyBlock checks block state
+func (bc *BlockChain) VerifyBlock(block *types.Block) error {
+	err := bc.validator.ValidateBody(block)
+	if err != nil {
+		err = fmt.Errorf("failed to validate body: %w", err)
+		log.Error(err.Error())
+		return err
+	}
+
+	parent := bc.GetBlockByHash(block.ParentHash())
+	if parent == nil {
+		err = fmt.Errorf("failed to retrieve parent by hash to verify block, %s: %v, %s: %s", "parent number", block.NumberU64()-1,
+			"parent hash", block.ParentHash().String())
+		log.Error(err.Error())
+		parent = bc.GetBlockByNumber(block.NumberU64() - 1)
+		if parent == nil {
+			err = fmt.Errorf("failed to retrieve canonical parent by number to verify block, %s: %v, %s: %s", "parent number", block.NumberU64()-1,
+				"parent hash", block.ParentHash().String())
+			log.Error(err.Error())
+			return err
+		}
+	}
+	statedb, err := bc.StateAt(parent.Root())
+	if err != nil {
+		err = fmt.Errorf("failed to retrieve state at %s: %w", parent.Root(), err)
+		log.Error(err.Error())
+		return err
+	}
+
+	receipts, _, usedGas, err := bc.processor.Process(block, statedb, bc.vmConfig)
+	if err != nil {
+		err = fmt.Errorf("failed to process block: %w", err)
+		log.Error(err.Error())
+		return err
+	}
+	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
+		err = fmt.Errorf("failed to verify state: %w", err)
+		log.Error(err.Error())
+		return err
+	}
+	return nil
+}

@@ -118,3 +118,11 @@ func (b *Block) Verify(pub crypto.PublicKey, sign []byte) error {
 func (b *Block) Hash() util.Uint256 {
 	return WorkerSealHash(b.header).Uint256()
 }
+
+// Convert dbft.Blcok to types.Block
+func (b *Block) ToEthBlock() *types.Block {
+	res := types.NewBlockWithHeader(b.header)
+	// Uncles are always nil in dBFT-like consensus.
+	res = res.WithBody(b.transactions, nil)
+	return res
+}
