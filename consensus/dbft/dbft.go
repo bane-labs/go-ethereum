@@ -346,33 +346,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				panic("can't create new block from context: prepare request is nil")
 			}
 			proposal := prepareReq.GetPrepareRequest().(*prepareRequest)
-			// Avoid changing PrepareRequest itself.
-			h := types.CopyHeader(proposal.SealingProposal)
 
-			// BlockIndex -> Number
-			h.Number = big.NewInt(int64(ctx.BlockIndex))
-
-			// PrimaryIndex -> Nonce
-			binary.BigEndian.PutUint64(h.Nonce[:], uint64(ctx.PrimaryIndex))
-
-			h.Difficulty = c.getDifficulty(int(ctx.PrimaryIndex), uint64(ctx.BlockIndex))
-
-			// NextConsensus -> MixHash
-			nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true) // always compute as it's NextConsensus.
-			if err != nil {
-				panic(fmt.Errorf("failed to retrieve next block validators: %w", err))
-			}
-			h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
-
-			// Do not fill block's transactions. First of all, transactions are not
-			// needed for block signing or block signature verification. Secondly, some
-			// transactions may be missing by the moment of call to NewBlockFromContext
-			// (dBFT has only the full set of their hashes). Once all transactions are
-			// fetched and the commits are collected, SetTransactions callback will be
-			// called by dBFT library to properly initialize block's transactions.
-			return &Block{
-				header: h,
-			}
+			return c.newBlockFromContext(proposal.SealingProposal)
 		}),
 		dbft.WithWatchOnly(func() bool {
 			return false
@@ -430,13 +405,31 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			if c.sealingProposal == nil {
 				panic("bug: sealing proposal is not initialized")
 			}
-			// Fill in only proposal and receipts, transactions will be properly
-			// set from context later in SetTransactionHashes callback.
-			req.SealingProposal = c.sealingProposal
-
 			req.ParentSealHash = c.lastBlockSealHash
 			req.ParentExtra = c.lastBlockExtra
 
+			// Recalculate block state provided by miner and update sealing proposal if CV happened and context-related
+			// block fields were changed.
+			if c.dbft.Context.ViewNumber != 0 {
+				dbftBlock := c.newBlockFromContext(c.sealingProposal)
+				dbftBlock.transactions = c.sealingTransactions
+				ethBlock := dbftBlock.ToEthBlock()
+
+				state, receipts, _, _, err := c.chain.ProcessState(ethBlock)
+				if err != nil {
+					panic(fmt.Errorf("failed to process proposal state: %w", err))
+				}
+				b, err := c.FinalizeAndAssemble(c.chain, dbftBlock.header, state, c.sealingTransactions, nil, receipts, nil)
+				if err != nil {
+					panic(fmt.Errorf("faield to finalize proposal: %w", err))
+				}
+
+				c.sealingProposal = b.Header()
+			}
+
+			// Fill in only proposal, transactions will be properly set from context later in SetTransactionHashes
+			// callback.
+			req.SealingProposal = c.sealingProposal
 			return req
 		}),
 		dbft.WithNewCommit(func() payload.Commit { return new(commit) }),
@@ -557,6 +550,41 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 	)
 
 	return c, nil
+}
+
+// newBlockFromContext is a dBFT callback that builds Block from the provided dBFT proposal
+// filling all appropriate fields from dBFT context. It doesn't set transactions or any
+// other information except the header itself.
+func (c *DBFT) newBlockFromContext(sealingProposal *types.Header) *Block {
+	// Avoid changing PrepareRequest itself.
+	h := types.CopyHeader(sealingProposal)
+	ctx := c.dbft.Context
+
+	// BlockIndex -> Number
+	h.Number = big.NewInt(int64(ctx.BlockIndex))
+
+	// PrimaryIndex -> Nonce
+	binary.BigEndian.PutUint64(h.Nonce[:], uint64(ctx.PrimaryIndex))
+
+	h.Difficulty = c.getDifficulty(int(ctx.PrimaryIndex), uint64(ctx.BlockIndex))
+
+	// NextConsensus -> MixHash
+	nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true) // always compute as it's NextConsensus.
+	if err != nil {
+		panic(fmt.Errorf("failed to retrieve next block validators: %w", err))
+	}
+	h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
+
+	// Do not fill block's transactions. First of all, transactions are not
+	// needed for block signing or block signature verification. Secondly, some
+	// transactions may be missing by the moment of call to NewBlockFromContext
+	// (dBFT has only the full set of their hashes). Once all transactions are
+	// fetched and the commits are collected, SetTransactions callback will be
+	// called by dBFT library to properly initialize block's transactions.
+	return &Block{
+		header: h,
+	}
+
 }
 
 func (c *DBFT) getBlockWitness() []byte {

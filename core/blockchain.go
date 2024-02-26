@@ -2606,6 +2606,39 @@ func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 	return time.Duration(bc.flushInterval.Load())
 }
 
+// ProcessState processes the state changes according to the Ethereum rules by running
+// the transaction messages using the statedb and applying any rewards to both
+// the processor (coinbase) and any included uncles. It doesn't persist any data.
+func (bc *BlockChain) ProcessState(block *types.Block) (*state.StateDB, types.Receipts, []*types.Log, uint64, error) {
+	parent := bc.GetBlockByHash(block.ParentHash())
+	if parent == nil {
+		err := fmt.Errorf("failed to retrieve parent by hash to process block, %s: %v, %s: %s", "parent number", block.NumberU64()-1,
+			"parent hash", block.ParentHash().String())
+		log.Error(err.Error())
+		parent = bc.GetBlockByNumber(block.NumberU64() - 1)
+		if parent == nil {
+			err = fmt.Errorf("failed to retrieve canonical parent by number to process block, %s: %v, %s: %s", "parent number", block.NumberU64()-1,
+				"parent hash", block.ParentHash().String())
+			log.Error(err.Error())
+			return nil, nil, nil, 0, err
+		}
+	}
+	statedb, err := bc.StateAt(parent.Root())
+	if err != nil {
+		err = fmt.Errorf("failed to retrieve state at %s: %w", parent.Root(), err)
+		log.Error(err.Error())
+		return nil, nil, nil, 0, err
+	}
+
+	receipts, logs, usedGas, err := bc.processor.Process(block, statedb, bc.vmConfig)
+	if err != nil {
+		err = fmt.Errorf("failed to process block: %w", err)
+		log.Error(err.Error())
+		return nil, nil, nil, 0, err
+	}
+	return statedb, receipts, logs, usedGas, nil
+}
+
 // VerifyBlock checks block state
 func (bc *BlockChain) VerifyBlock(block *types.Block) error {
 	err := bc.validator.ValidateBody(block)
@@ -2615,32 +2648,13 @@ func (bc *BlockChain) VerifyBlock(block *types.Block) error {
 		return err
 	}
 
-	parent := bc.GetBlockByHash(block.ParentHash())
-	if parent == nil {
-		err = fmt.Errorf("failed to retrieve parent by hash to verify block, %s: %v, %s: %s", "parent number", block.NumberU64()-1,
-			"parent hash", block.ParentHash().String())
-		log.Error(err.Error())
-		parent = bc.GetBlockByNumber(block.NumberU64() - 1)
-		if parent == nil {
-			err = fmt.Errorf("failed to retrieve canonical parent by number to verify block, %s: %v, %s: %s", "parent number", block.NumberU64()-1,
-				"parent hash", block.ParentHash().String())
-			log.Error(err.Error())
-			return err
-		}
-	}
-	statedb, err := bc.StateAt(parent.Root())
+	statedb, receipts, _, usedGas, err := bc.ProcessState(block)
 	if err != nil {
-		err = fmt.Errorf("failed to retrieve state at %s: %w", parent.Root(), err)
+		err = fmt.Errorf("failed to process block state: %w", err)
 		log.Error(err.Error())
 		return err
 	}
 
-	receipts, _, usedGas, err := bc.processor.Process(block, statedb, bc.vmConfig)
-	if err != nil {
-		err = fmt.Errorf("failed to process block: %w", err)
-		log.Error(err.Error())
-		return err
-	}
 	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
 		err = fmt.Errorf("failed to verify state: %w", err)
 		log.Error(err.Error())
