@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	ecrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/nspcc-dev/dbft/block"
@@ -23,6 +24,10 @@ type Block struct {
 	header              *types.Header
 	transactions        []*types.Transaction
 	localSignatureBytes []byte
+
+	// Local data calculated during dBFT block verification. Allowed to be empty.
+	state    *state.StateDB
+	receipts types.Receipts
 }
 
 // Version implements block.Block interface.

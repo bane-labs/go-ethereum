@@ -2640,25 +2640,25 @@ func (bc *BlockChain) ProcessState(block *types.Block) (*state.StateDB, types.Re
 }
 
 // VerifyBlock checks block state
-func (bc *BlockChain) VerifyBlock(block *types.Block) error {
+func (bc *BlockChain) VerifyBlock(block *types.Block) (*state.StateDB, types.Receipts, error) {
 	err := bc.validator.ValidateBody(block)
 	if err != nil {
 		err = fmt.Errorf("failed to validate body: %w", err)
 		log.Error(err.Error())
-		return err
+		return nil, nil, err
 	}
 
 	statedb, receipts, _, usedGas, err := bc.ProcessState(block)
 	if err != nil {
 		err = fmt.Errorf("failed to process block state: %w", err)
 		log.Error(err.Error())
-		return err
+		return nil, nil, err
 	}
 
 	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
 		err = fmt.Errorf("failed to verify state: %w", err)
 		log.Error(err.Error())
-		return err
+		return nil, nil, err
 	}
-	return nil
+	return statedb, receipts, nil
 }
