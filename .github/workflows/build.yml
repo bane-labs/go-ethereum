@@ -21,6 +21,14 @@ on:
         description: 'Ref to build geth [default: latest bane-main; examples: v0.92.0, 0a4ff9d3e4a9ab432fd5812eb18c98e03b5a7432]'
         required: false
         default: ''
+      push_image:
+        description: 'Push images to DockerHub [default: false; examples: true, false]'
+        required: false
+        default: 'false'
+      use_latest_tag:
+        description: 'Use `latest` tag while pushing images to DockerHub (applied to Ubuntu image only) [default: false; examples: true, false]'
+        required: false
+        default: 'false'
 
 jobs:
   build_cli:
@@ -62,3 +70,59 @@ jobs:
         run: gh release upload ${{ github.event.release.tag_name }} ./build/bin/geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}${{ (matrix.os.bin-name == 'windows' && '.exe') || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build_image:
+    name: Build and push Docker image
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Build geth
+        run: |
+          make geth
+          ./build/bin/geth --version
+
+      - name: Set env
+        id: setvars
+        run: echo "version=$(./build/bin/geth -v | sed -e "s/^geth version //" -e "s/-stable-.*//")" >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.push_image == 'true') }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Set latest tag
+        id: setlatest
+        if: ${{ (github.event_name == 'release' && github.event.release.target_commitish == 'bane-main') || (github.event_name == 'workflow_dispatch' && github.event.inputs.use_latest_tag == 'true') }}
+        run: echo "latest=,developerneox/neox_nodes:latest" >> $GITHUB_OUTPUT
+
+      - name: Build and push Geth
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.push_image == 'true') }}
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            REPO=github.com/${{ github.repository }}
+            VERSION=${{ steps.setvars.outputs.version }}
+          tags: developerneox/neox_nodes:${{ steps.setvars.outputs.version }}${{ steps.setlatest.outputs.latest }}
+          file: Dockerfile
