@@ -12,6 +12,9 @@ on:
     # Build for the bane-main branch.
     branches:
       - bane-main
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       ref:
@@ -25,8 +28,8 @@ jobs:
     runs-on: ${{matrix.os.name}}
     strategy:
       matrix:
-        os: [{ name: ubuntu-20.04 }]
-        arch: [amd64]
+        os: [{ name: ubuntu-22.04, bin-name: linux }]
+        arch: [amd64, arm64]
 
     steps:
       - uses: actions/checkout@v4
@@ -43,3 +46,19 @@ jobs:
 
       - name: Build geth
         run: make all
+
+      - name: Rename geth binary
+        run: mv ./build/bin/geth* ./build/bin/geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}${{ (matrix.os.bin-name == 'windows' && '.exe') || '' }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}
+          path: ./build/bin/geth*
+          if-no-files-found: error
+
+      - name: Attach binary to the release as an asset
+        if: ${{ github.event_name == 'release' }}
+        run: gh release upload ${{ github.event.release.tag_name }} ./build/bin/geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}${{ (matrix.os.bin-name == 'windows' && '.exe') || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
