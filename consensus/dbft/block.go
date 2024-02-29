@@ -3,8 +3,9 @@ package dbft
 import (
 	"errors"
 	"fmt"
-
+	
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	ecrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/nspcc-dev/dbft/block"
@@ -24,6 +25,10 @@ type Block struct {
 	withdrawals         []*types.Withdrawal
 	transactions        []*types.Transaction
 	localSignatureBytes []byte
+
+	// Local data calculated during dBFT block verification. Allowed to be empty.
+	state    *state.StateDB
+	receipts types.Receipts
 }
 
 // Version implements block.Block interface.
@@ -120,13 +125,10 @@ func (b *Block) Hash() util.Uint256 {
 	return WorkerSealHash(b.header).Uint256()
 }
 
-// Convert dbft.Blcok to types.Block
+// ToEthBlock converts [dbft.Block] to [types.Block].
 func (b *Block) ToEthBlock() *types.Block {
 	res := types.NewBlockWithHeader(b.header)
 	// Uncles are always nil in dBFT-like consensus.
-	res = res.WithBody(b.transactions, nil)
-	if b.withdrawals != nil {
-		res = res.WithWithdrawals(b.withdrawals)
-	}
+	res = res.WithBody(b.transactions, nil).WithWithdrawals(b.withdrawals)
 	return res
 }

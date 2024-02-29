@@ -68,7 +68,6 @@ import (
 var (
 	uncleHash = types.CalcUncleHash(nil) // Always Keccak256(RLP([])) as uncles are meaningless outside of PoW.
 
-	diffStub   = big.NewInt(3) // Block difficulty stub that is used for miner's task preparation.
 	diffInTurn = big.NewInt(2) // Block difficulty for in-turn signatures
 	diffNoTurn = big.NewInt(1) // Block difficulty for out-of-turn signatures
 
@@ -321,8 +320,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			return res
 		}),
 		dbft.WithProcessBlock(func(b block.Block) {
-			ethBlock := b.(*Block)
-			if uint64(ethBlock.Index()) <= c.lastIndex {
+			dbftBlock := b.(*Block)
+			if uint64(dbftBlock.Index()) <= c.lastIndex {
 				return
 			}
 
@@ -330,18 +329,11 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			// of code is guaranteed to be called once thanks to condition above,
 			// c.lastIndex is updated in postBlock callback every time new block
 			// with higher index is accepted.
-			dBFTHeader := ethBlock.header
-			dBFTHeader.Extra = append(dBFTHeader.Extra, c.getBlockWitness()...) // Extra version isn't changed, validators addresses and signatures are added.
+			dbftBlock.header.Extra = append(dbftBlock.header.Extra, c.getBlockWitness()...) // Extra version isn't changed, validators addresses and signatures are added.
 
-			res := types.NewBlockWithHeader(ethBlock.header)
-			// Uncles are always nil in dBFT-like consensus.
-			res = res.WithBody(ethBlock.transactions, nil)
-			if ethBlock.withdrawals != nil {
-				res = res.WithWithdrawals(ethBlock.withdrawals)
-			}
-
+			res := dbftBlock.ToEthBlock()
 			// Firstly, notify chain about new block.
-			if err := c.blockQueue.PutBlock(res); err != nil {
+			if err := c.blockQueue.PutBlock(res, dbftBlock.state, dbftBlock.receipts); err != nil {
 				// The block might already be added via the regular network
 				// interaction.
 				if h := c.chain.GetHeaderByNumber(res.Number().Uint64()); h == nil {
@@ -358,32 +350,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			if prepareReq == nil {
 				panic("can't create new block from context: prepare request is nil")
 			}
-			proposal := prepareReq.GetPrepareRequest().(*prepareRequest)
-			// Avoid changing PrepareRequest itself.
-			h := types.CopyHeader(proposal.SealingProposal)
-
-			// BlockIndex -> Number
-			h.Number = big.NewInt(int64(ctx.BlockIndex))
-
-			// PrimaryIndex -> Nonce
-			binary.BigEndian.PutUint64(h.Nonce[:], uint64(ctx.PrimaryIndex))
-
-			h.Difficulty = c.getDifficulty(int(ctx.PrimaryIndex), uint64(ctx.BlockIndex))
-
-			// Do not fill block's transactions. First of all, transactions are not
-			// needed for block signing or block signature verification. Secondly, some
-			// transactions may be missing by the moment of call to NewBlockFromContext
-			// (dBFT has only the full set of their hashes). Once all transactions are
-			// fetched and the commits are collected, SetTransactions callback will be
-			// called by dBFT library to properly initialize block's transactions.
-			res := &Block{
-				header: h,
-			}
-			// Withdrawals are temporary empty if Shanghai is passed.
-			if c.chain.Config().IsShanghai(h.Number, h.Time) {
-				res.withdrawals = emptyWithdrawals
-			}
-			return res
+			return c.newBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
 		}),
 		dbft.WithWatchOnly(func() bool {
 			return false
@@ -456,10 +423,43 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			// NextConsensus -> MixHash
 			c.sealingProposal.MixDigest = c.lastBlockNextNextConsensus
 
-			// Fill in only proposal and receipts, transactions will be properly
+			// Recalculate block state provided by miner and update sealing proposal if CV happened and context-related
+			// block fields were changed.
+			if c.dbft.Context.ViewNumber != 0 {
+				dbftBlock := c.newBlockFromContext(c.sealingProposal)
+				dbftBlock.transactions = c.sealingTransactions
+				ethBlock := dbftBlock.ToEthBlock()
+
+				state, receipts, _, _, err := c.chain.ProcessState(ethBlock)
+				if err != nil {
+					log.Crit("failed to process state from proposal",
+						"err", err,
+						"number", ethBlock.NumberU64(),
+						"seal hash", c.SealHash(ethBlock.Header()),
+						"parent hash", ethBlock.ParentHash().String(),
+						"intermediate merkle root", ethBlock.Root(),
+						"coinbase", ethBlock.Coinbase().String(),
+						"gas limit", ethBlock.GasLimit(),
+						"gas used", ethBlock.GasUsed(),
+						"difficulty", ethBlock.Difficulty().String(),
+						"mix digest", ethBlock.MixDigest().String(),
+						"nonce", ethBlock.Nonce(),
+						"time", ethBlock.Time(),
+						"uncle hash", ethBlock.UncleHash().String(),
+						"txs", len(ethBlock.Transactions()))
+				}
+				b, err := c.FinalizeAndAssemble(c.chain, dbftBlock.header, state, dbftBlock.transactions, nil, receipts, dbftBlock.withdrawals)
+				if err != nil {
+					log.Crit("failed to finalize and assemble proposal",
+						"err", err)
+				}
+
+				c.sealingProposal = b.Header()
+			}
+
+			// Fill in only proposal and last block info, transactions will be properly
 			// set from context later in SetTransactionHashes callback.
 			req.SealingProposal = c.sealingProposal
-
 			req.ParentSealHash = c.lastBlockSealHash
 			req.ParentExtra = c.lastBlockExtra
 
@@ -514,7 +514,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				oldHash := c.lastBlockHash
 				oldExtra := c.lastBlockExtra
 				parentHeader.Extra = req.ParentExtra
-				err = c.blockQueue.PutBlock(parent.WithSeal(parentHeader))
+				err = c.blockQueue.PutBlock(parent.WithSeal(parentHeader), nil, nil)
 				if err != nil {
 					err = fmt.Errorf("failed to enqueue parent with updated extra for height %d (old hash %s, new hash %s): %w",
 						req.SealingProposal.Number.Uint64()-1,
@@ -566,12 +566,15 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				return false
 			}
 			ethBlock := dbftBlock.ToEthBlock()
-			_, _, err := c.chain.VerifyBlock(ethBlock)
+			state, receipts, err := c.chain.VerifyBlock(ethBlock)
 			if err != nil {
 				log.Warn("proposed block verification failed",
 					"err", err.Error())
 				return false
 			}
+			dbftBlock.state = state
+			dbftBlock.receipts = receipts
+
 			return true
 		}),
 		dbft.WithBroadcast(func(p payload.ConsensusPayload) {
@@ -590,6 +593,38 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 	return c, nil
 }
 
+// newBlockFromContext is a dBFT callback that builds [Block] from the provided dBFT proposal
+// filling all appropriate fields from dBFT context. It doesn't set transactions or any
+// other information except the header itself.
+func (c *DBFT) newBlockFromContext(sealingProposal *types.Header) *Block {
+	ctx := c.dbft.Context
+
+	// Avoid changing PrepareRequest itself.
+	h := types.CopyHeader(sealingProposal)
+
+	// BlockIndex -> Number
+	h.Number = big.NewInt(int64(ctx.BlockIndex))
+
+	// PrimaryIndex -> Nonce
+	binary.BigEndian.PutUint64(h.Nonce[:], uint64(ctx.PrimaryIndex))
+
+	h.Difficulty = c.getDifficulty(int(ctx.PrimaryIndex), uint64(ctx.BlockIndex))
+
+	// Do not fill block's transactions. First of all, transactions are not
+	// needed for block signing or block signature verification. Secondly, some
+	// transactions may be missing by the moment of call to NewBlockFromContext
+	// (dBFT has only the full set of their hashes). Once all transactions are
+	// fetched and the commits are collected, SetTransactions callback will be
+	// called by dBFT library to properly initialize block's transactions.
+	res := &Block{
+		header: h,
+	}
+	// Withdrawals are temporary empty if Shanghai is passed.
+	if c.chain.Config().IsShanghai(h.Number, h.Time) {
+		res.withdrawals = emptyWithdrawals
+	}
+	return res
+}
 func (c *DBFT) getBlockWitness() []byte {
 	dctx := c.dbft.Context
 
@@ -951,9 +986,10 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	// for now.
 	header.Nonce = types.BlockNonce{}
 
-	// Use difficulty stub to let the Beacon engine know that sealing task should be handled
-	// by PoA engine. This stub will be overridden during further dBFT process anyway.
-	header.Difficulty = diffStub
+	// Use in-turn difficulty as a base for miner's transactions processing to skip dBFT transactions reprocessing in best
+	// case. In worse case this field will be overridden during further dBFT consensus in case of CV and state will be
+	// recalculated by dBFT based on new value.
+	header.Difficulty = new(big.Int).Set(diffInTurn)
 
 	// Ensure the extra data has all its components. Set default Extra version if not
 	// provided by miner.
