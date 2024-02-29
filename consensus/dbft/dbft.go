@@ -457,10 +457,9 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				c.sealingProposal = b.Header()
 			}
 
-			// Fill in only proposal and receipts, transactions will be properly
+			// Fill in only proposal and last block info, transactions will be properly
 			// set from context later in SetTransactionHashes callback.
 			req.SealingProposal = c.sealingProposal
-			
 			req.ParentSealHash = c.lastBlockSealHash
 			req.ParentExtra = c.lastBlockExtra
 
@@ -575,7 +574,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 			dbftBlock.state = state
 			dbftBlock.receipts = receipts
-			
+
 			return true
 		}),
 		dbft.WithBroadcast(func(p payload.ConsensusPayload) {
