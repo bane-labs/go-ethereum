@@ -32,8 +32,12 @@ contract GovernanceV2 is IGovernanceV2 {
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
 
-    mapping(address => mapping(uint => mapping(address => uint))) regularVotes;
+    // voter=>round=>candidate=>amount
+    mapping(address => mapping(uint => mapping(address => uint))) voterTable;
+    // voter=>candidate=>rounds
     mapping(address => mapping(address => uint[])) votedRounds;
+    // candidate=>round=>amount
+    mapping(address => mapping(uint => uint)) receivedVotes;
 
     function getCurrentRound() public view returns (uint) {
         return getRound(block.timestamp);
@@ -43,43 +47,50 @@ contract GovernanceV2 is IGovernanceV2 {
         return timestamp / 1209600;
     }
 
-    function vote(address to) external payable {
+    function vote(address candidateTo) external payable {
         require(msg.value >= MIN_VOTE_AMOUNT, "insufficient amount");
         uint currentRound = getCurrentRound();
 
-        uint voted = regularVotes[msg.sender][currentRound][to];
+        uint voted = voterTable[msg.sender][currentRound][candidateTo];
         // add this round to
         if (voted == 0) {
-            votedRounds[msg.sender][to].push(currentRound);
+            votedRounds[msg.sender][candidateTo].push(currentRound);
         }
-        regularVotes[msg.sender][currentRound][to] = voted + msg.value;
+        voterTable[msg.sender][currentRound][candidateTo] = voted + msg.value;
+        receivedVotes[candidateTo][currentRound] += msg.value;
 
-        emit Vote(msg.sender, to, msg.value);
+        emit Vote(msg.sender, candidateTo, msg.value);
     }
 
-    function revokeVote(address from) external {
+    function revokeVote(address candidateFrom) external {
         uint currentRound = getCurrentRound();
-        uint amount = regularVotes[msg.sender][currentRound][from];
-        delete regularVotes[msg.sender][currentRound][from];
+        uint amount = voterTable[msg.sender][currentRound][candidateFrom];
+        receivedVotes[candidateFrom][currentRound] -= amount;
+        delete voterTable[msg.sender][currentRound][candidateFrom];
         safeTransferETH(msg.sender, amount);
+
+        emit RevokeVote(msg.sender, candidateFrom, amount);
     }
 
-    function withdraw(address from) external {
+    function withdraw(address candidateFrom) external {
         uint currentRound = getCurrentRound();
         uint totalAmount = 0;
-        uint[] memory votedIndex = votedRounds[msg.sender][from];
+        uint totalReward = 0;
+        uint[] memory votedIndex = votedRounds[msg.sender][candidateFrom];
         uint indexLength = votedIndex.length;
         for (uint i = 0; i < indexLength; i++) {
             uint round = votedIndex[i];
             // only rounds before the current running one (the one before current voting)
             if (round < currentRound - 1) {
-                uint roundAmount = regularVotes[msg.sender][round][from];
-                delete regularVotes[msg.sender][round][from];
-                delete votedRounds[msg.sender][from][i];
-                totalAmount += roundAmount + getRoundReward(round, roundAmount);
+                uint roundAmount = voterTable[msg.sender][round][candidateFrom];
+                delete voterTable[msg.sender][round][candidateFrom];
+                delete votedRounds[msg.sender][candidateFrom][i];
+                totalAmount += roundAmount;
+                totalReward += getRoundReward(round, roundAmount);
             }
         }
-        safeTransferETH(msg.sender, totalAmount);
+        safeTransferETH(msg.sender, totalAmount + totalReward);
+        emit WithdrawReward(msg.sender, totalReward);
     }
 
     function getRewardAmount(address voter, address candidate) external view returns (uint) {
@@ -91,14 +102,14 @@ contract GovernanceV2 is IGovernanceV2 {
             uint round = votedIndex[i];
             // only rounds before the current running one (the one before current voting)
             if (round < currentRound - 1) {
-                uint roundAmount = regularVotes[voter][round][candidate];
+                uint roundAmount = voterTable[voter][round][candidate];
                 totalReward += getRoundReward(round, roundAmount);
             }
         }
         return totalReward;
     }
 
-    function getRoundReward(uint round, uint amount) public view returns (uint) {
+    function getRoundReward(uint round, uint share) public view returns (uint) {
         return 0;
     }
 
