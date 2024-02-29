@@ -120,7 +120,7 @@ func (b *Block) Hash() util.Uint256 {
 	return WorkerSealHash(b.header).Uint256()
 }
 
-// Convert dbft.Blcok to types.Block
+// ToEthBlock converts [dbft.Block] to [types.Block].
 func (b *Block) ToEthBlock() *types.Block {
 	res := types.NewBlockWithHeader(b.header)
 	// Uncles are always nil in dBFT-like consensus.

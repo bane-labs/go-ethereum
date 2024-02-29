@@ -2485,7 +2485,7 @@ func (bc *BlockChain) ProcessState(block *types.Block) (*state.StateDB, types.Re
 	return statedb, receipts, logs, usedGas, nil
 }
 
-// VerifyBlock checks block state
+// VerifyBlock validates block body, processes block and validates the resulting state, receipts and gas used.
 func (bc *BlockChain) VerifyBlock(block *types.Block) (*state.StateDB, types.Receipts, error) {
 	err := bc.validator.ValidateBody(block)
 	if err != nil {
