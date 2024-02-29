@@ -321,8 +321,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			return res
 		}),
 		dbft.WithProcessBlock(func(b block.Block) {
-			ethBlock := b.(*Block)
-			if uint64(ethBlock.Index()) <= c.lastIndex {
+			dbftBlock := b.(*Block)
+			if uint64(dbftBlock.Index()) <= c.lastIndex {
 				return
 			}
 
@@ -330,16 +330,9 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			// of code is guaranteed to be called once thanks to condition above,
 			// c.lastIndex is updated in postBlock callback every time new block
 			// with higher index is accepted.
-			dBFTHeader := ethBlock.header
-			dBFTHeader.Extra = append(dBFTHeader.Extra, c.getBlockWitness()...) // Extra version isn't changed, validators addresses and signatures are added.
+			dbftBlock.header.Extra = append(dbftBlock.header.Extra, c.getBlockWitness()...) // Extra version isn't changed, validators addresses and signatures are added.
 
-			res := types.NewBlockWithHeader(ethBlock.header)
-			// Uncles are always nil in dBFT-like consensus.
-			res = res.WithBody(ethBlock.transactions, nil)
-			if ethBlock.withdrawals != nil {
-				res = res.WithWithdrawals(ethBlock.withdrawals)
-			}
-
+			res := dbftBlock.ToEthBlock()
 			// Firstly, notify chain about new block.
 			if err := c.blockQueue.PutBlock(res); err != nil {
 				// The block might already be added via the regular network
