@@ -25,5 +25,5 @@ type ChainHeaderReader interface {
 type ChainHeaderWriter interface {
 	ChainHeaderReader
 	InsertChain(chain types.Blocks) (int, error)
-	InsertBlockWithoutSetHead(b *types.Block) error
+	WriteBlockAndSetHead(block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB, emitHeadEvent bool) (core.WriteStatus, error)
 }
