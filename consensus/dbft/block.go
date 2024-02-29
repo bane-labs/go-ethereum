@@ -124,9 +124,6 @@ func (b *Block) Hash() util.Uint256 {
 func (b *Block) ToEthBlock() *types.Block {
 	res := types.NewBlockWithHeader(b.header)
 	// Uncles are always nil in dBFT-like consensus.
-	res = res.WithBody(b.transactions, nil)
-	if b.withdrawals != nil {
-		res = res.WithWithdrawals(b.withdrawals)
-	}
+	res = res.WithBody(b.transactions, nil).WithWithdrawals(b.withdrawals)
 	return res
 }
