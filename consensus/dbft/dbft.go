@@ -550,6 +550,30 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			return nil
 		}),
+		dbft.WithVerifyBlock(func(b block.Block) bool {
+			dbftBlock := b.(*Block)
+			parent := c.chain.CurrentBlock()
+			if parent.Number.Cmp(dbftBlock.header.Number) >= 0 {
+				log.Warn("proposed block has already outdated",
+					"current block number", parent.Number.Uint64(),
+					"proposed block number", dbftBlock.header.Number)
+				return false
+			}
+			if c.lastTimestamp > dbftBlock.header.Time {
+				log.Warn("proposed block has small timestamp",
+					"ts", dbftBlock.header.Time,
+					"last", c.lastTimestamp)
+				return false
+			}
+			ethBlock := dbftBlock.ToEthBlock()
+			_, _, err := c.chain.VerifyBlock(ethBlock)
+			if err != nil {
+				log.Warn("proposed block verification failed",
+					"err", err.Error())
+				return false
+			}
+			return true
+		}),
 		dbft.WithBroadcast(func(p payload.ConsensusPayload) {
 			if err := p.(*Payload).Sign(c.dbft.Priv.(*Signer)); err != nil {
 				log.Warn("can't sign consensus payload", "error", err)
