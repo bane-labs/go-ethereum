@@ -47,6 +47,14 @@ contract GovernanceV2 is IGovernanceV2 {
         return timestamp / 1209600;
     }
 
+    function getVotedValueByRound(address voter, uint round, address candidate) public view returns (uint) {
+        return voterTable[voter][round][candidate];
+    }
+
+    function getReceivedVotedByRound(address candidate, uint round) public view returns (uint) {
+        return receivedVotes[candidate][round];
+    }
+
     function vote(address candidateTo) external payable {
         require(msg.value >= MIN_VOTE_AMOUNT, "insufficient amount");
         uint currentRound = getCurrentRound();
@@ -78,16 +86,28 @@ contract GovernanceV2 is IGovernanceV2 {
         uint totalReward = 0;
         uint[] memory votedIndex = votedRounds[msg.sender][candidateFrom];
         uint indexLength = votedIndex.length;
+        bool reconstructed = false;
         for (uint i = 0; i < indexLength; i++) {
             uint round = votedIndex[i];
             // only rounds before the current running one (the one before current voting)
             if (round < currentRound - 1) {
                 uint roundAmount = voterTable[msg.sender][round][candidateFrom];
                 delete voterTable[msg.sender][round][candidateFrom];
-                delete votedRounds[msg.sender][candidateFrom][i];
                 totalAmount += roundAmount;
                 totalReward += getRoundReward(round, roundAmount);
+            } else if (round >= currentRound - 1) {
+                // reconstructed array, the new one always shorter than 2
+                if (!reconstructed) {
+                    // replace the old one
+                    votedRounds[msg.sender][candidateFrom] = [round];
+                } else {
+                    votedRounds[msg.sender][candidateFrom].push(round);
+                }
             }
+        }
+        // delete if all withdrawed
+        if (!reconstructed) {
+            delete votedRounds[msg.sender][candidateFrom];
         }
         safeTransferETH(msg.sender, totalAmount + totalReward);
         emit WithdrawReward(msg.sender, totalReward);
@@ -104,6 +124,8 @@ contract GovernanceV2 is IGovernanceV2 {
             if (round < currentRound - 1) {
                 uint roundAmount = voterTable[voter][round][candidate];
                 totalReward += getRoundReward(round, roundAmount);
+            } else {
+                break;
             }
         }
         return totalReward;
