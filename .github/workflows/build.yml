@@ -36,7 +36,7 @@ jobs:
     runs-on: ${{matrix.os.name}}
     strategy:
       matrix:
-        os: [{ name: ubuntu-22.04, bin-name: linux }]
+        os: [{ name: ubuntu-22.04, bin-name: linux }, { name: macos-12, bin-name: darwin }]
         arch: [amd64, arm64]
 
     steps:
