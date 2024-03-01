@@ -56,18 +56,18 @@ jobs:
         run: make all
 
       - name: Rename geth binary
-        run: mv ./build/bin/geth* ./build/bin/geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}${{ (matrix.os.bin-name == 'windows' && '.exe') || '' }}
+        run: mv ./build/bin/geth ./build/bin/geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}
-          path: ./build/bin/geth*
+          path: ./build/bin/geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}
           if-no-files-found: error
 
       - name: Attach binary to the release as an asset
         if: ${{ github.event_name == 'release' }}
-        run: gh release upload ${{ github.event.release.tag_name }} ./build/bin/geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}${{ (matrix.os.bin-name == 'windows' && '.exe') || '' }}
+        run: gh release upload ${{ github.event.release.tag_name }} ./build/bin/geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
