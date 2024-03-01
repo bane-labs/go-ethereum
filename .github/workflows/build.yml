@@ -124,5 +124,6 @@ jobs:
           build-args: |
             REPO=github.com/${{ github.repository }}
             VERSION=${{ steps.setvars.outputs.version }}
+            COMMIT=${{ github.sha }}
           tags: developerneox/neox_nodes:${{ steps.setvars.outputs.version }}${{ steps.setlatest.outputs.latest }}
           file: Dockerfile
