@@ -16,7 +16,10 @@ interface IGovernanceV2 {
     function withdraw(address from) external;
 
     // get reward amount of addr
-    function getRewardAmount(address voter, address candidate) external view returns (uint);
+    function getRewardAmount(
+        address voter,
+        address candidate
+    ) external view returns (uint);
 }
 
 interface IGovReward {
@@ -25,13 +28,17 @@ interface IGovReward {
     function withdraw(address to, uint amount) external;
 }
 
-contract GovernanceV2 is IGovernanceV2 { 
+contract GovernanceV2 is IGovernanceV2 {
     // the min balance for voting
     uint public constant MIN_VOTE_AMOUNT = 1 ether;
     // GovReward contract
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
 
+    // the counter of round index
+    uint public roundCount;
+    // the timestamp of the last time when voting start
+    uint public lastRoundTime;
     // voter=>round=>candidate=>amount
     mapping(address => mapping(uint => mapping(address => uint))) voterTable;
     // voter=>candidate=>rounds
@@ -40,24 +47,31 @@ contract GovernanceV2 is IGovernanceV2 {
     mapping(address => mapping(uint => uint)) receivedVotes;
 
     function getCurrentRound() public view returns (uint) {
-        return getRound(block.timestamp);
+        if (block.timestamp > lastRoundTime + 1209600) {
+            return roundCount + 1;
+        } else {
+            return roundCount;
+        }
     }
 
-    function getRound(uint timestamp) public pure returns (uint) {
-        return timestamp / 1209600;
-    }
-
-    function getVotedValueByRound(address voter, uint round, address candidate) public view returns (uint) {
+    function getVotedValueByRound(
+        address voter,
+        uint round,
+        address candidate
+    ) public view returns (uint) {
         return voterTable[voter][round][candidate];
     }
 
-    function getReceivedVotedByRound(address candidate, uint round) public view returns (uint) {
+    function getReceivedVotedByRound(
+        address candidate,
+        uint round
+    ) public view returns (uint) {
         return receivedVotes[candidate][round];
     }
 
     function vote(address candidateTo) external payable {
         require(msg.value >= MIN_VOTE_AMOUNT, "insufficient amount");
-        uint currentRound = getCurrentRound();
+        uint currentRound = _getAndUpdateRoundCount();
 
         uint voted = voterTable[msg.sender][currentRound][candidateTo];
         // add this round to
@@ -75,7 +89,7 @@ contract GovernanceV2 is IGovernanceV2 {
         uint amount = voterTable[msg.sender][currentRound][candidateFrom];
         receivedVotes[candidateFrom][currentRound] -= amount;
         delete voterTable[msg.sender][currentRound][candidateFrom];
-        safeTransferETH(msg.sender, amount);
+        _safeTransferETH(msg.sender, amount);
 
         emit RevokeVote(msg.sender, candidateFrom, amount);
     }
@@ -109,11 +123,14 @@ contract GovernanceV2 is IGovernanceV2 {
         if (!reconstructed) {
             delete votedRounds[msg.sender][candidateFrom];
         }
-        safeTransferETH(msg.sender, totalAmount + totalReward);
+        _safeTransferETH(msg.sender, totalAmount + totalReward);
         emit WithdrawReward(msg.sender, totalReward);
     }
 
-    function getRewardAmount(address voter, address candidate) external view returns (uint) {
+    function getRewardAmount(
+        address voter,
+        address candidate
+    ) external view returns (uint) {
         uint currentRound = getCurrentRound();
         uint totalReward = 0;
         uint[] memory votedIndex = votedRounds[voter][candidate];
@@ -135,7 +152,15 @@ contract GovernanceV2 is IGovernanceV2 {
         return 0;
     }
 
-    function safeTransferETH(address to, uint value) internal {
+    function _getAndUpdateRoundCount() internal returns (uint) {
+        if (block.timestamp > lastRoundTime + 1209600) {
+            roundCount += 1;
+            lastRoundTime = block.timestamp;
+        }
+        return roundCount;
+    }
+
+    function _safeTransferETH(address to, uint value) internal {
         (bool success, ) = to.call{value: value}(new bytes(0));
         require(success, "safeTransferETH: ETH transfer failed");
     }
