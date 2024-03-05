@@ -26,6 +26,9 @@ interface IGovernanceV2 {
     // withdraw past vote
     function withdraw(address from) external;
 
+    // get current consensus group
+    function getCurrentConsensus() external view returns (address[7] memory);
+
     // get reward amount of addr
     function getRewardAmount(
         address voter,
@@ -34,9 +37,7 @@ interface IGovernanceV2 {
 }
 
 interface IGovReward {
-    function withdrawERC20(address to, address token, uint amount) external;
-
-    function withdraw(address to, uint amount) external;
+    function withdraw() external;
 }
 
 contract GovernanceV2 is IGovernanceV2 {
@@ -70,6 +71,12 @@ contract GovernanceV2 is IGovernanceV2 {
     mapping(address => mapping(address => uint[])) votedEpochs;
     // candidate=>epoch=>amount
     mapping(address => mapping(uint => uint)) receivedVotes;
+    // epoch=>amount
+    mapping(uint => uint) public totalVotes;
+
+    receive() external payable {
+        epochReward[epochCount] += msg.value;
+    }
 
     function getCurrentEpoch() public view returns (uint) {
         if (block.timestamp > lastEpochTime + EPOCH_DURATION) {
@@ -87,7 +94,7 @@ contract GovernanceV2 is IGovernanceV2 {
         return voterTable[voter][epoch][candidate];
     }
 
-    function getReceivedVotedByEpoch(
+    function getReceivedVotesByEpoch(
         address candidate,
         uint epoch
     ) public view returns (uint) {
@@ -159,6 +166,7 @@ contract GovernanceV2 is IGovernanceV2 {
         }
         voterTable[msg.sender][currentEpoch][candidateTo] = voted + msg.value;
         receivedVotes[candidateTo][currentEpoch] += msg.value;
+        totalVotes[currentEpoch] += msg.value;
 
         emit Vote(msg.sender, candidateTo, msg.value);
     }
@@ -168,6 +176,7 @@ contract GovernanceV2 is IGovernanceV2 {
         uint currentEpoch = getCurrentEpoch();
         uint amount = voterTable[msg.sender][currentEpoch][candidateFrom];
         receivedVotes[candidateFrom][currentEpoch] -= amount;
+        totalVotes[currentEpoch] -= amount;
         delete voterTable[msg.sender][currentEpoch][candidateFrom];
         _safeTransferETH(msg.sender, amount);
 
@@ -222,10 +231,10 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function getEpochReward(uint epoch, uint share) public view returns (uint) {
-        return 0;
+        return share * epochReward[epoch] / totalVotes[epoch];
     }
 
-    function getCurrentConsensus() public view returns (address[7] memory) {
+    function getCurrentConsensus() external view returns (address[7] memory) {
         // build up a votes array
         uint length = candidateList.length;
         uint epoch = epochCount - 1;
@@ -248,6 +257,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function _getAndUpdateEpochCount() internal returns (uint) {
         if (block.timestamp > lastEpochTime + EPOCH_DURATION) {
+            IGovReward(govReward).withdraw();
             epochCount += 1;
             lastEpochTime = block.timestamp;
         }
