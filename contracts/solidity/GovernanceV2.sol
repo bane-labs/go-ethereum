@@ -25,15 +25,6 @@ interface IGovernanceV2 {
 
     // withdraw past vote
     function withdraw(address from) external;
-
-    // get current consensus group
-    function getCurrentConsensus() external view returns (address[7] memory);
-
-    // get reward amount of addr
-    function getRewardAmount(
-        address voter,
-        address candidate
-    ) external view returns (uint);
 }
 
 interface IGovReward {
@@ -71,8 +62,6 @@ contract GovernanceV2 is IGovernanceV2 {
     mapping(address => mapping(address => uint[])) votedEpochs;
     // candidate=>epoch=>amount
     mapping(address => mapping(uint => uint)) receivedVotes;
-    // epoch=>amount
-    mapping(uint => uint) public totalVotes;
 
     receive() external payable {
         epochReward[epochCount] += msg.value;
@@ -106,15 +95,17 @@ contract GovernanceV2 is IGovernanceV2 {
         address[] memory list = candidateList;
         uint length = candidateList.length;
         // check duplication
+        bool existed = false;
         for (uint i = 0; i < length; i++) {
             if (list[i] == msg.sender) {
-                revert("candidate exists");
+                existed = true;
+                break;
             }
         }
-        // delete exit record
-        delete exitTime[msg.sender];
-        // add to candidates
-        candidateList.push(msg.sender);
+        if (!existed) {
+            // add to candidates
+            candidateList.push(msg.sender);
+        }
         // record register time and balance
         registerTime[msg.sender] = block.timestamp;
         feeBalance[msg.sender] = msg.value;
@@ -137,16 +128,6 @@ contract GovernanceV2 is IGovernanceV2 {
             "claim not allowed"
         );
 
-        // reconstruct candidate list
-        address[] memory list = candidateList;
-        uint length = candidateList.length;
-        delete candidateList;
-        for (uint i = 0; i < length; i++) {
-            if (list[i] != msg.sender) {
-                candidateList.push(list[i]);
-            }
-        }
-
         // send back balance
         uint amount = feeBalance[msg.sender];
         delete feeBalance[msg.sender];
@@ -166,7 +147,6 @@ contract GovernanceV2 is IGovernanceV2 {
         }
         voterTable[msg.sender][currentEpoch][candidateTo] = voted + msg.value;
         receivedVotes[candidateTo][currentEpoch] += msg.value;
-        totalVotes[currentEpoch] += msg.value;
 
         emit Vote(msg.sender, candidateTo, msg.value);
     }
@@ -176,7 +156,6 @@ contract GovernanceV2 is IGovernanceV2 {
         uint currentEpoch = getCurrentEpoch();
         uint amount = voterTable[msg.sender][currentEpoch][candidateFrom];
         receivedVotes[candidateFrom][currentEpoch] -= amount;
-        totalVotes[currentEpoch] -= amount;
         delete voterTable[msg.sender][currentEpoch][candidateFrom];
         _safeTransferETH(msg.sender, amount);
 
@@ -184,8 +163,8 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function withdraw(address candidateFrom) external {
-        // withdraw will not trigger epoch change
-        uint currentEpoch = getCurrentEpoch();
+        // withdraw use epochCount, to lock until epoch change
+        uint currentEpoch = epochCount;
         uint totalAmount = 0;
         uint totalReward = 0;
         // loop all voted epochs
@@ -199,7 +178,18 @@ contract GovernanceV2 is IGovernanceV2 {
                 uint epochAmount = voterTable[msg.sender][epoch][candidateFrom];
                 delete voterTable[msg.sender][epoch][candidateFrom];
                 totalAmount += epochAmount;
-                totalReward += getEpochReward(epoch, epochAmount);
+
+                // calculate reward
+                address[7] memory consensus = getConsensus(epoch);
+                uint totalEffectiveVotes = 0;
+                uint userEffectiveVotes = 0;
+                for (uint j = 0; j < 7; j++) {
+                    totalEffectiveVotes += receivedVotes[consensus[j]][epoch];
+                    if (consensus[j] == candidateFrom) {
+                        userEffectiveVotes = epochAmount;
+                    }
+                }
+                totalReward += userEffectiveVotes * epochReward[epoch] / totalEffectiveVotes;
             } else if (epoch >= currentEpoch - 1) {
                 // reconstructed array, the new one always shorter than 2
                 votedEpochs[msg.sender][candidateFrom].push(epoch);
@@ -209,40 +199,18 @@ contract GovernanceV2 is IGovernanceV2 {
         emit WithdrawReward(msg.sender, totalReward);
     }
 
-    function getRewardAmount(
-        address voter,
-        address candidate
-    ) external view returns (uint) {
-        uint currentEpoch = getCurrentEpoch();
-        uint totalReward = 0;
-        uint[] memory votedIndex = votedEpochs[voter][candidate];
-        uint indexLength = votedIndex.length;
-        for (uint i = 0; i < indexLength; i++) {
-            uint epoch = votedIndex[i];
-            // only epochs before the current running one (the one before current voting)
-            if (epoch < currentEpoch - 1) {
-                uint epochAmount = voterTable[voter][epoch][candidate];
-                totalReward += getEpochReward(epoch, epochAmount);
-            } else {
-                break;
-            }
-        }
-        return totalReward;
+    function getCurrentConsensus() public view returns (address[7] memory) {
+        return getConsensus(epochCount - 1);
     }
 
-    function getEpochReward(uint epoch, uint share) public view returns (uint) {
-        return share * epochReward[epoch] / totalVotes[epoch];
-    }
-
-    function getCurrentConsensus() external view returns (address[7] memory) {
+    function getConsensus(uint epoch) public view returns (address[7] memory) {
         // build up a votes array
-        uint length = candidateList.length;
-        uint epoch = epochCount - 1;
-        uint[] memory votes;
-        for (uint i = 0; i < length; i++) {
-            _push(votes, receivedVotes[candidateList[i]][epoch]);
-        }
         address[] memory candidates = candidateList;
+        uint length = candidateList.length;
+        uint[] memory votes = new uint[](length);
+        for (uint i = 0; i < length; i++) {
+            votes[i] = receivedVotes[candidateList[i]][epoch];
+        }
 
         // sort based on votes
         _quickSort(candidates, votes, 0, int(length - 1));
@@ -281,8 +249,8 @@ contract GovernanceV2 is IGovernanceV2 {
         if (i == j) return;
         uint pivot = votes[uint(left + (right - left) / 2)];
         while (i <= j) {
-            while (votes[uint(i)] < pivot) i++;
-            while (pivot < votes[uint(j)]) j--;
+            while (votes[uint(i)] > pivot) i++;
+            while (pivot > votes[uint(j)]) j--;
             if (i <= j) {
                 (votes[uint(i)], votes[uint(j)]) = (
                     votes[uint(j)],
@@ -298,14 +266,5 @@ contract GovernanceV2 is IGovernanceV2 {
         }
         if (left < j) _quickSort(candidates, votes, left, j);
         if (i < right) _quickSort(candidates, votes, i, right);
-    }
-
-    // push an element to the end of a memory array, note the array can not be changed if another dynamic array is declared after this
-    function _push(uint[] memory _nums, uint _num) internal pure {
-        assembly {
-            mstore(add(_nums, mul(add(mload(_nums), 1), 0x20)), _num)
-            mstore(_nums, add(mload(_nums), 1))
-            mstore(0x40, add(mload(0x40), 0x20))
-        }
     }
 }
