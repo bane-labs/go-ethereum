@@ -100,7 +100,7 @@ contract GovernanceV2 is IGovernanceV2 {
         uint totalReward = 0;
         uint[] memory votedIndex = votedRounds[msg.sender][candidateFrom];
         uint indexLength = votedIndex.length;
-        bool reconstructed = false;
+        delete votedRounds[msg.sender][candidateFrom];
         for (uint i = 0; i < indexLength; i++) {
             uint round = votedIndex[i];
             // only rounds before the current running one (the one before current voting)
@@ -111,17 +111,8 @@ contract GovernanceV2 is IGovernanceV2 {
                 totalReward += getRoundReward(round, roundAmount);
             } else if (round >= currentRound - 1) {
                 // reconstructed array, the new one always shorter than 2
-                if (!reconstructed) {
-                    // replace the old one
-                    votedRounds[msg.sender][candidateFrom] = [round];
-                } else {
-                    votedRounds[msg.sender][candidateFrom].push(round);
-                }
+                votedRounds[msg.sender][candidateFrom].push(round);
             }
-        }
-        // delete if all withdrawed
-        if (!reconstructed) {
-            delete votedRounds[msg.sender][candidateFrom];
         }
         _safeTransferETH(msg.sender, totalAmount + totalReward);
         emit WithdrawReward(msg.sender, totalReward);
