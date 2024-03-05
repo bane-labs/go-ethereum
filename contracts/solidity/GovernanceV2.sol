@@ -67,12 +67,16 @@ contract GovernanceV2 is IGovernanceV2 {
         epochReward[epochCount] += msg.value;
     }
 
-    function getCurrentEpoch() public view returns (uint) {
+    function getNominalCurrentEpoch() public view returns (uint) {
         if (block.timestamp > lastEpochTime + EPOCH_DURATION) {
             return epochCount + 1;
         } else {
             return epochCount;
         }
+    }
+
+    function getRealCurrentEpoch() public view returns (uint) {
+        return epochCount;
     }
 
     function getVotedValueByEpoch(
@@ -153,7 +157,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function revokeVote(address candidateFrom) external {
         // revoke will not trigger epoch change
-        uint currentEpoch = getCurrentEpoch();
+        uint currentEpoch = getNominalCurrentEpoch();
         uint amount = voterTable[msg.sender][currentEpoch][candidateFrom];
         receivedVotes[candidateFrom][currentEpoch] -= amount;
         delete voterTable[msg.sender][currentEpoch][candidateFrom];
@@ -164,7 +168,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function withdraw(address candidateFrom) external {
         // withdraw use epochCount, to lock until epoch change
-        uint currentEpoch = epochCount;
+        uint currentEpoch = getRealCurrentEpoch();
         uint totalAmount = 0;
         uint totalReward = 0;
         // loop all voted epochs
