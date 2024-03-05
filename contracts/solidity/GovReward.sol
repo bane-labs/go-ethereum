@@ -24,7 +24,7 @@ interface IGovernance {
         uint startHeight;
         address[] miners;
         uint preHeight;
-        uint draftId;
+        uint nextHeight;
         uint voteAmount;
     }
 
