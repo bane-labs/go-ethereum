@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/forkid"
@@ -109,7 +108,6 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 			Database:   dbNoFork,
 			Chain:      chainNoFork,
 			TxPool:     newTestTxPool(),
-			Merger:     consensus.NewMerger(rawdb.NewMemoryDatabase()),
 			Network:    1,
 			Sync:       downloader.FullSync,
 			BloomCache: 1,
@@ -118,7 +116,6 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 			Database:   dbProFork,
 			Chain:      chainProFork,
 			TxPool:     newTestTxPool(),
-			Merger:     consensus.NewMerger(rawdb.NewMemoryDatabase()),
 			Network:    1,
 			Sync:       downloader.FullSync,
 			BloomCache: 1,

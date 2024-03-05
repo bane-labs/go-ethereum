@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/core"
@@ -98,7 +97,6 @@ type handlerConfig struct {
 	Database       ethdb.Database         // Database for direct sync insertions
 	Chain          *core.BlockChain       // Blockchain to serve data from
 	TxPool         txPool                 // Transaction pool to propagate from
-	Merger         *consensus.Merger      // The manager for eth1/2 transition
 	Network        uint64                 // Network identifier to advertise
 	Sync           downloader.SyncMode    // Whether to snap or full sync
 	BloomCache     uint64                 // Megabytes to alloc for snap sync bloom
@@ -123,7 +121,6 @@ type handler struct {
 	blockFetcher *fetcher.BlockFetcher
 	txFetcher    *fetcher.TxFetcher
 	peers        *peerSet
-	merger       *consensus.Merger
 
 	eventMux      *event.TypeMux
 	txsCh         chan core.NewTxsEvent
@@ -159,7 +156,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		txpool:         config.TxPool,
 		chain:          config.Chain,
 		peers:          newPeerSet(),
-		merger:         config.Merger,
 		requiredBlocks: config.RequiredBlocks,
 		quitSync:       make(chan struct{}),
 		handlerDoneCh:  make(chan struct{}),
@@ -215,12 +211,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {
-		// All the block fetcher activities should be disabled
-		// after the transition. Print the warning log.
-		if h.merger.PoSFinalized() {
-			log.Warn("Unexpected validation activity", "hash", header.Hash(), "number", header.Number)
-			return errors.New("unexpected behavior after transition")
-		}
 		// Reject all the PoS style headers in the first place. No matter
 		// the chain has finished the transition or not, the PoS headers
 		// should only come from the trusted consensus layer instead of
@@ -236,20 +226,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return h.chain.CurrentBlock().Number.Uint64()
 	}
 	inserter := func(blocks types.Blocks) (int, error) {
-		// All the block fetcher activities should be disabled
-		// after the transition. Print the warning log.
-		if h.merger.PoSFinalized() {
-			var ctx []interface{}
-			ctx = append(ctx, "blocks", len(blocks))
-			if len(blocks) > 0 {
-				ctx = append(ctx, "firsthash", blocks[0].Hash())
-				ctx = append(ctx, "firstnumber", blocks[0].Number())
-				ctx = append(ctx, "lasthash", blocks[len(blocks)-1].Hash())
-				ctx = append(ctx, "lastnumber", blocks[len(blocks)-1].Number())
-			}
-			log.Warn("Unexpected insertion activity", ctx...)
-			return 0, errors.New("unexpected behavior after transition")
-		}
 		// If snap sync is running, deny importing weird blocks. This is a problematic
 		// clause when starting up a new network, because snap-syncing miners might not
 		// accept each others' blocks until a restart. Unfortunately we haven't figured
@@ -257,29 +233,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		// or not. This should be fixed if we figure out a solution.
 		if !h.synced.Load() {
 			log.Warn("Syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
-			return 0, nil
-		}
-		if h.merger.TDDReached() {
-			// The blocks from the p2p network is regarded as untrusted
-			// after the transition. In theory block gossip should be disabled
-			// entirely whenever the transition is started. But in order to
-			// handle the transition boundary reorg in the consensus-layer,
-			// the legacy blocks are still accepted, but only for the terminal
-			// pow blocks. Spec: https://github.com/ethereum/EIPs/blob/master/EIPS/eip-3675.md#halt-the-importing-of-pow-blocks
-			for i, block := range blocks {
-				ptd := h.chain.GetTd(block.ParentHash(), block.NumberU64()-1)
-				if ptd == nil {
-					return 0, nil
-				}
-				td := new(big.Int).Add(ptd, block.Difficulty())
-				if !h.chain.Config().IsTerminalPoWBlock(ptd, td) {
-					log.Info("Filtered out non-terminal pow block", "number", block.NumberU64(), "hash", block.Hash())
-					return 0, nil
-				}
-				if err := h.chain.InsertBlockWithoutSetHead(block); err != nil {
-					return i, err
-				}
-			}
 			return 0, nil
 		}
 		return h.chain.InsertChain(blocks)
@@ -590,11 +543,6 @@ func (h *handler) Stop() {
 // BroadcastBlock will either propagate a block to a subset of its peers, or
 // will only announce its availability (depending what's requested).
 func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
-	// Disable the block propagation if the chain has already entered the PoS
-	// stage. The block propagation is delegated to the consensus layer.
-	if h.merger.PoSFinalized() {
-		return
-	}
 	// Disable the block propagation if it's the post-merge block.
 	if beacon, ok := h.chain.Engine().(*beacon.Beacon); ok {
 		if beacon.IsPoSHeader(block.Header()) {
