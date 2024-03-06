@@ -218,20 +218,21 @@ contract GovernanceV2 is IGovernanceV2 {
                 // calculate reward
                 address candidate = votedTo[msg.sender][epoch];
                 address[7] memory consensus = _tryGetAndCacheConsensus(epoch);
-                uint totalEffectiveVotes = 0;
-                uint voterEffectiveVotes = 0;
+                bool included = false;
                 for (uint j = 0; j < 7; j++) {
-                    totalEffectiveVotes += receivedVotes[consensus[j]][epoch];
                     if (consensus[j] == candidate) {
-                        voterEffectiveVotes = epochAmount;
+                        included = true;
                     }
                 }
-                totalReward +=
-                    (voterEffectiveVotes *
-                        epochRewards[epoch] *
-                        shareRateOf[candidate]) /
-                    totalEffectiveVotes /
-                    1000;
+                if (included) {
+                    totalReward +=
+                        (epochAmount *
+                            epochRewards[epoch] *
+                            shareRateOf[candidate]) /
+                        receivedVotes[candidate][epoch] /
+                        7 /
+                        1000;
+                }
             } else if (epoch >= currentEpoch - 1) {
                 // reconstructed array, the new one always shorter than 2
                 unclaimedEpochsOf[msg.sender].push(epoch);
@@ -257,24 +258,19 @@ contract GovernanceV2 is IGovernanceV2 {
             i++
         ) {
             // only epochs before the current running one (the one before current voting)
-            uint receivedVote = receivedVotes[msg.sender][i];
-
-            // calculate reward
             address[7] memory consensus = _tryGetAndCacheConsensus(i);
-            uint totalEffectiveVotes = 0;
-            uint candidateEffectiveVotes = 0;
+            bool included = false;
             for (uint j = 0; j < 7; j++) {
-                totalEffectiveVotes += receivedVotes[consensus[j]][i];
                 if (consensus[j] == msg.sender) {
-                    candidateEffectiveVotes = receivedVote;
+                    included = true;
                 }
             }
-            totalReward +=
-                (candidateEffectiveVotes *
-                    epochRewards[i] *
-                    (1000 - shareRateOf[msg.sender])) /
-                totalEffectiveVotes /
-                1000;
+            if (included) {
+                totalReward +=
+                    (epochRewards[i] * (1000 - shareRateOf[msg.sender])) /
+                    7 /
+                    1000;
+            }
         }
         lastClaimedEpochOf[msg.sender] = currentEpoch - 2;
         _safeTransferETH(msg.sender, totalReward);
@@ -288,12 +284,14 @@ contract GovernanceV2 is IGovernanceV2 {
     function getConsensus(uint epoch) public view returns (address[7] memory) {
         address[7] memory cache = consensusCache[epoch];
         if (cache[0] == address(0)) {
-            return getConsensus(epoch);
+            return _getConsensus(epoch);
         }
         return cache;
     }
 
-    function _tryGetAndCacheConsensus(uint epoch) internal returns (address[7] memory) {
+    function _tryGetAndCacheConsensus(
+        uint epoch
+    ) internal returns (address[7] memory) {
         address[7] memory cache = consensusCache[epoch];
         if (cache[0] == address(0)) {
             cache = _getConsensus(epoch);
@@ -302,7 +300,9 @@ contract GovernanceV2 is IGovernanceV2 {
         return cache;
     }
 
-    function _getConsensus(uint epoch) internal view returns (address[7] memory) {
+    function _getConsensus(
+        uint epoch
+    ) internal view returns (address[7] memory) {
         // build up a votes array
         address[] memory candidates = candidateList;
         uint length = candidateList.length;
