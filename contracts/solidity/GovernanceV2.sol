@@ -75,8 +75,26 @@ contract GovernanceV2 is IGovernanceV2 {
     // epoch=>consensus
     mapping(uint => address[7]) private consensusCache;
 
+    constructor() {
+        address[7] memory initialConsensus = [
+            address(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266),
+            address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8),
+            address(0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC),
+            address(0x90F79bf6EB2c4f870365E785982E1f101E93b906),
+            address(0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65),
+            address(0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc),
+            address(0x976EA74026E726554dB657fA54763abd0C3a0aa9)
+        ];
+        consensusCache[0] = initialConsensus;
+    }
+
     receive() external payable {
-        epochRewards[getRealCurrentEpoch()] += msg.value;
+        uint epoch = getRealCurrentEpoch();
+        if (epoch > 0) {
+            epochRewards[epoch] += msg.value;
+        } else {
+            epochRewards[epoch + 1] += msg.value;
+        }
     }
 
     function getNominalCurrentEpoch() public view returns (uint) {
@@ -227,7 +245,7 @@ contract GovernanceV2 is IGovernanceV2 {
                 if (included) {
                     totalReward +=
                         (epochAmount *
-                            epochRewards[epoch] *
+                            epochRewards[epoch + 1] *
                             shareRateOf[candidate]) /
                         receivedVotes[candidate][epoch] /
                         7 /
@@ -267,7 +285,7 @@ contract GovernanceV2 is IGovernanceV2 {
             }
             if (included) {
                 totalReward +=
-                    (epochRewards[i] * (1000 - shareRateOf[msg.sender])) /
+                    (epochRewards[i + 1] * (1000 - shareRateOf[msg.sender])) /
                     7 /
                     1000;
             }
@@ -278,7 +296,12 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function getCurrentConsensus() public view returns (address[7] memory) {
-        return getConsensus(getRealCurrentEpoch() - 1);
+        uint epoch = getRealCurrentEpoch();
+        if (epoch > 0) {
+            return getConsensus(epoch - 1);
+        } else {
+            return getConsensus(epoch);
+        }
     }
 
     function getConsensus(uint epoch) public view returns (address[7] memory) {
