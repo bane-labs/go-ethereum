@@ -9,7 +9,7 @@ interface IGovernanceV2 {
     event WithdrawReward(address voter, uint reward);
 
     // register to be a candidate with gas
-    function registerCandidate() external payable;
+    function registerCandidate(uint shareRate) external payable;
 
     // exit candidates and wait for withdraw
     function exitCandidate() external;
@@ -21,10 +21,10 @@ interface IGovernanceV2 {
     function vote(address to) external payable;
 
     // withdraw ongoing vote
-    function revokeVote(address from) external;
+    function revokeVote() external;
 
     // withdraw past vote
-    function withdraw(address from) external;
+    function withdraw() external;
 }
 
 interface IGovReward {
@@ -42,29 +42,33 @@ contract GovernanceV2 is IGovernanceV2 {
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
 
-    // the counter of epoch index
+    // counter of epoch index
     uint public epochCount;
-    // the timestamp of the last time when voting start
+    // timestamp of the last time when voting starts
     uint public lastEpochTime;
     // candidate list
     address[] public candidateList;
-    // the timestamp when register happen
-    mapping(address => uint) public registerTime;
-    // the timestamp when exit happen
-    mapping(address => uint) public exitTime;
+    // settings about how much reward given to voter
+    mapping(address => uint) public shareRateOf;
+    // timestamp when register happens
+    mapping(address => uint) public registerTimeOf;
+    // the timestamp when exit happens
+    mapping(address => uint) public exitTimeOf;
     // the left register fee to exit
-    mapping(address => uint) public feeBalance;
+    mapping(address => uint) public candidateBalanceOf;
     // epoch=>uint
-    mapping(uint => uint) public epochReward;
-    // voter=>epoch=>candidate=>amount
-    mapping(address => mapping(uint => mapping(address => uint))) voterTable;
-    // voter=>candidate=>epochs
-    mapping(address => mapping(address => uint[])) votedEpochs;
+    mapping(uint => uint) public epochRewards;
+    // voter=>epoch=>candidate
+    mapping(address => mapping(uint => address)) votedTo;
+    // voter=>epoch=>amount
+    mapping(address => mapping(uint => uint)) votedAmount;
+    // voter=>epochs
+    mapping(address => uint[]) votedEpochs;
     // candidate=>epoch=>amount
     mapping(address => mapping(uint => uint)) receivedVotes;
 
     receive() external payable {
-        epochReward[epochCount] += msg.value;
+        epochRewards[epochCount] += msg.value;
     }
 
     function getNominalCurrentEpoch() public view returns (uint) {
@@ -79,12 +83,20 @@ contract GovernanceV2 is IGovernanceV2 {
         return epochCount;
     }
 
-    function getVotedValueByEpoch(
+    function _getAndUpdateEpochCount() internal returns (uint) {
+        if (block.timestamp > lastEpochTime + EPOCH_DURATION) {
+            IGovReward(govReward).withdraw();
+            epochCount += 1;
+            lastEpochTime = block.timestamp;
+        }
+        return epochCount;
+    }
+
+    function getVotedByEpoch(
         address voter,
-        uint epoch,
-        address candidate
-    ) public view returns (uint) {
-        return voterTable[voter][epoch][candidate];
+        uint epoch
+    ) public view returns (address, uint) {
+        return (votedTo[voter][epoch], votedAmount[voter][epoch]);
     }
 
     function getReceivedVotesByEpoch(
@@ -94,8 +106,9 @@ contract GovernanceV2 is IGovernanceV2 {
         return receivedVotes[candidate][epoch];
     }
 
-    function registerCandidate() external payable {
+    function registerCandidate(uint shareRate) external payable {
         require(msg.value == REGISTER_FEE, "insufficient amount");
+        require(shareRate < 1000, "invalid rate");
         address[] memory list = candidateList;
         uint length = candidateList.length;
         // check duplication
@@ -110,93 +123,108 @@ contract GovernanceV2 is IGovernanceV2 {
             // add to candidates
             candidateList.push(msg.sender);
         }
-        // record register time and balance
-        registerTime[msg.sender] = block.timestamp;
-        feeBalance[msg.sender] = msg.value;
+        // record register time, share rate and balance
+        registerTimeOf[msg.sender] = block.timestamp;
+        shareRateOf[msg.sender] = shareRate;
+        candidateBalanceOf[msg.sender] = msg.value;
         emit Register(msg.sender);
     }
 
     function exitCandidate() external {
-        require(registerTime[msg.sender] > 0, "candidate not exists");
+        require(registerTimeOf[msg.sender] > 0, "candidate not exists");
         // delete register time, cannot be voted
-        delete registerTime[msg.sender];
+        delete registerTimeOf[msg.sender];
         // record exit time, but candidate list not removed, balance still locked
-        exitTime[msg.sender] = block.timestamp;
+        exitTimeOf[msg.sender] = block.timestamp;
         emit Exit(msg.sender);
     }
 
     function claimRegisterFee() external {
         // require 2 epochs to exit candidate list, so that the last round of vote can work as expected
         require(
-            block.timestamp > exitTime[msg.sender] + 2 * EPOCH_DURATION,
+            block.timestamp > exitTimeOf[msg.sender] + 2 * EPOCH_DURATION,
             "claim not allowed"
         );
 
         // send back balance
-        uint amount = feeBalance[msg.sender];
-        delete feeBalance[msg.sender];
+        uint amount = candidateBalanceOf[msg.sender];
+        delete candidateBalanceOf[msg.sender];
         _safeTransferETH(msg.sender, amount);
     }
 
     function vote(address candidateTo) external payable {
         require(msg.value >= MIN_VOTE_AMOUNT, "insufficient amount");
-        require(registerTime[candidateTo] > 0, "candidate not allowed");
+        require(registerTimeOf[candidateTo] > 0, "candidate not allowed");
         // the first person vote in new epoch will pay for update
         uint currentEpoch = _getAndUpdateEpochCount();
 
-        uint voted = voterTable[msg.sender][currentEpoch][candidateTo];
+        uint voted = votedAmount[msg.sender][currentEpoch];
         // add this epoch to personal record if never voted
         if (voted == 0) {
-            votedEpochs[msg.sender][candidateTo].push(currentEpoch);
+            votedTo[msg.sender][currentEpoch] = candidateTo;
+            votedEpochs[msg.sender].push(currentEpoch);
+        } else {
+            require(
+                votedTo[msg.sender][currentEpoch] == candidateTo,
+                "only one choice is allowed"
+            );
         }
-        voterTable[msg.sender][currentEpoch][candidateTo] = voted + msg.value;
+        votedAmount[msg.sender][currentEpoch] = voted + msg.value;
         receivedVotes[candidateTo][currentEpoch] += msg.value;
 
         emit Vote(msg.sender, candidateTo, msg.value);
     }
 
-    function revokeVote(address candidateFrom) external {
+    function revokeVote() external {
         // revoke will not trigger epoch change
         uint currentEpoch = getNominalCurrentEpoch();
-        uint amount = voterTable[msg.sender][currentEpoch][candidateFrom];
+        address candidateFrom = votedTo[msg.sender][currentEpoch];
+        uint amount = votedAmount[msg.sender][currentEpoch];
         receivedVotes[candidateFrom][currentEpoch] -= amount;
-        delete voterTable[msg.sender][currentEpoch][candidateFrom];
+        delete votedTo[msg.sender][currentEpoch];
+        delete votedAmount[msg.sender][currentEpoch];
         _safeTransferETH(msg.sender, amount);
 
         emit RevokeVote(msg.sender, candidateFrom, amount);
     }
 
-    function withdraw(address candidateFrom) external {
+    function withdraw() external {
         // withdraw use epochCount, to lock until epoch change
         uint currentEpoch = getRealCurrentEpoch();
         uint totalAmount = 0;
         uint totalReward = 0;
         // loop all voted epochs
-        uint[] memory votedIndex = votedEpochs[msg.sender][candidateFrom];
+        uint[] memory votedIndex = votedEpochs[msg.sender];
         uint indexLength = votedIndex.length;
-        delete votedEpochs[msg.sender][candidateFrom];
+        delete votedEpochs[msg.sender];
         for (uint i = 0; i < indexLength; i++) {
             uint epoch = votedIndex[i];
             // only epochs before the current running one (the one before current voting)
             if (epoch < currentEpoch - 1) {
-                uint epochAmount = voterTable[msg.sender][epoch][candidateFrom];
-                delete voterTable[msg.sender][epoch][candidateFrom];
+                uint epochAmount = votedAmount[msg.sender][epoch];
+                delete votedAmount[msg.sender][epoch];
                 totalAmount += epochAmount;
 
                 // calculate reward
+                address candidate = votedTo[msg.sender][epoch];
                 address[7] memory consensus = getConsensus(epoch);
                 uint totalEffectiveVotes = 0;
                 uint userEffectiveVotes = 0;
                 for (uint j = 0; j < 7; j++) {
                     totalEffectiveVotes += receivedVotes[consensus[j]][epoch];
-                    if (consensus[j] == candidateFrom) {
+                    if (consensus[j] == candidate) {
                         userEffectiveVotes = epochAmount;
                     }
                 }
-                totalReward += userEffectiveVotes * epochReward[epoch] / totalEffectiveVotes;
+                totalReward +=
+                    (userEffectiveVotes *
+                        epochRewards[epoch] *
+                        shareRateOf[candidate]) /
+                    totalEffectiveVotes /
+                    1000;
             } else if (epoch >= currentEpoch - 1) {
                 // reconstructed array, the new one always shorter than 2
-                votedEpochs[msg.sender][candidateFrom].push(epoch);
+                votedEpochs[msg.sender].push(epoch);
             }
         }
         _safeTransferETH(msg.sender, totalAmount + totalReward);
@@ -225,15 +253,6 @@ contract GovernanceV2 is IGovernanceV2 {
             consensus[i] = candidates[i];
         }
         return consensus;
-    }
-
-    function _getAndUpdateEpochCount() internal returns (uint) {
-        if (block.timestamp > lastEpochTime + EPOCH_DURATION) {
-            IGovReward(govReward).withdraw();
-            epochCount += 1;
-            lastEpochTime = block.timestamp;
-        }
-        return epochCount;
     }
 
     function _safeTransferETH(address to, uint value) internal {
