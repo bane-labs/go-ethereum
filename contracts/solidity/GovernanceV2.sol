@@ -71,7 +71,7 @@ contract GovernanceV2 is IGovernanceV2 {
     // candidate=>epoch=>amount
     mapping(address => mapping(uint => uint)) public receivedVotes;
     // candidate=>epoch
-    mapping(address => uint) public lastClaimedEpochOf;
+    mapping(address => uint) public claimStartEpochOf;
     // epoch=>consensus
     mapping(uint => address[7]) private consensusCache;
 
@@ -154,7 +154,7 @@ contract GovernanceV2 is IGovernanceV2 {
         shareRateOf[msg.sender] = shareRate;
         candidateBalanceOf[msg.sender] = msg.value;
         // set the start point for claim
-        lastClaimedEpochOf[msg.sender] = getRealCurrentEpoch();
+        claimStartEpochOf[msg.sender] = getRealCurrentEpoch();
         emit Register(msg.sender);
     }
 
@@ -267,11 +267,11 @@ contract GovernanceV2 is IGovernanceV2 {
         );
         // use epochCount, to lock rewards until epoch change
         uint currentEpoch = getRealCurrentEpoch();
-        require(currentEpoch > 2, "claim not started");
+        require(currentEpoch > 1, "claim not started");
         uint totalReward = 0;
         // loop all unclaimed epochs
         for (
-            uint i = lastClaimedEpochOf[msg.sender] + 1;
+            uint i = claimStartEpochOf[msg.sender];
             i < currentEpoch - 1;
             i++
         ) {
@@ -290,7 +290,7 @@ contract GovernanceV2 is IGovernanceV2 {
                     1000;
             }
         }
-        lastClaimedEpochOf[msg.sender] = currentEpoch - 2;
+        claimStartEpochOf[msg.sender] = currentEpoch - 1;
         _safeTransferETH(msg.sender, totalReward);
         emit CandidateClaim(msg.sender, totalReward);
     }
