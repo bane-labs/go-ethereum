@@ -72,6 +72,8 @@ contract GovernanceV2 is IGovernanceV2 {
     mapping(address => mapping(uint => uint)) public receivedVotes;
     // candidate=>epoch
     mapping(address => uint) public lastClaimedEpochOf;
+    // epoch=>consensus
+    mapping(uint => address[7]) private consensusCache;
 
     receive() external payable {
         epochRewards[getRealCurrentEpoch()] += msg.value;
@@ -215,7 +217,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
                 // calculate reward
                 address candidate = votedTo[msg.sender][epoch];
-                address[7] memory consensus = getConsensus(epoch);
+                address[7] memory consensus = _tryGetAndCacheConsensus(epoch);
                 uint totalEffectiveVotes = 0;
                 uint voterEffectiveVotes = 0;
                 for (uint j = 0; j < 7; j++) {
@@ -258,7 +260,7 @@ contract GovernanceV2 is IGovernanceV2 {
             uint receivedVote = receivedVotes[msg.sender][i];
 
             // calculate reward
-            address[7] memory consensus = getConsensus(i);
+            address[7] memory consensus = _tryGetAndCacheConsensus(i);
             uint totalEffectiveVotes = 0;
             uint candidateEffectiveVotes = 0;
             for (uint j = 0; j < 7; j++) {
@@ -284,6 +286,23 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function getConsensus(uint epoch) public view returns (address[7] memory) {
+        address[7] memory cache = consensusCache[epoch];
+        if (cache[0] == address(0)) {
+            return getConsensus(epoch);
+        }
+        return cache;
+    }
+
+    function _tryGetAndCacheConsensus(uint epoch) internal returns (address[7] memory) {
+        address[7] memory cache = consensusCache[epoch];
+        if (cache[0] == address(0)) {
+            cache = _getConsensus(epoch);
+            consensusCache[epoch] = cache;
+        }
+        return cache;
+    }
+
+    function _getConsensus(uint epoch) internal view returns (address[7] memory) {
         // build up a votes array
         address[] memory candidates = candidateList;
         uint length = candidateList.length;
