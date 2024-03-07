@@ -363,8 +363,6 @@ contract GovernanceV2 is IGovernanceV2 {
             if (votes[i] > votes[0]) {
                 votes[0] = votes[i];
                 candidates[0] = candidates[i];
-                (votes[0], votes[i]) = (votes[i], votes[0]);
-                (candidates[0], candidates[i]) = (candidates[i], candidates[0]);
                 _heapDown(candidates, votes, 0, k);
             }
         }
