@@ -334,8 +334,8 @@ contract GovernanceV2 is IGovernanceV2 {
             votes[i] = receivedVotes[candidateList[i]][epoch];
         }
 
-        // sort based on votes
-        _quickSort(candidates, votes, 0, int(length - 1));
+        // sort top 7 based on votes
+        _topK(candidates, votes, 7);
 
         // return the first 7 candidates as consensus list
         address[7] memory consensus;
@@ -350,34 +350,44 @@ contract GovernanceV2 is IGovernanceV2 {
         require(success, "safeTransferETH: ETH transfer failed");
     }
 
-    // sort candidates from high votes to low
-    function _quickSort(
+    function _topK(
         address[] memory candidates,
         uint[] memory votes,
-        int left,
-        int right
+        uint k
     ) internal pure {
-        int i = left;
-        int j = right;
-        if (i == j) return;
-        uint pivot = votes[uint(left + (right - left) / 2)];
-        while (i <= j) {
-            while (votes[uint(i)] > pivot) i++;
-            while (pivot > votes[uint(j)]) j--;
-            if (i <= j) {
-                (votes[uint(i)], votes[uint(j)]) = (
-                    votes[uint(j)],
-                    votes[uint(i)]
-                );
-                (candidates[uint(i)], candidates[uint(j)]) = (
-                    candidates[uint(j)],
-                    candidates[uint(i)]
-                );
-                i++;
-                j--;
+        uint length = candidates.length;
+        for (int j = int(k) / 2 - 1; j >= 0; j--) {
+            _heapDown(candidates, votes, uint(j), k);
+        }
+        for (uint i = k; i < length; i++) {
+            if (votes[i] > votes[0]) {
+                votes[0] = votes[i];
+                candidates[0] = candidates[i];
+                (votes[0], votes[i]) = (votes[i], votes[0]);
+                (candidates[0], candidates[i]) = (candidates[i], candidates[0]);
+                _heapDown(candidates, votes, 0, k);
             }
         }
-        if (left < j) _quickSort(candidates, votes, left, j);
-        if (i < right) _quickSort(candidates, votes, i, right);
+    }
+
+    function _heapDown(
+        address[] memory candidates,
+        uint[] memory votes,
+        uint j,
+        uint k
+    ) internal pure {
+        uint i = 2 * j + 1;
+        while (i < k) {
+            if (i + 1 < k && votes[i] > votes[i + 1]) {
+                i += 1;
+            }
+            if (votes[i] > votes[j]) {
+                break;
+            }
+            (votes[i], votes[j]) = (votes[j], votes[i]);
+            (candidates[i], candidates[j]) = (candidates[j], candidates[i]);
+            j = i;
+            i = i * 2 + 1;
+        }
     }
 }
