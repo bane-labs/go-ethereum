@@ -77,13 +77,13 @@ contract GovernanceV2 is IGovernanceV2 {
 
     constructor() {
         address[7] memory initialConsensus = [
-            address(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266),
-            address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8),
-            address(0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC),
-            address(0x90F79bf6EB2c4f870365E785982E1f101E93b906),
-            address(0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65),
-            address(0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc),
-            address(0x976EA74026E726554dB657fA54763abd0C3a0aa9)
+            address(0x74f4EFFb0B538BAec703346b03B6d9292f53A4CD),
+            address(0x910AD1641B7125Eff746acCdCa1F11148b22f472),
+            address(0xfEf5F250aF14DF73f983cAAb7b1F5002189c42E0),
+            address(0xc51964013acbC6b271FEeCB0feBD9E7A01202930),
+            address(0xC5bbD9652546BC96bE3DEc97a38eE335f7873Dfa),
+            address(0x26F1794B81dF2B832545b8B6bbcA196b82E4fEB1),
+            address(0x0B51369D02e47EE3f143391B837Aa08c31AAA19b)
         ];
         consensusCache[0] = initialConsensus;
     }
