@@ -54,10 +54,10 @@ contract GovernanceV2 is IGovernanceV2 {
     address[] public candidateList;
     // settings about how much reward given to voter
     mapping(address => uint) public shareRateOf;
-    // timestamp when register happens
-    mapping(address => uint) public registerTimeOf;
-    // the timestamp when exit happens
-    mapping(address => uint) public exitTimeOf;
+    // the timestamp when register happens
+    mapping(address => uint) public registerEpochOf;
+    // the epoch when exit happens
+    mapping(address => uint) public exitEpochOf;
     // the left register fee to exit
     mapping(address => uint) public candidateBalanceOf;
     // epoch=>uint
@@ -149,30 +149,51 @@ contract GovernanceV2 is IGovernanceV2 {
             // add to candidates
             candidateList.push(msg.sender);
         }
+        uint epoch = _getAndUpdateEpochCount();
         // record register time, share rate and balance
-        registerTimeOf[msg.sender] = block.timestamp;
+        registerEpochOf[msg.sender] = epoch;
         shareRateOf[msg.sender] = shareRate;
         candidateBalanceOf[msg.sender] = msg.value;
         // set the start point for claim
-        claimStartEpochOf[msg.sender] = getRealCurrentEpoch();
+        claimStartEpochOf[msg.sender] = epoch;
         emit Register(msg.sender);
     }
 
     function exitCandidate() external {
-        require(registerTimeOf[msg.sender] > 0, "candidate not exists");
+        require(registerEpochOf[msg.sender] > 0, "candidate not exists");
         // delete register time, cannot be voted
-        delete registerTimeOf[msg.sender];
+        delete registerEpochOf[msg.sender];
         // record exit time, but candidate list not removed, balance still locked
-        exitTimeOf[msg.sender] = block.timestamp;
+        exitEpochOf[msg.sender] = _getAndUpdateEpochCount();
         emit Exit(msg.sender);
     }
 
     function claimRegisterFee() external {
         // require 2 epochs to exit candidate list, so that the last round of vote can work as expected
+        uint epoch = _getAndUpdateEpochCount();
         require(
-            block.timestamp > exitTimeOf[msg.sender] + 2 * EPOCH_DURATION,
+            epoch > exitEpochOf[msg.sender] + 1,
             "claim not allowed"
         );
+
+        // make sure all consensus are settled
+        for (
+            uint i = claimStartEpochOf[msg.sender];
+            i < epoch - 1;
+            i++
+        ) {
+            _tryGetAndCacheConsensus(i);
+        }
+
+        // reorg candidate list
+        address[] memory candidates = candidateList;
+        uint length = candidateList.length;
+        delete candidateList;
+        for (uint i = 0; i < length; i++) {
+            if (candidates[i] != msg.sender) {
+                candidateList.push(candidates[i]);
+            }
+        }
 
         // send back balance
         uint amount = candidateBalanceOf[msg.sender];
@@ -182,7 +203,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function vote(address candidateTo) external payable {
         require(msg.value >= MIN_VOTE_AMOUNT, "insufficient amount");
-        require(registerTimeOf[candidateTo] > 0, "candidate not allowed");
+        require(registerEpochOf[candidateTo] > 0, "candidate not allowed");
         // the first person vote in new epoch will pay for update
         uint currentEpoch = _getAndUpdateEpochCount();
 
@@ -218,7 +239,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function voterWithdraw() external {
         // use epochCount, to lock votes and rewards until epoch change
-        uint currentEpoch = getRealCurrentEpoch();
+        uint currentEpoch = _getAndUpdateEpochCount();
         uint totalAmount = 0;
         uint totalReward = 0;
         // loop all voted epochs
@@ -261,12 +282,8 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function candidateClaim() external {
-        require(
-            registerTimeOf[msg.sender] > 0 || exitTimeOf[msg.sender] > 0,
-            "not a candidate"
-        );
         // use epochCount, to lock rewards until epoch change
-        uint currentEpoch = getRealCurrentEpoch();
+        uint currentEpoch = _getAndUpdateEpochCount();
         require(currentEpoch > 1, "claim not started");
         uint totalReward = 0;
         // loop all unclaimed epochs
