@@ -138,17 +138,13 @@ contract GovernanceV2 is IGovernanceV2 {
         address[] memory list = candidateList;
         uint length = candidateList.length;
         // check duplication
-        bool existed = false;
         for (uint i = 0; i < length; i++) {
             if (list[i] == msg.sender) {
-                existed = true;
-                break;
+                revert("candidate exists");
             }
         }
-        if (!existed) {
-            // add to candidates
-            candidateList.push(msg.sender);
-        }
+        candidateList.push(msg.sender);
+
         uint epoch = _getAndUpdateEpochCount();
         // record register time, share rate and balance
         registerEpochOf[msg.sender] = epoch;
