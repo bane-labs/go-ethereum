@@ -29,6 +29,9 @@ interface IGovernanceV2 {
 
     // claim rewards for being a consensus member
     function candidateClaim() external;
+
+    // get the current selected consensus group
+    function getCurrentConsensus() external returns (address[7] memory);
 }
 
 interface IGovReward {
@@ -54,6 +57,14 @@ contract GovernanceV2 is IGovernanceV2 {
     uint public lastEpochTime;
     // candidate list
     address[] public candidateList;
+    // epoch=>uint
+    mapping(uint => uint) public epochRewards;
+    // epoch=>amount
+    mapping(uint => uint) public totalVotes;
+    // epoch=>amount
+    mapping(uint => uint) public votedCandidates;
+    // epoch=>consensus
+    mapping(uint => address[7]) private consensusCache;
     // settings about how much reward given to voter
     mapping(address => uint) public shareRateOf;
     // the timestamp when register happens
@@ -62,22 +73,16 @@ contract GovernanceV2 is IGovernanceV2 {
     mapping(address => uint) public exitEpochOf;
     // the left register fee to exit
     mapping(address => uint) public candidateBalanceOf;
-    // epoch=>uint
-    mapping(uint => uint) public epochRewards;
+    // candidate=>epoch
+    mapping(address => uint) public claimStartEpochOf;
+    // candidate=>epoch=>amount
+    mapping(address => mapping(uint => uint)) public receivedVotes;
     // voter=>epoch=>candidate
     mapping(address => mapping(uint => address)) public votedTo;
     // voter=>epoch=>amount
     mapping(address => mapping(uint => uint)) public votedAmount;
     // voter=>epochs
     mapping(address => uint[]) public unclaimedEpochsOf;
-    // candidate=>epoch=>amount
-    mapping(address => mapping(uint => uint)) public receivedVotes;
-    // epoch=>amount
-    mapping(uint => uint) public totalVotes;
-    // candidate=>epoch
-    mapping(address => uint) public claimStartEpochOf;
-    // epoch=>consensus
-    mapping(uint => address[7]) private consensusCache;
 
     constructor() {
         address[7] memory initialConsensus = [
@@ -114,7 +119,7 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function _getAndUpdateEpochCount() internal returns (uint) {
-        if ((block.timestamp > lastEpochTime + EPOCH_DURATION && totalVotes[epochCount] >= MIN_TOTAL_VOTE) || epochCount == 0) {
+        if ((block.timestamp > lastEpochTime + EPOCH_DURATION && totalVotes[epochCount] >= MIN_TOTAL_VOTE && votedCandidates[epochCount] >= 7) || epochCount == 0) {
             IGovReward(govReward).withdraw();
             epochCount += 1;
             lastEpochTime = block.timestamp;
@@ -219,7 +224,12 @@ contract GovernanceV2 is IGovernanceV2 {
             );
         }
         votedAmount[msg.sender][currentEpoch] = voted + msg.value;
-        receivedVotes[candidateTo][currentEpoch] += msg.value;
+
+        uint received = receivedVotes[candidateTo][currentEpoch];
+        if (received == 0) {
+            votedCandidates[currentEpoch] += 1;
+        }
+        receivedVotes[candidateTo][currentEpoch] = received + msg.value;
         totalVotes[currentEpoch] += msg.value;
 
         emit Vote(msg.sender, candidateTo, msg.value);
@@ -230,7 +240,12 @@ contract GovernanceV2 is IGovernanceV2 {
         uint currentEpoch = getNominalCurrentEpoch();
         address candidateFrom = votedTo[msg.sender][currentEpoch];
         uint amount = votedAmount[msg.sender][currentEpoch];
-        receivedVotes[candidateFrom][currentEpoch] -= amount;
+
+        uint received = receivedVotes[candidateFrom][currentEpoch];
+        if (received == amount) {
+            votedCandidates[currentEpoch] -= 1;
+        }
+        receivedVotes[candidateFrom][currentEpoch] = received - amount;
         totalVotes[currentEpoch] -= amount;
         delete votedTo[msg.sender][currentEpoch];
         delete votedAmount[msg.sender][currentEpoch];
@@ -347,9 +362,9 @@ contract GovernanceV2 is IGovernanceV2 {
     ) internal view returns (address[7] memory) {
         // build up a votes array
         address[] memory candidates = candidateList;
-        uint candidateLength = candidateList.length;
-        uint[] memory votes = new uint[](candidateLength);
-        for (uint i = 0; i < candidateLength; i++) {
+        uint length = candidateList.length;
+        uint[] memory votes = new uint[](length);
+        for (uint i = 0; i < length; i++) {
             votes[i] = receivedVotes[candidateList[i]][epoch];
         }
 
@@ -358,8 +373,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
         // return the first 7 candidates as consensus list
         address[7] memory consensus;
-        uint size = candidateLength > 7 ? 7 : candidateLength;
-        for (uint i = 0; i < size; i++) {
+        for (uint i = 0; i < 7; i++) {
             consensus[i] = candidates[i];
         }
         return consensus;
@@ -376,9 +390,6 @@ contract GovernanceV2 is IGovernanceV2 {
         uint k
     ) internal pure {
         uint length = candidates.length;
-        if (length <= k) {
-            return;
-        }
         for (int j = int(k) / 2 - 1; j >= 0; j--) {
             _heapDown(candidates, votes, uint(j), k);
         }
