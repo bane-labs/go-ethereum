@@ -341,9 +341,9 @@ contract GovernanceV2 is IGovernanceV2 {
     ) internal view returns (address[7] memory) {
         // build up a votes array
         address[] memory candidates = candidateList;
-        uint length = candidateList.length;
-        uint[] memory votes = new uint[](length);
-        for (uint i = 0; i < length; i++) {
+        uint candidateLength = candidateList.length;
+        uint[] memory votes = new uint[](candidateLength);
+        for (uint i = 0; i < candidateLength; i++) {
             votes[i] = receivedVotes[candidateList[i]][epoch];
         }
 
@@ -352,7 +352,8 @@ contract GovernanceV2 is IGovernanceV2 {
 
         // return the first 7 candidates as consensus list
         address[7] memory consensus;
-        for (uint i = 0; i < 7; i++) {
+        uint size = candidateLength > 7 ? 7 : candidateLength;
+        for (uint i = 0; i < size; i++) {
             consensus[i] = candidates[i];
         }
         return consensus;
@@ -369,6 +370,9 @@ contract GovernanceV2 is IGovernanceV2 {
         uint k
     ) internal pure {
         uint length = candidates.length;
+        if (length <= k) {
+            return;
+        }
         for (int j = int(k) / 2 - 1; j >= 0; j--) {
             _heapDown(candidates, votes, uint(j), k);
         }
