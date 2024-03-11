@@ -340,10 +340,6 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					log.Warn("error on enqueue block", "error", err.Error())
 				}
 			}
-
-			// After that, update last block cached information. Do not reset sealing
-			// proposal, it will be done once new block arrives to eventLoop.
-			c.postBlock(res)
 		}),
 		dbft.WithNewBlockFromContext(func(ctx *dbft.Context) block.Block {
 			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
