@@ -40,6 +40,8 @@ contract GovernanceV2 is IGovernanceV2 {
     uint public constant MIN_VOTE_AMOUNT = 1 ether;
     // register fee
     uint public constant REGISTER_FEE = 1000 ether;
+    // the min vote amount to change epoch 
+    uint public constant MIN_TOTAL_VOTE = 3000000 ether;
     // minimum duration of an epoch
     uint public constant EPOCH_DURATION = 1209600;
     // GovReward contract
@@ -70,6 +72,8 @@ contract GovernanceV2 is IGovernanceV2 {
     mapping(address => uint[]) public unclaimedEpochsOf;
     // candidate=>epoch=>amount
     mapping(address => mapping(uint => uint)) public receivedVotes;
+    // epoch=>amount
+    mapping(uint => uint) public totalVotes;
     // candidate=>epoch
     mapping(address => uint) public claimStartEpochOf;
     // epoch=>consensus
@@ -110,7 +114,7 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function _getAndUpdateEpochCount() internal returns (uint) {
-        if (block.timestamp > lastEpochTime + EPOCH_DURATION) {
+        if ((block.timestamp > lastEpochTime + EPOCH_DURATION && totalVotes[epochCount] >= MIN_TOTAL_VOTE) || epochCount == 0) {
             IGovReward(govReward).withdraw();
             epochCount += 1;
             lastEpochTime = block.timestamp;
@@ -216,6 +220,7 @@ contract GovernanceV2 is IGovernanceV2 {
         }
         votedAmount[msg.sender][currentEpoch] = voted + msg.value;
         receivedVotes[candidateTo][currentEpoch] += msg.value;
+        totalVotes[currentEpoch] += msg.value;
 
         emit Vote(msg.sender, candidateTo, msg.value);
     }
@@ -226,6 +231,7 @@ contract GovernanceV2 is IGovernanceV2 {
         address candidateFrom = votedTo[msg.sender][currentEpoch];
         uint amount = votedAmount[msg.sender][currentEpoch];
         receivedVotes[candidateFrom][currentEpoch] -= amount;
+        totalVotes[currentEpoch] -= amount;
         delete votedTo[msg.sender][currentEpoch];
         delete votedAmount[msg.sender][currentEpoch];
         _safeTransferETH(msg.sender, amount);
