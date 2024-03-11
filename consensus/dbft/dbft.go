@@ -25,9 +25,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"math/big"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -243,6 +243,11 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 	copy(conf.StandByValidators, config.StandByValidators)
 	slices.SortFunc(conf.StandByValidators, common.Address.Cmp)
 
+	govABI, err := abi.JSON(strings.NewReader(systemcontracts.GovernanceABI))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse Governance contract ABI")
+	}
+
 	c := &DBFT{
 		config:     &conf,
 		blockQueue: newBlockQueue(),
@@ -253,6 +258,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 		quit:     make(chan struct{}),
 		finished: make(chan struct{}),
+
+		governanceABI: govABI,
 	}
 
 	logger, _ := zap.NewDevelopment()
@@ -1593,7 +1600,7 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 // to be sorted by bytes order (even if returned from governance contract).
 func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, compute bool) ([]common.Address, error) {
 	// Currently we don't have governance contract, thus, always return standby set.
-	if true {
+	if blockNum == 0 {
 		return c.config.StandByValidators, nil
 	}
 
@@ -1603,26 +1610,22 @@ func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, co
 
 	// Once we have governance contract, we don't need StandByValidators in the dBFT's
 	// config, governance contract will handle it internally.
-	blockNr := rpc.BlockNumberOrHashWithHash(blockHash, false)
+	blockNr := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(blockNum))
 
 	// Different values depending on dBFT epoch.
-	method := "getNextBlockValidators" // current epoch validators
-	if compute {
-		method = "computeNextBlockValidators" // current epoch validators for the middle of dBFT epoch and next epoch validators for the last block in epoch
-	}
-
+	method := "getCurrentConsensus" // current epoch validators
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel when we are finished consuming integers
 	defer cancel()
 	data, err := c.governanceABI.Pack(method)
 	if err != nil {
-		log.Error("Unable to pack tx to retrieve next block validators", "error", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to pack '%s': %w", method, err)
 	}
-	// do smart contract call
-	msgData := (hexutil.Bytes)(data)
-	toAddress := common.HexToAddress(systemcontracts.GovernanceContract)
-	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
+
+	// Perform smart contract call.
+	msgData := hexutil.Bytes(data)
+	toAddress := common.HexToAddress(systemcontracts.GovernanceHash)
+	gas := hexutil.Uint64(50_000_000) // more than enough for validators call processing.
 	result, err := c.ethAPI.Call(ctx, ethapi.TransactionArgs{
 		Gas:  &gas,
 		To:   &toAddress,
@@ -1632,9 +1635,14 @@ func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, co
 		return nil, err
 	}
 
-	var valSet []common.Address
-	err = c.governanceABI.UnpackIntoInterface(&valSet, method, result)
-	return valSet, err
+	var res []common.Address
+	err = c.governanceABI.UnpackIntoInterface(&res, method, result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unpack validators: %w", err)
+	}
+	slices.SortFunc(res, common.Address.Cmp)
+
+	return res, err
 }
 
 func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
