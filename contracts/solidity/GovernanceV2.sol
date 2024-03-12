@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import '@openzeppelin/contracts/utils/structs/EnumerableSet.sol';
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 interface IGovernanceV2 {
     event Register(address candidate);
@@ -33,7 +33,7 @@ interface IGovernanceV2 {
     function candidateClaim() external;
 
     // get the current selected consensus group
-    function getCurrentConsensus() external returns (address[7] memory);
+    function getCurrentConsensus() external returns (address[] memory);
 }
 
 interface IGovReward {
@@ -43,11 +43,12 @@ interface IGovReward {
 contract GovernanceV2 is IGovernanceV2 {
     using EnumerableSet for EnumerableSet.AddressSet;
 
+    uint public constant CONSENSUS_SIZE = 7;
     // the min balance for voting
     uint public constant MIN_VOTE_AMOUNT = 1 ether;
     // register fee
     uint public constant REGISTER_FEE = 1000 ether;
-    // the min vote amount to change epoch 
+    // the min vote amount to change epoch
     uint public constant MIN_TOTAL_VOTE = 3000000 ether;
     // minimum duration of an epoch
     uint public constant EPOCH_DURATION = 1209600;
@@ -68,7 +69,7 @@ contract GovernanceV2 is IGovernanceV2 {
     // epoch=>amount
     mapping(uint => uint) public votedCandidates;
     // epoch=>consensus
-    mapping(uint => address[7]) private consensusCache;
+    mapping(uint => address[]) private consensusCache;
     // settings about how much reward given to voter
     mapping(address => uint) public shareRateOf;
     // the timestamp when register happens
@@ -123,7 +124,12 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function _getAndUpdateEpochCount() internal returns (uint) {
-        if ((block.timestamp > lastEpochTime + EPOCH_DURATION && totalVotes[epochCount] >= MIN_TOTAL_VOTE && votedCandidates[epochCount] >= 7) || epochCount == 0) {
+        if (
+            (block.timestamp > lastEpochTime + EPOCH_DURATION &&
+                totalVotes[epochCount] >= MIN_TOTAL_VOTE &&
+                votedCandidates[epochCount] >= CONSENSUS_SIZE) ||
+            epochCount == 0
+        ) {
             IGovReward(govReward).withdraw();
             epochCount += 1;
             lastEpochTime = block.timestamp;
@@ -177,17 +183,10 @@ contract GovernanceV2 is IGovernanceV2 {
     function claimRegisterFee() external {
         // require 2 epochs to exit candidate list, so that the last round of vote can work as expected
         uint epoch = _getAndUpdateEpochCount();
-        require(
-            epoch > exitEpochOf[msg.sender] + 1,
-            "claim not allowed"
-        );
+        require(epoch > exitEpochOf[msg.sender] + 1, "claim not allowed");
 
         // make sure all consensus are settled
-        for (
-            uint i = claimStartEpochOf[msg.sender];
-            i < epoch - 1;
-            i++
-        ) {
+        for (uint i = claimStartEpochOf[msg.sender]; i < epoch - 1; i++) {
             _tryGetAndCacheConsensus(i);
         }
 
@@ -267,9 +266,9 @@ contract GovernanceV2 is IGovernanceV2 {
 
                 // calculate reward
                 address candidate = votedTo[msg.sender][epoch];
-                address[7] memory consensus = _tryGetAndCacheConsensus(epoch);
+                address[] memory consensus = _tryGetAndCacheConsensus(epoch);
                 bool included = false;
-                for (uint j = 0; j < 7; j++) {
+                for (uint j = 0; j < CONSENSUS_SIZE; j++) {
                     if (consensus[j] == candidate) {
                         included = true;
                     }
@@ -280,7 +279,7 @@ contract GovernanceV2 is IGovernanceV2 {
                             epochRewards[epoch + 1] *
                             shareRateOf[candidate]) /
                         receivedVotes[candidate][epoch] /
-                        7 /
+                        CONSENSUS_SIZE /
                         1000;
                 }
             } else if (epoch >= currentEpoch - 1) {
@@ -304,9 +303,9 @@ contract GovernanceV2 is IGovernanceV2 {
             i++
         ) {
             // only epochs before the current running one (the one before current voting)
-            address[7] memory consensus = _tryGetAndCacheConsensus(i);
+            address[] memory consensus = _tryGetAndCacheConsensus(i);
             bool included = false;
-            for (uint j = 0; j < 7; j++) {
+            for (uint j = 0; j < CONSENSUS_SIZE; j++) {
                 if (consensus[j] == msg.sender) {
                     included = true;
                 }
@@ -314,7 +313,7 @@ contract GovernanceV2 is IGovernanceV2 {
             if (included) {
                 totalReward +=
                     (epochRewards[i + 1] * (1000 - shareRateOf[msg.sender])) /
-                    7 /
+                    CONSENSUS_SIZE /
                     1000;
             }
         }
@@ -323,7 +322,7 @@ contract GovernanceV2 is IGovernanceV2 {
         emit CandidateClaim(msg.sender, totalReward);
     }
 
-    function getCurrentConsensus() public view returns (address[7] memory) {
+    function getCurrentConsensus() public view returns (address[] memory) {
         uint epoch = getRealCurrentEpoch();
         if (epoch > 0) {
             return getConsensus(epoch - 1);
@@ -332,28 +331,28 @@ contract GovernanceV2 is IGovernanceV2 {
         }
     }
 
-    function getConsensus(uint epoch) public view returns (address[7] memory) {
-        address[7] memory cache = consensusCache[epoch];
-        if (cache[0] == address(0)) {
-            return _getConsensus(epoch);
+    function getConsensus(uint epoch) public view returns (address[] memory) {
+        address[] memory cache = consensusCache[epoch];
+        if (cache.length == 0) {
+            return _computeConsensus(epoch);
         }
         return cache;
     }
 
     function _tryGetAndCacheConsensus(
         uint epoch
-    ) internal returns (address[7] memory) {
-        address[7] memory cache = consensusCache[epoch];
-        if (cache[0] == address(0)) {
-            cache = _getConsensus(epoch);
+    ) internal returns (address[] memory) {
+        address[] memory cache = consensusCache[epoch];
+        if (cache.length == 0) {
+            cache = _computeConsensus(epoch);
             consensusCache[epoch] = cache;
         }
         return cache;
     }
 
-    function _getConsensus(
+    function _computeConsensus(
         uint epoch
-    ) internal view returns (address[7] memory) {
+    ) internal view returns (address[] memory) {
         // build up a votes array
         address[] memory candidates = getCandidates();
         uint length = candidates.length;
@@ -362,12 +361,12 @@ contract GovernanceV2 is IGovernanceV2 {
             votes[i] = receivedVotes[candidates[i]][epoch];
         }
 
-        // sort top 7 based on votes
-        _topK(candidates, votes, 7);
+        // sort top CONSENSUS_SIZE based on votes
+        _topK(candidates, votes, CONSENSUS_SIZE);
 
-        // return the first 7 candidates as consensus list
-        address[7] memory consensus;
-        for (uint i = 0; i < 7; i++) {
+        // return the first CONSENSUS_SIZE candidates as consensus list
+        address[] memory consensus = new address[](CONSENSUS_SIZE);
+        for (uint i = 0; i < CONSENSUS_SIZE; i++) {
             consensus[i] = candidates[i];
         }
         return consensus;
