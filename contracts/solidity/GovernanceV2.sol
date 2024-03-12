@@ -50,16 +50,16 @@ contract GovernanceV2 is IGovernanceV2 {
     uint public constant REGISTER_FEE = 1000 ether;
     // the min vote amount to change epoch
     uint public constant MIN_TOTAL_VOTE = 3000000 ether;
-    // minimum duration of an epoch
-    uint public constant EPOCH_DURATION = 1209600;
+    // minimum duration of an epoch (in blocks)
+    uint public constant EPOCH_DURATION = 120960;
     // GovReward contract
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
 
     // counter of epoch index
     uint public epochCount;
-    // timestamp of the last time when voting starts
-    uint public lastEpochTime;
+    // the last block height when voting starts
+    uint public lastEpochHeight;
     // candidate list
     EnumerableSet.AddressSet internal candidateList;
     // epoch=>uint
@@ -112,7 +112,7 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function getNominalCurrentEpoch() public view returns (uint) {
-        if (block.timestamp > lastEpochTime + EPOCH_DURATION) {
+        if (block.number > lastEpochHeight + EPOCH_DURATION) {
             return epochCount + 1;
         } else {
             return epochCount;
@@ -125,14 +125,14 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function _getAndUpdateEpochCount() internal returns (uint) {
         if (
-            (block.timestamp > lastEpochTime + EPOCH_DURATION &&
+            (block.number > lastEpochHeight + EPOCH_DURATION &&
                 totalVotes[epochCount] >= MIN_TOTAL_VOTE &&
                 votedCandidates[epochCount] >= CONSENSUS_SIZE) ||
             epochCount == 0
         ) {
             IGovReward(govReward).withdraw();
             epochCount += 1;
-            lastEpochTime = block.timestamp;
+            lastEpochHeight = block.number;
         }
         return epochCount;
     }
