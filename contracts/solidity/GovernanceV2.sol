@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import '@openzeppelin/contracts/utils/structs/EnumerableSet.sol';
+
 interface IGovernanceV2 {
     event Register(address candidate);
     event Exit(address candidate);
@@ -39,6 +41,8 @@ interface IGovReward {
 }
 
 contract GovernanceV2 is IGovernanceV2 {
+    using EnumerableSet for EnumerableSet.AddressSet;
+
     // the min balance for voting
     uint public constant MIN_VOTE_AMOUNT = 1 ether;
     // register fee
@@ -56,7 +60,7 @@ contract GovernanceV2 is IGovernanceV2 {
     // timestamp of the last time when voting starts
     uint public lastEpochTime;
     // candidate list
-    address[] public candidateList;
+    EnumerableSet.AddressSet internal candidateList;
     // epoch=>uint
     mapping(uint => uint) public epochRewards;
     // epoch=>amount
@@ -141,18 +145,15 @@ contract GovernanceV2 is IGovernanceV2 {
         return receivedVotes[candidate][epoch];
     }
 
+    function getCandidates() public view returns (address[] memory) {
+        return candidateList.values();
+    }
+
     function registerCandidate(uint shareRate) external payable {
         require(msg.value == REGISTER_FEE, "insufficient amount");
         require(shareRate < 1000, "invalid rate");
-        address[] memory list = candidateList;
-        uint length = candidateList.length;
-        // check duplication
-        for (uint i = 0; i < length; i++) {
-            if (list[i] == msg.sender) {
-                revert("candidate exists");
-            }
-        }
-        candidateList.push(msg.sender);
+        require(!candidateList.contains(msg.sender), "candidate exists");
+        candidateList.add(msg.sender);
 
         uint epoch = _getAndUpdateEpochCount();
         // record register time, share rate and balance
@@ -191,14 +192,7 @@ contract GovernanceV2 is IGovernanceV2 {
         }
 
         // reorg candidate list
-        address[] memory candidates = candidateList;
-        uint length = candidateList.length;
-        delete candidateList;
-        for (uint i = 0; i < length; i++) {
-            if (candidates[i] != msg.sender) {
-                candidateList.push(candidates[i]);
-            }
-        }
+        candidateList.remove(msg.sender);
 
         // send back balance
         uint amount = candidateBalanceOf[msg.sender];
@@ -361,11 +355,11 @@ contract GovernanceV2 is IGovernanceV2 {
         uint epoch
     ) internal view returns (address[7] memory) {
         // build up a votes array
-        address[] memory candidates = candidateList;
-        uint length = candidateList.length;
+        address[] memory candidates = getCandidates();
+        uint length = candidates.length;
         uint[] memory votes = new uint[](length);
         for (uint i = 0; i < length; i++) {
-            votes[i] = receivedVotes[candidateList[i]][epoch];
+            votes[i] = receivedVotes[candidates[i]][epoch];
         }
 
         // sort top 7 based on votes
