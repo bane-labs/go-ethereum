@@ -1341,8 +1341,8 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 		return nil
 	}
 
-	if !c.validatePayload(p) {
-		log.Info("can't validate payload", "hash", cp.Hash())
+	if err := c.validatePayload(p); err != nil {
+		log.Info("Can't validate payload", "hash", cp.Hash(), "err", err)
 		return nil
 	}
 
@@ -1380,19 +1380,23 @@ func payloadFromMessage(ep *dbftproto.Message) *Payload {
 	}
 }
 
-func (c *DBFT) validatePayload(p *Payload) bool {
+func (c *DBFT) validatePayload(p *Payload) error {
 	h := c.chain.CurrentBlock()
 	// TODO: need validators cache at least for payloads verification, otherwise we'll end up in endless state-dependent computations.
 	validators, err := c.getNextBlockValidators(h.Hash(), h.Number.Uint64(), false)
 	if err != nil {
-		return false
+		return fmt.Errorf("failed to get next block validators: %w", err)
 	}
 	if int(p.message.ValidatorIndex) >= len(validators) {
-		return false
+		return fmt.Errorf("invalid message validator index: validators count is %d, requested %d", len(validators), p.message.ValidatorIndex)
 	}
 
 	val := validators[p.message.ValidatorIndex]
-	return p.Sender == val
+	if p.Sender != val {
+		return fmt.Errorf("message sender is not a validator: expected %s, got %s", val, p.Sender)
+	}
+
+	return nil
 }
 
 func (c *DBFT) newPayload(ctx *dbft.Context, t payload.MessageType, msg any) payload.ConsensusPayload {
