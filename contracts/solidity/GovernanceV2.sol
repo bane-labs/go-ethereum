@@ -57,9 +57,9 @@ contract GovernanceV2 is IGovernanceV2 {
         0x1212000000000000000000000000000000000003;
 
     // counter of epoch index
-    uint public epochCount;
+    uint public epochCount = 1;
     // the last block height when voting starts
-    uint public lastEpochHeight;
+    uint public lastEpochHeight = block.number;
     // candidate list
     EnumerableSet.AddressSet internal candidateList;
     // epoch=>uint
@@ -90,7 +90,7 @@ contract GovernanceV2 is IGovernanceV2 {
     mapping(address => uint[]) public unclaimedEpochsOf;
 
     constructor() {
-        address[7] memory initialConsensus = [
+        consensusCache[0] = [
             address(0x74f4EFFb0B538BAec703346b03B6d9292f53A4CD),
             address(0x910AD1641B7125Eff746acCdCa1F11148b22f472),
             address(0xfEf5F250aF14DF73f983cAAb7b1F5002189c42E0),
@@ -99,16 +99,10 @@ contract GovernanceV2 is IGovernanceV2 {
             address(0x26F1794B81dF2B832545b8B6bbcA196b82E4fEB1),
             address(0x0B51369D02e47EE3f143391B837Aa08c31AAA19b)
         ];
-        consensusCache[0] = initialConsensus;
     }
 
     receive() external payable {
-        uint epoch = getRealCurrentEpoch();
-        if (epoch > 0) {
-            epochRewards[epoch] += msg.value;
-        } else {
-            epochRewards[epoch + 1] += msg.value;
-        }
+        epochRewards[getRealCurrentEpoch()] += msg.value;
     }
 
     function getNominalCurrentEpoch() public view returns (uint) {
@@ -125,10 +119,9 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function _getAndUpdateEpochCount() internal returns (uint) {
         if (
-            (block.number > lastEpochHeight + EPOCH_DURATION &&
-                totalVotes[epochCount] >= MIN_TOTAL_VOTE &&
-                votedCandidates[epochCount] >= CONSENSUS_SIZE) ||
-            epochCount == 0
+            block.number > lastEpochHeight + EPOCH_DURATION &&
+            totalVotes[epochCount] >= MIN_TOTAL_VOTE &&
+            votedCandidates[epochCount] >= CONSENSUS_SIZE
         ) {
             IGovReward(govReward).withdraw();
             epochCount += 1;
@@ -166,8 +159,8 @@ contract GovernanceV2 is IGovernanceV2 {
         registerEpochOf[msg.sender] = epoch;
         shareRateOf[msg.sender] = shareRate;
         candidateBalanceOf[msg.sender] = msg.value;
-        // set the start point for claim
-        claimStartEpochOf[msg.sender] = epoch;
+        // set the start point for claim, only if register in epoch 1 can get epoch 0 reward
+        claimStartEpochOf[msg.sender] = epoch > 1 ? epoch : 0;
         emit Register(msg.sender);
     }
 
@@ -323,12 +316,7 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function getCurrentConsensus() public view returns (address[] memory) {
-        uint epoch = getRealCurrentEpoch();
-        if (epoch > 0) {
-            return getConsensus(epoch - 1);
-        } else {
-            return getConsensus(epoch);
-        }
+        return getConsensus(getRealCurrentEpoch() - 1);
     }
 
     function getConsensus(uint epoch) public view returns (address[] memory) {
