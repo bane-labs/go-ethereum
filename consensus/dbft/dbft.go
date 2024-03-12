@@ -1604,12 +1604,6 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 // field (if compute is false). Validators returned from this method are always expected
 // to be sorted by bytes order (even if returned from governance contract).
 func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, compute bool) ([]common.Address, error) {
-	// Currently we don't have governance contract, thus, always return standby set.
-	// TODO: to be removed.
-	if blockNum == 0 {
-		return c.config.StandByValidators, nil
-	}
-
 	if c.ethAPI == nil {
 		return nil, errors.New("eth blockchain API is not initialized, dBFT can't function properly")
 	}
