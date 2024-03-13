@@ -21,11 +21,11 @@ library TransferHelper {
 
 interface IGovernance {
     // get current consensus group
-    function getCurrentConsensus() external view returns (address[7] memory);
+    function getCurrentConsensus() external view returns (address[] memory);
 }
 
 interface IGovReward {
-    function getMiners() external view returns (address[7] memory);
+    function getMiners() external view returns (address[] memory);
 
     function withdraw() external;
 }
@@ -42,7 +42,7 @@ contract GovReward is IGovReward {
         _;
     }
 
-    function getMiners() external view override returns (address[7] memory) {
+    function getMiners() external view override returns (address[] memory) {
         return IGovernance(governance).getCurrentConsensus();
     }
 
