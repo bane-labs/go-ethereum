@@ -34,6 +34,16 @@ interface IGovernanceV2 {
 
     // get the current selected consensus group
     function getCurrentConsensus() external returns (address[] memory);
+
+    /*
+        The following should only be used by DBFT module, refer to https://github.com/nspcc-dev/neo-go/blob/master/pkg/core/blockchain.go
+    */
+
+    // get the consensus group before the current block is executed, which is the group that should produce this block
+    function getNextBlockValidators() external returns (address[] memory);
+
+    // select the latest consensus group after the current block is executed, which is the group that should produce the next block
+    function computeNextBlockValidators() external returns (address[] memory);
 }
 
 interface IGovReward {
@@ -316,6 +326,20 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function getCurrentConsensus() public view returns (address[] memory) {
         return consensusOf[getRealCurrentEpoch() - 1];
+    }
+
+    function getNextBlockValidators() external view returns (address[] memory) {
+        uint height = block.number;
+        if (lastEpochHeight == height) {
+            // epoch changed in this block, so this is the last block
+            return consensusOf[getRealCurrentEpoch() - 2];
+        } else {
+            return consensusOf[getRealCurrentEpoch() - 1];
+        }
+    }
+
+    function computeNextBlockValidators() external view returns (address[] memory) {
+        return getCurrentConsensus();
     }
 
     function _computeConsensus(
