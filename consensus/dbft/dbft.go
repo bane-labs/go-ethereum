@@ -315,7 +315,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				// getValidators with empty args is used by dbft to fill the list of
 				// block's validators, thus should return validators from the current
 				// epoch without recalculation.
-				pKeys, err = c.getNextBlockValidators(&c.lastIndex, nil, nil)
+				pKeys, err = c.getValidators(&c.lastIndex, nil, nil)
 			}
 			// getValidators with non-empty args is used by dbft to fill block's
 			// NextConsensus field, but DBFT doesn't provide WithGetConsensusAddress
@@ -462,7 +462,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			c.sealingProposal = b.Header()
 
 			// Fill NextConsensus based on the currently accepting block state and update MixDigest.
-			nextVals, err := c.getNextBlockValidators(nil, state, c.sealingProposal)
+			nextVals, err := c.getValidators(nil, state, c.sealingProposal)
 			if err != nil {
 				log.Crit("Failed to compute next block validators",
 					"err", err)
@@ -589,7 +589,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			// (at least, at the current version), and we don't need to create a copy. But I'm not sure
 			// whether processing engine makes changes in the state, it should be investigated in a separate
 			// issue. And if not, then state may not be copied.
-			nextVals, err := c.getNextBlockValidators(nil, state.Copy(), dbftBlock.header)
+			nextVals, err := c.getValidators(nil, state.Copy(), dbftBlock.header)
 			if err != nil {
 				log.Crit("Failed to compute next block validators",
 					"err", err)
@@ -1394,7 +1394,7 @@ func payloadFromMessage(ep *dbftproto.Message) *Payload {
 
 func (c *DBFT) validatePayload(p *Payload) error {
 	h := c.chain.CurrentBlock().Number.Uint64()
-	validators, err := c.getNextBlockValidators(&h, nil, nil)
+	validators, err := c.getValidators(&h, nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get next block validators: %w", err)
 	}
@@ -1466,7 +1466,7 @@ func (c *DBFT) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, pa
 
 func (c *DBFT) calcDifficulty(signer common.Address, parent *types.Header) *big.Int {
 	h := parent.Number.Uint64()
-	vals, err := c.getNextBlockValidators(&h, nil, nil)
+	vals, err := c.getValidators(&h, nil, nil)
 	if err != nil {
 		return nil
 	}
@@ -1610,14 +1610,14 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	}}
 }
 
-// getNextBlockValidators returns validators chosen in the result of the latest
+// getValidators returns validators chosen in the result of the latest
 // finalized voting epoch. It calls Governance contract under the hood. The call
 // is based on the provided state or (if not provided) on the state of the block
 // with the specified height. Validators returned from this method are always
 // sorted by bytes order (even if the list returned from governance contract is
 // sorted in another way). This method uses cached values in case of validators
 // requested by block height.
-func (c *DBFT) getNextBlockValidators(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
+func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
 	if c.ethAPI == nil {
 		return nil, errors.New("eth blockchain API is not initialized, dBFT can't function properly")
 	}
