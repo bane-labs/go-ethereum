@@ -205,7 +205,6 @@ contract GovernanceV2 is IGovernanceV2 {
 
         // send back balance
         uint amount = candidateBalanceOf[msg.sender];
-        delete registerEpochOf[msg.sender];
         delete candidateBalanceOf[msg.sender];
         _safeTransferETH(msg.sender, amount);
     }
