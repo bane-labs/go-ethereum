@@ -426,39 +426,37 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			// NextConsensus -> MixHash
 			c.sealingProposal.MixDigest = c.lastBlockNextNextConsensus
 
-			// Recalculate block state provided by miner and update sealing proposal if CV happened and context-related
+			// Recalculate block state provided by miner and update sealing proposal if context-related
 			// block fields were changed.
-			if c.dbft.Context.ViewNumber != 0 {
-				dbftBlock := c.newBlockFromContext(c.sealingProposal)
-				dbftBlock.transactions = c.sealingTransactions
-				ethBlock := dbftBlock.ToEthBlock()
+			dbftBlock := c.newBlockFromContext(c.sealingProposal)
+			dbftBlock.transactions = c.sealingTransactions
+			ethBlock := dbftBlock.ToEthBlock()
 
-				state, receipts, _, _, err := c.chain.ProcessState(ethBlock)
-				if err != nil {
-					log.Crit("failed to process state from proposal",
-						"err", err,
-						"number", ethBlock.NumberU64(),
-						"seal hash", c.SealHash(ethBlock.Header()),
-						"parent hash", ethBlock.ParentHash().String(),
-						"intermediate merkle root", ethBlock.Root(),
-						"coinbase", ethBlock.Coinbase().String(),
-						"gas limit", ethBlock.GasLimit(),
-						"gas used", ethBlock.GasUsed(),
-						"difficulty", ethBlock.Difficulty().String(),
-						"mix digest", ethBlock.MixDigest().String(),
-						"nonce", ethBlock.Nonce(),
-						"time", ethBlock.Time(),
-						"uncle hash", ethBlock.UncleHash().String(),
-						"txs", len(ethBlock.Transactions()))
-				}
-				b, err := c.FinalizeAndAssemble(c.chain, dbftBlock.header, state, dbftBlock.transactions, nil, receipts, dbftBlock.withdrawals)
-				if err != nil {
-					log.Crit("failed to finalize and assemble proposal",
-						"err", err)
-				}
-
-				c.sealingProposal = b.Header()
+			state, receipts, _, _, err := c.chain.ProcessState(ethBlock)
+			if err != nil {
+				log.Crit("failed to process state from proposal",
+					"err", err,
+					"number", ethBlock.NumberU64(),
+					"seal hash", c.SealHash(ethBlock.Header()),
+					"parent hash", ethBlock.ParentHash().String(),
+					"intermediate merkle root", ethBlock.Root(),
+					"coinbase", ethBlock.Coinbase().String(),
+					"gas limit", ethBlock.GasLimit(),
+					"gas used", ethBlock.GasUsed(),
+					"difficulty", ethBlock.Difficulty().String(),
+					"mix digest", ethBlock.MixDigest().String(),
+					"nonce", ethBlock.Nonce(),
+					"time", ethBlock.Time(),
+					"uncle hash", ethBlock.UncleHash().String(),
+					"txs", len(ethBlock.Transactions()))
 			}
+			b, err := c.FinalizeAndAssemble(c.chain, dbftBlock.header, state, dbftBlock.transactions, nil, receipts, dbftBlock.withdrawals)
+			if err != nil {
+				log.Crit("failed to finalize and assemble proposal",
+					"err", err)
+			}
+
+			c.sealingProposal = b.Header()
 
 			// Fill in only proposal and last block info, transactions will be properly
 			// set from context later in SetTransactionHashes callback.
