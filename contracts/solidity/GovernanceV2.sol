@@ -112,10 +112,10 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     receive() external payable {
-        epochRewards[getRealCurrentEpoch()] += msg.value;
+        epochRewards[getCurrentRunningEpoch()] += msg.value;
     }
 
-    function getNominalCurrentEpoch() public view returns (uint) {
+    function getCurrentRevokingEpoch() public view returns (uint) {
         if (block.number > lastEpochHeight + EPOCH_DURATION) {
             return epochCount + 1;
         } else {
@@ -123,8 +123,12 @@ contract GovernanceV2 is IGovernanceV2 {
         }
     }
 
-    function getRealCurrentEpoch() public view returns (uint) {
+    function getCurrentVotingEpoch() public view returns (uint) {
         return epochCount;
+    }
+
+    function getCurrentRunningEpoch() public view returns (uint) {
+        return epochCount - 1;
     }
 
     function _getAndUpdateEpochCount() internal returns (uint) {
@@ -232,7 +236,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function revokeVote() external {
         // revoke will not trigger epoch change
-        uint currentEpoch = getNominalCurrentEpoch();
+        uint currentEpoch = getCurrentRevokingEpoch();
         address candidateFrom = votedTo[msg.sender][currentEpoch];
         uint amount = votedAmount[msg.sender][currentEpoch];
 
@@ -278,7 +282,7 @@ contract GovernanceV2 is IGovernanceV2 {
                 if (included) {
                     totalReward +=
                         (epochAmount *
-                            epochRewards[epoch + 1] *
+                            epochRewards[epoch] *
                             shareRateOf[candidate]) /
                         receivedVotes[candidate][epoch] /
                         CONSENSUS_SIZE /
@@ -314,7 +318,7 @@ contract GovernanceV2 is IGovernanceV2 {
             }
             if (included) {
                 totalReward +=
-                    (epochRewards[i + 1] * (1000 - shareRateOf[msg.sender])) /
+                    (epochRewards[i] * (1000 - shareRateOf[msg.sender])) /
                     CONSENSUS_SIZE /
                     1000;
             }
@@ -325,16 +329,16 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function getCurrentConsensus() public view returns (address[] memory) {
-        return consensusOf[getRealCurrentEpoch() - 1];
+        return consensusOf[getCurrentRunningEpoch()];
     }
 
     function getNextBlockValidators() external view returns (address[] memory) {
         uint height = block.number;
         if (lastEpochHeight == height) {
             // epoch changed in this block, so this is the last block
-            return consensusOf[getRealCurrentEpoch() - 2];
+            return consensusOf[getCurrentRunningEpoch() - 1];
         } else {
-            return consensusOf[getRealCurrentEpoch() - 1];
+            return consensusOf[getCurrentRunningEpoch()];
         }
     }
 
