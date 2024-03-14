@@ -66,7 +66,6 @@ contract GovernanceV2 is IGovernanceV2 {
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
 
-    // counter of epoch index
     uint public epochCount = 1;
     // the last block height when voting starts
     uint public lastEpochHeight = block.number;
