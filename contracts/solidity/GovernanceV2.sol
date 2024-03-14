@@ -95,6 +95,8 @@ contract GovernanceV2 is IGovernanceV2 {
     mapping(address => mapping(uint => address)) public votedTo;
     // voter=>epoch=>amount
     mapping(address => mapping(uint => uint)) public votedAmount;
+    // voter=>epoch=>amount
+    mapping(address => mapping(uint => uint)) public rewardBase;
     // voter=>epochs
     mapping(address => uint[]) public unclaimedEpochsOf;
 
@@ -228,6 +230,7 @@ contract GovernanceV2 is IGovernanceV2 {
             );
         }
         votedAmount[msg.sender][currentEpoch] = voted + msg.value;
+        rewardBase[msg.sender][currentEpoch] += msg.value * shareRateOf[candidateTo] / 1000;
 
         uint received = receivedVotes[candidateTo][currentEpoch];
         if (received == 0) {
@@ -254,6 +257,7 @@ contract GovernanceV2 is IGovernanceV2 {
         totalVotes[currentEpoch] -= amount;
         delete votedTo[msg.sender][currentEpoch];
         delete votedAmount[msg.sender][currentEpoch];
+        delete rewardBase[msg.sender][currentEpoch];
         _safeTransferETH(msg.sender, amount);
 
         emit RevokeVote(msg.sender, candidateFrom, amount);
@@ -272,9 +276,8 @@ contract GovernanceV2 is IGovernanceV2 {
             uint epoch = votedIndex[i];
             // only epochs before the current running one (the one before current voting)
             if (epoch < currentEpoch - 1) {
-                uint epochAmount = votedAmount[msg.sender][epoch];
+                totalAmount += votedAmount[msg.sender][epoch];
                 delete votedAmount[msg.sender][epoch];
-                totalAmount += epochAmount;
 
                 // calculate reward
                 address candidate = votedTo[msg.sender][epoch];
@@ -287,13 +290,12 @@ contract GovernanceV2 is IGovernanceV2 {
                 }
                 if (included) {
                     totalReward +=
-                        (epochAmount *
-                            epochRewards[epoch] *
-                            shareRateOf[candidate]) /
+                        (rewardBase[msg.sender][epoch] *
+                            epochRewards[epoch]) /
                         receivedVotes[candidate][epoch] /
-                        CONSENSUS_SIZE /
-                        1000;
+                        CONSENSUS_SIZE;
                 }
+                delete rewardBase[msg.sender][epoch];
             } else if (epoch >= currentEpoch - 1) {
                 // reconstructed array, the new one always shorter than 2
                 unclaimedEpochsOf[msg.sender].push(epoch);
