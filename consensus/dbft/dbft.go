@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/consensus/misc"
@@ -81,6 +82,11 @@ const (
 	// msgsChCap is a capacity of channel that accepts consensus messages from
 	// dBFT protocol.
 	msgsChCap = 100
+	// validatorsCacheCap is a capacity of validators cache. It's enough to store
+	// validators for only three potentially subsequent heights, i.e. three latest
+	// blocks to effectivaly verify dBFT payloads travelling through the network and
+	// properly initialize dBFT at the latest height.
+	validatorsCacheCap = 3
 )
 
 // Various error messages to mark blocks invalid. These should be private to
@@ -218,8 +224,9 @@ type DBFT struct {
 	finished chan struct{}
 
 	// various native contract APIs that dBFT uses.
-	ethAPI        *ethapi.BlockChainAPI
-	governanceABI abi.ABI
+	ethAPI          *ethapi.BlockChainAPI
+	governanceABI   abi.ABI
+	validatorsCache *lru.Cache[uint64, []common.Address]
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
@@ -258,7 +265,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		quit:     make(chan struct{}),
 		finished: make(chan struct{}),
 
-		governanceABI: govABI,
+		governanceABI:   govABI,
+		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 	}
 
 	logger, _ := zap.NewDevelopment()
@@ -1386,7 +1394,6 @@ func payloadFromMessage(ep *dbftproto.Message) *Payload {
 
 func (c *DBFT) validatePayload(p *Payload) error {
 	h := c.chain.CurrentBlock().Number.Uint64()
-	// TODO: need validators cache at least for payloads verification, otherwise we'll end up in endless state-dependent computations.
 	validators, err := c.getNextBlockValidators(&h, nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get next block validators: %w", err)
@@ -1608,10 +1615,18 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 // is based on the provided state or (if not provided) on the state of the block
 // with the specified height. Validators returned from this method are always
 // sorted by bytes order (even if the list returned from governance contract is
-// sorted in another way).
+// sorted in another way). This method uses cached values in case of validators
+// requested by block height.
 func (c *DBFT) getNextBlockValidators(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
 	if c.ethAPI == nil {
 		return nil, errors.New("eth blockchain API is not initialized, dBFT can't function properly")
+	}
+
+	if state == nil && blockNum != nil {
+		vals, ok := c.validatorsCache.Get(*blockNum)
+		if ok {
+			return vals, nil
+		}
 	}
 
 	method := "getCurrentConsensus" // latest finalized epoch validators.
@@ -1663,6 +1678,11 @@ func (c *DBFT) getNextBlockValidators(blockNum *uint64, state *state.StateDB, he
 	// TODO: roman-khimov, we've agreed that validators are sorted using lexicographic order, but in contract they are
 	// sorted by votes. Need to come to some single solution.
 	slices.SortFunc(res, common.Address.Cmp)
+
+	// Update cache in case if existing state was used for validators retrieval.
+	if state == nil && blockNum != nil {
+		_ = c.validatorsCache.Add(*blockNum, res)
+	}
 
 	return res, err
 }
