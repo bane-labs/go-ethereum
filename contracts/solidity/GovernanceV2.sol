@@ -175,6 +175,7 @@ contract GovernanceV2 is IGovernanceV2 {
         require(shareRate < 1000, "invalid rate");
         require(!candidateList.contains(msg.sender), "candidate exists");
         candidateList.add(msg.sender);
+        delete exitEpochOf[msg.sender];
 
         uint epoch = _getAndUpdateEpochCount();
         // record register time, share rate and balance
