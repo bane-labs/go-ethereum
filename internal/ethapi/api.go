@@ -1138,6 +1138,12 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 	return doCall(ctx, b, args, state, header, overrides, blockOverrides, timeout, globalGasCap)
 }
 
+func DoCallAtState(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, header *types.Header, overrides *StateOverride, blockOverrides *BlockOverrides, timeout time.Duration, globalGasCap uint64) (*core.ExecutionResult, error) {
+	defer func(start time.Time) { log.Debug("Executing EVM call finished", "runtime", time.Since(start)) }(time.Now())
+
+	return doCall(ctx, b, args, state, header, overrides, blockOverrides, timeout, globalGasCap)
+}
+
 // Call executes the given transaction on the state for the given block number.
 //
 // Additionally, the caller can specify a batch of contract for fields overriding.
@@ -1150,6 +1156,22 @@ func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrO
 		blockNrOrHash = &latest
 	}
 	result, err := DoCall(ctx, s.b, args, *blockNrOrHash, overrides, blockOverrides, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
+	if err != nil {
+		return nil, err
+	}
+	// If the result contains a revert reason, try to unpack and return it.
+	if len(result.Revert()) > 0 {
+		return nil, newRevertError(result.Revert())
+	}
+	return result.Return(), result.Err
+}
+
+// CallAtState executes the given transaction on the specified state with the given header.
+//
+// Note, this function performs changes in the given state and thus, it's a user's responsibility
+// to back up the original state if needed.
+func (s *BlockChainAPI) CallAtState(ctx context.Context, args TransactionArgs, state *state.StateDB, header *types.Header) (hexutil.Bytes, error) {
+	result, err := DoCallAtState(ctx, s.b, args, state, header, nil, nil, s.b.RPCEVMTimeout(), s.b.RPCGasCap())
 	if err != nil {
 		return nil, err
 	}
