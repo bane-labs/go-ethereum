@@ -115,10 +115,15 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function getCurrentRevokingEpoch() public view returns (uint) {
-        if (block.number > lastEpochHeight + EPOCH_DURATION) {
-            return epochCount + 1;
+        uint epoch = epochCount;
+        if (
+            block.number > lastEpochHeight + EPOCH_DURATION &&
+            totalVotes[epoch] >= MIN_TOTAL_VOTE &&
+            votedCandidates[epoch] >= CONSENSUS_SIZE
+        ) {
+            return epoch + 1;
         } else {
-            return epochCount;
+            return epoch;
         }
     }
 
@@ -239,6 +244,7 @@ contract GovernanceV2 is IGovernanceV2 {
         uint currentEpoch = getCurrentRevokingEpoch();
         address candidateFrom = votedTo[msg.sender][currentEpoch];
         uint amount = votedAmount[msg.sender][currentEpoch];
+        require(amount > 0, "insufficient amount");
 
         uint received = receivedVotes[candidateFrom][currentEpoch];
         if (received == amount) {
