@@ -58,7 +58,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
     uint public epochCount = 1;
     // the last block height when voting starts
-    uint public lastEpochHeight = block.number;
+    uint public currentEpochStartHeight = block.number;
     // candidate list
     EnumerableSet.AddressSet internal candidateList;
     // epoch=>uint
@@ -109,7 +109,7 @@ contract GovernanceV2 is IGovernanceV2 {
     function getCurrentRevokingEpoch() public view returns (uint) {
         uint epoch = epochCount;
         if (
-            block.number > lastEpochHeight + EPOCH_DURATION &&
+            block.number > currentEpochStartHeight + EPOCH_DURATION &&
             totalVotes[epoch] >= MIN_TOTAL_VOTE &&
             votedCandidates[epoch] >= CONSENSUS_SIZE
         ) {
@@ -130,7 +130,7 @@ contract GovernanceV2 is IGovernanceV2 {
     function _getAndUpdateEpochCount() internal returns (uint) {
         uint epoch = epochCount;
         if (
-            block.number > lastEpochHeight + EPOCH_DURATION &&
+            block.number > currentEpochStartHeight + EPOCH_DURATION &&
             totalVotes[epoch] >= MIN_TOTAL_VOTE &&
             votedCandidates[epoch] >= CONSENSUS_SIZE
         ) {
@@ -139,7 +139,7 @@ contract GovernanceV2 is IGovernanceV2 {
             consensusOf[epoch] = _computeConsensus(epoch);
             epoch += 1;
             epochCount = epoch;
-            lastEpochHeight = block.number;
+            currentEpochStartHeight = block.number;
         }
         return epoch;
     }
