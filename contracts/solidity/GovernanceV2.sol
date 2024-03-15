@@ -43,22 +43,23 @@ interface IGovReward {
 contract GovernanceV2 is IGovernanceV2 {
     using EnumerableSet for EnumerableSet.AddressSet;
 
-    uint public constant CONSENSUS_SIZE = 7;
-    // the min balance for voting
-    uint public constant MIN_VOTE_AMOUNT = 1 ether;
-    // register fee
-    uint public constant REGISTER_FEE = 1000 ether;
-    // the min vote amount to change epoch
-    uint public constant MIN_TOTAL_VOTE = 3000000 ether;
-    // minimum duration of an epoch (in blocks)
-    uint public constant EPOCH_DURATION = 120960;
     // GovReward contract
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
 
-    uint public epochCount = 1;
+    uint public CONSENSUS_SIZE;
+    // the min balance for voting
+    uint public MIN_VOTE_AMOUNT;
+    // register fee
+    uint public REGISTER_FEE;
+    // the min vote amount to change epoch
+    uint public MIN_TOTAL_VOTE;
+    // minimum duration of an epoch (in blocks)
+    uint public EPOCH_DURATION;
+
+    uint public epochCount;
     // the last block height when voting starts
-    uint public currentEpochStartHeight = block.number;
+    uint public currentEpochStartHeight;
     // candidate list
     EnumerableSet.AddressSet internal candidateList;
     // epoch=>uint
@@ -89,18 +90,6 @@ contract GovernanceV2 is IGovernanceV2 {
     mapping(address => mapping(uint => uint)) public rewardBase;
     // voter=>epochs
     mapping(address => uint[]) public unclaimedEpochsOf;
-
-    constructor() {
-        consensusOf[0] = [
-            address(0x74f4EFFb0B538BAec703346b03B6d9292f53A4CD),
-            address(0x910AD1641B7125Eff746acCdCa1F11148b22f472),
-            address(0xfEf5F250aF14DF73f983cAAb7b1F5002189c42E0),
-            address(0xc51964013acbC6b271FEeCB0feBD9E7A01202930),
-            address(0xC5bbD9652546BC96bE3DEc97a38eE335f7873Dfa),
-            address(0x26F1794B81dF2B832545b8B6bbcA196b82E4fEB1),
-            address(0x0B51369D02e47EE3f143391B837Aa08c31AAA19b)
-        ];
-    }
 
     receive() external payable {
         epochRewards[getCurrentRunningEpoch()] += msg.value;
@@ -220,7 +209,9 @@ contract GovernanceV2 is IGovernanceV2 {
             );
         }
         votedAmount[msg.sender][currentEpoch] = voted + msg.value;
-        rewardBase[msg.sender][currentEpoch] += msg.value * shareRateOf[candidateTo] / 1000;
+        rewardBase[msg.sender][currentEpoch] +=
+            (msg.value * shareRateOf[candidateTo]) /
+            1000;
 
         uint received = receivedVotes[candidateTo][currentEpoch];
         if (received == 0) {
@@ -280,8 +271,7 @@ contract GovernanceV2 is IGovernanceV2 {
                 }
                 if (included) {
                     totalReward +=
-                        (rewardBase[msg.sender][epoch] *
-                            epochRewards[epoch]) /
+                        (rewardBase[msg.sender][epoch] * epochRewards[epoch]) /
                         receivedVotes[candidate][epoch] /
                         CONSENSUS_SIZE;
                 }
