@@ -129,7 +129,7 @@ jobs:
         if: ${{ (github.event_name == 'release' && github.event.release.target_commitish == 'bane-main') || (github.event_name == 'workflow_dispatch' && github.event.inputs.use_latest_tag == 'true') }}
         run: |
           echo "latest=,developerneox/neox_nodes:latest" >> $GITHUB_OUTPUT
-          echo "alltoolslatest=,developerneox/neox_nodes_alltools:latest" >> $GITHUB_OUTPUT
+          echo "alltoolslatest=,developerneox/neox_nodes:alltools-latest" >> $GITHUB_OUTPUT
 
       - name: Build and push Geth
         uses: docker/build-push-action@v5
@@ -154,5 +154,5 @@ jobs:
             REPO=github.com/${{ github.repository }}
             VERSION=${{ steps.setvars.outputs.version }}
             COMMIT=${{ github.sha }}
-          tags: developerneox/neox_nodes_alltools:${{ steps.setvars.outputs.version }}${{ steps.setlatest.outputs.alltoolslatest }}
+          tags: developerneox/neox_nodes:alltools-${{ steps.setvars.outputs.version }}${{ steps.setlatest.outputs.alltoolslatest }}
           file: Dockerfile.alltools
