@@ -237,7 +237,7 @@ contract GovernanceV2 is IGovernanceV2 {
         emit Persist(currentConsensus);
     }
 
-    function getCurrentConsensus() external view returns (address[] memory) {
+    function getCurrentConsensus() public view returns (address[] memory) {
         return currentConsensus;
     }
 
