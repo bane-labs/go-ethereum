@@ -222,6 +222,7 @@ contract GovernanceV2 is IGovernanceV2 {
         );
 
         // update tag values
+        IGovReward(govReward).withdraw();
         address[] memory consensus = currentConsensus;
         uint length = consensus.length;
         for (uint i = 0; i < length; i++) {
@@ -229,7 +230,6 @@ contract GovernanceV2 is IGovernanceV2 {
                 currentEpochStartHeight / EPOCH_DURATION
             ] = candidateGasPerVote[consensus[i]];
         }
-        IGovReward(govReward).withdraw();
 
         // compute and update consensus
         currentEpochStartHeight = block.number;
