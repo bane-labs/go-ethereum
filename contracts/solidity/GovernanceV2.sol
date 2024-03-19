@@ -30,6 +30,9 @@ interface IGovernanceV2 {
     // only claim rewards
     function claimReward() external;
 
+    // get consensus group members
+    function getCurrentConsensus() external view returns (address[] memory);
+
     /*
         The following should only be used by DBFT module, refer to https://github.com/nspcc-dev/neo-go/blob/master/pkg/core/blockchain.go
     */
@@ -217,21 +220,29 @@ contract GovernanceV2 is IGovernanceV2 {
             block.number >= currentEpochStartHeight + EPOCH_DURATION,
             "persist not allowed"
         );
+
+        // update tag values
+        address[] memory consensus = currentConsensus;
+        uint length = consensus.length;
+        for (uint i = 0; i < length; i++) {
+            epochStartGasPerVote[consensus[i]][
+                currentEpochStartHeight / EPOCH_DURATION
+            ] = candidateGasPerVote[consensus[i]];
+        }
         IGovReward(govReward).withdraw();
 
+        // compute and update consensus
         currentEpochStartHeight = block.number;
         currentConsensus = _computeConsensus();
-        uint length = currentConsensus.length;
-        for (uint i = 0; i < length; i++) {
-            epochStartGasPerVote[currentConsensus[i]][
-                currentEpochStartHeight / EPOCH_DURATION
-            ] = candidateGasPerVote[currentConsensus[i]];
-        }
         emit Persist(currentConsensus);
     }
 
-    function getNextBlockValidators() external view returns (address[] memory) {
+    function getCurrentConsensus() external view returns (address[] memory) {
         return currentConsensus;
+    }
+
+    function getNextBlockValidators() external view returns (address[] memory) {
+        return getCurrentConsensus();
     }
 
     function computeNextBlockValidators()
