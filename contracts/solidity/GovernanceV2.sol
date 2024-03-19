@@ -100,12 +100,14 @@ contract GovernanceV2 is IGovernanceV2 {
         for (uint i = 0; i < length; i++) {
             candidateGasPerVote[validators[i]] +=
                 (msg.value * shareRateOf[validators[i]] * SCALE_FACTOR) /
-                7 /
+                CONSENSUS_SIZE /
                 1000 /
                 receivedVotes[validators[i]];
             _safeTransferETH(
                 validators[i],
-                (msg.value * (1000 - shareRateOf[validators[i]])) / 7 / 1000
+                (msg.value * (1000 - shareRateOf[validators[i]])) /
+                    CONSENSUS_SIZE /
+                    1000
             );
         }
     }
