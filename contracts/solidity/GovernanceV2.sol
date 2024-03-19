@@ -115,7 +115,7 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function registerCandidate(uint shareRate) external payable {
-        require(msg.value == REGISTER_FEE, "insufficient amount");
+        require(msg.value >= REGISTER_FEE, "insufficient amount");
         require(shareRate < 1000, "invalid rate");
         require(!candidateList.contains(msg.sender), "candidate exists");
         require(exitHeightOf[msg.sender] == 0, "left not claimed");
