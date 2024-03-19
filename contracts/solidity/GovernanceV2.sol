@@ -7,9 +7,10 @@ interface IGovernanceV2 {
     event Register(address candidate);
     event Exit(address candidate);
     event Vote(address voter, address to, uint amount);
-    event RevokeVote(address voter, address from, uint amount);
-    event VoterWithdraw(address voter, uint votes, uint reward);
-    event CandidateClaim(address candidate, uint reward);
+    event Revoke(address voter, address from, uint amount);
+    event VoterClaim(address voter, uint reward);
+    event CandidateWithdraw(address candidate, uint amount);
+    event Persist(address[] validators);
 
     // register to be a candidate with gas
     function registerCandidate(uint shareRate) external payable;
@@ -17,23 +18,30 @@ interface IGovernanceV2 {
     // exit candidates and wait for withdraw
     function exitCandidate() external;
 
-    // withdraw register fee after 1 epoch
-    function claimRegisterFee() external;
+    // withdraw register fee after 2 epoch
+    function withdrawRegisterFee() external;
 
     // vote with gas, only 1 target is allowed
     function vote(address to) external payable;
 
-    // revoke ongoing vote
+    // revoke votes and claim rewards
     function revokeVote() external;
 
-    // withdraw past vote
-    function voterWithdraw() external;
+    // only claim rewards
+    function claimReward() external;
 
-    // claim rewards for being a consensus member
-    function candidateClaim() external;
+    /*
+        The following should only be used by DBFT module, refer to https://github.com/nspcc-dev/neo-go/blob/master/pkg/core/blockchain.go
+    */
 
-    // get the current selected consensus group
-    function getCurrentConsensus() external returns (address[] memory);
+    // get the consensus group before postPersist, which is the group that should produce this block
+    function getNextBlockValidators() external returns (address[] memory);
+
+    // select the latest consensus group after postPersist, which is the group that should produce the next block
+    function computeNextBlockValidators() external returns (address[] memory);
+
+    // compute and update cached consensus group
+    function postPersist() external;
 }
 
 interface IGovReward {
@@ -46,105 +54,60 @@ contract GovernanceV2 is IGovernanceV2 {
     // GovReward contract
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
+    uint public constant SCALE_FACTOR = 10 ** 18;
 
     uint public CONSENSUS_SIZE;
     // the min balance for voting
     uint public MIN_VOTE_AMOUNT;
     // register fee
     uint public REGISTER_FEE;
-    // the min vote amount to change epoch
-    uint public MIN_TOTAL_VOTE;
-    // minimum duration of an epoch (in blocks)
+    // duration of an epoch (in blocks)
     uint public EPOCH_DURATION;
 
-    uint public epochCount;
-    // the last block height when voting starts
-    uint public currentEpochStartHeight;
     // candidate list
     EnumerableSet.AddressSet internal candidateList;
-    // epoch=>uint
-    mapping(uint => uint) public epochRewards;
-    // epoch=>amount
-    mapping(uint => uint) public totalVotes;
-    // epoch=>amount
-    mapping(uint => uint) public votedCandidates;
-    // epoch=>consensus
-    mapping(uint => address[]) public consensusOf;
     // settings about how much reward given to voter
     mapping(address => uint) public shareRateOf;
-    // the timestamp when register happens
-    mapping(address => uint) public registerEpochOf;
-    // the epoch when exit happens
-    mapping(address => uint) public exitEpochOf;
+    // the height when exit happens
+    mapping(address => uint) public exitHeightOf;
     // the left register fee to exit
     mapping(address => uint) public candidateBalanceOf;
-    // candidate=>epoch
-    mapping(address => uint) public claimStartEpochOf;
-    // candidate=>epoch=>amount
-    mapping(address => mapping(uint => uint)) public receivedVotes;
-    // voter=>epoch=>candidate
-    mapping(address => mapping(uint => address)) public votedTo;
-    // voter=>epoch=>amount
-    mapping(address => mapping(uint => uint)) public votedAmount;
-    // voter=>epoch=>amount
-    mapping(address => mapping(uint => uint)) public rewardBase;
-    // voter=>epochs
-    mapping(address => uint[]) public unclaimedEpochsOf;
+
+    // candidate=>amount
+    mapping(address => uint) public receivedVotes;
+    // voter=>candidate
+    mapping(address => address) public votedTo;
+    // voter=>amount
+    mapping(address => uint) public votedAmount;
+
+    // the block height when current epoch starts
+    uint public currentEpochStartHeight;
+    // the current group of block validators
+    address[] public currentConsensus;
+
+    // candidate=>total
+    mapping(address => uint) public candidateGasPerVote;
+    // voter=>number
+    mapping(address => uint) public voterGasPerVote;
+    // voter=>height
+    mapping(address => uint) public voteHeight;
+    // candidate=>height=>number
+    mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
 
     receive() external payable {
-        epochRewards[getCurrentRunningEpoch()] += msg.value;
-    }
-
-    function getCurrentRevokingEpoch() public view returns (uint) {
-        uint epoch = epochCount;
-        if (
-            block.number > currentEpochStartHeight + EPOCH_DURATION &&
-            totalVotes[epoch] >= MIN_TOTAL_VOTE &&
-            votedCandidates[epoch] >= CONSENSUS_SIZE
-        ) {
-            return epoch + 1;
-        } else {
-            return epoch;
+        address[] memory validators = currentConsensus;
+        uint length = validators.length;
+        for (uint i = 0; i < length; i++) {
+            candidateGasPerVote[validators[i]] +=
+                (msg.value * shareRateOf[validators[i]] * SCALE_FACTOR) /
+                7 /
+                1000 /
+                receivedVotes[validators[i]];
+            _safeTransferETH(
+                validators[i],
+                (msg.value * (1000 - shareRateOf[validators[i]])) / 7 / 1000
+            );
         }
-    }
-
-    function getCurrentVotingEpoch() public view returns (uint) {
-        return epochCount;
-    }
-
-    function getCurrentRunningEpoch() public view returns (uint) {
-        return epochCount - 1;
-    }
-
-    function _getAndUpdateEpochCount() internal returns (uint) {
-        uint epoch = epochCount;
-        if (
-            block.number > currentEpochStartHeight + EPOCH_DURATION &&
-            totalVotes[epoch] >= MIN_TOTAL_VOTE &&
-            votedCandidates[epoch] >= CONSENSUS_SIZE
-        ) {
-            // record gov reward and vote result
-            IGovReward(govReward).withdraw();
-            consensusOf[epoch] = _computeConsensus(epoch);
-            epoch += 1;
-            epochCount = epoch;
-            currentEpochStartHeight = block.number;
-        }
-        return epoch;
-    }
-
-    function getVotedByEpoch(
-        address voter,
-        uint epoch
-    ) public view returns (address, uint) {
-        return (votedTo[voter][epoch], votedAmount[voter][epoch]);
-    }
-
-    function getReceivedVotesByEpoch(
-        address candidate,
-        uint epoch
-    ) public view returns (uint) {
-        return receivedVotes[candidate][epoch];
     }
 
     function getCandidates() public view returns (address[] memory) {
@@ -155,180 +118,163 @@ contract GovernanceV2 is IGovernanceV2 {
         require(msg.value == REGISTER_FEE, "insufficient amount");
         require(shareRate < 1000, "invalid rate");
         require(!candidateList.contains(msg.sender), "candidate exists");
+        require(exitHeightOf[msg.sender] == 0, "left not claimed");
         candidateList.add(msg.sender);
-        delete exitEpochOf[msg.sender];
 
-        uint epoch = _getAndUpdateEpochCount();
-        // record register time, share rate and balance
-        registerEpochOf[msg.sender] = epoch;
+        // record share rate and balance
         shareRateOf[msg.sender] = shareRate;
         candidateBalanceOf[msg.sender] = msg.value;
-        // set the start point for claim, only if register in epoch 1 can get epoch 0 reward
-        claimStartEpochOf[msg.sender] = epoch > 1 ? epoch : 0;
         emit Register(msg.sender);
     }
 
     function exitCandidate() external {
-        require(registerEpochOf[msg.sender] > 0, "candidate not exists");
-        // delete register time, cannot be voted
-        delete registerEpochOf[msg.sender];
-        // record exit time, but candidate list not removed, balance still locked
-        exitEpochOf[msg.sender] = _getAndUpdateEpochCount();
+        require(candidateList.contains(msg.sender), "candidate not exists");
+        // remove candidate list, balance still locked
+        candidateList.remove(msg.sender);
+        exitHeightOf[msg.sender] = block.number;
         emit Exit(msg.sender);
     }
 
-    function claimRegisterFee() external {
-        // require 2 epochs to exit candidate list, so that the last round of vote can work as expected
-        uint epoch = _getAndUpdateEpochCount();
-        require(epoch > exitEpochOf[msg.sender] + 1, "claim not allowed");
-
-        // reorg candidate list
-        candidateList.remove(msg.sender);
+    function withdrawRegisterFee() external {
+        // require 2 epochs to exit candidate list
+        // NOTE: suppose postPersist always happens in time
+        require(
+            exitHeightOf[msg.sender] > 0 &&
+                block.number > exitHeightOf[msg.sender] + 2 * EPOCH_DURATION,
+            "withdraw not allowed"
+        );
 
         // send back balance
         uint amount = candidateBalanceOf[msg.sender];
         delete candidateBalanceOf[msg.sender];
+        delete exitHeightOf[msg.sender];
         _safeTransferETH(msg.sender, amount);
+        emit CandidateWithdraw(msg.sender, amount);
     }
 
     function vote(address candidateTo) external payable {
         require(msg.value >= MIN_VOTE_AMOUNT, "insufficient amount");
-        require(registerEpochOf[candidateTo] > 0, "candidate not allowed");
-        // the first person vote in new epoch will pay for update
-        uint currentEpoch = _getAndUpdateEpochCount();
+        require(candidateList.contains(candidateTo), "candidate not allowed");
+        address votedCandidate = votedTo[msg.sender];
+        require(
+            votedCandidate == candidateTo || votedCandidate == address(0),
+            "only one choice is allowed"
+        );
 
-        uint voted = votedAmount[msg.sender][currentEpoch];
-        // add this epoch to personal record if never voted
-        if (voted == 0) {
-            votedTo[msg.sender][currentEpoch] = candidateTo;
-            unclaimedEpochsOf[msg.sender].push(currentEpoch);
+        // settle reward here
+        if (votedCandidate != address(0)) {
+            _settleReward(msg.sender, votedCandidate);
         } else {
-            require(
-                votedTo[msg.sender][currentEpoch] == candidateTo,
-                "only one choice is allowed"
-            );
+            // record tag value
+            votedTo[msg.sender] = candidateTo;
+            voterGasPerVote[msg.sender] = candidateGasPerVote[candidateTo];
         }
-        votedAmount[msg.sender][currentEpoch] = voted + msg.value;
-        rewardBase[msg.sender][currentEpoch] +=
-            (msg.value * shareRateOf[candidateTo]) /
-            1000;
 
-        uint received = receivedVotes[candidateTo][currentEpoch];
-        if (received == 0) {
-            votedCandidates[currentEpoch] += 1;
-        }
-        receivedVotes[candidateTo][currentEpoch] = received + msg.value;
-        totalVotes[currentEpoch] += msg.value;
+        // update votes
+        votedAmount[msg.sender] += msg.value;
+        receivedVotes[candidateTo] += msg.value;
+        // NOTE: the left reward in current epoch will be unclaimable
+        voteHeight[msg.sender] = block.number;
 
         emit Vote(msg.sender, candidateTo, msg.value);
     }
 
     function revokeVote() external {
-        // revoke will not trigger epoch change
-        uint currentEpoch = getCurrentRevokingEpoch();
-        address candidateFrom = votedTo[msg.sender][currentEpoch];
-        uint amount = votedAmount[msg.sender][currentEpoch];
-        require(amount > 0, "insufficient amount");
+        address candidateFrom = votedTo[msg.sender];
+        uint amount = votedAmount[msg.sender];
+        require(
+            candidateFrom != address(0) && amount > 0,
+            "revoke not allowed"
+        );
 
-        uint received = receivedVotes[candidateFrom][currentEpoch];
-        if (received == amount) {
-            votedCandidates[currentEpoch] -= 1;
-        }
-        receivedVotes[candidateFrom][currentEpoch] = received - amount;
-        totalVotes[currentEpoch] -= amount;
-        delete votedTo[msg.sender][currentEpoch];
-        delete votedAmount[msg.sender][currentEpoch];
-        delete rewardBase[msg.sender][currentEpoch];
+        // settle reward here
+        _settleReward(msg.sender, candidateFrom);
+
+        // update votes
+        receivedVotes[candidateFrom] -= amount;
+        delete votedTo[msg.sender];
+        delete votedAmount[msg.sender];
+
+        // delete tag value
+        delete voterGasPerVote[msg.sender];
+        delete voteHeight[msg.sender];
+
         _safeTransferETH(msg.sender, amount);
-
-        emit RevokeVote(msg.sender, candidateFrom, amount);
+        emit Revoke(msg.sender, candidateFrom, amount);
     }
 
-    function voterWithdraw() external {
-        // use epochCount, to lock votes and rewards until epoch change
-        uint currentEpoch = _getAndUpdateEpochCount();
-        uint totalAmount = 0;
-        uint totalReward = 0;
-        // loop all voted epochs
-        uint[] memory votedIndex = unclaimedEpochsOf[msg.sender];
-        uint indexLength = votedIndex.length;
-        delete unclaimedEpochsOf[msg.sender];
-        for (uint i = 0; i < indexLength; i++) {
-            uint epoch = votedIndex[i];
-            // only epochs before the current running one (the one before current voting)
-            if (epoch < currentEpoch - 1) {
-                totalAmount += votedAmount[msg.sender][epoch];
-                delete votedAmount[msg.sender][epoch];
+    function claimReward() external {
+        address votedCandidate = votedTo[msg.sender];
+        require(votedCandidate != address(0), "claim not allowed");
+        _settleReward(msg.sender, votedCandidate);
+    }
 
-                // calculate reward
-                address candidate = votedTo[msg.sender][epoch];
-                address[] memory consensus = consensusOf[epoch];
-                bool included = false;
-                for (uint j = 0; j < CONSENSUS_SIZE; j++) {
-                    if (consensus[j] == candidate) {
-                        included = true;
-                    }
-                }
-                if (included) {
-                    totalReward +=
-                        (rewardBase[msg.sender][epoch] * epochRewards[epoch]) /
-                        receivedVotes[candidate][epoch] /
-                        CONSENSUS_SIZE;
-                }
-                delete rewardBase[msg.sender][epoch];
-            } else if (epoch >= currentEpoch - 1) {
-                // reconstructed array, the new one always shorter than 2
-                unclaimedEpochsOf[msg.sender].push(epoch);
-            }
+    function postPersist() external {
+        // NOTE: suppose postPersist always happens when equal
+        require(
+            block.number >= currentEpochStartHeight + EPOCH_DURATION,
+            "persist not allowed"
+        );
+        IGovReward(govReward).withdraw();
+
+        currentEpochStartHeight = block.number;
+        currentConsensus = _computeConsensus();
+        uint length = currentConsensus.length;
+        for (uint i = 0; i < length; i++) {
+            epochStartGasPerVote[currentConsensus[i]][
+                currentEpochStartHeight / EPOCH_DURATION
+            ] = candidateGasPerVote[currentConsensus[i]];
         }
-        _safeTransferETH(msg.sender, totalAmount + totalReward);
-        emit VoterWithdraw(msg.sender, totalAmount, totalReward);
+        emit Persist(currentConsensus);
     }
 
-    function candidateClaim() external {
-        // use epochCount, to lock rewards until epoch change
-        uint currentEpoch = _getAndUpdateEpochCount();
-        require(currentEpoch > 1, "claim not started");
-        uint totalReward = 0;
-        // loop all unclaimed epochs
-        for (
-            uint i = claimStartEpochOf[msg.sender];
-            i < currentEpoch - 1;
-            i++
-        ) {
-            // only epochs before the current running one (the one before current voting)
-            address[] memory consensus = consensusOf[i];
-            bool included = false;
-            for (uint j = 0; j < CONSENSUS_SIZE; j++) {
-                if (consensus[j] == msg.sender) {
-                    included = true;
-                }
-            }
-            if (included) {
-                totalReward +=
-                    (epochRewards[i] * (1000 - shareRateOf[msg.sender])) /
-                    CONSENSUS_SIZE /
-                    1000;
-            }
+    function getNextBlockValidators() external view returns (address[] memory) {
+        return currentConsensus;
+    }
+
+    function computeNextBlockValidators()
+        external
+        view
+        returns (address[] memory)
+    {
+        return _computeConsensus();
+    }
+
+    function _settleReward(address voter, address candidate) internal {
+        IGovReward(govReward).withdraw();
+
+        uint height = voteHeight[voter];
+        uint lastGasPerVote = voterGasPerVote[voter];
+        uint latestGasPerVote = candidateGasPerVote[candidate];
+
+        // NOTE: suppose postPersist always happens in the correct block at expected height
+        // NOTE: suppose postPersist always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
+        uint voteEpochEndGasPerVote = epochStartGasPerVote[candidate][
+            (height - 1) / EPOCH_DURATION + 1
+        ];
+        if (voteEpochEndGasPerVote > lastGasPerVote) {
+            lastGasPerVote = voteEpochEndGasPerVote;
         }
-        claimStartEpochOf[msg.sender] = currentEpoch - 1;
-        _safeTransferETH(msg.sender, totalReward);
-        emit CandidateClaim(msg.sender, totalReward);
+
+        uint reward = (votedAmount[voter] *
+            (latestGasPerVote - lastGasPerVote)) / SCALE_FACTOR;
+        voterGasPerVote[voter] = latestGasPerVote;
+        _safeTransferETH(voter, reward);
+        emit VoterClaim(voter, reward);
     }
 
-    function getCurrentConsensus() public view returns (address[] memory) {
-        return consensusOf[getCurrentRunningEpoch()];
+    function _safeTransferETH(address to, uint value) internal {
+        (bool success, ) = to.call{value: value}(new bytes(0));
+        require(success, "safeTransferETH: ETH transfer failed");
     }
 
-    function _computeConsensus(
-        uint epoch
-    ) internal view returns (address[] memory) {
+    function _computeConsensus() internal view returns (address[] memory) {
         // build up a votes array
         address[] memory candidates = getCandidates();
         uint length = candidates.length;
         uint[] memory votes = new uint[](length);
         for (uint i = 0; i < length; i++) {
-            votes[i] = receivedVotes[candidates[i]][epoch];
+            votes[i] = receivedVotes[candidates[i]];
         }
 
         // sort top CONSENSUS_SIZE based on votes
@@ -340,11 +286,6 @@ contract GovernanceV2 is IGovernanceV2 {
             consensus[i] = candidates[i];
         }
         return consensus;
-    }
-
-    function _safeTransferETH(address to, uint value) internal {
-        (bool success, ) = to.call{value: value}(new bytes(0));
-        require(success, "safeTransferETH: ETH transfer failed");
     }
 
     function _topK(
