@@ -10,7 +10,9 @@ import (
 // prepareRequest represents dBFT prepareRequest message.
 type prepareRequest struct {
 	SealingProposal *types.Header
-	TxHashes        []util.Uint256
+	OnPersist       *types.Transaction
+	// TODO: remove OnPersist hash from TxHashes and adjust TransactionsHashes and SetTransactionsHashes wrt OnPersist.
+	TxHashes []util.Uint256
 
 	// Fields that should be included into PrepareRequest for its verification:
 	ParentSealHash common.Hash

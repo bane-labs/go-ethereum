@@ -1,21 +1,29 @@
 package dbft
 
 import (
+	"math/big"
+
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	dbftCrypto "github.com/nspcc-dev/dbft/crypto"
 )
 
 var _ = dbftCrypto.PrivateKey(&Signer{})
 
-// SignerFn hashes and signs the data to be signed by a backing account.
-type SignerFn func(signer accounts.Account, mimeType string, message []byte) ([]byte, error)
+type (
+	// DataSignerFn hashes and signs the data to be signed by a backing account.
+	DataSignerFn func(signer accounts.Account, mimeType string, message []byte) ([]byte, error)
+
+	// TxSignerFn signs the provided transaction by a backing account.
+	TxSignerFn func(account accounts.Account, tx *types.Transaction, chainID *big.Int) (*types.Transaction, error)
+)
 
 // Signer is a wrapper around Eth signer function that implements dbftCrypto.PrivateKey
 // interface and is sufficient for dBFT operations.
 type Signer struct {
 	Signer common.Address
-	SignFn SignerFn
+	SignFn DataSignerFn
 }
 
 // Sign implements dbftCrypto.PrivateKey interface and signs the given message.

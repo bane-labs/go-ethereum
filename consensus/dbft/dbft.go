@@ -32,6 +32,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -188,9 +189,10 @@ type DBFT struct {
 
 	config *params.DBFTConfig // Consensus engine configuration parameters
 
-	signer common.Address // Ethereum address of the signing key
-	signFn SignerFn       // Signer function to authorize hashes with
-	lock   sync.RWMutex   // Protects the signer field
+	signer     common.Address // Ethereum address of the signing key
+	signDataFn DataSignerFn   // Signer function to sign consensus payloads and block data with.
+	signTxFn   TxSignerFn     // Signer function to sign transactions with.
+	lock       sync.RWMutex   // Protects the signer field
 
 	dbft             *dbft.DBFT
 	dbftStarted      atomic.Bool
@@ -275,7 +277,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithSecondsPerBlock(time.Duration(conf.SecondsPerBlock)*time.Second),
 		dbft.WithGetKeyPair(func(keys []dbftCrypto.PublicKey) (int, dbftCrypto.PrivateKey, dbftCrypto.PublicKey) {
 			c.lock.RLock()
-			signer, signFn := c.signer, c.signFn
+			signer, signFn := c.signer, c.signDataFn
 			c.lock.RUnlock()
 
 			// Bail out if we're unauthorized to sign a block
@@ -366,6 +368,13 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			return false
 		}),
 		dbft.WithGetTx(func(h util.Uint256) block.Transaction {
+			var ctx = c.dbft.Context
+			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex].GetPrepareRequest().(*prepareRequest)
+			if prepareReq != nil && h == prepareReq.OnPersist.Hash().Uint256() {
+				return &Transaction{
+					Tx: prepareReq.OnPersist,
+				}
+			}
 			var hash common.Hash
 			hash.SetUint256(h)
 			tx := c.txpool.Get(hash)
@@ -474,6 +483,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			req.SealingProposal = c.sealingProposal
 			req.ParentSealHash = c.lastBlockSealHash
 			req.ParentExtra = c.lastBlockExtra
+			req.OnPersist = c.sealingTransactions[0] // OnPersist transaction is guaranteed to be present.
 
 			return req
 		}),
@@ -499,6 +509,15 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			if err != nil {
 				return fmt.Errorf("invalid header: %w", err)
 			}
+
+			// Verify required OnPersist transaction.
+			if len(req.TxHashes) < 1 || req.OnPersist == nil {
+				return errors.New("missing OnPersist transaction")
+			}
+			if req.TxHashes[0] != req.OnPersist.Hash().Uint256() {
+				return fmt.Errorf("OnPersist transaction hash mismatch: expected %s, got %s", req.OnPersist.Hash().String(), req.TxHashes[0].StringLE())
+			}
+
 			if req.SealingProposal.ParentHash != c.lastBlockHash {
 				// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
 				// the one that prepareRequest declares as a parent hash, otherwise it's an error.
@@ -1076,12 +1095,13 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 
 // Authorize injects a private key into the consensus engine to mint new blocks
 // with.
-func (c *DBFT) Authorize(signer common.Address, signFn SignerFn) {
+func (c *DBFT) Authorize(signer common.Address, signDataFn DataSignerFn, signTxFn TxSignerFn) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
 	c.signer = signer
-	c.signFn = signFn
+	c.signDataFn = signDataFn
+	c.signTxFn = signTxFn
 }
 
 // Start initializes last block cache, fetches fresh proposal from miner, starts
@@ -1203,7 +1223,36 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 	}
 
 	c.sealingProposal = lastProposal.Header()
-	c.sealingTransactions = lastProposal.Transactions()
+
+	// TODO: fill tx
+	var (
+		tx      *types.Transaction
+		govHash = common.HexToAddress(systemcontracts.GovernanceHash)
+	)
+	//data, err := c.governanceABI.Pack("onPersist", c.lastIndex)
+	data, err := c.governanceABI.Pack("getCurrentConsensus")
+
+	if err != nil {
+		return fmt.Errorf("failed to create OnPersist transaction: %w", err)
+	}
+	tx = types.NewTx(&types.LegacyTx{
+		Nonce:    c.lastIndex,
+		GasPrice: c.chain.Config()., // TODO: should be allowed
+		Gas:      0,             // TODO: free?
+		To:       &govHash,
+		Value:    big.NewInt(0), // no actual transfer, just a method call
+		Data:     data,
+	})
+	c.lock.RLock()
+	signer, signTxFn := c.signer, c.signTxFn
+	c.lock.RUnlock()
+
+	tx, err = signTxFn(accounts.Account{Address: signer}, tx, c.chain.Config().ChainID)
+	if err != nil {
+		return fmt.Errorf("failed to sign OnPersist transaction: %w", err)
+	}
+
+	c.sealingTransactions = append([]*types.Transaction{tx}, ([]*types.Transaction)(lastProposal.Transactions())...)
 	log.Info("Sealing proposal updated",
 		"number", c.sealingProposal.Number,
 		"sealhash", c.SealHash(c.sealingProposal),
