@@ -57,15 +57,15 @@ contract GovernanceV2 is IGovernanceV2 {
     // GovReward contract
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
-    uint public constant SCALE_FACTOR = 10 ** 18;
+    uint public constant scaleFactor = 10 ** 18;
 
-    uint public CONSENSUS_SIZE;
+    uint public consensusSize;
     // the min balance for voting
-    uint public MIN_VOTE_AMOUNT;
+    uint public minVoteAmount;
     // register fee
-    uint public REGISTER_FEE;
+    uint public registerFee;
     // duration of an epoch (in blocks)
-    uint public EPOCH_DURATION;
+    uint public epochDuration;
 
     // candidate list
     EnumerableSet.AddressSet internal candidateList;
@@ -102,14 +102,14 @@ contract GovernanceV2 is IGovernanceV2 {
         uint length = validators.length;
         for (uint i = 0; i < length; i++) {
             candidateGasPerVote[validators[i]] +=
-                (msg.value * shareRateOf[validators[i]] * SCALE_FACTOR) /
-                CONSENSUS_SIZE /
+                (msg.value * shareRateOf[validators[i]] * scaleFactor) /
+                consensusSize /
                 1000 /
                 receivedVotes[validators[i]];
             _safeTransferETH(
                 validators[i],
                 (msg.value * (1000 - shareRateOf[validators[i]])) /
-                    CONSENSUS_SIZE /
+                    consensusSize /
                     1000
             );
         }
@@ -120,7 +120,7 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function registerCandidate(uint shareRate) external payable {
-        require(msg.value >= REGISTER_FEE, "insufficient amount");
+        require(msg.value >= registerFee, "insufficient amount");
         require(shareRate < 1000, "invalid rate");
         require(!candidateList.contains(msg.sender), "candidate exists");
         require(exitHeightOf[msg.sender] == 0, "left not claimed");
@@ -145,7 +145,7 @@ contract GovernanceV2 is IGovernanceV2 {
         // NOTE: suppose postPersist always happens in time
         require(
             exitHeightOf[msg.sender] > 0 &&
-                block.number > exitHeightOf[msg.sender] + 2 * EPOCH_DURATION,
+                block.number > exitHeightOf[msg.sender] + 2 * epochDuration,
             "withdraw not allowed"
         );
 
@@ -158,7 +158,7 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function vote(address candidateTo) external payable {
-        require(msg.value >= MIN_VOTE_AMOUNT, "insufficient amount");
+        require(msg.value >= minVoteAmount, "insufficient amount");
         require(candidateList.contains(candidateTo), "candidate not allowed");
         address votedCandidate = votedTo[msg.sender];
         require(
@@ -217,7 +217,7 @@ contract GovernanceV2 is IGovernanceV2 {
     function postPersist() external {
         // NOTE: suppose postPersist always happens when equal
         require(
-            block.number >= currentEpochStartHeight + EPOCH_DURATION,
+            block.number >= currentEpochStartHeight + epochDuration,
             "persist not allowed"
         );
 
@@ -227,7 +227,7 @@ contract GovernanceV2 is IGovernanceV2 {
         uint length = consensus.length;
         for (uint i = 0; i < length; i++) {
             epochStartGasPerVote[consensus[i]][
-                currentEpochStartHeight / EPOCH_DURATION
+                currentEpochStartHeight / epochDuration
             ] = candidateGasPerVote[consensus[i]];
         }
 
@@ -263,14 +263,14 @@ contract GovernanceV2 is IGovernanceV2 {
         // NOTE: suppose postPersist always happens in the correct block at expected height
         // NOTE: suppose postPersist always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
         uint voteEpochEndGasPerVote = epochStartGasPerVote[candidate][
-            (height - 1) / EPOCH_DURATION + 1
+            (height - 1) / epochDuration + 1
         ];
         if (voteEpochEndGasPerVote > lastGasPerVote) {
             lastGasPerVote = voteEpochEndGasPerVote;
         }
 
         uint reward = (votedAmount[voter] *
-            (latestGasPerVote - lastGasPerVote)) / SCALE_FACTOR;
+            (latestGasPerVote - lastGasPerVote)) / scaleFactor;
         voterGasPerVote[voter] = latestGasPerVote;
         _safeTransferETH(voter, reward);
         emit VoterClaim(voter, reward);
@@ -290,12 +290,12 @@ contract GovernanceV2 is IGovernanceV2 {
             votes[i] = receivedVotes[candidates[i]];
         }
 
-        // sort top CONSENSUS_SIZE based on votes
-        _topK(candidates, votes, CONSENSUS_SIZE);
+        // sort top consensusSize based on votes
+        _topK(candidates, votes, consensusSize);
 
-        // return the first CONSENSUS_SIZE candidates as consensus list
-        address[] memory consensus = new address[](CONSENSUS_SIZE);
-        for (uint i = 0; i < CONSENSUS_SIZE; i++) {
+        // return the first consensusSize candidates as consensus list
+        address[] memory consensus = new address[](consensusSize);
+        for (uint i = 0; i < consensusSize; i++) {
             consensus[i] = candidates[i];
         }
         return consensus;
