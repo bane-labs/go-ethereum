@@ -587,7 +587,8 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 	h.Extra = append(h.Extra[:dbftutil.ExtraVersionLen+dbftutil.ExtraV1SignatureSchemeLen], multisig.Bytes()...)
 
 	// Update state root, transactions root, receipts hash and bloom.
-	res, err := c.FinalizeAndAssemble(c.chain, h, pre.finalState, pre.finalTransactions, nil, pre.finalReceipts, ethBlock.Withdrawals())
+	body := types.Body{Transactions: pre.finalTransactions, Withdrawals: ethBlock.Withdrawals()}
+	res, err := c.FinalizeAndAssemble(c.chain, h, pre.finalState, &body, pre.finalReceipts)
 	if err != nil {
 		log.Crit("Failed to finalize and assemble final Block",
 			"err", err)
@@ -705,7 +706,8 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 	}
 
 	// Update state root, transactions root, receipts hash and bloom.
-	res, err := c.FinalizeAndAssemble(c.chain, header, state, dbftBlock.transactions, nil, receipts, ethBlock.Withdrawals())
+	body := types.Body{Transactions: dbftBlock.transactions, Withdrawals: ethBlock.Withdrawals()}
+	res, err := c.FinalizeAndAssemble(c.chain, header, state, &body, receipts)
 	if err != nil {
 		log.Crit("Failed to finalize and assemble proposed block",
 			"err", err)
@@ -2008,9 +2010,9 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 }
 
 // Finalize implements consensus.Engine. For now, it only manages block withdrawals.
-func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
+func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body) {
 	// Withdrawals processing.
-	for _, w := range withdrawals {
+	for _, w := range body.Withdrawals {
 		// Convert amount from gwei to wei.
 		amount := new(uint256.Int).SetUint64(w.Amount)
 		amount = amount.Mul(amount, uint256.NewInt(params.GWei))
@@ -2021,27 +2023,27 @@ func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header,
 
 // FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
 // nor block rewards given, and returns the final block.
-func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, error) {
+func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
 	shanghai := chain.Config().IsShanghai(header.Number, header.Time)
 	if shanghai {
 		// All blocks after Shanghai must include a withdrawals root.
-		if withdrawals == nil {
-			withdrawals = make([]*types.Withdrawal, 0)
+		if body.Withdrawals == nil {
+			body.Withdrawals = make([]*types.Withdrawal, 0)
 		}
 	} else {
-		if len(withdrawals) > 0 {
+		if len(body.Withdrawals) > 0 {
 			return nil, errors.New("withdrawals set before Shanghai activation")
 		}
 	}
 
 	// Finalize block
-	c.Finalize(chain, header, state, txs, uncles, withdrawals)
+	c.Finalize(chain, header, state, body)
 
 	// Assign the final state root to header.
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 
 	// Assemble and return the final block for sealing.
-	b := types.NewBlockWithWithdrawals(header, txs, nil, receipts, withdrawals, trie.NewStackTrie(nil))
+	b := types.NewBlockWithWithdrawals(header, body.Transactions, nil, receipts, body.Withdrawals, trie.NewStackTrie(nil))
 	return b, nil
 }
 
