@@ -27,12 +27,10 @@ import (
 	"io"
 	"math/big"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/lru"
@@ -225,7 +223,6 @@ type DBFT struct {
 
 	// various native contract APIs that dBFT uses.
 	ethAPI          *ethapi.BlockChainAPI
-	governanceABI   abi.ABI
 	validatorsCache *lru.Cache[uint64, []common.Address]
 
 	// The fields below are for testing only
@@ -249,11 +246,6 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 	copy(conf.StandByValidators, config.StandByValidators)
 	slices.SortFunc(conf.StandByValidators, common.Address.Cmp)
 
-	govABI, err := abi.JSON(strings.NewReader(systemcontracts.GovernanceABI))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse Governance contract ABI")
-	}
-
 	c := &DBFT{
 		config:     &conf,
 		blockQueue: newBlockQueue(),
@@ -265,7 +257,6 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		quit:     make(chan struct{}),
 		finished: make(chan struct{}),
 
-		governanceABI:   govABI,
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 	}
 
@@ -1624,25 +1615,23 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 		}
 	}
 
+	// Perform smart contract call.
 	method := "getCurrentConsensus" // latest finalized epoch validators.
-	ctx, cancel := context.WithCancel(context.Background())
-	// Cancel when we are finished consuming integers.
-	defer cancel()
-	data, err := c.governanceABI.Pack(method)
+	data, err := systemcontracts.GovernanceABI.Pack(method)
 	if err != nil {
 		return nil, fmt.Errorf("failed to pack '%s': %w", method, err)
 	}
-
-	// Perform smart contract call.
 	msgData := hexutil.Bytes(data)
-	toAddress := common.HexToAddress(systemcontracts.GovernanceHash)
 	gas := hexutil.Uint64(50_000_000) // more than enough for validators call processing.
 	args := ethapi.TransactionArgs{
 		Gas:  &gas,
-		To:   &toAddress,
+		To:   &systemcontracts.GovernanceHash,
 		Data: &msgData,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel when we are finished consuming integers.
+	defer cancel()
 	var result hexutil.Bytes
 	if state != nil {
 		result, err = c.ethAPI.CallAtState(ctx, args, state, header)
@@ -1657,7 +1646,7 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 	}
 
 	var res []common.Address
-	err = c.governanceABI.UnpackIntoInterface(&res, method, result)
+	err = systemcontracts.GovernanceABI.UnpackIntoInterface(&res, method, result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unpack validators: %w", err)
 	}
