@@ -436,7 +436,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			dbftBlock.transactions = c.sealingTransactions
 			ethBlock := dbftBlock.ToEthBlock()
 
-			state, receipts, _, _, err := c.chain.ProcessState(ethBlock)
+			state, _, _, _, err := c.chain.ProcessState(ethBlock)
 			if err != nil {
 				log.Crit("failed to process state from proposal",
 					"err", err,
@@ -454,13 +454,11 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					"uncle hash", ethBlock.UncleHash().String(),
 					"txs", len(ethBlock.Transactions()))
 			}
-			b, err := c.FinalizeAndAssemble(c.chain, dbftBlock.header, state, dbftBlock.transactions, nil, receipts, dbftBlock.withdrawals)
-			if err != nil {
-				log.Crit("failed to finalize and assemble proposal",
-					"err", err)
-			}
 
-			c.sealingProposal = b.Header()
+			header := ethBlock.Header()
+			header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
+
+			c.sealingProposal = header
 
 			// Fill NextConsensus based on the currently accepting block state and update MixDigest.
 			nextVals, err := c.getValidators(nil, state, c.sealingProposal)
