@@ -37,14 +37,14 @@ interface IGovernanceV2 {
         The following should only be used by DBFT module, refer to https://github.com/nspcc-dev/neo-go/blob/master/pkg/core/blockchain.go
     */
 
-    // get the consensus group before postPersist, which is the group that should produce this block
+    // get the consensus group before onPersist, which is the group that should produce this block
     function getNextBlockValidators() external returns (address[] memory);
 
-    // select the latest consensus group after postPersist, which is the group that should produce the next block
+    // select the latest consensus group after onPersist, which is the group that should produce the next block
     function computeNextBlockValidators() external returns (address[] memory);
 
     // compute and update cached consensus group
-    function postPersist() external;
+    function onPersist() external;
 }
 
 interface IGovReward {
@@ -142,7 +142,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function withdrawRegisterFee() external {
         // require 2 epochs to exit candidate list
-        // NOTE: suppose postPersist always happens in time
+        // NOTE: suppose onPersist always happens in time
         require(
             exitHeightOf[msg.sender] > 0 &&
                 block.number > exitHeightOf[msg.sender] + 2 * epochDuration,
@@ -214,7 +214,7 @@ contract GovernanceV2 is IGovernanceV2 {
         _settleReward(msg.sender, votedCandidate);
     }
 
-    function postPersist() external {
+    function onPersist() external {
         if (block.number < currentEpochStartHeight + epochDuration) {
             return;
         }
@@ -258,8 +258,8 @@ contract GovernanceV2 is IGovernanceV2 {
         uint lastGasPerVote = voterGasPerVote[voter];
         uint latestGasPerVote = candidateGasPerVote[candidate];
 
-        // NOTE: suppose postPersist always happens in the correct block at expected height
-        // NOTE: suppose postPersist always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
+        // NOTE: suppose onPersist always happens in the correct block at expected height
+        // NOTE: suppose onPersist always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
         uint voteEpochEndGasPerVote = epochStartGasPerVote[candidate][
             (height - 1) / epochDuration + 1
         ];
