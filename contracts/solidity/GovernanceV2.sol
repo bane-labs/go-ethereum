@@ -215,11 +215,9 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function postPersist() external {
-        // NOTE: suppose postPersist always happens when equal
-        require(
-            block.number >= currentEpochStartHeight + epochDuration,
-            "persist not allowed"
-        );
+        if (block.number < currentEpochStartHeight + epochDuration) {
+            return;
+        }
 
         // update tag values
         IGovReward(govReward).withdraw();
