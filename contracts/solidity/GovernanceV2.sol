@@ -212,12 +212,12 @@ contract GovernanceV2 is IGovernanceV2 {
 
         // update tag values
         IGovReward(govReward).withdraw();
-        address[] memory consensus = currentConsensus;
-        uint length = consensus.length;
+        address[] memory candidates = candidateList.values();
+        uint length = candidates.length;
         for (uint i = 0; i < length; i++) {
-            epochStartGasPerVote[consensus[i]][
+            epochStartGasPerVote[candidates[i]][
                 currentEpochStartHeight / epochDuration
-            ] = candidateGasPerVote[consensus[i]];
+            ] = candidateGasPerVote[candidates[i]];
         }
 
         // compute and update consensus
