@@ -215,6 +215,7 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function onPersist() external {
+        require(msg.sender == address(0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE), "side call not allowed");
         if (block.number < currentEpochStartHeight + epochDuration) {
             return;
         }
