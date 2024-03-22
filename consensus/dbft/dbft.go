@@ -45,6 +45,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -2016,7 +2017,7 @@ func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header,
 		// Convert amount from gwei to wei.
 		amount := new(uint256.Int).SetUint64(w.Amount)
 		amount = amount.Mul(amount, uint256.NewInt(params.GWei))
-		state.AddBalance(w.Address, amount)
+		state.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
 	}
 	// No block rewards in PoA, so the state remains as is
 }
