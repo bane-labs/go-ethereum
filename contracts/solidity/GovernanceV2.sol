@@ -33,16 +33,6 @@ interface IGovernanceV2 {
     // get consensus group members
     function getCurrentConsensus() external view returns (address[] memory);
 
-    /*
-        The following should only be used by DBFT module, refer to https://github.com/nspcc-dev/neo-go/blob/master/pkg/core/blockchain.go
-    */
-
-    // get the consensus group before onPersist, which is the group that should produce this block
-    function getNextBlockValidators() external returns (address[] memory);
-
-    // select the latest consensus group after onPersist, which is the group that should produce the next block
-    function computeNextBlockValidators() external returns (address[] memory);
-
     // compute and update cached consensus group
     function onPersist() external;
 }
@@ -238,18 +228,6 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function getCurrentConsensus() public view returns (address[] memory) {
         return currentConsensus;
-    }
-
-    function getNextBlockValidators() external view returns (address[] memory) {
-        return getCurrentConsensus();
-    }
-
-    function computeNextBlockValidators()
-        external
-        view
-        returns (address[] memory)
-    {
-        return _computeConsensus();
     }
 
     function _settleReward(address voter, address candidate) internal {
