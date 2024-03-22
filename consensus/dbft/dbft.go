@@ -1625,7 +1625,7 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 	gas := hexutil.Uint64(50_000_000) // more than enough for validators call processing.
 	args := ethapi.TransactionArgs{
 		Gas:  &gas,
-		To:   &systemcontracts.GovernanceHash,
+		To:   &systemcontracts.GovernanceProxyHash,
 		Data: &msgData,
 	}
 

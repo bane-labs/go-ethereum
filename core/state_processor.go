@@ -209,11 +209,11 @@ func ProcessOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
 		GasPrice:  common.Big0,
 		GasFeeCap: common.Big0,
 		GasTipCap: common.Big0,
-		To:        &systemcontracts.GovernanceHash,
+		To:        &systemcontracts.GovernanceProxyHash,
 		Data:      data,
 	}
 	vmenv.Reset(NewEVMTxContext(msg), statedb)
-	statedb.AddAddressToAccessList(systemcontracts.GovernanceHash)
+	statedb.AddAddressToAccessList(systemcontracts.GovernanceProxyHash)
 	_, _, err = vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
 	if err != nil {
 		return fmt.Errorf("onPersist call failed: %w", err)
