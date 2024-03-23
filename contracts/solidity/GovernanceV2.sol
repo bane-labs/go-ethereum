@@ -215,9 +215,7 @@ contract GovernanceV2 is IGovernanceV2 {
         require(msg.sender == sysCall, "side call not allowed");
         // only settle validator reward if there is no epoch change
         IGovReward(govReward).withdraw();
-        if (block.number < currentEpochStartHeight + epochDuration) {
-            return;
-        }
+        if (block.number < currentEpochStartHeight + epochDuration) return;
 
         // update tag values
         address[] memory candidates = candidateList.values();
@@ -243,6 +241,7 @@ contract GovernanceV2 is IGovernanceV2 {
         uint height = voteHeight[voter];
         uint lastGasPerVote = voterGasPerVote[voter];
         uint latestGasPerVote = candidateGasPerVote[candidate];
+        if (currentEpochStartHeight <= height) return;
 
         // NOTE: suppose epoch change always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
         uint voteEpochEndGasPerVote = epochStartGasPerVote[candidate][
