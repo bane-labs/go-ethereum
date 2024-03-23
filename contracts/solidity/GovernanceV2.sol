@@ -47,6 +47,8 @@ contract GovernanceV2 is IGovernanceV2 {
     // GovReward contract
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
+    address public constant sysCall =
+        0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
     uint public constant scaleFactor = 10 ** 18;
 
     uint public consensusSize;
@@ -88,6 +90,7 @@ contract GovernanceV2 is IGovernanceV2 {
     mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
 
     receive() external payable {
+        require(msg.sender == govReward, "side call not allowed");
         address[] memory validators = currentConsensus;
         uint length = validators.length;
         for (uint i = 0; i < length; i++) {
@@ -205,7 +208,7 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function onPersist() external {
-        require(msg.sender == address(0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE), "side call not allowed");
+        require(msg.sender == sysCall, "side call not allowed");
         if (block.number < currentEpochStartHeight + epochDuration) {
             return;
         }
