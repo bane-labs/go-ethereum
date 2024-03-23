@@ -172,9 +172,9 @@ contract GovernanceV2 is IGovernanceV2 {
         // update votes
         votedAmount[msg.sender] += msg.value;
         receivedVotes[candidateTo] += msg.value;
-        // NOTE: the left reward in the epoch of first vote will be unclaimable.
+        // NOTE: the left reward in the first epoch of first vote will be unclaimable.
         if (votedCandidate == address(0)) {
-                voteHeight[msg.sender] = block.number;
+            voteHeight[msg.sender] = block.number;
         }
 
         emit Vote(msg.sender, candidateTo, msg.value);
