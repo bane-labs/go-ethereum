@@ -47,6 +47,8 @@ contract GovReward is IGovReward {
     }
 
     function withdraw() external onlyGov {
-        TransferHelper.safeTransferETH(governance, address(this).balance);
+        if (address(this).balance > 0) {
+            TransferHelper.safeTransferETH(governance, address(this).balance);
+        }
     }
 }
