@@ -135,7 +135,7 @@ contract GovernanceV2 is IGovernanceV2 {
 
     function withdrawRegisterFee() external {
         // require 2 epochs to exit candidate list
-        // NOTE: suppose onPersist always happens in time
+        // NOTE: suppose epoch change always happens in time
         require(
             exitHeightOf[msg.sender] > 0 &&
                 block.number > exitHeightOf[msg.sender] + 2 * epochDuration,
@@ -209,13 +209,15 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function onPersist() external {
+        // NOTE: suppose onPersist always happens at the beginning of every block
         require(msg.sender == sysCall, "side call not allowed");
+        // only settle validator reward if there is no epoch change
+        IGovReward(govReward).withdraw();
         if (block.number < currentEpochStartHeight + epochDuration) {
             return;
         }
 
         // update tag values
-        IGovReward(govReward).withdraw();
         address[] memory candidates = candidateList.values();
         uint length = candidates.length;
         for (uint i = 0; i < length; i++) {
@@ -235,14 +237,12 @@ contract GovernanceV2 is IGovernanceV2 {
     }
 
     function _settleReward(address voter, address candidate) internal {
-        IGovReward(govReward).withdraw();
-
+        // NOTE: suppose onPersist always happens at the beginning of every block, then latestGasPerVote is always the latest
         uint height = voteHeight[voter];
         uint lastGasPerVote = voterGasPerVote[voter];
         uint latestGasPerVote = candidateGasPerVote[candidate];
 
-        // NOTE: suppose onPersist always happens in the correct block at expected height
-        // NOTE: suppose onPersist always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
+        // NOTE: suppose epoch change always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
         uint voteEpochEndGasPerVote = epochStartGasPerVote[candidate][
             (height - 1) / epochDuration + 1
         ];
