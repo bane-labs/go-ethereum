@@ -146,6 +146,7 @@ contract GovernanceV2 is IGovernanceV2 {
         uint amount = candidateBalanceOf[msg.sender];
         delete candidateBalanceOf[msg.sender];
         delete exitHeightOf[msg.sender];
+        delete shareRateOf[msg.sender];
         _safeTransferETH(msg.sender, amount);
         emit CandidateWithdraw(msg.sender, amount);
     }
