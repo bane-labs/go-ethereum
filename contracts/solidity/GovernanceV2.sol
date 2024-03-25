@@ -30,6 +30,9 @@ interface IGovernanceV2 {
     // only claim rewards
     function claimReward() external;
 
+    // get reward amount to be claimed when settle
+    function unclaimedRewardOf(address voter) external view returns (uint);
+
     // get consensus group members
     function getCurrentConsensus() external view returns (address[] memory);
 
@@ -210,6 +213,12 @@ contract GovernanceV2 is IGovernanceV2 {
         _settleReward(msg.sender, votedCandidate);
     }
 
+    function unclaimedRewardOf(address voter) external view returns (uint) {
+        address votedCandidate = votedTo[voter];
+        if (votedCandidate == address(0)) return 0;
+        else return _computeReward(voter, votedCandidate);
+    }
+
     function onPersist() external {
         // NOTE: suppose onPersist always happens at the beginning of every block
         require(msg.sender == sysCall, "side call not allowed");
@@ -236,12 +245,15 @@ contract GovernanceV2 is IGovernanceV2 {
         return currentConsensus;
     }
 
-    function _settleReward(address voter, address candidate) internal {
+    function _computeReward(
+        address voter,
+        address candidate
+    ) internal view returns (uint) {
         // NOTE: suppose onPersist always happens at the beginning of every block, then latestGasPerVote is always the latest
         uint height = voteHeight[voter];
         uint lastGasPerVote = voterGasPerVote[voter];
         uint latestGasPerVote = candidateGasPerVote[candidate];
-        if (currentEpochStartHeight <= height) return;
+        if (currentEpochStartHeight <= height) return 0;
 
         // NOTE: suppose epoch change always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
         uint voteEpochEndGasPerVote = epochStartGasPerVote[candidate][
@@ -251,9 +263,14 @@ contract GovernanceV2 is IGovernanceV2 {
             lastGasPerVote = voteEpochEndGasPerVote;
         }
 
-        uint reward = (votedAmount[voter] *
-            (latestGasPerVote - lastGasPerVote)) / scaleFactor;
-        voterGasPerVote[voter] = latestGasPerVote;
+        return
+            (votedAmount[voter] * (latestGasPerVote - lastGasPerVote)) /
+            scaleFactor;
+    }
+
+    function _settleReward(address voter, address candidate) internal {
+        uint reward = _computeReward(voter, candidate);
+        voterGasPerVote[voter] = candidateGasPerVote[candidate];
         _safeTransferETH(voter, reward);
         emit VoterClaim(voter, reward);
     }
