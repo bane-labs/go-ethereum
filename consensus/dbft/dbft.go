@@ -1615,7 +1615,7 @@ func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, co
 	// Different values depending on dBFT epoch.
 	method := "getCurrentConsensus" // current epoch validators
 	ctx, cancel := context.WithCancel(context.Background())
-	// Cancel when we are finished consuming integers
+	// Cancel when we are finished consuming integers.
 	defer cancel()
 	data, err := c.governanceABI.Pack(method)
 	if err != nil {
