@@ -20,24 +20,14 @@ library TransferHelper {
 }
 
 interface IGovernance {
-    struct Phase {
-        uint startHeight;
-        address[] miners;
-        uint preHeight;
-        uint nextHeight;
-        uint voteAmount;
-    }
-
-    // get current consensus phase
-    function getCurrentPhase() external view returns (Phase memory);
+    // get current consensus group
+    function getCurrentConsensus() external view returns (address[] memory);
 }
 
 interface IGovReward {
     function getMiners() external view returns (address[] memory);
 
-    function withdrawERC20(address to, address token, uint256 amount) external;
-
-    function withdraw(address to, uint256 amount) external;
+    function withdraw() external;
 }
 
 contract GovReward is IGovReward {
@@ -53,18 +43,12 @@ contract GovReward is IGovReward {
     }
 
     function getMiners() external view override returns (address[] memory) {
-        return IGovernance(governance).getCurrentPhase().miners;
+        return IGovernance(governance).getCurrentConsensus();
     }
 
-    function withdrawERC20(
-        address to,
-        address token,
-        uint256 amount
-    ) external override onlyGov {
-        TransferHelper.safeTransfer(token, to, amount);
-    }
-
-    function withdraw(address to, uint256 amount) external override onlyGov {
-        TransferHelper.safeTransferETH(to, amount);
+    function withdraw() external onlyGov {
+        if (address(this).balance > 0) {
+            TransferHelper.safeTransferETH(governance, address(this).balance);
+        }
     }
 }
