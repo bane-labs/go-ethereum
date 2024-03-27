@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -78,6 +79,12 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	)
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
 		ProcessBeaconBlockRoot(*beaconRoot, vmenv, statedb)
+	}
+	if p.config.DBFT != nil {
+		err := ProcessOnPersist(vmenv, statedb)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("could not apply OnPersist [%v]: %w", block.Hash().Hex(), err)
+		}
 	}
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
@@ -188,4 +195,29 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, vmenv *vm.EVM, statedb *stat
 	statedb.AddAddressToAccessList(params.BeaconRootsStorageAddress)
 	_, _, _ = vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
 	statedb.Finalise(true)
+}
+
+// ProcessOnPersist applies a system call to the governance contract.
+func ProcessOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
+	data, err := systemcontracts.GovernanceABI.Pack("onPersist")
+	if err != nil {
+		return fmt.Errorf("filed to pack onPersist call: %w", err)
+	}
+	msg := &Message{
+		From:      params.SystemAddress,
+		GasLimit:  30_000_000,
+		GasPrice:  common.Big0,
+		GasFeeCap: common.Big0,
+		GasTipCap: common.Big0,
+		To:        &systemcontracts.GovernanceProxyHash,
+		Data:      data,
+	}
+	vmenv.Reset(NewEVMTxContext(msg), statedb)
+	statedb.AddAddressToAccessList(systemcontracts.GovernanceProxyHash)
+	_, _, err = vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
+	if err != nil {
+		return fmt.Errorf("onPersist call failed: %w", err)
+	}
+	statedb.Finalise(true)
+	return nil
 }

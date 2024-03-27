@@ -25,16 +25,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"math/big"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/consensus/misc"
@@ -81,6 +80,11 @@ const (
 	// msgsChCap is a capacity of channel that accepts consensus messages from
 	// dBFT protocol.
 	msgsChCap = 100
+	// validatorsCacheCap is a capacity of validators cache. It's enough to store
+	// validators for only three potentially subsequent heights, i.e. three latest
+	// blocks to effectivaly verify dBFT payloads travelling through the network and
+	// properly initialize dBFT at the latest height.
+	validatorsCacheCap = 3
 )
 
 // Various error messages to mark blocks invalid. These should be private to
@@ -194,12 +198,11 @@ type DBFT struct {
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
 	// received from dBFT or from chain. These fields have exactly those type
 	// that Eth offers, thus, they need to be converted before feeding to dBFT.
-	lastTimestamp              uint64 // in seconds, like Eth requires.
-	lastIndex                  uint64
-	lastBlockHash              common.Hash
-	lastBlockSealHash          common.Hash
-	lastBlockExtra             []byte
-	lastBlockNextNextConsensus common.Hash // ready-to-use NextConsensus field for the next accepted block.
+	lastTimestamp     uint64 // in seconds, like Eth requires.
+	lastIndex         uint64
+	lastBlockHash     common.Hash
+	lastBlockSealHash common.Hash
+	lastBlockExtra    []byte
 
 	// lastProposal holds the latest proposal submitted to dBFT by miner. It is updated
 	// irrespectively and concurrently to dBFT process, thus, access should be protected
@@ -219,8 +222,8 @@ type DBFT struct {
 	finished chan struct{}
 
 	// various native contract APIs that dBFT uses.
-	ethAPI        *ethapi.BlockChainAPI
-	governanceABI abi.ABI
+	ethAPI          *ethapi.BlockChainAPI
+	validatorsCache *lru.Cache[uint64, []common.Address]
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
@@ -253,6 +256,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 		quit:     make(chan struct{}),
 		finished: make(chan struct{}),
+
+		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 	}
 
 	logger, _ := zap.NewDevelopment()
@@ -301,7 +306,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				// getValidators with empty args is used by dbft to fill the list of
 				// block's validators, thus should return validators from the current
 				// epoch without recalculation.
-				pKeys, err = c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, false)
+				pKeys, err = c.getValidators(&c.lastIndex, nil, nil)
 			}
 			// getValidators with non-empty args is used by dbft to fill block's
 			// NextConsensus field, but DBFT doesn't provide WithGetConsensusAddress
@@ -340,10 +345,6 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					log.Warn("error on enqueue block", "error", err.Error())
 				}
 			}
-
-			// After that, update last block cached information. Do not reset sealing
-			// proposal, it will be done once new block arrives to eventLoop.
-			c.postBlock(res)
 		}),
 		dbft.WithNewBlockFromContext(func(ctx *dbft.Context) block.Block {
 			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
@@ -420,42 +421,43 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				panic("bug: sealing proposal is not initialized")
 			}
 
-			// NextConsensus -> MixHash
-			c.sealingProposal.MixDigest = c.lastBlockNextNextConsensus
-
-			// Recalculate block state provided by miner and update sealing proposal if CV happened and context-related
+			// Recalculate block state provided by miner and update sealing proposal if context-related
 			// block fields were changed.
-			if c.dbft.Context.ViewNumber != 0 {
-				dbftBlock := c.newBlockFromContext(c.sealingProposal)
-				dbftBlock.transactions = c.sealingTransactions
-				ethBlock := dbftBlock.ToEthBlock()
+			dbftBlock := c.newBlockFromContext(c.sealingProposal)
+			dbftBlock.transactions = c.sealingTransactions
+			ethBlock := dbftBlock.ToEthBlock()
 
-				state, receipts, _, _, err := c.chain.ProcessState(ethBlock)
-				if err != nil {
-					log.Crit("failed to process state from proposal",
-						"err", err,
-						"number", ethBlock.NumberU64(),
-						"seal hash", c.SealHash(ethBlock.Header()),
-						"parent hash", ethBlock.ParentHash().String(),
-						"intermediate merkle root", ethBlock.Root(),
-						"coinbase", ethBlock.Coinbase().String(),
-						"gas limit", ethBlock.GasLimit(),
-						"gas used", ethBlock.GasUsed(),
-						"difficulty", ethBlock.Difficulty().String(),
-						"mix digest", ethBlock.MixDigest().String(),
-						"nonce", ethBlock.Nonce(),
-						"time", ethBlock.Time(),
-						"uncle hash", ethBlock.UncleHash().String(),
-						"txs", len(ethBlock.Transactions()))
-				}
-				b, err := c.FinalizeAndAssemble(c.chain, dbftBlock.header, state, dbftBlock.transactions, nil, receipts, dbftBlock.withdrawals)
-				if err != nil {
-					log.Crit("failed to finalize and assemble proposal",
-						"err", err)
-				}
-
-				c.sealingProposal = b.Header()
+			state, _, _, _, err := c.chain.ProcessState(ethBlock)
+			if err != nil {
+				log.Crit("failed to process state from proposal",
+					"err", err,
+					"number", ethBlock.NumberU64(),
+					"seal hash", c.SealHash(ethBlock.Header()),
+					"parent hash", ethBlock.ParentHash().String(),
+					"intermediate merkle root", ethBlock.Root(),
+					"coinbase", ethBlock.Coinbase().String(),
+					"gas limit", ethBlock.GasLimit(),
+					"gas used", ethBlock.GasUsed(),
+					"difficulty", ethBlock.Difficulty().String(),
+					"mix digest", ethBlock.MixDigest().String(),
+					"nonce", ethBlock.Nonce(),
+					"time", ethBlock.Time(),
+					"uncle hash", ethBlock.UncleHash().String(),
+					"txs", len(ethBlock.Transactions()))
 			}
+
+			header := ethBlock.Header()
+			header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
+
+			c.sealingProposal = header
+
+			// Fill NextConsensus based on the currently accepting block state and update MixDigest.
+			nextVals, err := c.getValidators(nil, state, c.sealingProposal)
+			if err != nil {
+				log.Crit("Failed to compute next block validators",
+					"err", err)
+			}
+			c.sealingProposal.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
 
 			// Fill in only proposal and last block info, transactions will be properly
 			// set from context later in SetTransactionHashes callback.
@@ -476,11 +478,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			if req.SealingProposal == nil {
 				return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
 			}
-			// Verify MixDigest separately from header verification below since header verification
-			// doesn't check the correctness of NextConsensus wrt storage state.
-			if req.SealingProposal.MixDigest != c.lastBlockNextNextConsensus {
-				return fmt.Errorf("invalid MixDigest (NextConsensus): expected %s, got %s", c.lastBlockNextNextConsensus, req.SealingProposal.MixDigest)
-			}
+			// Do not verify MixDigest since it depends on block state and will be verified once all transactions
+			// are fetched.
 			parent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 1)
 			if parent == nil {
 				return fmt.Errorf("no parent found for height %d", req.SealingProposal.Number.Uint64()-1)
@@ -572,6 +571,23 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					"err", err.Error())
 				return false
 			}
+
+			// Verify NextConsensus based on the state got after in-block transactions processing. Make a
+			// state copy in order to avoid state modifications potentially made by getValidators call.
+			// The original state will be committed if block is accepted.
+			nextVals, err := c.getValidators(nil, state.Copy(), dbftBlock.header)
+			if err != nil {
+				log.Crit("Failed to compute next block validators",
+					"err", err)
+			}
+			expectedMixDigest := dbftutil.GetNextConsensusHash(nextVals)
+			if dbftBlock.header.MixDigest != expectedMixDigest {
+				log.Warn("Invalid NextConsensus in the proposed block",
+					"expected", expectedMixDigest.String(),
+					"actual", dbftBlock.header.MixDigest.String())
+				return false
+			}
+
 			dbftBlock.state = state
 			dbftBlock.receipts = receipts
 
@@ -692,14 +708,6 @@ func (c *DBFT) postBlock(b *types.Block) {
 		c.lastBlockExtra = h.Extra
 
 		c.blockQueue.ClearStaleTasks(b.NumberU64())
-
-		// Calculate NextConsensus field for the next block based on the accepted lastBlock state.
-		nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true) // always compute as it's NextConsensus.
-		if err != nil {
-			log.Crit("failed to compute next block validators",
-				"err", err.Error())
-		}
-		c.lastBlockNextNextConsensus = dbftutil.GetNextConsensusHash(nextVals)
 	}
 }
 
@@ -1079,17 +1087,10 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.lastBlockHash = currHeader.Hash()
 		c.lastBlockSealHash = HonestSealHash(currHeader)
 		c.lastBlockExtra = currHeader.Extra
-		nextVals, err := c.getNextBlockValidators(c.lastBlockHash, c.lastIndex, true) // always compute as it's NextConsensus.
-		if err != nil {
-			log.Warn("failed to compute next block validators while initializing dBFT",
-				"err", err.Error())
-			return
-		}
-		c.lastBlockNextNextConsensus = dbftutil.GetNextConsensusHash(nextVals)
 
 		// Before consensus start we should wait for initial sealing proposal to be
 		// initialised by miner. Start consensus once we have new sealing work in Seal.
-		err = c.waitForNewSealingProposal(c.lastIndex+1, false)
+		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
 		if err != nil {
 			log.Warn("Failed to fetch latest sealing proposal",
 				"index", c.lastIndex+1,
@@ -1338,8 +1339,8 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 		return nil
 	}
 
-	if !c.validatePayload(p) {
-		log.Info("can't validate payload", "hash", cp.Hash())
+	if err := c.validatePayload(p); err != nil {
+		log.Info("Can't validate payload", "hash", cp.Hash(), "err", err)
 		return nil
 	}
 
@@ -1377,18 +1378,22 @@ func payloadFromMessage(ep *dbftproto.Message) *Payload {
 	}
 }
 
-func (c *DBFT) validatePayload(p *Payload) bool {
-	h := c.chain.CurrentBlock()
-	validators, err := c.getNextBlockValidators(h.Hash(), h.Number.Uint64(), false)
+func (c *DBFT) validatePayload(p *Payload) error {
+	h := c.chain.CurrentBlock().Number.Uint64()
+	validators, err := c.getValidators(&h, nil, nil)
 	if err != nil {
-		return false
+		return fmt.Errorf("failed to get next block validators: %w", err)
 	}
 	if int(p.message.ValidatorIndex) >= len(validators) {
-		return false
+		return fmt.Errorf("invalid message validator index: validators count is %d, requested %d", len(validators), p.message.ValidatorIndex)
 	}
 
 	val := validators[p.message.ValidatorIndex]
-	return p.Sender == val
+	if p.Sender != val {
+		return fmt.Errorf("message sender is not a validator: expected %s, got %s", val, p.Sender)
+	}
+
+	return nil
 }
 
 func (c *DBFT) newPayload(ctx *dbft.Context, t payload.MessageType, msg any) payload.ConsensusPayload {
@@ -1415,7 +1420,8 @@ func (c *DBFT) handleChainBlock(b *types.Block) error {
 			"hash", b.Hash().String(),
 			"parent hash", b.ParentHash().String(),
 			"primary", b.Primary(),
-			"coinbase", b.Coinbase())
+			"coinbase", b.Coinbase(),
+			"mix digest", b.MixDigest().String())
 		c.postBlock(b)
 
 		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
@@ -1445,7 +1451,8 @@ func (c *DBFT) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, pa
 }
 
 func (c *DBFT) calcDifficulty(signer common.Address, parent *types.Header) *big.Int {
-	vals, err := c.getNextBlockValidators(parent.Hash(), parent.Number.Uint64(), false)
+	h := parent.Number.Uint64()
+	vals, err := c.getValidators(&h, nil, nil)
 	if err != nil {
 		return nil
 	}
@@ -1589,56 +1596,68 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	}}
 }
 
-// getNextBlockValidators returns next block validators that should be set as
-// a NextConsensus address for the next block accepted after block with blockHash
-// hash and blockNum height (if compute is true). It also returns validators of
-// the currently processing blocks to properly initialize dBFT context's Validators
-// field (if compute is false). Validators returned from this method are always expected
-// to be sorted by bytes order (even if returned from governance contract).
-func (c *DBFT) getNextBlockValidators(blockHash common.Hash, blockNum uint64, compute bool) ([]common.Address, error) {
-	// Currently we don't have governance contract, thus, always return standby set.
-	if true {
-		return c.config.StandByValidators, nil
-	}
-
+// getValidators returns validators chosen in the result of the latest
+// finalized voting epoch. It calls Governance contract under the hood. The call
+// is based on the provided state or (if not provided) on the state of the block
+// with the specified height. Validators returned from this method are always
+// sorted by bytes order (even if the list returned from governance contract is
+// sorted in another way). This method uses cached values in case of validators
+// requested by block height.
+func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
 	if c.ethAPI == nil {
 		return nil, errors.New("eth blockchain API is not initialized, dBFT can't function properly")
 	}
 
-	// Once we have governance contract, we don't need StandByValidators in the dBFT's
-	// config, governance contract will handle it internally.
-	blockNr := rpc.BlockNumberOrHashWithHash(blockHash, false)
+	if state == nil && blockNum != nil {
+		vals, ok := c.validatorsCache.Get(*blockNum)
+		if ok {
+			return vals, nil
+		}
+	}
 
-	// Different values depending on dBFT epoch.
-	method := "getNextBlockValidators" // current epoch validators
-	if compute {
-		method = "computeNextBlockValidators" // current epoch validators for the middle of dBFT epoch and next epoch validators for the last block in epoch
+	// Perform smart contract call.
+	method := "getCurrentConsensus" // latest finalized epoch validators.
+	data, err := systemcontracts.GovernanceABI.Pack(method)
+	if err != nil {
+		return nil, fmt.Errorf("failed to pack '%s': %w", method, err)
+	}
+	msgData := hexutil.Bytes(data)
+	gas := hexutil.Uint64(50_000_000) // more than enough for validators call processing.
+	args := ethapi.TransactionArgs{
+		Gas:  &gas,
+		To:   &systemcontracts.GovernanceProxyHash,
+		Data: &msgData,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	// Cancel when we are finished consuming integers
+	// Cancel when we are finished consuming integers.
 	defer cancel()
-	data, err := c.governanceABI.Pack(method)
-	if err != nil {
-		log.Error("Unable to pack tx to retrieve next block validators", "error", err)
-		return nil, err
+	var result hexutil.Bytes
+	if state != nil {
+		result, err = c.ethAPI.CallAtState(ctx, args, state, header)
+	} else if blockNum != nil {
+		blockNr := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(*blockNum))
+		result, err = c.ethAPI.Call(ctx, args, &blockNr, nil, nil)
+	} else {
+		return nil, fmt.Errorf("failed to compute validators: both block number and state are nil")
 	}
-	// do smart contract call
-	msgData := (hexutil.Bytes)(data)
-	toAddress := common.HexToAddress(systemcontracts.GovernanceContract)
-	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
-	result, err := c.ethAPI.Call(ctx, ethapi.TransactionArgs{
-		Gas:  &gas,
-		To:   &toAddress,
-		Data: &msgData,
-	}, &blockNr, nil, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to perform '%s' call: %w", method, err)
 	}
 
-	var valSet []common.Address
-	err = c.governanceABI.UnpackIntoInterface(&valSet, method, result)
-	return valSet, err
+	var res []common.Address
+	err = systemcontracts.GovernanceABI.UnpackIntoInterface(&res, method, result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unpack validators: %w", err)
+	}
+	slices.SortFunc(res, common.Address.Cmp)
+
+	// Update cache in case if existing state was used for validators retrieval.
+	if state == nil && blockNum != nil {
+		_ = c.validatorsCache.Add(*blockNum, res)
+	}
+
+	return res, err
 }
 
 func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {

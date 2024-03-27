@@ -977,10 +977,21 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 		log.Error("Failed to create sealing context", "err", err)
 		return nil, err
 	}
+	var (
+		context vm.BlockContext
+		vmenv   *vm.EVM
+	)
 	if header.ParentBeaconRoot != nil {
-		context := core.NewEVMBlockContext(header, w.chain, nil)
-		vmenv := vm.NewEVM(context, vm.TxContext{}, env.state, w.chainConfig, vm.Config{})
+		context = core.NewEVMBlockContext(header, w.chain, nil)
+		vmenv = vm.NewEVM(context, vm.TxContext{}, env.state, w.chainConfig, vm.Config{})
 		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, vmenv, env.state)
+	}
+	if w.chain.Config().DBFT != nil {
+		if vmenv == nil {
+			context = core.NewEVMBlockContext(header, w.chain, nil)
+			vmenv = vm.NewEVM(context, vm.TxContext{}, env.state, w.chainConfig, vm.Config{})
+		}
+		core.ProcessOnPersist(vmenv, env.state)
 	}
 	return env, nil
 }
