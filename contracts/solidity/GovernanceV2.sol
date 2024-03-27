@@ -117,6 +117,7 @@ contract GovernanceV2 is IGovernanceV2, ReentrancyGuard {
     }
 
     function registerCandidate(uint shareRate) external payable {
+        require(tx.origin == msg.sender, "only allow EOA");
         require(msg.value >= registerFee, "insufficient amount");
         require(shareRate < 1000, "invalid rate");
         require(!candidateList.contains(msg.sender), "candidate exists");
