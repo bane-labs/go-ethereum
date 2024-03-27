@@ -150,8 +150,9 @@ contract GovernanceV2 is IGovernanceV2 {
         delete candidateBalanceOf[msg.sender];
         delete exitHeightOf[msg.sender];
         delete shareRateOf[msg.sender];
-        _safeTransferETH(msg.sender, amount);
+
         emit CandidateWithdraw(msg.sender, amount);
+        _safeTransferETH(msg.sender, amount);
     }
 
     function vote(address candidateTo) external payable {
@@ -164,8 +165,9 @@ contract GovernanceV2 is IGovernanceV2 {
         );
 
         // settle reward here
+        uint unclaimedReward = 0;
         if (votedCandidate != address(0)) {
-            _settleReward(msg.sender, votedCandidate);
+            unclaimedReward = _settleReward(msg.sender, votedCandidate);
         } else {
             // record tag value
             votedTo[msg.sender] = candidateTo;
@@ -181,6 +183,7 @@ contract GovernanceV2 is IGovernanceV2 {
         }
 
         emit Vote(msg.sender, candidateTo, msg.value);
+        if (unclaimedReward > 0) _safeTransferETH(msg.sender, unclaimedReward);
     }
 
     function revokeVote() external {
@@ -192,7 +195,7 @@ contract GovernanceV2 is IGovernanceV2 {
         );
 
         // settle reward here
-        _settleReward(msg.sender, candidateFrom);
+        uint unclaimedReward = _settleReward(msg.sender, candidateFrom);
 
         // update votes
         receivedVotes[candidateFrom] -= amount;
@@ -203,14 +206,15 @@ contract GovernanceV2 is IGovernanceV2 {
         delete voterGasPerVote[msg.sender];
         delete voteHeight[msg.sender];
 
-        _safeTransferETH(msg.sender, amount);
         emit Revoke(msg.sender, candidateFrom, amount);
+        _safeTransferETH(msg.sender, amount + unclaimedReward);
     }
 
     function claimReward() external {
         address votedCandidate = votedTo[msg.sender];
         require(votedCandidate != address(0), "claim not allowed");
-        _settleReward(msg.sender, votedCandidate);
+        uint unclaimedReward = _settleReward(msg.sender, votedCandidate);
+        if (unclaimedReward > 0) _safeTransferETH(msg.sender, unclaimedReward);
     }
 
     function unclaimedRewardOf(address voter) external view returns (uint) {
@@ -268,11 +272,11 @@ contract GovernanceV2 is IGovernanceV2 {
             scaleFactor;
     }
 
-    function _settleReward(address voter, address candidate) internal {
+    function _settleReward(address voter, address candidate) internal returns (uint) {
         uint reward = _computeReward(voter, candidate);
         voterGasPerVote[voter] = candidateGasPerVote[candidate];
-        _safeTransferETH(voter, reward);
         emit VoterClaim(voter, reward);
+        return reward;
     }
 
     function _safeTransferETH(address to, uint value) internal {
