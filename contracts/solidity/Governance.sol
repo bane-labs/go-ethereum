@@ -58,6 +58,8 @@ contract Governance is IGovernance, ReentrancyGuard {
     uint public consensusSize;
     // the min balance for voting
     uint public minVoteAmount;
+    // the min amount to make vote result valid
+    uint public voteTargetAmount;
     // register fee
     uint public registerFee;
     // duration of an epoch (in blocks)
@@ -72,6 +74,7 @@ contract Governance is IGovernance, ReentrancyGuard {
     // the left register fee to exit
     mapping(address => uint) public candidateBalanceOf;
 
+    uint public totalVotes;
     // candidate=>amount
     mapping(address => uint) public receivedVotes;
     // voter=>candidate
@@ -83,6 +86,8 @@ contract Governance is IGovernance, ReentrancyGuard {
     uint public currentEpochStartHeight;
     // the current group of block validators
     address[] public currentConsensus;
+    // a fixed list of stand-by validators to be selected as consensus
+    address[] public standByValidators;
 
     // candidate=>total
     mapping(address => uint) public candidateGasPerVote;
@@ -179,6 +184,7 @@ contract Governance is IGovernance, ReentrancyGuard {
         // update votes
         votedAmount[msg.sender] += msg.value;
         receivedVotes[candidateTo] += msg.value;
+        totalVotes += msg.value;
         // NOTE: the left reward in the first epoch of first vote will be unclaimable.
         if (votedCandidate == address(0)) {
             voteHeight[msg.sender] = block.number;
@@ -201,6 +207,7 @@ contract Governance is IGovernance, ReentrancyGuard {
 
         // update votes
         receivedVotes[candidateFrom] -= amount;
+        totalVotes -= amount;
         delete votedTo[msg.sender];
         delete votedAmount[msg.sender];
 
@@ -243,7 +250,11 @@ contract Governance is IGovernance, ReentrancyGuard {
 
         // compute and update consensus
         currentEpochStartHeight = block.number;
-        currentConsensus = _computeConsensus();
+        if (length < consensusSize || totalVotes < voteTargetAmount) {
+            currentConsensus = standByValidators;
+        } else {
+            currentConsensus = _computeConsensus();
+        }
         emit Persist(currentConsensus);
     }
 
