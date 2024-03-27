@@ -50,7 +50,7 @@ abstract contract GovernanceVote {
                 votedCount++;
             }
         }
-        return votedCount > (voters.length * 2) / 3;
+        return votedCount >= (voters.length + 1) / 2;
     }
 
     modifier needVote(bytes32 methodKey, bytes32 paramKey) {

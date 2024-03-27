@@ -1,470 +1,349 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
 interface IGovernance {
-    struct Phase {
-        uint startHeight;
-        address[] miners;
-        uint preHeight;
-        uint nextHeight;
-        uint voteAmount;
-    }
+    event Register(address candidate);
+    event Exit(address candidate);
+    event Vote(address voter, address to, uint amount);
+    event Revoke(address voter, address from, uint amount);
+    event VoterClaim(address voter, uint reward);
+    event CandidateWithdraw(address candidate, uint amount);
+    event Persist(address[] validators);
 
-    event Vote(address voter, address candidate, uint value);
-    event RevokeVote(address voter, address candidate, uint value);
+    // register to be a candidate with gas
+    function registerCandidate(uint shareRate) external payable;
 
-    event VotePass(
-        uint votedBalance,
-        uint startHeight,
-        address[] miners,
-        uint preHeight
-    );
+    // exit candidates and wait for withdraw
+    function exitCandidate() external;
 
-    event WithdrawReward(address voter, uint reward);
+    // withdraw register fee after 2 epoch
+    function withdrawRegisterFee() external;
 
-    // vote candidate with gas
-    // add new phase when the vote condition meets
-    function vote(address candidate, uint value) external payable;
+    // vote with gas, only 1 target is allowed
+    function vote(address to) external payable;
 
-    // revoke vote to candidate
-    function revokeVote(address candidate) external;
+    // revoke votes and claim rewards
+    function revokeVote() external;
 
-    // get current consensus phase
-    function getCurrentPhase() external view returns (Phase memory);
+    // only claim rewards
+    function claimReward() external;
 
-    // get consensus phase by start height
-    function getPhaseByHeight(uint height) external view returns (Phase memory);
+    // get reward amount to be claimed when settle
+    function unclaimedRewardOf(address voter) external view returns (uint);
 
-    // get reward amount of addr
-    function getRewardAmount(
-        address addr,
-        address candidate
-    ) external view returns (uint reward);
+    // get consensus group members
+    function getCurrentConsensus() external view returns (address[] memory);
 
-    // withdraw reward
-    function withdrawReward(address candidate) external;
+    // compute and update cached consensus group
+    function onPersist() external;
 }
 
 interface IGovReward {
-    function withdrawERC20(address to, address token, uint amount) external;
-
-    function withdraw(address to, uint amount) external;
+    function withdraw() external;
 }
 
-contract Governance is IGovernance {
-    // the min balance for voting
-    uint public constant MIN_VOTE_AMOUNT = 1 ether;
-    // the total balance target for a vote to pass
-    uint public constant VOTE_TARGET_AMOUNT = 3000000 ether;
-    // candidate stake amount
-    uint public constant STAKE_AMOUNT = 1000 ether;
+contract Governance is IGovernance, ReentrancyGuard {
+    using EnumerableSet for EnumerableSet.AddressSet;
+
     // GovReward contract
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
-    // block count of one round
-    uint public constant ROUND = 120960;
+    address public constant sysCall =
+        0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
+    uint public constant scaleFactor = 10 ** 18;
 
-    // the last Phase's start height, default 1
-    uint public lastStartHeight;
+    uint public consensusSize;
+    // the min balance for voting
+    uint public minVoteAmount;
+    // register fee
+    uint public registerFee;
+    // duration of an epoch (in blocks)
+    uint public epochDuration;
 
-    // Phase mapping to store Phase, key is the start height of Phase,
-    // should add first phase in genesis block
-    mapping(uint => Phase) private phaseMap;
-    // candidate mapping, candidate address -> stake height
-    mapping(address => uint) private candidateMap;
-    // unstake mapping, candidate address -> unstake height
-    mapping(address => uint) private unSkakeMap;
+    // candidate list
+    EnumerableSet.AddressSet internal candidateList;
+    // settings about how much reward given to voter
+    mapping(address => uint) public shareRateOf;
+    // the height when exit happens
+    mapping(address => uint) public exitHeightOf;
+    // the left register fee to exit
+    mapping(address => uint) public candidateBalanceOf;
 
-    // candidate linked list
-    address constant HEAD = address(1);
-    mapping(address => address) _nextCandidate;
-    mapping(address => address) _preCandidate;
+    // candidate=>amount
+    mapping(address => uint) public receivedVotes;
+    // voter=>candidate
+    mapping(address => address) public votedTo;
+    // voter=>amount
+    mapping(address => uint) public votedAmount;
 
-    // vote shares mapping, phase height -> (candidate address -> (user address -> voteValue))
-    mapping(uint => mapping(address => mapping(address => int)))
-        private voterMap;
-    // candidate vote mapping, phase height -> candidate -> voteValue
-    mapping(uint => mapping(address => int)) candidateVoteMap;
-    // total candidate vote mapping, candidate -> voteValue
-    mapping(address => uint) totalCandidateVoteMap;
-    // total voted amount
-    uint private totalVotedAmount;
-    // vote reward, phase height -> total reward
-    mapping(uint => uint) private rewardRecord;
+    // the block height when current epoch starts
+    uint public currentEpochStartHeight;
+    // the current group of block validators
+    address[] public currentConsensus;
 
-    // withdrawedReward reward, user address -> withdrawedReward
-    mapping(address => uint) private withdrawedReward;
-    // total withdrawed reward
-    uint public totalWithdrawedReward;
+    // candidate=>total
+    mapping(address => uint) public candidateGasPerVote;
+    // voter=>number
+    mapping(address => uint) public voterGasPerVote;
+    // voter=>height
+    mapping(address => uint) public voteHeight;
+    // candidate=>height=>number
+    mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
 
-    uint private constant _NOT_ENTERED = 1;
-    uint private constant _ENTERED = 2;
-
-    // status for nonReentrant modifier
-    uint private _status;
-
-    // ratio base
-    uint public constant RatioBase = 10000;
-    // vote reward ratio
-    uint public constant RatioVote = 5000;
-
-    /**
-     * @dev Prevents a contract from calling itself, directly or indirectly.
-     */
-    modifier nonReentrant() {
-        // On the first call to nonReentrant, _notEntered will be true
-        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
-
-        // Any calls to nonReentrant after this point will fail
-        _status = _ENTERED;
-
-        _;
-
-        // By storing the original value once again, a refund is triggered (see
-        // https://eips.ethereum.org/EIPS/eip-2200)
-        _status = _NOT_ENTERED;
-    }
-
-    // constructor should not be in upgradable contract, this method is just for testing
-    // governance contract should be pre-deployed in genesis.json
-    constructor() {
-        lastStartHeight = 1;
-        _nextCandidate[HEAD] = HEAD;
-        _preCandidate[HEAD] = HEAD;
-        _status = _NOT_ENTERED;
-        address[] memory defaultMiners = new address[](2);
-        defaultMiners[0] = 0x625eAFa3473492007C0dD331E23B1035f6a7FB64;
-        defaultMiners[1] = 0x745c8f1AF649651f46DcAEc2C6EB94068843AE96;
-        phaseMap[1] = Phase({
-            startHeight: 1,
-            miners: defaultMiners,
-            preHeight: 0,
-            nextHeight: 0,
-            voteAmount: 0
-        });
-    }
-
-    function isMinerOfPhase(
-        Phase memory phase,
-        address addr
-    ) public pure returns (bool) {
-        for (uint i = 0; i < phase.miners.length; i++) {
-            if (addr == phase.miners[i]) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    function isMiner(address addr) public view returns (bool) {
-        Phase memory currentPhase = getCurrentPhase();
-        return isMinerOfPhase(currentPhase, addr);
-    }
-
-    // stake GAS to be a candidate of miner
-    function stake() external payable nonReentrant {
-        require(msg.value >= STAKE_AMOUNT, "insufficient stake value");
-        require(candidateMap[msg.sender] == 0, "already candidate");
-        require(unSkakeMap[msg.sender] == 0, "already unskake");
-
-        candidateMap[msg.sender] = block.number;
-
-        // refund
-        if (msg.value > STAKE_AMOUNT) {
-            safeTransferETH(msg.sender, msg.value - STAKE_AMOUNT);
-        }
-    }
-
-    // unskate GAS, the GAS can be withdrawed in next epoch
-    function unstake() external {
-        require(candidateMap[msg.sender] > 0, "no candidate");
-
-        candidateMap[msg.sender] = 0;
-        unSkakeMap[msg.sender] = lastStartHeight;
-
-        // remove candidate from linked list
-        _removeCandidate(msg.sender);
-    }
-
-    // claim unskated GAS
-    function claimStake() external nonReentrant {
-        require(unSkakeMap[msg.sender] > 0, "no unskated GAS");
-        require(
-            unSkakeMap[msg.sender] < lastStartHeight,
-            "unskated GAS can be withdrawed in next epoch"
-        );
-
-        unSkakeMap[msg.sender] = 0;
-        safeTransferETH(msg.sender, STAKE_AMOUNT);
-    }
-
-    function getVoterTotal(
-        address voter,
-        address candidate,
-        uint phaseHeight
-    ) internal view returns (uint) {
-        int amount = voterMap[phaseHeight][candidate][voter];
-        uint preHeight = phaseMap[phaseHeight].preHeight;
-        while (preHeight > 0) {
-            amount += voterMap[preHeight][candidate][voter];
-            preHeight = phaseMap[preHeight].preHeight;
-        }
-        return uint(amount);
-    }
-
-    function getCandidateTotal(
-        address candidate,
-        uint phaseHeight
-    ) internal view returns (uint) {
-        int amount = candidateVoteMap[phaseHeight][candidate];
-        uint preHeight = phaseMap[phaseHeight].preHeight;
-        while (preHeight > 0) {
-            amount += candidateVoteMap[preHeight][candidate];
-            preHeight = phaseMap[preHeight].preHeight;
-        }
-        return uint(amount);
-    }
-
-    // check newValue is betweent prev and next
-    function _verifyIndex(
-        address prev,
-        uint256 newValue,
-        address next
-    ) internal view returns (bool) {
-        return
-            (prev == HEAD || totalCandidateVoteMap[prev] >= newValue) &&
-            (next == HEAD || newValue > totalCandidateVoteMap[next]);
-    }
-
-    // remove candidate
-    function _removeCandidate(address candidate) internal {
-        if (_nextCandidate[candidate] == address(0)) {
-            return;
-        }
-        address pre = _preCandidate[candidate];
-        address next = _nextCandidate[candidate];
-        _nextCandidate[pre] = next;
-        _preCandidate[next] = pre;
-    }
-
-    function updateCandidateList(address candidate, uint voteAmount) internal {
-        // if candidate exists
-        if (_nextCandidate[candidate] != address(0)) {
-            address pre = _preCandidate[candidate];
-            address next = _nextCandidate[candidate];
-            // if order no need to change
-            if (_verifyIndex(pre, voteAmount, next)) {
-                return;
-            }
-
-            // remove candidate
-            _nextCandidate[pre] = next;
-            _preCandidate[next] = pre;
-        }
-
-        // if voteAmount is 0, no need to insert
-        if (voteAmount == 0) {
-            return;
-        }
-        // insert candidate
-        address insertPre = _findIndex(voteAmount);
-        address insertNext = _nextCandidate[insertPre];
-        _nextCandidate[insertPre] = candidate;
-        _nextCandidate[candidate] = insertNext;
-        _preCandidate[insertNext] = candidate;
-        _preCandidate[candidate] = insertPre;
-    }
-
-    function _findIndex(uint voteAmount) internal view returns (address) {
-        address candidateAddress = HEAD;
-        while (_nextCandidate[candidateAddress] != HEAD) {
-            if (
-                _verifyIndex(
-                    candidateAddress,
-                    voteAmount,
-                    _nextCandidate[candidateAddress]
-                )
-            ) {
-                return candidateAddress;
-            }
-            candidateAddress = _nextCandidate[candidateAddress];
-        }
-        return candidateAddress;
-    }
-
-    function getTopCandidates(
-        uint256 k
-    ) public view returns (address[] memory) {
-        address[] memory result = new address[](k);
-        address currentAddress = _nextCandidate[HEAD];
-        uint i = 0;
-        while (currentAddress != HEAD && i < k) {
-            result[i] = currentAddress;
-            currentAddress = _nextCandidate[currentAddress];
-            i++;
-        }
-        return result;
-    }
-
-    function _checkVotePass(uint votedTotal) internal view returns (bool) {
-        // check round
-        if ((block.number - lastStartHeight) < ROUND) {
-            return false;
-        }
-        if (votedTotal < VOTE_TARGET_AMOUNT) {
-            return false;
-        }
-        address[] memory miners = getTopCandidates(7);
-        if (miners[6] == address(0)) {
-            return false;
-        }
-        return true;
-    }
-
-    function vote(
-        address candidate,
-        uint amount
-    ) external payable override nonReentrant {
-        require(candidateMap[candidate] > 0, "invalid candidate");
-        require(amount >= MIN_VOTE_AMOUNT, "insufficient amount");
-        require(msg.value >= amount, "insufficient value");
-
-        // add this vote in this phase
-        voterMap[lastStartHeight][candidate][msg.sender] += int(amount);
-        candidateVoteMap[lastStartHeight][candidate] += int(amount);
-        totalCandidateVoteMap[candidate] += amount;
-        totalVotedAmount += amount;
-        updateCandidateList(candidate, totalCandidateVoteMap[candidate]);
-        emit Vote(msg.sender, candidate, amount);
-
-        // check total vote balance
-        if (_checkVotePass(totalVotedAmount)) {
-            Phase memory phase = Phase({
-                startHeight: block.number + 1,
-                miners: getTopCandidates(7),
-                preHeight: lastStartHeight,
-                nextHeight: 0,
-                voteAmount: totalVotedAmount
-            });
-            phaseMap[lastStartHeight].nextHeight = phase.startHeight;
-            phaseMap[phase.startHeight] = phase;
-            lastStartHeight = phase.startHeight;
-
-            // record current reward balance
-            rewardRecord[phase.startHeight] =
-                govReward.balance +
-                totalWithdrawedReward;
-
-            emit VotePass(
-                totalVotedAmount,
-                phase.startHeight,
-                phase.miners,
-                phase.preHeight
+    receive() external payable nonReentrant {
+        require(msg.sender == govReward, "side call not allowed");
+        address[] memory validators = currentConsensus;
+        uint length = validators.length;
+        for (uint i = 0; i < length; i++) {
+            candidateGasPerVote[validators[i]] +=
+                (msg.value * shareRateOf[validators[i]] * scaleFactor) /
+                consensusSize /
+                1000 /
+                receivedVotes[validators[i]];
+            _safeTransferETH(
+                validators[i],
+                (msg.value * (1000 - shareRateOf[validators[i]])) /
+                    consensusSize /
+                    1000
             );
         }
-
-        // refund
-        if (msg.value > amount) {
-            safeTransferETH(msg.sender, msg.value - amount);
-        }
     }
 
-    function safeTransferETH(address to, uint value) internal {
+    function getCandidates() public view returns (address[] memory) {
+        return candidateList.values();
+    }
+
+    function registerCandidate(uint shareRate) external payable {
+        require(msg.value >= registerFee, "insufficient amount");
+        require(shareRate < 1000, "invalid rate");
+        require(!candidateList.contains(msg.sender), "candidate exists");
+        require(exitHeightOf[msg.sender] == 0, "left not claimed");
+        candidateList.add(msg.sender);
+
+        // record share rate and balance
+        shareRateOf[msg.sender] = shareRate;
+        candidateBalanceOf[msg.sender] = msg.value;
+        emit Register(msg.sender);
+    }
+
+    function exitCandidate() external {
+        require(candidateList.contains(msg.sender), "candidate not exists");
+        // remove candidate list, balance still locked
+        candidateList.remove(msg.sender);
+        exitHeightOf[msg.sender] = block.number;
+        emit Exit(msg.sender);
+    }
+
+    function withdrawRegisterFee() external nonReentrant {
+        // require 2 epochs to exit candidate list
+        // NOTE: suppose epoch change always happens in time
+        require(
+            exitHeightOf[msg.sender] > 0 &&
+                block.number > exitHeightOf[msg.sender] + 2 * epochDuration,
+            "withdraw not allowed"
+        );
+
+        // send back balance
+        uint amount = candidateBalanceOf[msg.sender];
+        delete candidateBalanceOf[msg.sender];
+        delete exitHeightOf[msg.sender];
+        delete shareRateOf[msg.sender];
+
+        emit CandidateWithdraw(msg.sender, amount);
+        _safeTransferETH(msg.sender, amount);
+    }
+
+    function vote(address candidateTo) external payable nonReentrant {
+        require(msg.value >= minVoteAmount, "insufficient amount");
+        require(candidateList.contains(candidateTo), "candidate not allowed");
+        address votedCandidate = votedTo[msg.sender];
+        require(
+            votedCandidate == candidateTo || votedCandidate == address(0),
+            "only one choice is allowed"
+        );
+
+        // settle reward here
+        uint unclaimedReward = 0;
+        if (votedCandidate != address(0)) {
+            unclaimedReward = _settleReward(msg.sender, votedCandidate);
+        } else {
+            // record tag value
+            votedTo[msg.sender] = candidateTo;
+            voterGasPerVote[msg.sender] = candidateGasPerVote[candidateTo];
+        }
+
+        // update votes
+        votedAmount[msg.sender] += msg.value;
+        receivedVotes[candidateTo] += msg.value;
+        // NOTE: the left reward in the first epoch of first vote will be unclaimable.
+        if (votedCandidate == address(0)) {
+            voteHeight[msg.sender] = block.number;
+        }
+
+        emit Vote(msg.sender, candidateTo, msg.value);
+        if (unclaimedReward > 0) _safeTransferETH(msg.sender, unclaimedReward);
+    }
+
+    function revokeVote() external nonReentrant {
+        address candidateFrom = votedTo[msg.sender];
+        uint amount = votedAmount[msg.sender];
+        require(
+            candidateFrom != address(0) && amount > 0,
+            "revoke not allowed"
+        );
+
+        // settle reward here
+        uint unclaimedReward = _settleReward(msg.sender, candidateFrom);
+
+        // update votes
+        receivedVotes[candidateFrom] -= amount;
+        delete votedTo[msg.sender];
+        delete votedAmount[msg.sender];
+
+        // delete tag value
+        delete voterGasPerVote[msg.sender];
+        delete voteHeight[msg.sender];
+
+        emit Revoke(msg.sender, candidateFrom, amount);
+        _safeTransferETH(msg.sender, amount + unclaimedReward);
+    }
+
+    function claimReward() external nonReentrant {
+        address votedCandidate = votedTo[msg.sender];
+        require(votedCandidate != address(0), "claim not allowed");
+        uint unclaimedReward = _settleReward(msg.sender, votedCandidate);
+        if (unclaimedReward > 0) _safeTransferETH(msg.sender, unclaimedReward);
+    }
+
+    function unclaimedRewardOf(address voter) external view returns (uint) {
+        address votedCandidate = votedTo[voter];
+        if (votedCandidate == address(0)) return 0;
+        else return _computeReward(voter, votedCandidate);
+    }
+
+    function onPersist() external {
+        // NOTE: suppose onPersist always happens at the beginning of every block
+        require(msg.sender == sysCall, "side call not allowed");
+        // only settle validator reward if there is no epoch change
+        IGovReward(govReward).withdraw();
+        if (block.number < currentEpochStartHeight + epochDuration) return;
+
+        // update tag values
+        address[] memory candidates = candidateList.values();
+        uint length = candidates.length;
+        for (uint i = 0; i < length; i++) {
+            epochStartGasPerVote[candidates[i]][
+                currentEpochStartHeight / epochDuration
+            ] = candidateGasPerVote[candidates[i]];
+        }
+
+        // compute and update consensus
+        currentEpochStartHeight = block.number;
+        currentConsensus = _computeConsensus();
+        emit Persist(currentConsensus);
+    }
+
+    function getCurrentConsensus() public view returns (address[] memory) {
+        return currentConsensus;
+    }
+
+    function _computeReward(
+        address voter,
+        address candidate
+    ) internal view returns (uint) {
+        // NOTE: suppose onPersist always happens at the beginning of every block, then latestGasPerVote is always the latest
+        uint height = voteHeight[voter];
+        uint lastGasPerVote = voterGasPerVote[voter];
+        uint latestGasPerVote = candidateGasPerVote[candidate];
+        if (currentEpochStartHeight <= height) return 0;
+
+        // NOTE: suppose epoch change always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
+        uint voteEpochEndGasPerVote = epochStartGasPerVote[candidate][
+            (height - 1) / epochDuration + 1
+        ];
+        if (voteEpochEndGasPerVote > lastGasPerVote) {
+            lastGasPerVote = voteEpochEndGasPerVote;
+        }
+
+        return
+            (votedAmount[voter] * (latestGasPerVote - lastGasPerVote)) /
+            scaleFactor;
+    }
+
+    function _settleReward(
+        address voter,
+        address candidate
+    ) internal returns (uint) {
+        uint reward = _computeReward(voter, candidate);
+        voterGasPerVote[voter] = candidateGasPerVote[candidate];
+        emit VoterClaim(voter, reward);
+        return reward;
+    }
+
+    function _safeTransferETH(address to, uint value) internal {
         (bool success, ) = to.call{value: value}(new bytes(0));
         require(success, "safeTransferETH: ETH transfer failed");
     }
 
-    function revokeVote(address candidate) external override nonReentrant {
-        uint voteValue = getVoterTotal(msg.sender, candidate, lastStartHeight);
-        require(voteValue > 0, "empty vote value");
+    function _computeConsensus() internal view returns (address[] memory) {
+        // build up a votes array
+        address[] memory candidates = getCandidates();
+        uint length = candidates.length;
+        uint[] memory votes = new uint[](length);
+        for (uint i = 0; i < length; i++) {
+            votes[i] = receivedVotes[candidates[i]];
+        }
 
-        voterMap[lastStartHeight][candidate][msg.sender] -= int(voteValue);
-        candidateVoteMap[lastStartHeight][candidate] -= int(voteValue);
-        totalCandidateVoteMap[candidate] -= voteValue;
-        totalVotedAmount -= voteValue;
+        // sort top consensusSize based on votes
+        _topK(candidates, votes, consensusSize);
 
-        safeTransferETH(msg.sender, voteValue);
-        emit RevokeVote(msg.sender, candidate, voteValue);
+        // return the first consensusSize candidates as consensus list
+        address[] memory consensus = new address[](consensusSize);
+        for (uint i = 0; i < consensusSize; i++) {
+            consensus[i] = candidates[i];
+        }
+        return consensus;
     }
 
-    function getRewardAmount(
-        address addr,
-        address candidate
-    ) public view returns (uint reward) {
-        Phase memory current = phaseMap[lastStartHeight];
-        Phase memory prePhase = phaseMap[current.preHeight];
-        uint currentReward = 0;
-        uint preReward = 0;
-        // the first phase, there is no reward
-        while (current.startHeight > 1 && isMinerOfPhase(current, candidate)) {
-            uint share = getVoterTotal(addr, candidate, current.preHeight);
-            uint candidateTotal = getCandidateTotal(
-                candidate,
-                current.preHeight
-            );
-            // for the last phase, we calculate the balance of govReward
-            if (current.startHeight == lastStartHeight) {
-                currentReward =
-                    govReward.balance +
-                    totalWithdrawedReward -
-                    rewardRecord[current.startHeight];
-            } else {
-                // for pre phases, we get by rewardRecord
-                currentReward = preReward;
+    function _topK(
+        address[] memory candidates,
+        uint[] memory votes,
+        uint k
+    ) internal pure {
+        uint length = candidates.length;
+        for (int j = int(k) / 2 - 1; j >= 0; j--) {
+            _heapDown(candidates, votes, uint(j), k);
+        }
+        for (uint i = k; i < length; i++) {
+            if (votes[i] > votes[0]) {
+                votes[0] = votes[i];
+                candidates[0] = candidates[i];
+                _heapDown(candidates, votes, 0, k);
             }
-            // sum all the vote reward for addr
-            reward +=
-                (currentReward * share * RatioVote) /
-                candidateTotal /
-                current.miners.length /
-                RatioBase;
+        }
+    }
 
-            // sum all the consensus reward
-            if (isMinerOfPhase(current, addr)) {
-                reward +=
-                    (currentReward * (RatioBase - RatioVote)) /
-                    current.miners.length /
-                    RatioBase;
+    function _heapDown(
+        address[] memory candidates,
+        uint[] memory votes,
+        uint j,
+        uint k
+    ) internal pure {
+        uint i = 2 * j + 1;
+        while (i < k) {
+            if (i + 1 < k && votes[i] > votes[i + 1]) {
+                i += 1;
+            }
+            if (votes[i] > votes[j]) {
                 break;
             }
-
-            // calculate the reward for pre phase
-            preReward =
-                rewardRecord[current.startHeight] -
-                rewardRecord[prePhase.startHeight];
-
-            current = prePhase;
-            prePhase = phaseMap[current.preHeight];
+            (votes[i], votes[j]) = (votes[j], votes[i]);
+            (candidates[i], candidates[j]) = (candidates[j], candidates[i]);
+            j = i;
+            i = i * 2 + 1;
         }
-        // total reward - withdrawed reward
-        reward -= withdrawedReward[addr];
-        return reward;
-    }
-
-    function withdrawReward(address candidate) external nonReentrant {
-        uint reward = getRewardAmount(msg.sender, candidate);
-        if (reward > 0) {
-            withdrawedReward[msg.sender] += reward;
-            totalWithdrawedReward += reward;
-            IGovReward(govReward).withdraw(msg.sender, reward);
-            emit WithdrawReward(msg.sender, reward);
-        }
-    }
-
-    function getCurrentPhase() public view override returns (Phase memory) {
-        return getPhaseByHeight(block.number);
-    }
-
-    function getPhaseByHeight(
-        uint height
-    ) public view override returns (Phase memory) {
-        if (height >= lastStartHeight) {
-            return phaseMap[lastStartHeight];
-        }
-        uint currentHeight = lastStartHeight;
-        while (height < currentHeight) {
-            currentHeight = phaseMap[currentHeight].preHeight;
-        }
-        return phaseMap[currentHeight];
     }
 }

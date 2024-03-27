@@ -41,7 +41,7 @@ contract Policy is GovernanceVote {
         needVote(keccak256("removeBlackList"), keccak256(abi.encode(_addr)))
     {
         require(isBlackListed[_addr], "Policy: Blacklist does not exist");
-        isBlackListed[_addr] = false;
+        delete isBlackListed[_addr];
         emit RemoveBlackList(_addr);
     }
 }
