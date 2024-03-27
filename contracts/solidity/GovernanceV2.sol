@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IGovernanceV2 {
     event Register(address candidate);
@@ -44,7 +45,7 @@ interface IGovReward {
     function withdraw() external;
 }
 
-contract GovernanceV2 is IGovernanceV2 {
+contract GovernanceV2 is IGovernanceV2, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     // GovReward contract
@@ -92,7 +93,7 @@ contract GovernanceV2 is IGovernanceV2 {
     // candidate=>height=>number
     mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
 
-    receive() external payable {
+    receive() external payable nonReentrant {
         require(msg.sender == govReward, "side call not allowed");
         address[] memory validators = currentConsensus;
         uint length = validators.length;
@@ -136,7 +137,7 @@ contract GovernanceV2 is IGovernanceV2 {
         emit Exit(msg.sender);
     }
 
-    function withdrawRegisterFee() external {
+    function withdrawRegisterFee() external nonReentrant {
         // require 2 epochs to exit candidate list
         // NOTE: suppose epoch change always happens in time
         require(
@@ -155,7 +156,7 @@ contract GovernanceV2 is IGovernanceV2 {
         _safeTransferETH(msg.sender, amount);
     }
 
-    function vote(address candidateTo) external payable {
+    function vote(address candidateTo) external payable nonReentrant {
         require(msg.value >= minVoteAmount, "insufficient amount");
         require(candidateList.contains(candidateTo), "candidate not allowed");
         address votedCandidate = votedTo[msg.sender];
@@ -186,7 +187,7 @@ contract GovernanceV2 is IGovernanceV2 {
         if (unclaimedReward > 0) _safeTransferETH(msg.sender, unclaimedReward);
     }
 
-    function revokeVote() external {
+    function revokeVote() external nonReentrant {
         address candidateFrom = votedTo[msg.sender];
         uint amount = votedAmount[msg.sender];
         require(
@@ -210,7 +211,7 @@ contract GovernanceV2 is IGovernanceV2 {
         _safeTransferETH(msg.sender, amount + unclaimedReward);
     }
 
-    function claimReward() external {
+    function claimReward() external nonReentrant {
         address votedCandidate = votedTo[msg.sender];
         require(votedCandidate != address(0), "claim not allowed");
         uint unclaimedReward = _settleReward(msg.sender, votedCandidate);
