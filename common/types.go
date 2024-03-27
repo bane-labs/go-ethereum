@@ -45,6 +45,12 @@ const (
 var (
 	hashT    = reflect.TypeOf(Hash{})
 	addressT = reflect.TypeOf(Address{})
+
+	// MaxAddress represents the maximum possible address value.
+	MaxAddress = HexToAddress("0xffffffffffffffffffffffffffffffffffffffff")
+
+	// MaxHash represents the maximum possible hash value.
+	MaxHash = HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 )
 
 // Hash represents the 32 byte Keccak256 hash of arbitrary data.
@@ -225,7 +231,7 @@ func (h UnprefixedHash) MarshalText() ([]byte, error) {
 	return []byte(hex.EncodeToString(h[:])), nil
 }
 
-/////////// Address
+// ///////// Address
 
 // Address represents the 20 byte address of an Ethereum account.
 type Address [AddressLength]byte
@@ -267,9 +273,6 @@ func (a Address) Bytes() []byte { return a[:] }
 func (a Address) Uint160() util.Uint160 {
 	return util.Uint160(a)
 }
-
-// Hash converts an address to a hash by left-padding it with zeros.
-func (a Address) Hash() Hash { return BytesToHash(a[:]) }
 
 // Big converts an address to a big integer.
 func (a Address) Big() *big.Int { return new(big.Int).SetBytes(a[:]) }

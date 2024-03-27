@@ -267,8 +267,8 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 	if chainConfig.DBFT != nil {
 		worker.coinbase = chainConfig.DBFT.Coinbase
 	}
-	// Subscribe NewTxsEvent for tx pool
-	worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)
+	// Subscribe for transaction insertion events (whether from network or resurrects)
+	worker.txsSub = eth.TxPool().SubscribeTransactions(worker.txsCh, true)
 	// Subscribe events for blockchain
 	worker.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)
 
@@ -546,11 +546,14 @@ func (w *worker) mainLoop() {
 				for _, tx := range ev.Txs {
 					acc, _ := types.Sender(w.current.signer, tx)
 					txs[acc] = append(txs[acc], &txpool.LazyTransaction{
+						Pool:      w.eth.TxPool(), // We don't know where this came from, yolo resolve from everywhere
 						Hash:      tx.Hash(),
-						Tx:        tx.WithoutBlobTxSidecar(),
+						Tx:        nil, // Do *not* set this! We need to resolve it later to pull blobs in
 						Time:      tx.Time(),
 						GasFeeCap: tx.GasFeeCap(),
 						GasTipCap: tx.GasTipCap(),
+						Gas:       tx.Gas(),
+						BlobGas:   tx.BlobGas(),
 					})
 				}
 				txset := newTransactionsByPriceAndNonce(w.current.signer, txs, w.current.header.BaseFee)
@@ -746,7 +749,6 @@ func (w *worker) commitTransaction(env *environment, tx *types.Transaction) ([]*
 	if tx.Type() == types.BlobTxType {
 		return w.commitBlobTransaction(env, tx)
 	}
-
 	receipt, err := w.applyTransaction(env, tx)
 	if err != nil {
 		return nil, err
@@ -768,7 +770,6 @@ func (w *worker) commitBlobTransaction(env *environment, tx *types.Transaction) 
 	if (env.blobs+len(sc.Blobs))*params.BlobTxBlobGasPerBlob > params.MaxBlobGasPerBlock {
 		return nil, errors.New("max data blobs reached")
 	}
-
 	receipt, err := w.applyTransaction(env, tx)
 	if err != nil {
 		return nil, err
@@ -819,13 +820,24 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 		if ltx == nil {
 			break
 		}
-		tx := ltx.Resolve()
-		if tx == nil {
-			log.Warn("Ignoring evicted transaction")
+		// If we don't have enough space for the next transaction, skip the account.
+		if env.gasPool.Gas() < ltx.Gas {
+			log.Trace("Not enough gas left for transaction", "hash", ltx.Hash, "left", env.gasPool.Gas(), "needed", ltx.Gas)
 			txs.Pop()
 			continue
 		}
-
+		if left := uint64(params.MaxBlobGasPerBlock - env.blobs*params.BlobTxBlobGasPerBlob); left < ltx.BlobGas {
+			log.Trace("Not enough blob gas left for transaction", "hash", ltx.Hash, "left", left, "needed", ltx.BlobGas)
+			txs.Pop()
+			continue
+		}
+		// Transaction seems to fit, pull it up from the pool
+		tx := ltx.Resolve()
+		if tx == nil {
+			log.Trace("Ignoring evicted transaction", "hash", ltx.Hash)
+			txs.Pop()
+			continue
+		}
 		// Error may be ignored here. The error has already been checked
 		// during transaction acceptance is the transaction pool.
 		from, _ := types.Sender(env.signer, tx)
@@ -833,11 +845,10 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 		// Check whether the tx is replay protected. If we're not in the EIP155 hf
 		// phase, start ignoring the sender until we do.
 		if tx.Protected() && !w.chainConfig.IsEIP155(env.header.Number) {
-			log.Trace("Ignoring replay protected transaction", "hash", tx.Hash(), "eip155", w.chainConfig.EIP155Block)
+			log.Trace("Ignoring replay protected transaction", "hash", ltx.Hash, "eip155", w.chainConfig.EIP155Block)
 			txs.Pop()
 			continue
 		}
-
 		// Start executing the transaction
 		env.state.SetTxContext(tx.Hash(), env.tcount)
 
@@ -845,7 +856,7 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 		switch {
 		case errors.Is(err, core.ErrNonceTooLow):
 			// New head notification data race between the transaction pool and miner, shift
-			log.Trace("Skipping transaction with low nonce", "sender", from, "nonce", tx.Nonce())
+			log.Trace("Skipping transaction with low nonce", "hash", ltx.Hash, "sender", from, "nonce", tx.Nonce())
 			txs.Shift()
 
 		case errors.Is(err, nil):
@@ -857,7 +868,7 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 		default:
 			// Transaction is regarded as invalid, drop all consecutive transactions from
 			// the same sender because of `nonce-too-high` clause.
-			log.Debug("Transaction failed, account skipped", "hash", tx.Hash(), "err", err)
+			log.Debug("Transaction failed, account skipped", "hash", ltx.Hash, "err", err)
 			txs.Pop()
 		}
 	}
@@ -1068,7 +1079,7 @@ func (w *worker) commitWork(interrupt *atomic.Int32, timestamp int64) {
 	case err == nil:
 		// The entire block is filled, decrease resubmit interval in case
 		// of current interval is larger than the user-specified one.
-		w.resubmitAdjustCh <- &intervalAdjust{inc: false}
+		w.adjustResubmitInterval(&intervalAdjust{inc: false})
 
 	case errors.Is(err, errBlockInterruptedByRecommit):
 		// Notify resubmit loop to increase resubmitting interval if the
@@ -1078,10 +1089,10 @@ func (w *worker) commitWork(interrupt *atomic.Int32, timestamp int64) {
 		if ratio < 0.1 {
 			ratio = 0.1
 		}
-		w.resubmitAdjustCh <- &intervalAdjust{
+		w.adjustResubmitInterval(&intervalAdjust{
 			ratio: ratio,
 			inc:   true,
-		}
+		})
 
 	case errors.Is(err, errBlockInterruptedByNewHead):
 		// If the block building is interrupted by newhead event, discard it
@@ -1126,6 +1137,7 @@ func (w *worker) commit(env *environment, interval func(), update bool, start ti
 				fees := totalFees(block, env.receipts)
 				feesInEther := new(big.Float).Quo(new(big.Float).SetInt(fees), big.NewFloat(params.Ether))
 				log.Info("Commit new sealing work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
+					"parent hash", block.ParentHash(),
 					"etherbase", block.Coinbase().String(),
 					"txs", env.tcount, "gas", block.GasUsed(), "fees", feesInEther,
 					"elapsed", common.PrettyDuration(time.Since(start)))
@@ -1162,6 +1174,15 @@ func (w *worker) getSealingBlock(params *generateParams) *newPayloadResult {
 func (w *worker) isTTDReached(header *types.Header) bool {
 	td, ttd := w.chain.GetTd(header.ParentHash, header.Number.Uint64()-1), w.chain.Config().TerminalTotalDifficulty
 	return td != nil && ttd != nil && td.Cmp(ttd) >= 0
+}
+
+// adjustResubmitInterval adjusts the resubmit interval.
+func (w *worker) adjustResubmitInterval(message *intervalAdjust) {
+	select {
+	case w.resubmitAdjustCh <- message:
+	default:
+		log.Warn("the resubmitAdjustCh is full, discard the message")
+	}
 }
 
 // copyReceipts makes a deep copy of the given receipts.

@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/dbft"
+	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -111,7 +112,7 @@ type Ethereum struct {
 func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	// Ensure configuration values are compatible and sane
 	if config.SyncMode == downloader.LightSync {
-		return nil, errors.New("can't run eth.Ethereum in light sync mode, use les.LightEthereum")
+		return nil, errors.New("can't run eth.Ethereum in light sync mode, light mode has been deprecated")
 	}
 	if !config.SyncMode.IsValid() {
 		return nil, fmt.Errorf("invalid sync mode %d", config.SyncMode)
@@ -136,8 +137,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+	scheme, err := rawdb.ParseStateScheme(config.StateScheme, chainDb)
+	if err != nil {
+		return nil, err
+	}
 	// Try to recover offline state pruning only in hash-based.
-	if config.StateScheme == rawdb.HashScheme {
+	if scheme == rawdb.HashScheme {
 		if err := pruner.RecoverPruning(stack.ResolvePath(""), chainDb); err != nil {
 			log.Error("Failed to recover state", "error", err)
 		}
@@ -151,6 +156,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+	networkID := config.NetworkId
+	if networkID == 0 {
+		networkID = chainConfig.ChainID.Uint64()
+	}
 	eth := &Ethereum{
 		config:            config,
 		merger:            consensus.NewMerger(chainDb),
@@ -159,7 +168,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		accountManager:    stack.AccountManager(),
 		engine:            engine,
 		closeBloomHandler: make(chan struct{}),
-		networkID:         config.NetworkId,
+		networkID:         networkID,
 		gasPrice:          config.Miner.GasPrice,
 		etherbase:         config.Miner.Etherbase,
 		bloomRequests:     make(chan chan *bloombits.Retrieval),
@@ -176,7 +185,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if bcVersion != nil {
 		dbVer = fmt.Sprintf("%d", *bcVersion)
 	}
-	log.Info("Initialising Ethereum protocol", "network", config.NetworkId, "dbversion", dbVer)
+	log.Info("Initialising Ethereum protocol", "network", networkID, "dbversion", dbVer)
 
 	if !config.SkipBcVersionCheck {
 		if bcVersion != nil && *bcVersion > core.BlockChainVersion {
@@ -201,7 +210,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			SnapshotLimit:       config.SnapshotCache,
 			Preimages:           config.Preimages,
 			StateHistory:        config.StateHistory,
-			StateScheme:         config.StateScheme,
+			StateScheme:         scheme,
 		}
 	)
 	// Override the chain config with provided settings.
@@ -239,7 +248,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		Chain:          eth.blockchain,
 		TxPool:         eth.txPool,
 		Merger:         eth.merger,
-		Network:        config.NetworkId,
+		Network:        networkID,
 		Sync:           config.SyncMode,
 		BloomCache:     uint64(cacheLimit),
 		EventMux:       eth.eventMux,
@@ -249,7 +258,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 
 	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, eth.isLocalBlock)
-	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
+	if chainConfig.DBFT != nil && len(config.Miner.ExtraData) != 0 {
+		return nil, fmt.Errorf("custom miner Extra is not supported by dBFT")
+	}
+	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData, chainConfig.DBFT != nil))
 
 	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
 	if eth.APIBackend.allowUnprotectedTxs {
@@ -282,7 +294,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		ethAPI := ethapi.NewBlockChainAPI(eth.APIBackend)
 		bft.WithEthAPI(ethAPI)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
-		bft.WithTxPool(eth.txPool)
+		bft.WithTxPool(eth.TxPool())
 		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
 	}
 
@@ -298,7 +310,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 
 	// Start the RPC service
-	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, config.NetworkId)
+	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, networkID)
 
 	// Register the backend on the node
 	stack.RegisterAPIs(eth.APIs())
@@ -311,15 +323,19 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	return eth, nil
 }
 
-func makeExtraData(extra []byte) []byte {
+func makeExtraData(extra []byte, isBFT bool) []byte {
 	if len(extra) == 0 {
 		// create default extradata
-		extra, _ = rlp.EncodeToBytes([]interface{}{
-			uint(params.VersionMajor<<16 | params.VersionMinor<<8 | params.VersionPatch),
-			"geth",
-			runtime.Version(),
-			runtime.GOOS,
-		})
+		if isBFT {
+			extra = []byte{dbftutil.ExtraV0}
+		} else {
+			extra, _ = rlp.EncodeToBytes([]interface{}{
+				uint(params.VersionMajor<<16 | params.VersionMinor<<8 | params.VersionPatch),
+				"geth",
+				runtime.Version(),
+				runtime.GOOS,
+			})
+		}
 	}
 	if uint64(len(extra)) > params.MaximumExtraDataSize {
 		log.Warn("Miner extra data exceed limit", "extra", hexutil.Bytes(extra), "limit", params.MaximumExtraDataSize)
@@ -346,7 +362,7 @@ func (s *Ethereum) APIs() []rpc.API {
 			Service:   NewMinerAPI(s),
 		}, {
 			Namespace: "eth",
-			Service:   downloader.NewDownloaderAPI(s.handler.downloader, s.eventMux),
+			Service:   downloader.NewDownloaderAPI(s.handler.downloader, s.blockchain, s.eventMux),
 		}, {
 			Namespace: "admin",
 			Service:   NewAdminAPI(s),
@@ -421,7 +437,7 @@ func (s *Ethereum) shouldPreserve(header *types.Header) bool {
 	// r5   A      [X] F G
 	// r6    [X]
 	//
-	// In the round5, the inturn signer E is offline, so the worst case
+	// In the round5, the in-turn signer E is offline, so the worst case
 	// is A, F and G sign the block of round5 and reject the block of opponents
 	// and in the round6, the last available signer B is offline, the whole
 	// network is stuck.
@@ -491,7 +507,8 @@ func (s *Ethereum) StartMining() error {
 				cli.Authorize(eb, wallet.SignData)
 			}
 			if bft != nil {
-				log.Info("initializing BFT consensus")
+				log.Info("Initializing BFT consensus",
+					"account", eb.String())
 				bft.Authorize(eb, wallet.SignData)
 			}
 		}
@@ -532,7 +549,7 @@ func (s *Ethereum) Engine() consensus.Engine           { return s.engine }
 func (s *Ethereum) ChainDb() ethdb.Database            { return s.chainDb }
 func (s *Ethereum) IsListening() bool                  { return true } // Always listening
 func (s *Ethereum) Downloader() *downloader.Downloader { return s.handler.downloader }
-func (s *Ethereum) Synced() bool                       { return s.handler.acceptTxs.Load() }
+func (s *Ethereum) Synced() bool                       { return s.handler.synced.Load() }
 func (s *Ethereum) SetSynced()                         { s.handler.enableSyncedFeatures() }
 func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruning }
 func (s *Ethereum) BloomIndexer() *core.ChainIndexer   { return s.bloomIndexer }

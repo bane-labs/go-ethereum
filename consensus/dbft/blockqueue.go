@@ -3,6 +3,7 @@ package dbft
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/state"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -10,11 +11,15 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-// blockQueueCap is the number of tasks blockQueue can fit at once. It's OK for
-// the blockQueue not to have a proper task for the newly-created block, and
-// normally a single task is expected to be present in blockQueue. But we still
-// need blockQueueCap restriction for the case of endless change views.
-const blockQueueCap = 100
+const (
+	// blockQueueCap is the number of tasks blockQueue can fit at once. It's OK for
+	// the blockQueue not to have a proper task for the newly-created block, and
+	// normally a single task is expected to be present in blockQueue. But we still
+	// need blockQueueCap restriction for the case of endless change views.
+	blockQueueCap = 100
+
+	clearAllMatchingTasks = -1
+)
 
 // blockQueue is an entity that collects sealed blocks from dBFT and routs these
 // blocks to a proper place (either to miner or directly to chain).
@@ -48,13 +53,13 @@ func (bq *blockQueue) SetChain(chain ChainHeaderWriter) {
 // PutBlock routs block either to miner or (if there's no suitable sealing task)
 // directly to blockchain. No block verification is performed, it is assumed that
 // provided block is sealed and valid.
-func (bq *blockQueue) PutBlock(b *types.Block) error {
+func (bq *blockQueue) PutBlock(b *types.Block, state *state.StateDB, receipts []*types.Receipt) error {
 	h := WorkerSealHash(b.Header())
 
 	bq.tasksLock.Lock()
 	task, ok := bq.tasks[h]
 
-	bq.clearStaleTasks(b.NumberU64(), -1)
+	bq.clearStaleTasks(b.NumberU64(), clearAllMatchingTasks)
 
 	if ok {
 		var (
@@ -93,16 +98,56 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 	//  3) or we're not a primary node in this consensus round and thus,
 	//     worker's task differs from the dBFT's proposal. In this case we
 	//     need to try to insert block right into chain.
-	if bq.chain.HasBlock(b.Hash(), b.NumberU64()) {
+	hash := b.Hash()
+	if bq.chain.HasBlock(hash, b.NumberU64()) {
 		return nil
 	}
 
-	_, err := bq.chain.InsertChain(types.Blocks{b})
-	if err != nil {
-		return fmt.Errorf("failed to insert block into chain: %w", err)
+	// Short circuit if we don't have pre-calculated state.
+	if state == nil {
+		_, err := bq.chain.InsertChain(types.Blocks{b})
+		if err != nil {
+			return fmt.Errorf("failed to insert block into chain: %w", err)
+		}
+		log.Info("Successfully inserted new block", "number", b.Number(), "hash", hash)
+		return nil
 	}
 
-	return err
+	// Insert state directly if we have one.
+	var logs []*types.Log
+	for i, receipt := range receipts {
+		// Add block location fields.
+		receipt.BlockHash = hash
+		receipt.BlockNumber = b.Number()
+		receipt.TransactionIndex = uint(i)
+
+		// Update the block hash in all logs since it is now available and not when the
+		// receipt/log of individual transactions were created.
+		for _, taskLog := range receipt.Logs {
+			taskLog.BlockHash = hash
+		}
+		logs = append(logs, receipt.Logs...)
+	}
+	// Commit block and state to database.
+	_, err := bq.chain.WriteBlockAndSetHead(b, receipts, logs, state, true)
+	if err != nil {
+		log.Error("Failed to write block to chain and set head",
+			"number", b.NumberU64(),
+			"err", err)
+		return fmt.Errorf("failed to write block into chain: %w", err)
+	}
+	log.Info("Successfully wrote new block with state", "number", b.Number(), "hash", hash)
+
+	return nil
+}
+
+// ClearStaleTasks removes all stale tasks up to the specified height (including
+// the height itself).
+func (bq *blockQueue) ClearStaleTasks(till uint64) {
+	bq.tasksLock.Lock()
+	defer bq.tasksLock.Unlock()
+
+	bq.clearStaleTasks(till, clearAllMatchingTasks)
 }
 
 // clearStaleTasks removes all stale tasks up to the specified height (including
@@ -111,9 +156,11 @@ func (bq *blockQueue) clearStaleTasks(till uint64, count int) {
 	for h, task := range bq.tasks {
 		if task.height <= till {
 			delete(bq.tasks, h)
-			count--
-			if count <= 0 {
-				break
+			if count != clearAllMatchingTasks {
+				count--
+				if count <= 0 {
+					break
+				}
 			}
 		}
 	}
