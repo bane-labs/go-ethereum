@@ -1,13 +1,27 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.0;
-import "./GovernanceVote.sol";
+pragma solidity ^0.8.20;
 
-contract Policy is GovernanceVote {
+import "./GovernanceVote.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
+contract Policy is GovernanceVote, UUPSUpgradeable {
+    address public constant GOV_ADMIN =
+        0x1212000000000000000000000000000000000000;
+
     uint256 public minGasPrice;
     mapping(address => bool) public isBlackListed;
     event SetMinGasPrice(uint256 gasPrice);
     event AddBlackList(address addr);
     event RemoveBlackList(address addr);
+
+    modifier onlyAdmin() {
+        require(msg.sender == GOV_ADMIN, "Not admin");
+        _;
+    }
+
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyAdmin {}
 
     // set minimum gasprice
     function setMinGasPrice(

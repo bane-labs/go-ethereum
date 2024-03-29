@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 library TransferHelper {
     function safeTransfer(address token, address to, uint256 value) internal {
@@ -30,7 +32,9 @@ interface IGovReward {
     function withdraw() external;
 }
 
-contract GovReward is IGovReward {
+contract GovReward is IGovReward, UUPSUpgradeable {
+    address public constant GOV_ADMIN =
+        0x1212000000000000000000000000000000000000;
     // governance contact
     address public constant governance =
         0x1212000000000000000000000000000000000001;
@@ -41,6 +45,15 @@ contract GovReward is IGovReward {
         require(msg.sender == governance, "Not governance");
         _;
     }
+
+    modifier onlyAdmin() {
+        require(msg.sender == GOV_ADMIN, "Not admin");
+        _;
+    }
+
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyAdmin {}
 
     function getMiners() external view override returns (address[] memory) {
         return IGovernance(governance).getCurrentConsensus();

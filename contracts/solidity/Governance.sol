@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 interface IGovernance {
     event Register(address candidate);
@@ -45,9 +46,11 @@ interface IGovReward {
     function withdraw() external;
 }
 
-contract Governance is IGovernance, ReentrancyGuard {
+contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
 
+    address public constant GOV_ADMIN =
+        0x1212000000000000000000000000000000000000;
     // GovReward contract
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
@@ -97,6 +100,15 @@ contract Governance is IGovernance, ReentrancyGuard {
     mapping(address => uint) public voteHeight;
     // candidate=>height=>number
     mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
+
+    modifier onlyAdmin() {
+        require(msg.sender == GOV_ADMIN, "Not admin");
+        _;
+    }
+
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal virtual override onlyAdmin {}
 
     receive() external payable nonReentrant {
         require(msg.sender == govReward, "side call not allowed");
