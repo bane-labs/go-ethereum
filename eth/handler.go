@@ -589,9 +589,7 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 		largeTxs int // Number of large transactions to announce only
 
 		directCount int // Number of transactions sent directly to peers (duplicates included)
-		directPeers int // Number of peers that were sent transactions directly
 		annCount    int // Number of transactions announced across all peers (duplicates included)
-		annPeers    int // Number of peers announced about transactions
 
 		txset = make(map[*ethPeer][]common.Hash) // Set peer->hash to transfer directly
 		annos = make(map[*ethPeer][]common.Hash) // Set peer->hash to announce
@@ -648,17 +646,15 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 		}
 	}
 	for peer, hashes := range txset {
-		directPeers++
 		directCount += len(hashes)
 		peer.AsyncSendTransactions(hashes)
 	}
 	for peer, hashes := range annos {
-		annPeers++
 		annCount += len(hashes)
 		peer.AsyncSendPooledTransactionHashes(hashes)
 	}
 	log.Debug("Distributed transactions", "plaintxs", len(txs)-blobTxs-largeTxs, "blobtxs", blobTxs, "largetxs", largeTxs,
-		"bcastpeers", directPeers, "bcastcount", directCount, "annpeers", annPeers, "anncount", annCount)
+		"bcastpeers", len(txset), "bcastcount", directCount, "annpeers", len(annos), "anncount", annCount)
 }
 
 // ReannounceTransactions will announce a batch of pending transactions
