@@ -911,7 +911,7 @@ func (w *worker) commitTransactions(env *environment, plainTxs, blobTxs *transac
 	return nil
 }
 
-// generateParams wraps various of settings for generating sealing task.
+// generateParams wraps various settings for generating sealing task.
 type generateParams struct {
 	timestamp   uint64            // The timestamp for sealing task
 	forceTime   bool              // Flag whether the given timestamp is immutable or not
