@@ -9,12 +9,14 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
     address public constant GOV_ADMIN =
         0x1212000000000000000000000000000000000000;
 
-    uint256 public minGasPrice;
     mapping(address => bool) public isBlackListed;
+    uint256 public minGasTipCap;
+    uint256 public baseFee;
 
-    event SetMinGasPrice(uint256 gasPrice);
     event AddBlackList(address addr);
     event RemoveBlackList(address addr);
+    event SetMinGasTipCap(uint256 gasTipCap);
+    event SetBaseFee(uint256 baseFee);
 
     modifier onlyAdmin() {
         require(msg.sender == GOV_ADMIN, "not admin");
@@ -45,19 +47,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         }
     }
 
-    // set minimum gasprice
-    function setMinGasPrice(
-        uint256 _gasPrice
-    )
-        external
-        needVote(keccak256("setMinGasPrice"), keccak256(abi.encode(_gasPrice)))
-    {
-        require(_gasPrice > 0, "Policy: setMinGasPrice invalid parameter");
-        minGasPrice = _gasPrice;
-        emit SetMinGasPrice(_gasPrice);
-    }
-
-    //  add blacklist
+    // add blacklist
     function addBlackList(
         address _addr
     )
@@ -69,7 +59,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         emit AddBlackList(_addr);
     }
 
-    //  remove blacklist
+    // remove blacklist
     function removeBlackList(
         address _addr
     )
@@ -79,5 +69,32 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         require(isBlackListed[_addr], "Policy: Blacklist does not exist");
         delete isBlackListed[_addr];
         emit RemoveBlackList(_addr);
+    }
+
+    // set minimum gas tip cap
+    function setMinGasTipCap(
+        uint256 _gasTipCap
+    )
+        external
+        needVote(
+            keccak256("setMinGasTipCap"),
+            keccak256(abi.encode(_gasTipCap))
+        )
+    {
+        require(_gasTipCap > 0, "Policy: setMinGasTipCap invalid parameter");
+        minGasTipCap = _gasTipCap;
+        emit SetMinGasTipCap(_gasTipCap);
+    }
+
+    // set base fee
+    function setBaseFee(
+        uint256 _baseFee
+    )
+        external
+        needVote(keccak256("setBaseFee"), keccak256(abi.encode(_baseFee)))
+    {
+        require(_baseFee > 0, "Policy: setBaseFee invalid parameter");
+        baseFee = _baseFee;
+        emit SetBaseFee(_baseFee);
     }
 }
