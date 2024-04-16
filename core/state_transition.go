@@ -23,6 +23,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	cmath "github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
@@ -292,6 +293,19 @@ func (st *StateTransition) preCheck() error {
 		if codeHash != (common.Hash{}) && codeHash != types.EmptyCodeHash {
 			return fmt.Errorf("%w: address %v, codehash: %s", ErrSenderNoEOA,
 				msg.From.Hex(), codeHash)
+		}
+		// Ensure the transaction is allowed by policy
+		// Apply policy minimum gas tip cap
+		var minGasTipCap = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash())
+		if msg.GasTipCap.Cmp(minGasTipCap.Big()) < 0 {
+			return fmt.Errorf("%w: address %v, gastipcap %v", ErrUnderpriced,
+				msg.From.Hex(), msg.GasTipCap)
+		}
+		// Apply policy blacklist
+		var blocked = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(msg.From))
+		if blocked != (common.Hash{}) {
+			return fmt.Errorf("%w: address %v", ErrBlockedSender,
+				msg.From.Hex())
 		}
 	}
 	// Make sure that transaction gasFeeCap is greater than the baseFee (post london)
