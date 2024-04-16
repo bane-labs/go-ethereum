@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/log"
@@ -199,6 +200,17 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	next := opts.State.GetNonce(from)
 	if next > tx.Nonce() {
 		return fmt.Errorf("%w: next nonce %v, tx nonce %v", core.ErrNonceTooLow, next, tx.Nonce())
+	}
+	// Ensure the transaction is allowed by policy
+	// Apply policy minimum gas tip cap
+	var minGasTipCap = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash())
+	if tx.GasTipCap().Cmp(minGasTipCap.Big()) < 0 {
+		return fmt.Errorf("%w: policy needed %v, tip permitted %v", ErrUnderpriced, minGasTipCap.Big(), tx.GasTipCap())
+	}
+	// Apply policy blacklist
+	var blocked = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(from))
+	if blocked != (common.Hash{}) {
+		return fmt.Errorf("%w: sender %s", ErrBlockedSender, from.Hex())
 	}
 	// Ensure the transaction doesn't produce a nonce gap in pools that do not
 	// support arbitrary orderings
