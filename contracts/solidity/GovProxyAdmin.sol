@@ -10,8 +10,9 @@ import "./GovernanceVote.sol";
  */
 contract GovProxyAdmin is GovernanceVote {
     /**
-     * @dev Upgrades `proxy` to `implementation` and calls a function on the new implementation. See
-     * {TransparentUpgradeableProxy-upgradeToAndCall}.
+     * @dev Upgrades the implementation in proxy to `newImplementation`, and
+     * subsequently executes the function call encoded in `data`. See
+     * {UUPSUpgradeable-upgradeToAndCall}.
      *
      * Requirements:
      *
@@ -19,7 +20,7 @@ contract GovProxyAdmin is GovernanceVote {
      */
     function upgradeAndCall(
         UUPSUpgradeable proxy,
-        address implementation,
+        address newImplementation,
         bytes memory data
     )
         public
@@ -27,9 +28,9 @@ contract GovProxyAdmin is GovernanceVote {
         virtual
         needVote(
             keccak256("upgradeAndCall"),
-            keccak256(abi.encode(proxy, implementation, data))
+            keccak256(abi.encode(proxy, newImplementation, data))
         )
     {
-        proxy.upgradeToAndCall{value: msg.value}(implementation, data);
+        proxy.upgradeToAndCall{value: msg.value}(newImplementation, data);
     }
 }
