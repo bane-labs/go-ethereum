@@ -163,6 +163,9 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
         require(!candidateList.contains(msg.sender), "candidate exists");
         require(exitHeightOf[msg.sender] == 0, "left not claimed");
         candidateList.add(msg.sender);
+        if (receivedVotes[msg.sender] > 0) {
+            totalVotes += receivedVotes[msg.sender];
+        }
 
         // record share rate and balance
         shareRateOf[msg.sender] = shareRate;
@@ -175,6 +178,9 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
         // remove candidate list, balance still locked
         candidateList.remove(msg.sender);
         exitHeightOf[msg.sender] = block.number;
+        if (receivedVotes[msg.sender] > 0) {
+            totalVotes -= receivedVotes[msg.sender];
+        }
         emit Exit(msg.sender);
     }
 
@@ -242,7 +248,10 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
 
         // update votes
         receivedVotes[candidateFrom] -= amount;
-        totalVotes -= amount;
+        // only decrease totalVotes for active candidate
+        if (candidateList.contains(candidateFrom)) {
+            totalVotes -= amount;
+        }
         delete votedTo[msg.sender];
         delete votedAmount[msg.sender];
 
