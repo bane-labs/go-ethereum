@@ -88,6 +88,7 @@ jobs:
   build_image:
     name: Build and push Docker image
     runs-on: ubuntu-22.04
+    if: false
 
     steps:
       - uses: actions/checkout@v4
