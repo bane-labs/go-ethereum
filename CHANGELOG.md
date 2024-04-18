@@ -2,7 +2,7 @@
 
 This document outlines major changes between releases.
 
-## 0.1.0 Attraction (16 April 2024)
+## 0.1.0 "Attraction" (16 April 2024)
 
 Initial long-term supported node version including dBFT consensus engine integration with
 single-block state finality and two-blocks hash finality based on the v1.13.11 Geth
