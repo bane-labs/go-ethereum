@@ -183,6 +183,9 @@ type DBFT struct {
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
 	chainHeadEvents chan core.ChainHeadEvent
+	// minerInterrupted is the callback indicating whether miner is temporary interrupted
+	// due to the node sync.
+	minerInterrupted func() bool
 
 	config *params.DBFTConfig // Consensus engine configuration parameters
 
@@ -684,6 +687,12 @@ func (c *DBFT) WithBroadcast(f func(m *dbftproto.Message) error) {
 // WithRequestTxs sets callback to request the missing transactions from neighbor nodese.
 func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 	c.requestTxs = f
+}
+
+// WithMinerInterrupted sets callback to indicate whether miner is interrupted due
+// to the ongoing node sync process.
+func (c *DBFT) WithMinerInterrupted(f func() bool) {
+	c.minerInterrupted = f
 }
 
 // WithTxPool initializes transaction pool API for DBFT interactions with memory pool
@@ -1412,6 +1421,13 @@ func (c *DBFT) newPayload(ctx *dbft.Context, t payload.MessageType, msg any) pay
 }
 
 func (c *DBFT) handleChainBlock(b *types.Block) error {
+	// A short path if miner is not active and the node is in the process of block
+	// sync. In this case dBFT can't react properly on the newcoming blocks since no
+	// sealing task is expected from miner.
+	if c.minerInterrupted() {
+		return nil
+	}
+
 	// We can get our own block here, so check for index.
 	if uint32(b.Number().Uint64()) >= c.dbft.BlockIndex {
 		log.Info("New block in the chain",
