@@ -40,10 +40,11 @@ An election is, **GAS holders** vote to **registered candidates** and the Govern
 
 An address can only become a candidate to receive votes after it registers in Governance and stake a minimum register fee. A successful register requires below.
 
-1. Put at least `1000 GAS` deposit `value` along with the register transaction as register fee;
-2. Provide a `shareRate` ranges from `0` to `1000` in parameters which can not be changed until exit;
-3. The message sender is an EOA account and not yet a candidate;
-4. (optional) Withdraw past deposits if has registered and exited before.
+1. Registrant invokes `registerCandidate()` of `0x1212000000000000000000000000000000000001` as message sender;
+2. Registrant is an EOA account and not yet a candidate;
+3. Put at least `1000 GAS` deposit `value` along with the transaction as register fee;
+4. Provide a `shareRate` ranges from `0` to `1000` in parameters which can not be changed until exit;
+5. (optional) Withdraw past deposits if has registered and exited before.
 
 After this, a new candidate will appear in the candidate list and can be voted immediately and be elected as one of the block validators of the next epoch.
 
@@ -55,9 +56,10 @@ Note that the current epoch time on testnet is `60480` blocks.
 
 All GAS holders can vote and benefit from NeoX Governance, including EOA accounts and smart contracts. A successful vote requires below.
 
-1. Vote at least `1 GAS` in vote transaction;
-2. The provided `candidateTo` address is listed in the current candidates;
-3. (optional) Revoke votes to other candidates if has voted before.
+1. Voter invokes `vote()` of `0x1212000000000000000000000000000000000001` as message sender;
+2. Put at least `1 GAS` vote `value` along with the transaction;
+3. The provided `candidateTo` address is listed in the current candidates;
+4. (optional) Revoke votes to other candidates if has voted before.
 
 NeoX Governance doesn't allow multi-target votes and doesn't distribute rewards to new voters until a new epoch begins. So be careful to revoke or change your vote target.
 
