@@ -21,6 +21,14 @@ on:
         description: 'Ref to build geth [default: latest bane-main; examples: v0.92.0, 0a4ff9d3e4a9ab432fd5812eb18c98e03b5a7432]'
         required: false
         default: ''
+      upload_geth:
+        description: 'Upload Geth binary artifact [default: false; examples: true, false]'
+        required: false
+        default: 'false'
+      upload_alltools:
+        description: 'Upload Alltools binary artifacts [default: false; examples: true, false]'
+        required: false
+        default: 'false'
       push_image:
         description: 'Push images to DockerHub [default: false; examples: true, false]'
         required: false
@@ -62,7 +70,7 @@ jobs:
           mv ./build/bin/ ./build/alltools-${{ matrix.os.bin-name }}-${{ matrix.arch }}
 
       - name: Upload Geth artifact
-        if: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.upload_geth == 'true') }}
         uses: actions/upload-artifact@v4
         with:
           name: geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}
@@ -70,7 +78,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Alltools artifact
-        if: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.upload_alltools == 'true') }}
         uses: actions/upload-artifact@v4
         with:
           name: alltools-${{ matrix.os.bin-name }}-${{ matrix.arch }}
