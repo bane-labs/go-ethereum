@@ -296,6 +296,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
 		bft.WithTxPool(eth.TxPool())
 		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
+		bft.WithMinerInterrupted(eth.miner.Syncing)
 	}
 
 	// Setup DNS discovery iterators.
