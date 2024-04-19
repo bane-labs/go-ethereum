@@ -8,12 +8,10 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	ecrypto "github.com/ethereum/go-ethereum/crypto"
-	"github.com/nspcc-dev/dbft/block"
-	"github.com/nspcc-dev/dbft/crypto"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/nspcc-dev/dbft"
 )
 
-var _ block.Block = (*Block)(nil)
+var _ dbft.Block[common.Hash] = (*Block)(nil)
 
 // NsInS is the number of nanoseconds in second.
 const NsInS = 1000_000_000
@@ -31,15 +29,9 @@ type Block struct {
 	receipts types.Receipts
 }
 
-// Version implements block.Block interface.
-func (b *Block) Version() uint32 {
-	// Currently there's no free space for Version in the "shared" Eth-N3 block.
-	panic("TODO")
-}
-
 // PrevHash implements block.Block interface.
-func (b *Block) PrevHash() util.Uint256 {
-	return b.header.ParentHash.Uint256()
+func (b *Block) PrevHash() common.Hash {
+	return b.header.ParentHash
 }
 
 // Timestamp implements block.Block interface.
@@ -52,25 +44,14 @@ func (b *Block) Index() uint32 {
 	return uint32(b.header.Number.Uint64())
 }
 
-// NextConsensus implements block.Block interface.
-func (b *Block) NextConsensus() (u util.Uint160) {
-	copy(u[:], b.header.MixDigest.Bytes()[common.HashLength-util.Uint160Size:])
-	return
-}
-
 // MerkleRoot implements block.Block interface.
-func (b *Block) MerkleRoot() util.Uint256 {
-	return b.header.Root.Uint256()
-}
-
-// ConsensusData implements block.Block interface.
-func (b *Block) ConsensusData() uint64 {
-	panic("TODO")
+func (b *Block) MerkleRoot() common.Hash {
+	return b.header.Root
 }
 
 // Transactions implements block.Block interface.
-func (b *Block) Transactions() []block.Transaction {
-	dst := make([]block.Transaction, len(b.transactions))
+func (b *Block) Transactions() []dbft.Transaction[common.Hash] {
+	dst := make([]dbft.Transaction[common.Hash], len(b.transactions))
 	for i, tx := range b.transactions {
 		dst[i] = &Transaction{
 			Tx: tx,
@@ -81,7 +62,7 @@ func (b *Block) Transactions() []block.Transaction {
 
 // SetTransactions implements block.Block interface. It changes the underlying
 // Block.
-func (b *Block) SetTransactions(txx []block.Transaction) {
+func (b *Block) SetTransactions(txx []dbft.Transaction[common.Hash]) {
 	txs := make([]*types.Transaction, len(txx))
 	for i, tx := range txx {
 		txs[i] = tx.(*Transaction).Tx
@@ -95,7 +76,7 @@ func (b *Block) Signature() []byte {
 }
 
 // Sign implements Block interface.
-func (b *Block) Sign(key crypto.PrivateKey) error {
+func (b *Block) Sign(key dbft.PrivateKey) error {
 	sighash, err := key.Sign(dbftRLP(b.header))
 	if err != nil {
 		return fmt.Errorf("failed to sign dbftRLP header: %w", err)
@@ -106,7 +87,7 @@ func (b *Block) Sign(key crypto.PrivateKey) error {
 }
 
 // Verify implements Block interface.
-func (b *Block) Verify(pub crypto.PublicKey, sign []byte) error {
+func (b *Block) Verify(pub dbft.PublicKey, sign []byte) error {
 	sealHash := HonestSealHash(b.header)
 	pubkey, err := ecrypto.Ecrecover(sealHash.Bytes(), sign)
 	if err != nil {
@@ -121,8 +102,8 @@ func (b *Block) Verify(pub crypto.PublicKey, sign []byte) error {
 // Hash implements Block interface. Hash returns unsealed block hash that doesn't
 // include Nonce, MixDigest fields and Extra's signature part, thus, can be used
 // only for worker's block identification and information purposes.
-func (b *Block) Hash() util.Uint256 {
-	return WorkerSealHash(b.header).Uint256()
+func (b *Block) Hash() common.Hash {
+	return WorkerSealHash(b.header)
 }
 
 // ToEthBlock converts [dbft.Block] to [types.Block].
