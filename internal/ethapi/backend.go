@@ -46,7 +46,8 @@ type Backend interface {
 	SuggestGasTipCap(ctx context.Context) (*big.Int, error)
 	EnvelopeFee(ctx context.Context) (*big.Int, error)
 	MaxEnvelopeGas(ctx context.Context) (*big.Int, error)
-	FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error)
+	FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, []*big.Int, []float64, error)
+	BlobBaseFee(ctx context.Context) *big.Int
 	ChainDb() ethdb.Database
 	AccountManager() *accounts.Manager
 	ExtRPCEnabled() bool

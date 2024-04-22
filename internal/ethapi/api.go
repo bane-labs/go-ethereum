@@ -27,6 +27,9 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/holiman/uint256"
+	"github.com/tyler-smith/go-bip39"
+
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/accounts/scwallet"
@@ -51,8 +54,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
-	"github.com/holiman/uint256"
-	"github.com/tyler-smith/go-bip39"
 )
 
 // estimateGasErrorRatio is the amount of overestimation eth_estimateGas is
@@ -115,15 +116,17 @@ func (s *EthereumAPI) MaxEnvelopeGas(ctx context.Context) (*hexutil.Big, error) 
 }
 
 type feeHistoryResult struct {
-	OldestBlock  *hexutil.Big     `json:"oldestBlock"`
-	Reward       [][]*hexutil.Big `json:"reward,omitempty"`
-	BaseFee      []*hexutil.Big   `json:"baseFeePerGas,omitempty"`
-	GasUsedRatio []float64        `json:"gasUsedRatio"`
+	OldestBlock      *hexutil.Big     `json:"oldestBlock"`
+	Reward           [][]*hexutil.Big `json:"reward,omitempty"`
+	BaseFee          []*hexutil.Big   `json:"baseFeePerGas,omitempty"`
+	GasUsedRatio     []float64        `json:"gasUsedRatio"`
+	BlobBaseFee      []*hexutil.Big   `json:"baseFeePerBlobGas,omitempty"`
+	BlobGasUsedRatio []float64        `json:"blobGasUsedRatio,omitempty"`
 }
 
 // FeeHistory returns the fee market history.
 func (s *EthereumAPI) FeeHistory(ctx context.Context, blockCount math.HexOrDecimal64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*feeHistoryResult, error) {
-	oldest, reward, baseFee, gasUsed, err := s.b.FeeHistory(ctx, uint64(blockCount), lastBlock, rewardPercentiles)
+	oldest, reward, baseFee, gasUsed, blobBaseFee, blobGasUsed, err := s.b.FeeHistory(ctx, uint64(blockCount), lastBlock, rewardPercentiles)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +149,21 @@ func (s *EthereumAPI) FeeHistory(ctx context.Context, blockCount math.HexOrDecim
 			results.BaseFee[i] = (*hexutil.Big)(v)
 		}
 	}
+	if blobBaseFee != nil {
+		results.BlobBaseFee = make([]*hexutil.Big, len(blobBaseFee))
+		for i, v := range blobBaseFee {
+			results.BlobBaseFee[i] = (*hexutil.Big)(v)
+		}
+	}
+	if blobGasUsed != nil {
+		results.BlobGasUsedRatio = blobGasUsed
+	}
 	return results, nil
+}
+
+// BlobBaseFee returns the base fee for blob gas at the current head.
+func (s *EthereumAPI) BlobBaseFee(ctx context.Context) *hexutil.Big {
+	return (*hexutil.Big)(s.b.BlobBaseFee(ctx))
 }
 
 // Syncing returns false in case the node is currently not syncing with the network. It can be up-to-date or has not
