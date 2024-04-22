@@ -104,9 +104,9 @@ In NeoX DBFT, the block coinbase address is always `0x12120000000000000000000000
 
 If the `shareRate` of a validator is higher than `0`, then `validatorReward` will be distributed again between the validator and its voters.
 
-For the validator, $reward=validatorReward*(1-shareRate)/1000$.
+For the validator, $reward=validatorReward\times(1000-shareRate)/1000$.
 
-For each of its voters, $reward=(validatorReward*shareRate/1000)*(voteAmount/validatorTotalReceivedVoteAmount)$.
+For each of its voters, $reward=(validatorReward\times{shareRate/1000})\times(voteAmount/validatorTotalReceivedVoteAmount)$.
 
 The higher weight a voter has of the validator's received votes, the more `GAS` rewards he can share from NeoX Governance.
 
