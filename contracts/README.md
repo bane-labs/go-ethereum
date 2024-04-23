@@ -2,6 +2,8 @@
 
 NeoX system contracts are a set of pre-compiled Solidity codes with pre-fixed contract addresses. They represent the governance and economic model of NeoX, which is fully decentralized and transparent.
 
+![architecture](./architecture.jpg)
+
 These contracts are not deployed by transactions but alloced in the [genesis file](https://github.com/bane-labs/go-ethereum/blob/bane-main/config). The address setting of existing pre-compiled contracts is listed as below.
 
 |Address|Contract|
