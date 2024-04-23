@@ -30,7 +30,6 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/nspcc-dev/neo-go/pkg/util"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -79,19 +78,6 @@ func (h Hash) Cmp(other Hash) int {
 
 // Bytes gets the byte representation of the underlying hash.
 func (h Hash) Bytes() []byte { return h[:] }
-
-// Uint256 gets util.Uint256 representation of the underlying hash.
-func (h Hash) Uint256() util.Uint256 {
-	return util.Uint256(h)
-}
-
-// Uint160 gets util.Uint160 representation of the underlying hash cropping
-// first 12 bytes.
-func (h Hash) Uint160() util.Uint160 {
-	var res util.Uint160
-	copy(res[:], h[HashLength-util.Uint160Size:])
-	return res
-}
 
 // Big converts a hash to a big integer.
 func (h Hash) Big() *big.Int { return new(big.Int).SetBytes(h[:]) }
@@ -164,16 +150,6 @@ func (h *Hash) SetBytes(b []byte) {
 	}
 
 	copy(h[HashLength-len(b):], b)
-}
-
-// SetUint256 sets the hash to the value of util.Uint256.
-func (h *Hash) SetUint256(u util.Uint256) {
-	*h = Hash(u)
-}
-
-// SetUint160 sets the hash to the value of util.Uint160 with leading zeroes.
-func (h *Hash) SetUint160(u util.Uint160) {
-	copy(h[HashLength-util.Uint160Size:], u[:])
 }
 
 // Generate implements testing/quick.Generator.
@@ -269,11 +245,6 @@ func (a Address) Cmp(other Address) int {
 // Bytes gets the string representation of the underlying address.
 func (a Address) Bytes() []byte { return a[:] }
 
-// Uint160 returns util.Uint160 representation of the underlying address.
-func (a Address) Uint160() util.Uint160 {
-	return util.Uint160(a)
-}
-
 // Big converts an address to a big integer.
 func (a Address) Big() *big.Int { return new(big.Int).SetBytes(a[:]) }
 
@@ -350,11 +321,6 @@ func (a *Address) SetBytes(b []byte) {
 		b = b[len(b)-AddressLength:]
 	}
 	copy(a[AddressLength-len(b):], b)
-}
-
-// SetUint160 sets the address to the value of util.Uint160.
-func (a *Address) SetUint160(u util.Uint160) {
-	*a = Address(u)
 }
 
 // MarshalText returns the hex representation of a.

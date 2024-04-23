@@ -3,20 +3,21 @@ package dbft
 import (
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/nspcc-dev/neo-go/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPrepareResponse_Setters(t *testing.T) {
-	var p prepareResponse
+	var p = prepareResponse{
+		PreparationHashExt: common.Hash{1, 2, 3},
+	}
 
-	p.SetPreparationHash(util.Uint256{1, 2, 3})
-	require.Equal(t, util.Uint256{1, 2, 3}, p.PreparationHash())
+	require.Equal(t, common.Hash{1, 2, 3}, p.PreparationHash())
 }
 
 func TestPrepareResponse_RLP(t *testing.T) {
-	c := &prepareResponse{PreparationHashExt: util.Uint256{1}}
+	c := &prepareResponse{PreparationHashExt: common.Hash{1}}
 	bytes, err := rlp.EncodeToBytes(c)
 	require.NoError(t, err)
 

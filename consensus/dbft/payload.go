@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/ethereum/go-ethereum/common"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/nspcc-dev/dbft"
 )
 
 type (
@@ -48,24 +48,16 @@ const (
 	recoveryMessageType messageType = 0x41
 )
 
+var _ dbft.ConsensusPayload[common.Hash] = (*Payload)(nil)
+
 // ViewNumber implements the payload.ConsensusPayload interface.
 func (p Payload) ViewNumber() byte {
 	return p.message.ViewNumber
 }
 
-// SetViewNumber implements the payload.ConsensusPayload interface.
-func (p *Payload) SetViewNumber(view byte) {
-	p.message.ViewNumber = view
-}
-
 // Type implements the payload.ConsensusPayload interface.
-func (p Payload) Type() payload.MessageType {
-	return payload.MessageType(p.message.Type)
-}
-
-// SetType implements the payload.ConsensusPayload interface.
-func (p *Payload) SetType(t payload.MessageType) {
-	p.message.Type = messageType(t)
+func (p Payload) Type() dbft.MessageType {
+	return dbft.MessageType(p.message.Type)
 }
 
 // Payload implements the payload.ConsensusPayload interface.
@@ -73,38 +65,33 @@ func (p Payload) Payload() any {
 	return p.msgPayload
 }
 
-// SetPayload implements the payload.ConsensusPayload interface.
-func (p *Payload) SetPayload(pl any) {
-	p.msgPayload = pl
-}
-
 // GetChangeView implements the payload.ConsensusPayload interface.
-func (p Payload) GetChangeView() payload.ChangeView {
+func (p Payload) GetChangeView() dbft.ChangeView {
 	return p.msgPayload.(*changeView)
 }
 
 // GetPrepareRequest implements the payload.ConsensusPayload interface.
-func (p Payload) GetPrepareRequest() payload.PrepareRequest {
+func (p Payload) GetPrepareRequest() dbft.PrepareRequest[common.Hash] {
 	return p.msgPayload.(*prepareRequest)
 }
 
 // GetPrepareResponse implements the payload.ConsensusPayload interface.
-func (p Payload) GetPrepareResponse() payload.PrepareResponse {
+func (p Payload) GetPrepareResponse() dbft.PrepareResponse[common.Hash] {
 	return p.msgPayload.(*prepareResponse)
 }
 
 // GetCommit implements the payload.ConsensusPayload interface.
-func (p Payload) GetCommit() payload.Commit {
+func (p Payload) GetCommit() dbft.Commit {
 	return p.msgPayload.(*commit)
 }
 
 // GetRecoveryRequest implements the payload.ConsensusPayload interface.
-func (p Payload) GetRecoveryRequest() payload.RecoveryRequest {
+func (p Payload) GetRecoveryRequest() dbft.RecoveryRequest {
 	return p.msgPayload.(*recoveryRequest)
 }
 
 // GetRecoveryMessage implements the payload.ConsensusPayload interface.
-func (p Payload) GetRecoveryMessage() payload.RecoveryMessage {
+func (p Payload) GetRecoveryMessage() dbft.RecoveryMessage[common.Hash] {
 	return p.msgPayload.(*recoveryMessage)
 }
 
@@ -121,11 +108,6 @@ func (p *Payload) SetValidatorIndex(i uint16) {
 // Height implements the payload.ConsensusPayload interface.
 func (p Payload) Height() uint32 {
 	return uint32(p.message.BlockIndex)
-}
-
-// SetHeight implements the payload.ConsensusPayload interface.
-func (p *Payload) SetHeight(h uint32) {
-	p.message.BlockIndex = uint64(h)
 }
 
 // Sign signs payload using the private key.
@@ -162,11 +144,11 @@ func (p *Payload) rlp() ([]byte, error) {
 }
 
 // Hash implements the payload.ConsensusPayload interface.
-func (p *Payload) Hash() util.Uint256 {
+func (p *Payload) Hash() common.Hash {
 	if p.Message.Data == nil {
 		p.encodeData()
 	}
-	return p.Message.Hash().Uint256()
+	return p.Message.Hash()
 }
 
 // String implements fmt.Stringer interface.

@@ -2,10 +2,10 @@ package dbft
 
 import (
 	"github.com/ethereum/go-ethereum/common"
-	dbftCrypto "github.com/nspcc-dev/dbft/crypto"
+	"github.com/nspcc-dev/dbft"
 )
 
-var _ = dbftCrypto.PublicKey(&PublicKey{})
+var _ = dbft.PublicKey(&PublicKey{})
 
 // PublicKey is a wrapper that implements dbftCrypto.PublicKey interface and is
 // sufficient for dBFT operations.

@@ -4,11 +4,10 @@ import (
 	"errors"
 	"io"
 
+	"github.com/ethereum/go-ethereum/common"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/nspcc-dev/dbft/crypto"
-	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/nspcc-dev/dbft"
 )
 
 type (
@@ -17,7 +16,7 @@ type (
 		PreparationPayloads []*preparationCompact
 		CommitPayloads      []*commitCompact
 		ChangeViewPayloads  []*changeViewCompact
-		PreparationHashExt  *util.Uint256
+		PreparationHashExt  *common.Hash
 		PrepareRequest      *message
 	}
 
@@ -26,8 +25,8 @@ type (
 		PreparationPayloads []*preparationCompact
 		CommitPayloads      []*commitCompact
 		ChangeViewPayloads  []*changeViewCompact
-		PreparationHashExt  *util.Uint256 `rlp:"optional"`
-		PrepareRequest      *message      `rlp:"optional"`
+		PreparationHashExt  *common.Hash `rlp:"optional"`
+		PrepareRequest      *message     `rlp:"optional"`
 	}
 
 	changeViewCompact struct {
@@ -50,14 +49,14 @@ type (
 	}
 )
 
-var _ payload.RecoveryMessage = (*recoveryMessage)(nil)
+var _ dbft.RecoveryMessage[common.Hash] = (*recoveryMessage)(nil)
 
 // AddPayload implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) AddPayload(p payload.ConsensusPayload) {
+func (m *recoveryMessage) AddPayload(p dbft.ConsensusPayload[common.Hash]) {
 	validator := uint8(p.ValidatorIndex())
 
 	switch p.Type() {
-	case payload.PrepareRequestType:
+	case dbft.PrepareRequestType:
 		m.PrepareRequest = &message{
 			Type:       prepareRequestType,
 			ViewNumber: p.ViewNumber(),
@@ -69,7 +68,7 @@ func (m *recoveryMessage) AddPayload(p payload.ConsensusPayload) {
 			ValidatorIndex:   validator,
 			InvocationScript: p.(*Payload).Witness,
 		})
-	case payload.PrepareResponseType:
+	case dbft.PrepareResponseType:
 		m.PreparationPayloads = append(m.PreparationPayloads, &preparationCompact{
 			ValidatorIndex:   validator,
 			InvocationScript: p.(*Payload).Witness,
@@ -79,14 +78,14 @@ func (m *recoveryMessage) AddPayload(p payload.ConsensusPayload) {
 			h := p.GetPrepareResponse().PreparationHash()
 			m.PreparationHashExt = &h
 		}
-	case payload.ChangeViewType:
+	case dbft.ChangeViewType:
 		m.ChangeViewPayloads = append(m.ChangeViewPayloads, &changeViewCompact{
 			ValidatorIndex:     validator,
 			OriginalViewNumber: p.ViewNumber(),
-			Timestamp:          p.GetChangeView().Timestamp(),
+			Timestamp:          p.GetChangeView().(*changeView).TimestampExt,
 			InvocationScript:   p.(*Payload).Witness,
 		})
-	case payload.CommitType:
+	case dbft.CommitType:
 		m.CommitPayloads = append(m.CommitPayloads, &commitCompact{
 			ValidatorIndex:   validator,
 			ViewNumber:       p.ViewNumber(),
@@ -97,7 +96,7 @@ func (m *recoveryMessage) AddPayload(p payload.ConsensusPayload) {
 }
 
 // GetPrepareRequest implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetPrepareRequest(p payload.ConsensusPayload, validators []crypto.PublicKey, primary uint16) payload.ConsensusPayload {
+func (m *recoveryMessage) GetPrepareRequest(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey, primary uint16) dbft.ConsensusPayload[common.Hash] {
 	if m.PrepareRequest == nil {
 		return nil
 	}
@@ -123,12 +122,12 @@ func (m *recoveryMessage) GetPrepareRequest(p payload.ConsensusPayload, validato
 }
 
 // GetPrepareResponses implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetPrepareResponses(p payload.ConsensusPayload, validators []crypto.PublicKey) []payload.ConsensusPayload {
+func (m *recoveryMessage) GetPrepareResponses(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash] {
 	if m.PreparationHashExt == nil {
 		return nil
 	}
 
-	ps := make([]payload.ConsensusPayload, len(m.PreparationPayloads))
+	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.PreparationPayloads))
 
 	for i, resp := range m.PreparationPayloads {
 		r := fromPayload(prepareResponseType, p.(*Payload), &prepareResponse{
@@ -145,8 +144,8 @@ func (m *recoveryMessage) GetPrepareResponses(p payload.ConsensusPayload, valida
 }
 
 // GetChangeViews implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetChangeViews(p payload.ConsensusPayload, validators []crypto.PublicKey) []payload.ConsensusPayload {
-	ps := make([]payload.ConsensusPayload, len(m.ChangeViewPayloads))
+func (m *recoveryMessage) GetChangeViews(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash] {
+	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.ChangeViewPayloads))
 
 	for i, cv := range m.ChangeViewPayloads {
 		c := fromPayload(changeViewType, p.(*Payload), &changeView{
@@ -165,8 +164,8 @@ func (m *recoveryMessage) GetChangeViews(p payload.ConsensusPayload, validators 
 }
 
 // GetCommits implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetCommits(p payload.ConsensusPayload, validators []crypto.PublicKey) []payload.ConsensusPayload {
-	ps := make([]payload.ConsensusPayload, len(m.CommitPayloads))
+func (m *recoveryMessage) GetCommits(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash] {
+	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.CommitPayloads))
 
 	for i, c := range m.CommitPayloads {
 		cc := fromPayload(commitType, p.(*Payload), &commit{SignatureExt: c.Signature})
@@ -181,12 +180,12 @@ func (m *recoveryMessage) GetCommits(p payload.ConsensusPayload, validators []cr
 }
 
 // PreparationHash implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) PreparationHash() *util.Uint256 {
+func (m *recoveryMessage) PreparationHash() *common.Hash {
 	return m.PreparationHashExt
 }
 
 // SetPreparationHash implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) SetPreparationHash(h *util.Uint256) {
+func (m *recoveryMessage) SetPreparationHash(h *common.Hash) {
 	m.PreparationHashExt = h
 }
 
