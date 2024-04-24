@@ -1,10 +1,10 @@
-# NeoX System Contracts
+# Neo X System Contracts
 
-NeoX system contracts are a set of pre-compiled Solidity codes with pre-fixed contract addresses. They represent the governance and economic model of NeoX, which is fully decentralized and transparent.
+Neo X system contracts are a set of build-in Solidity contracts with predefined addresses. They represent the governance and economic model of Neo X, which is fully decentralized and transparent.
 
-![architecture](./architecture.jpg)
+![architecture](./architecture.png)
 
-These contracts are not deployed by transactions but alloced in the [genesis file](https://github.com/bane-labs/go-ethereum/blob/bane-main/config). The address setting of existing pre-compiled contracts is listed as below.
+These contracts are not deployed by transactions but allocated in the [genesis file](https://github.com/bane-labs/go-ethereum/blob/bane-main/config). The address setting of existing pre-compiled contracts is listed as below.
 
 |Address|Contract|
 |--|--|
@@ -24,7 +24,7 @@ These contracts are not deployed by transactions but alloced in the [genesis fil
 
 [GovernanceVote](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovernanceVote.sol) is a public "library" that is widely used in system contract management especially upgrade.
 
-Any contract inherits `GovernanceVote.sol` can set up a consensus vote on method execution, by calling internal `vote(bytes32 methodKey, bytes32 paramKey)`, which requires **more than half** of the **current consensus** votes for **the same method call and the same calling parameters**.
+Any contract inheriting `GovernanceVote.sol` can set up a consensus vote on method execution, by calling internal `vote(bytes32 methodKey, bytes32 paramKey)`, which requires **more than half** of the **current consensus** votes for **the same method call and the same calling parameters**.
 
 1. More than half - the threshold value is `1/2` instead of `2/3`;
 2. Current consensus - if an address is no longer a consensus member, its votes will not be counted;
@@ -34,49 +34,49 @@ Any contract inherits `GovernanceVote.sol` can set up a consensus vote on method
 
 [GovProxyAdmin](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovProxyAdmin.sol) controls the upgrade of other pre-compiled system contracts, since all of their `onlyOwner`/`onlyAdmin` point to `0x1212000000000000000000000000000000000000`.
 
-This contract inherits `GovernanceVote.sol` so that it requires a `50%` majority votes among current consensus to execute `upgradeAndCall()`, which means **more than half** of the **current consensus** votes for **the same contract implementation**.
+This contract inherits `GovernanceVote.sol` so that it requires a `50%` majority votes among current consensus to execute `upgradeAndCall(...)`, which means **more than half** of the **current consensus** votes for **the same contract implementation**.
 
-All of the upgradable NeoX system contracts use [ERC1967Proxy](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v5.0/contracts/proxy/ERC1967/ERC1967Proxy.sol) and [UUPSUpgradeable](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v5.0/contracts/proxy/utils/UUPSUpgradeable.sol).
+All of the upgradable Neo X system contracts use [ERC1967Proxy](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v5.0/contracts/proxy/ERC1967/ERC1967Proxy.sol) and [UUPSUpgradeable](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v5.0/contracts/proxy/utils/UUPSUpgradeable.sol).
 
 ## Governance
 
-[Governance](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Governance.sol) is responsible for the election of block validators and related reward distribution.
+[Governance](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Governance.sol) is responsible for the election of consensus nodes and related reward distribution.
 
-An election is, **GAS holders** vote to **registered candidates** and the Governance contracts selects **top 7 candidates** as block validators for **the next epoch**.
+An [election](#election) is, **GAS holders** vote for **registered candidates** and the Governance contract selects **top 7 candidates** as consensus nodes for **the next epoch\***.
+
+*<font size="2">Epoch is a unit of measurement for blocks. Currently, 1 epoch on testnet is the equivalent of `60480` blocks, which is the storage value `epochDuration` may be retrieved by contract calls.</font>
 
 ### Candidate
 
-An address can only become a candidate to receive votes after it registers in Governance and stake a minimum register fee. A successful register requires below.
+An EOA account is allowed to become a candidate only after successful registration via Governance contract with required registration fee deposit staked. The following requirements should be met for successful registration:
 
-1. Registrant invokes `registerCandidate()` of `0x1212000000000000000000000000000000000001` as message sender;
+1. Registrant invokes `registerCandidate(uint shareRate)` of `0x1212000000000000000000000000000000000001` as message sender;
 2. Registrant is an EOA account and not yet a candidate;
-3. Put at least `1000 GAS` deposit `value` along with the transaction as register fee;
-4. Provide a `shareRate` ranges from `0` to `1000` in parameters which can not be changed until exit;
-5. (optional) Withdraw past deposits if has registered and exited before.
+3. Put at least `1000 GAS` deposit `value` along with the transaction as registration fee;
+4. Provide a `shareRate` ranges from `0` to `1000` in parameters, which is a distribution ratio in thousandths. It determines how many rewards of the total that voters can share, and can not be changed until the candidate exits;
+5. (optional) Withdraw past deposits if it has registered and exited before.
 
-After this, a new candidate will appear in the candidate list and can be voted immediately and be elected as one of the block validators of the next epoch.
+If all conditions are met, the new candidate will be added to the candidate list. Only registered candidates can receive votes to be elected as a consensus node.
 
-A candidate can exit without any permission, but it requires 2 epoch times before register fee withdraw. During this period, candidate cannot receive any votes or become a block validator, but voters can revoke their votes and choose other candidates to share rewards.
-
-Note that the current epoch time on testnet is `60480` blocks.
+A candidate can exit without any permission, but it requires 2 epochs to pass until the candidate is allowed to withdraw its registeration deposit. During this period, the candidate can't receive any votes or become a consensus node, but voters can revoke their votes and choose other candidates to share rewards.
 
 ### Election
 
-All GAS holders can vote and benefit from NeoX Governance, including EOA accounts and smart contracts. A successful vote requires below.
+All GAS holders can vote and benefit from Neo X Governance, including EOA accounts and smart contracts. The following requirements should be met for a successful vote:
 
-1. Voter invokes `vote()` of `0x1212000000000000000000000000000000000001` as message sender;
+1. Voter invokes `vote(address candidateTo)` of `0x1212000000000000000000000000000000000001` as message sender;
 2. Put at least `1 GAS` vote `value` along with the transaction;
 3. The provided `candidateTo` address is listed in the current candidates;
 4. (optional) Revoke votes to other candidates if has voted before.
 
-NeoX Governance doesn't allow multi-target votes and doesn't distribute rewards to new voters until a new epoch begins. So be careful to revoke or change your vote target.
+Neo X Governance doesn't allow voting for multiple candidates and doesn't distribute rewards to new voters until a new epoch begins. So be careful to revoke or change your vote target.
 
-At the end of every election epoch, the 7 candidates with the highest amount of votes will be selected by Governance and become block validators of the next `60480` blocks. However, this replacement has two prerequisites.
+At the end of every election epoch, the 7 candidates with the highest amount of votes will be selected by Governance and become consensus nodes of the next epoch. However, this consensus set recalculation has two prerequisites:
 
 1. The size of candidate list is larger than `7`;
 2. The amount of total valid votes is higher than `3,000,000 GAS`.
 
-Otherwise, the block validators of the next `60480` blocks will be the following pre-fixed stand-by members.
+Otherwise, the consensus nodes of the next epoch will be the following predefined stand-by members.
 
 |Testnet Stand-by Address|
 |--|
@@ -90,53 +90,52 @@ Otherwise, the block validators of the next `60480` blocks will be the following
 
 ### Reward
 
-The reward distribution of NeoX Governance happens real time, both to validators and voters. Once a candidate is selected as a block validator, it automatically begins to receive `GAS` rewards by participanting DBFT consensus.
+Neo X Governance reward distribution is real-time. Once a candidate is selected as a consensus node, it automatically starts to receive `GAS` rewards via participation in the dBFT consensus.
 
-The governance reward in NeoX is always distributed twice, first among validators and second between validators and voters.
+The governance reward in Neo X is always distributed to two parts, the first part is distributed to consensus nodes and the second is distributed to voters according to the `shareRate` settings.
 
-#### Validator Distribution
+#### Consensus Node Distribution
 
-Regardless of consensus leader and received vote amount, all of the **transaction priority fees** are **equally divided** among validators as block rewards.
+Regardless of consensus leader and received vote amount, all of the **transaction priority fees** are **equally divided** among consensus nodes as block rewards. Unlike N3, **other registered candidates receive no reward for the whole epoch**.
 
-$validatorReward=totalNetworkTips/7$
+$blockReward=totalNetworkTips/7$
 
-In NeoX DBFT, the block coinbase address is always `0x1212000000000000000000000000000000000003`, which means the rewards are first minted to [GovReward](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovReward.sol) and then transfered to [Governance](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Governance.sol) through `OnPersist()`.
+In Neo X dBFT, the block coinbase address is always `0x1212000000000000000000000000000000000003`, which means the rewards are first minted to [GovReward](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovReward.sol) contract and then transfered to [Governance](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Governance.sol) contract during `OnPersist()` system call execution in the start of every subsequent block.
 
 #### Voter Distribution
 
-If the `shareRate` of a validator is higher than `0`, then `validatorReward` will be distributed again between the validator and its voters.
+If the `shareRate` of a consensus node is higher than `0`, then `blockReward` will be split again between the consensus node and its voters.
 
-For the validator, $reward=validatorReward\times(1000-shareRate)/1000$.
+For the consensus node, $consensusReward=blockReward\times(1000-shareRate)/1000$.
 
-For each of its voters, $reward=(validatorReward\times{shareRate/1000})\times(voteAmount/validatorTotalReceivedVoteAmount)$.
+For each of its voters, $voterReward=(blockReward\times{shareRate/1000})\times(votedAmount/candidateReceivedVotes)$.
 
-The higher weight a voter has of the validator's received votes, the more `GAS` rewards he can share from NeoX Governance.
+Voter `GAS` reward is proportional to different `shareRate` settings and the voter's weight, i.e. the ratio of voter's votes to the overall number of candidate's votes.
 
-The rewards for validators will be immediately sent to their addresses, but the reward settlement for voters has some other rules.
+The rewards for consensus nodes will be immediately sent to their addresses, but the reward settlement for voters obeys some other rules:
 
-1. The rewards after your first vote but before the next epoch starts is unclaimable, which means you cannot benefit without participanting and affecting any election;
-2. Claimable rewards require a `claimReward()` calling to `0x1212000000000000000000000000000000000001` to be released;
-3. The settlement happens real time, so your rewards will be transfered as well when the vote amount changes through `vote()` or `revokeVote()`.
+1. The rewards after first vote but before the next epoch starts are unclaimable, which means a voter can't benefit without participanting and affecting any election;
+2. A voter has to send a calling (e.g. `claimReward()`) by itself to `0x1212000000000000000000000000000000000001` to receive claimable rewards;
+3. The rewards are claimed and transfered as well when the vote amount changes via `vote(address candidateTo)` or `revokeVote()`.
 
-There are several special cases of reward distribution,
+There are several special cases of reward distribution:
 
-1. When block validators are stand-by validators, they will not share any reward to the network. This happens in `Epoch 0` and when election result is not valid;
-2. Voter rewards will not disappear if your candidate exits but remain claimable. However, it is possiable that your candidate exits and returns with a different `shareRate` after 2 epochs. It will influence your future benefits so keep eyes on candidate's activities.
+1. When consensus nodes are stand-by validators, they will not share any reward to the network;
+2. Voter rewards will not disappear if the voted candidate exits. However, it is possiable that a candidate exits and returns with a different `shareRate` after 2 epochs. It will affect your future benefits so voters are recommended to keep an eye on the voted candidate's activities.
 
 ## Policy
 
-[Policy](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Policy.sol) controls the global settings of NeoX protocol, which are forced on every running nodes.
+[Policy](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Policy.sol) controls the global settings of Neo X protocol, which are forced on every honest node in the network.
 
-The current NeoX Policy maintains following parameters. All these policies are both checked by nodes locally and by DBFT globally.
+The current Neo X Policy maintains following parameters. All these policies are both checked by honest consensus nodes locally and by dBFT globally.
 
 |Name|Parameter|Usage|
 |--|--|--|
-|Address Blacklist|`isBlackListed`|Prevent blacklisted addresses to send transactions in NeoX network|
-|Minimum Transaction Tip Cap|`minGasTipCap`|Force transaction senders to pay a minimum tip to NeoX Governance|
-|Network Base Fee|`baseFee`|Force block validators to burn a part of transaction fees (TBD)|
+|Address Blacklist|`isBlackListed`|Prevent blacklisted addresses to send transactions in Neo X network|
+|Minimum Transaction Tip Cap|`minGasTipCap`|Force transaction senders to pay a minimum tip to Neo X Governance|
 
-Since all the policy setters adopt the `needVote` modifier, any policy change requires `1/2` vote pass by current NeoX consensus.
+Since all the policy setters adopt the `needVote` modifier, any policy change requires more than 1/2 of the current Neo X consensus nodes votes to be collected.
 
 ## Bridge
 
-Refer to [bridge repo](https://github.com/bane-labs/bridge-evm-contracts).
+Refer to the [Bridge Contracts repository](https://github.com/bane-labs/bridge-evm-contracts).
