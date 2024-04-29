@@ -30,7 +30,7 @@ interface IGovernance {
     function revokeVote() external;
 
     // revoke votes, claim rewards and vote to another candidate
-    function changeVote(address candidateTo) external;
+    function transferVote(address candidateTo) external;
 
     // only claim rewards
     function claimReward() external;
@@ -266,7 +266,7 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
         _safeTransferETH(msg.sender, amount + unclaimedReward);
     }
 
-    function changeVote(address candidateTo) external nonReentrant {
+    function transferVote(address candidateTo) external nonReentrant {
         address candidateFrom = votedTo[msg.sender];
         uint amount = votedAmount[msg.sender];
         require(candidateFrom != address(0) && amount > 0, "no vote to change");
