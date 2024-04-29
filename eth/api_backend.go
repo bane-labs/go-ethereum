@@ -374,11 +374,25 @@ func (b *EthAPIBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) 
 		return nil, err
 	}
 	minGasTipCap := stateDb.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
-	return cmath.BigMax(suggestTipCap, minGasTipCap), nil
+	denom := new(big.Int).SetUint64(b.eth.blockchain.Config().BaseFeeChangeDenominator())
+	return cmath.BigMax(suggestTipCap, minGasTipCap.Add(minGasTipCap, new(big.Int).Div(minGasTipCap, denom))), nil
 }
 
 func (b *EthAPIBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (firstBlock *big.Int, reward [][]*big.Int, baseFee []*big.Int, gasUsedRatio []float64, err error) {
-	return b.gpo.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
+	oldestBlock, reward, baseFee, gasUsedRatio, err := b.gpo.FeeHistory(ctx, blockCount, lastBlock, rewardPercentiles)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	suggestGasTipCap, err := b.SuggestGasTipCap(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	for i, r := range reward {
+		for j, v := range r {
+			reward[i][j] = cmath.BigMax(suggestGasTipCap, v)
+		}
+	}
+	return oldestBlock, reward, baseFee, gasUsedRatio, nil
 }
 
 func (b *EthAPIBackend) ChainDb() ethdb.Database {
