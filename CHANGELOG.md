@@ -2,7 +2,21 @@
 
 This document outlines major changes between releases.
 
-## 0.1.0 Attraction (16 April 2024)
+## 0.1.1 "Backdating" (18 April 2024)
+
+An urgent patch release to fix the bug in T3 genesis configuration file introduced in 0.1.0.
+Also contains a fix of the bug preventing stale consensus node from continuous state sync
+process.
+
+Please, note that this release contains T3 genesis configuration file changes and thus,
+incompatible with 0.1.0 version. Node operators should regenerate genesis block based on
+the updated configuration if upgrading from 0.1.0 version.
+
+Bugs fixed:
+* missing initial balance for Bridge relayer in T3 genesis configuration (#174)
+* consensus node lock possible during the state sync process for stale nodes (#176)
+
+## 0.1.0 "Attraction" (16 April 2024)
 
 Initial long-term supported node version including dBFT consensus engine integration with
 single-block state finality and two-blocks hash finality based on the v1.13.11 Geth

@@ -185,6 +185,11 @@ func (miner *Miner) Mining() bool {
 	return miner.worker.isRunning()
 }
 
+// Syncing indicates whether mining is currently interrupted due to the node's Downloader work.
+func (miner *Miner) Syncing() bool {
+	return miner.worker.isSyncing()
+}
+
 func (miner *Miner) Hashrate() uint64 {
 	if pow, ok := miner.engine.(consensus.PoW); ok {
 		return uint64(pow.Hashrate())

@@ -54,10 +54,7 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
 	"github.com/nspcc-dev/dbft"
-	"github.com/nspcc-dev/dbft/block"
-	dbftCrypto "github.com/nspcc-dev/dbft/crypto"
-	"github.com/nspcc-dev/dbft/payload"
-	"github.com/nspcc-dev/neo-go/pkg/util"
+	"github.com/nspcc-dev/dbft/timer"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/sha3"
 	"golang.org/x/exp/slices"
@@ -183,6 +180,9 @@ type DBFT struct {
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
 	chainHeadEvents chan core.ChainHeadEvent
+	// minerInterrupted is the callback indicating whether miner is temporary interrupted
+	// due to the node sync.
+	minerInterrupted func() bool
 
 	config *params.DBFTConfig // Consensus engine configuration parameters
 
@@ -190,7 +190,7 @@ type DBFT struct {
 	signFn SignerFn       // Signer function to authorize hashes with
 	lock   sync.RWMutex   // Protects the signer field
 
-	dbft             *dbft.DBFT
+	dbft             *dbft.DBFT[common.Hash]
 	dbftStarted      atomic.Bool
 	eventLoopStarted atomic.Bool
 	blockQueue       *blockQueue
@@ -260,11 +260,16 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 	}
 
-	logger, _ := zap.NewDevelopment()
-	c.dbft = dbft.New(
-		dbft.WithLogger(logger),
-		dbft.WithSecondsPerBlock(time.Duration(conf.SecondsPerBlock)*time.Second),
-		dbft.WithGetKeyPair(func(keys []dbftCrypto.PublicKey) (int, dbftCrypto.PrivateKey, dbftCrypto.PublicKey) {
+	var err error
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize dBFT logger: %w", err)
+	}
+	c.dbft, err = dbft.New[common.Hash](
+		dbft.WithTimer[common.Hash](timer.New()),
+		dbft.WithLogger[common.Hash](logger),
+		dbft.WithSecondsPerBlock[common.Hash](time.Duration(conf.SecondsPerBlock)*time.Second),
+		dbft.WithGetKeyPair[common.Hash](func(keys []dbft.PublicKey) (int, dbft.PrivateKey, dbft.PublicKey) {
 			c.lock.RLock()
 			signer, signFn := c.signer, c.signFn
 			c.lock.RUnlock()
@@ -286,13 +291,13 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		}),
 		// Consensus engine doesn't have access to the blockchain at the moment of call to constructor. Thus,
 		// we use these `lastIndex` and `lastBlockHash` fields cached in the service.
-		dbft.WithCurrentHeight(func() uint32 {
+		dbft.WithCurrentHeight[common.Hash](func() uint32 {
 			return uint32(c.lastIndex)
 		}),
-		dbft.WithCurrentBlockHash(func() util.Uint256 {
-			return util.Uint256(c.lastBlockHash)
+		dbft.WithCurrentBlockHash[common.Hash](func() common.Hash {
+			return c.lastBlockHash
 		}),
-		dbft.WithGetValidators(func(txs ...block.Transaction) []dbftCrypto.PublicKey {
+		dbft.WithGetValidators[common.Hash](func(txs ...dbft.Transaction[common.Hash]) []dbft.PublicKey {
 			if c.lastBlockHash.Cmp(common.Hash{}) == 0 {
 				// Program bug.
 				panic("last block hash wasn't initialized")
@@ -316,7 +321,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				// Program bug.
 				panic(fmt.Errorf("failed to retrieve next block validators: %w", err))
 			}
-			res := make([]dbftCrypto.PublicKey, len(pKeys))
+			res := make([]dbft.PublicKey, len(pKeys))
 			for i, s := range pKeys {
 				res[i] = &PublicKey{
 					Account: s,
@@ -324,7 +329,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 			return res
 		}),
-		dbft.WithProcessBlock(func(b block.Block) {
+		dbft.WithProcessBlock[common.Hash](func(b dbft.Block[common.Hash]) {
 			dbftBlock := b.(*Block)
 			if uint64(dbftBlock.Index()) <= c.lastIndex {
 				return
@@ -346,20 +351,18 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				}
 			}
 		}),
-		dbft.WithNewBlockFromContext(func(ctx *dbft.Context) block.Block {
+		dbft.WithNewBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
 			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
 			if prepareReq == nil {
 				panic("can't create new block from context: prepare request is nil")
 			}
 			return c.newBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
 		}),
-		dbft.WithWatchOnly(func() bool {
+		dbft.WithWatchOnly[common.Hash](func() bool {
 			return false
 		}),
-		dbft.WithGetTx(func(h util.Uint256) block.Transaction {
-			var hash common.Hash
-			hash.SetUint256(h)
-			tx := c.txpool.Get(hash)
+		dbft.WithGetTx[common.Hash](func(h common.Hash) dbft.Transaction[common.Hash] {
+			tx := c.txpool.Get(h)
 			// This check is needed, because in case of missing transaction dBFT
 			// expects a pure nil.
 			if tx != nil {
@@ -371,7 +374,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			// Do not try to retrieve on-chain transaction.
 			return nil
 		}),
-		dbft.WithGetVerified(func() []block.Transaction {
+		dbft.WithGetVerified[common.Hash](func() []dbft.Transaction[common.Hash] {
 			var txs types.Transactions
 			// Check the sealing proposal, because c.sealingTransactions may be nil
 			// in case of missing pending transactions, and it's OK.
@@ -381,7 +384,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 			txs = c.sealingTransactions
 
-			res := make([]block.Transaction, len(txs))
+			res := make([]dbft.Transaction[common.Hash], len(txs))
 			for i := range txs {
 				res[i] = &Transaction{
 					Tx: txs[i],
@@ -389,14 +392,14 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 			return res
 		}),
-		dbft.WithRequestTx(func(hashes ...util.Uint256) {
+		dbft.WithRequestTx[common.Hash](func(hashes ...common.Hash) {
 			if len(hashes) == 0 {
 				return
 			}
 
 			var sorted = make([]common.Hash, len(hashes))
 			for i := range hashes {
-				sorted[i] = common.Hash(hashes[i])
+				sorted[i] = hashes[i]
 			}
 			sort.Slice(sorted, func(i, j int) bool {
 				return sorted[i].Cmp(sorted[j]) < 0
@@ -406,16 +409,12 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			c.requestTxs(sorted)
 		}),
-		dbft.WithStopTxFlow(func() {
+		dbft.WithStopTxFlow[common.Hash](func() {
 			var hashes []common.Hash
 			c.txCbList.Store(hashes)
 		}),
-		dbft.WithGetConsensusAddress(func(keys ...dbftCrypto.PublicKey) util.Uint160 {
-			// NextConsensus is filled manually in WithNewPrepareRequest callback.
-			return util.Uint160{}
-		}),
-		dbft.WithNewConsensusPayload(c.newPayload),
-		dbft.WithNewPrepareRequest(func() payload.PrepareRequest {
+		dbft.WithNewConsensusPayload[common.Hash](c.newPayload),
+		dbft.WithNewPrepareRequest[common.Hash](func(ts uint64, nonce uint64, txHashes []common.Hash) dbft.PrepareRequest[common.Hash] {
 			var req = new(prepareRequest)
 			if c.sealingProposal == nil {
 				panic("bug: sealing proposal is not initialized")
@@ -459,21 +458,38 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 			c.sealingProposal.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
 
-			// Fill in only proposal and last block info, transactions will be properly
-			// set from context later in SetTransactionHashes callback.
 			req.SealingProposal = c.sealingProposal
 			req.ParentSealHash = c.lastBlockSealHash
 			req.ParentExtra = c.lastBlockExtra
+			req.TxHashes = txHashes
 
 			return req
 		}),
-		dbft.WithNewCommit(func() payload.Commit { return new(commit) }),
-		dbft.WithNewPrepareResponse(func() payload.PrepareResponse { return new(prepareResponse) }),
-		dbft.WithNewChangeView(func() payload.ChangeView { return new(changeView) }),
-		dbft.WithNewRecoveryRequest(func() payload.RecoveryRequest { return new(recoveryRequest) }),
-		dbft.WithNewRecoveryMessage(func() payload.RecoveryMessage { return new(recoveryMessage) }),
-		dbft.WithVerifyPrepareResponse(func(_ payload.ConsensusPayload) error { return nil }),
-		dbft.WithVerifyPrepareRequest(func(p payload.ConsensusPayload) error {
+		dbft.WithNewCommit[common.Hash](func(sig []byte) dbft.Commit {
+			res := new(commit)
+			copy(res.SignatureExt[:], sig)
+			return res
+		}),
+		dbft.WithNewPrepareResponse[common.Hash](func(prepH common.Hash) dbft.PrepareResponse[common.Hash] {
+			return &prepareResponse{
+				PreparationHashExt: prepH,
+			}
+		}),
+		dbft.WithNewChangeView[common.Hash](func(newView byte, reason dbft.ChangeViewReason, ts uint64) dbft.ChangeView {
+			return &changeView{
+				newViewNumber: newView,
+				ReasonExt:     reason,
+				TimestampExt:  ts,
+			}
+		}),
+		dbft.WithNewRecoveryRequest[common.Hash](func(ts uint64) dbft.RecoveryRequest {
+			return &recoveryRequest{
+				TimestampExt: ts,
+			}
+		}),
+		dbft.WithNewRecoveryMessage[common.Hash](func() dbft.RecoveryMessage[common.Hash] { return new(recoveryMessage) }),
+		dbft.WithVerifyPrepareResponse[common.Hash](func(_ dbft.ConsensusPayload[common.Hash]) error { return nil }),
+		dbft.WithVerifyPrepareRequest[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) error {
 			req := p.GetPrepareRequest().(*prepareRequest)
 			if req.SealingProposal == nil {
 				return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
@@ -527,7 +543,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 				c.lastBlockHash = req.SealingProposal.ParentHash
 				c.lastBlockExtra = req.ParentExtra
-				c.dbft.PrevHash = req.SealingProposal.ParentHash.Uint256()
+				c.dbft.PrevHash = req.SealingProposal.ParentHash
 
 				log.Info("New parent stored",
 					"number", parentHeader.Number,
@@ -549,7 +565,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			return nil
 		}),
-		dbft.WithVerifyBlock(func(b block.Block) bool {
+		dbft.WithVerifyBlock[common.Hash](func(b dbft.Block[common.Hash]) bool {
 			dbftBlock := b.(*Block)
 			parent := c.chain.CurrentBlock()
 			if parent.Number.Cmp(dbftBlock.header.Number) >= 0 {
@@ -593,7 +609,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			return true
 		}),
-		dbft.WithBroadcast(func(p payload.ConsensusPayload) {
+		dbft.WithBroadcast[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) {
 			if err := p.(*Payload).Sign(c.dbft.Priv.(*Signer)); err != nil {
 				log.Warn("can't sign consensus payload", "error", err)
 			}
@@ -605,6 +621,9 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 		}),
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize dBFT: %w", err)
+	}
 
 	return c, nil
 }
@@ -684,6 +703,12 @@ func (c *DBFT) WithBroadcast(f func(m *dbftproto.Message) error) {
 // WithRequestTxs sets callback to request the missing transactions from neighbor nodese.
 func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 	c.requestTxs = f
+}
+
+// WithMinerInterrupted sets callback to indicate whether miner is interrupted due
+// to the ongoing node sync process.
+func (c *DBFT) WithMinerInterrupted(f func() bool) {
+	c.minerInterrupted = f
 }
 
 // WithTxPool initializes transaction pool API for DBFT interactions with memory pool
@@ -1201,7 +1226,7 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 		// update it manually to keep it in sync with the actual last block hash in
 		// case of chain reorgs (it's thread-safe to perform it here, because eventLoop
 		// is waiting for the end of Seal in this case).
-		c.dbft.Context.PrevHash = c.lastBlockHash.Uint256()
+		c.dbft.Context.PrevHash = c.lastBlockHash
 	}
 
 	return nil
@@ -1221,18 +1246,18 @@ events:
 			c.chainHeadSub.Unsubscribe()
 			break events
 		case <-c.dbft.Timer.C():
-			hv := c.dbft.Timer.HV()
+			h, v := c.dbft.Timer.Height(), c.dbft.Timer.View()
 			log.Debug("timer fired",
-				"height", hv.Height,
-				"view", uint(hv.View))
-			c.dbft.OnTimeout(hv)
+				"height", h,
+				"view", uint(v))
+			c.dbft.OnTimeout(h, v)
 		case msg := <-c.messages:
 			fields := []any{
 				"from", msg.message.ValidatorIndex,
 				"type", msg.Type().String(),
 			}
 
-			if msg.Type() == payload.RecoveryMessageType {
+			if msg.Type() == dbft.RecoveryMessageType {
 				rec := msg.GetRecoveryMessage().(*recoveryMessage)
 				if rec.PreparationHashExt == nil {
 					req := rec.GetPrepareRequest(&msg, c.dbft.Validators, uint16(c.dbft.PrimaryIndex))
@@ -1396,13 +1421,13 @@ func (c *DBFT) validatePayload(p *Payload) error {
 	return nil
 }
 
-func (c *DBFT) newPayload(ctx *dbft.Context, t payload.MessageType, msg any) payload.ConsensusPayload {
-	cp := &Payload{}
-	cp.SetHeight(ctx.BlockIndex)
-	cp.SetValidatorIndex(uint16(ctx.MyIndex))
-	cp.SetViewNumber(ctx.ViewNumber)
-	cp.SetType(t)
-	cp.SetPayload(msg)
+func (c *DBFT) newPayload(ctx *dbft.Context[common.Hash], t dbft.MessageType, msg any) dbft.ConsensusPayload[common.Hash] {
+	var cp = new(Payload)
+	cp.BlockIndex = uint64(ctx.BlockIndex)
+	cp.message.ValidatorIndex = byte(ctx.MyIndex)
+	cp.message.ViewNumber = ctx.ViewNumber
+	cp.message.Type = messageType(t)
+	cp.msgPayload = msg
 
 	cp.Message.ValidBlockStart = 0
 	cp.Message.ValidBlockEnd = uint64(ctx.BlockIndex)
@@ -1412,6 +1437,13 @@ func (c *DBFT) newPayload(ctx *dbft.Context, t payload.MessageType, msg any) pay
 }
 
 func (c *DBFT) handleChainBlock(b *types.Block) error {
+	// A short path if miner is not active and the node is in the process of block
+	// sync. In this case dBFT can't react properly on the newcoming blocks since no
+	// sealing task is expected from miner.
+	if c.minerInterrupted() {
+		return nil
+	}
+
 	// We can get our own block here, so check for index.
 	if uint32(b.Number().Uint64()) >= c.dbft.BlockIndex {
 		log.Info("New block in the chain",
@@ -1431,7 +1463,7 @@ func (c *DBFT) handleChainBlock(b *types.Block) error {
 				"err", err.Error())
 			return err
 		}
-		c.dbft.InitializeConsensus(0, c.lastTimestamp*NsInS)
+		c.dbft.Reset(c.lastTimestamp * NsInS)
 	}
 	return nil
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/nspcc-dev/neo-go/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +39,7 @@ func TestPayloadSerializable(t *testing.T) {
 			ExcessBlobGas:    nil,
 			ParentBeaconRoot: nil,
 		},
-		TxHashes:       []util.Uint256{},
+		TxHashes:       []common.Hash{},
 		ParentSealHash: common.Hash{1, 2, 3},
 		ParentExtra:    []byte{1, 2, 3},
 	}

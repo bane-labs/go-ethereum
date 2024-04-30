@@ -26,9 +26,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/nspcc-dev/neo-go/pkg/util"
-	"github.com/stretchr/testify/require"
 )
 
 func TestBytesConversion(t *testing.T) {
@@ -597,31 +594,4 @@ func BenchmarkPrettyDuration(b *testing.B) {
 		a = x.String()
 	}
 	b.Logf("Post %s", a)
-}
-
-func TestAddress_SetUint160_Uint160(t *testing.T) {
-	var (
-		a        = new(Address)
-		expected = util.Uint160{1, 2, 3}
-	)
-	a.SetUint160(expected)
-	require.Equal(t, expected, a.Uint160())
-}
-
-func TestHash_SetUint256_Uint256(t *testing.T) {
-	var (
-		a        = new(Hash)
-		expected = util.Uint256{1, 2, 3}
-	)
-	a.SetUint256(expected)
-	require.Equal(t, expected, a.Uint256())
-}
-
-func TestHash_SetUint160_Uint160(t *testing.T) {
-	var (
-		a        = new(Hash)
-		expected = util.Uint160{1, 2, 3}
-	)
-	a.SetUint160(expected)
-	require.Equal(t, expected, a.Uint160())
 }
