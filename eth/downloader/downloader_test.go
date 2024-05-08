@@ -19,7 +19,6 @@ package downloader
 import (
 	"fmt"
 	"math/big"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,7 +43,6 @@ import (
 
 // downloadTester is a test simulator for mocking out local block chain.
 type downloadTester struct {
-	freezer    string
 	chain      *core.BlockChain
 	downloader *Downloader
 
@@ -59,8 +57,7 @@ func newTester(t *testing.T) *downloadTester {
 
 // newTesterWithNotification creates a new downloader test mocker.
 func newTesterWithNotification(t *testing.T, success func()) *downloadTester {
-	freezer := t.TempDir()
-	db, err := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), freezer, "", false)
+	db, err := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), "", "", false)
 	if err != nil {
 		panic(err)
 	}
@@ -77,9 +74,8 @@ func newTesterWithNotification(t *testing.T, success func()) *downloadTester {
 		panic(err)
 	}
 	tester := &downloadTester{
-		freezer: freezer,
-		chain:   chain,
-		peers:   make(map[string]*downloadTesterPeer),
+		chain: chain,
+		peers: make(map[string]*downloadTesterPeer),
 	}
 	tester.downloader = New(db, new(event.TypeMux), tester.chain, nil, tester.dropPeer, success)
 	return tester
@@ -90,8 +86,6 @@ func newTesterWithNotification(t *testing.T, success func()) *downloadTester {
 func (dl *downloadTester) terminate() {
 	dl.downloader.Terminate()
 	dl.chain.Stop()
-
-	os.RemoveAll(dl.freezer)
 }
 
 // sync starts synchronizing with a remote peer, blocking until it completes.
