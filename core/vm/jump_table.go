@@ -58,6 +58,7 @@ var (
 	shanghaiInstructionSet         = newShanghaiInstructionSet()
 	neoxdkgInstructionSet          = newNeoXDKGInstructionSet()
 	cancunInstructionSet           = newCancunInstructionSet()
+	verkleInstructionSet           = newVerkleInstructionSet()
 )
 
 // JumpTable contains the EVM opcodes supported at a given fork.
@@ -79,6 +80,12 @@ func validate(jt JumpTable) JumpTable {
 		}
 	}
 	return jt
+}
+
+func newVerkleInstructionSet() JumpTable {
+	instructionSet := newCancunInstructionSet()
+	enable4762(&instructionSet)
+	return validate(instructionSet)
 }
 
 func newCancunInstructionSet() JumpTable {
