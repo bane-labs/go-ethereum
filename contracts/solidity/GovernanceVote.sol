@@ -7,8 +7,8 @@ interface IGovReward {
 
 abstract contract GovernanceVote {
     // events for voting
-    event Vote(address voter, bytes32 methodKey, bytes32 paramKey);
-    event VotePass(bytes32 methodKey, bytes32 paramKey);
+    event Vote(address indexed voter, bytes32 indexed methodKey, bytes32 paramKey);
+    event VotePass(bytes32 indexed methodKey, bytes32 paramKey);
 
     // governance reward contact
     address public constant govReward =

@@ -8,9 +8,9 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 interface IGovernance {
     event Register(address candidate);
     event Exit(address candidate);
-    event Vote(address voter, address to, uint amount);
-    event Revoke(address voter, address from, uint amount);
-    event VoterClaim(address voter, uint reward);
+    event Vote(address indexed voter, address indexed to, uint amount);
+    event Revoke(address indexed voter, address indexed from, uint amount);
+    event VoterClaim(address indexed voter, uint reward);
     event CandidateWithdraw(address candidate, uint amount);
     event Persist(address[] validators);
 

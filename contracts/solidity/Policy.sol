@@ -13,8 +13,8 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
     uint256 public minGasTipCap;
     uint256 public baseFee;
 
-    event AddBlackList(address addr);
-    event RemoveBlackList(address addr);
+    event AddBlackList(address indexed addr);
+    event RemoveBlackList(address indexed addr);
     event SetMinGasTipCap(uint256 gasTipCap);
     event SetBaseFee(uint256 baseFee);
 
