@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+
 interface IGovReward {
     function getMiners() external view returns (address[] memory);
 }
 
 abstract contract GovernanceVote {
+    using EnumerableSet for EnumerableSet.AddressSet;
+    struct AddressToBytes32Map {
+        EnumerableSet.AddressSet _keys;
+        mapping(address key => bytes32) _values;
+    }
+
     // events for voting
     event Vote(address voter, bytes32 methodKey, bytes32 paramKey);
     event VotePass(bytes32 methodKey, bytes32 paramKey);
@@ -14,57 +22,62 @@ abstract contract GovernanceVote {
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
 
-    // vote mapping, method key ->(user address -> param key)
-    mapping(bytes32 => mapping(address => bytes32)) private voteMap;
+    // vote mapping, method key -> (user address -> param key)
+    mapping(bytes32 => AddressToBytes32Map) private voteMap;
 
-    function isMiner(address addr) public view returns (bool) {
+    modifier needVote(bytes32 methodKey, bytes32 paramKey) {
         address[] memory miners = IGovReward(govReward).getMiners();
-        for (uint i = 0; i < miners.length; i++) {
-            if (addr == miners[i]) {
+        require(_contains(miners, msg.sender), "not Miner");
+
+        // update vote map
+        _vote(methodKey, paramKey);
+
+        // check vote, if not pass just return
+        uint mlength = miners.length;
+        uint validVotes = 0;
+        for (uint i = 0; i < mlength; i++) {
+            if (voteMap[methodKey]._values[miners[i]] == paramKey) {
+                validVotes++;
+            }
+        }
+        if (validVotes < (miners.length + 1) / 2) return;
+
+        // clear vote
+        emit VotePass(methodKey, paramKey);
+        _clearVote(methodKey);
+
+        // execute method
+        _;
+    }
+
+    function _vote(bytes32 methodKey, bytes32 paramKey) internal {
+        voteMap[methodKey]._values[msg.sender] = paramKey;
+        voteMap[methodKey]._keys.add(msg.sender);
+        emit Vote(msg.sender, methodKey, paramKey);
+    }
+
+    function _clearVote(bytes32 methodKey) internal {
+        address[] memory voters = voteMap[methodKey]._keys.values();
+        uint vlength = voters.length;
+        delete voteMap[methodKey]._keys._inner._values;
+        for (uint i = 0; i < vlength; i++) {
+            delete voteMap[methodKey]._keys._inner._positions[
+                bytes32(uint256(uint160(voters[i])))
+            ];
+            delete voteMap[methodKey]._values[voters[i]];
+        }
+    }
+
+    function _contains(
+        address[] memory list,
+        address addr
+    ) internal pure returns (bool) {
+        uint length = list.length;
+        for (uint i = 0; i < length; i++) {
+            if (addr == list[i]) {
                 return true;
             }
         }
         return false;
-    }
-
-    function vote(bytes32 methodKey, bytes32 paramKey) internal {
-        voteMap[methodKey][msg.sender] = paramKey;
-        emit Vote(msg.sender, methodKey, paramKey);
-    }
-
-    function clearVote(bytes32 methodKey) internal {
-        address[] memory voters = IGovReward(govReward).getMiners();
-        for (uint i; i < voters.length; i++) {
-            delete voteMap[methodKey][voters[i]];
-        }
-    }
-
-    function checkVote(
-        bytes32 methodKey,
-        bytes32 paramKey
-    ) internal view returns (bool isPass) {
-        address[] memory voters = IGovReward(govReward).getMiners();
-        uint votedCount;
-        for (uint i; i < voters.length; i++) {
-            if (voteMap[methodKey][voters[i]] == paramKey) {
-                votedCount++;
-            }
-        }
-        return votedCount >= (voters.length + 1) / 2;
-    }
-
-    modifier needVote(bytes32 methodKey, bytes32 paramKey) {
-        require(isMiner(msg.sender), "not Miner");
-        // update vote map
-        vote(methodKey, paramKey);
-        // check vote, if not pass just return
-        if (!checkVote(methodKey, paramKey)) {
-            return;
-        }
-        // execute method
-        _;
-        emit VotePass(methodKey, paramKey);
-        // clear vote
-        clearVote(methodKey);
     }
 }
