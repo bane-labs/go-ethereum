@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
+import "./Errors.sol";
+
 interface IGovReward {
     function getMiners() external view returns (address[] memory);
 }
@@ -54,7 +56,7 @@ abstract contract GovernanceVote {
     }
 
     modifier needVote(bytes32 methodKey, bytes32 paramKey) {
-        require(isMiner(msg.sender), "not Miner");
+        if(!isMiner(msg.sender)) revert Errors.NotMiner();
         // update vote map
         vote(methodKey, paramKey);
         // check vote, if not pass just return
