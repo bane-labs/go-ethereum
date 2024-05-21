@@ -1,7 +1,7 @@
 import { ethers } from "hardhat";
 import { expect } from "chai";
 import { mine } from "@nomicfoundation/hardhat-network-helpers";
-
+import { ERRORS } from "./helpers/errors";
 
 // NATIVE ADDRESSES
 const GOV_ADMIN = "0x1212000000000000000000000000000000000000";
@@ -106,7 +106,7 @@ describe("Governance", function () {
 
             await expect(
                 contract.call_registerCandidate(Governance, 500, { value: REGISTER_FEE })
-            ).to.be.revertedWith("only allow EOA");
+            ).to.be.revertedWithCustomError(Governance, ERRORS.ONLY_EOA);
         });
 
         it("Should revert if the sender is already a candidate", async function () {
@@ -116,19 +116,19 @@ describe("Governance", function () {
                 Governance
                     .connect(candidate1)
                     .registerCandidate(500, { value: REGISTER_FEE })
-            ).to.be.revertedWith("candidate exists");
+            ).to.be.revertedWithCustomError(Governance, ERRORS.CANDIDATE_EXISTS);
         });
 
         it("Should revert if the value sent is less than the registration fee", async function () {
             await expect(
                 Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE - BigInt(1) })
-            ).to.be.revertedWith("insufficient amount");
+            ).to.be.revertedWithCustomError(Governance, ERRORS.INSUFFICIENT_VALUE);
         });
 
         it("Should revert if register a candidate with more than 1000 shareRate", async function () {
             await expect(
                 Governance.connect(candidate1).registerCandidate(1001, { value: REGISTER_FEE })
-            ).to.be.revertedWith("invalid rate");
+            ).to.be.revertedWithCustomError(Governance, ERRORS.INVALID_SHARE_RATE);
         });
 
         it("Should register a new candidate if all conditions are met", async function () {
@@ -152,7 +152,7 @@ describe("Governance", function () {
         it("Should revert if the sender is not a candidate", async function () {
             await expect(
                 Governance.connect(candidate1).exitCandidate()
-            ).to.be.revertedWith("candidate not exists");
+            ).to.be.revertedWithCustomError(Governance, ERRORS.CANDIDATE_NOT_EXISTS);
         });
 
         it("Should remove a candidate if all conditions are met", async function () {
@@ -183,7 +183,7 @@ describe("Governance", function () {
         it("Should revert if the sender is not a candidate", async function () {
             await expect(
                 Governance.connect(candidate1).withdrawRegisterFee()
-            ).to.be.revertedWith("withdraw not allowed");
+            ).to.be.revertedWithCustomError(Governance, ERRORS.CANDIDATE_WITHDRAW_NOT_ALLOWED);
         });
         it("Should revert if the sender has not exited", async function () {
             await expect(
@@ -192,7 +192,7 @@ describe("Governance", function () {
 
             await expect(
                 Governance.connect(candidate1).withdrawRegisterFee()
-            ).to.be.revertedWith("withdraw not allowed");
+            ).to.be.revertedWithCustomError(Governance, ERRORS.CANDIDATE_WITHDRAW_NOT_ALLOWED);
         });
         it("Should revert if the sender has not waited for 2 epochs", async function () {
             await expect(
@@ -204,7 +204,7 @@ describe("Governance", function () {
 
             await expect(
                 Governance.connect(candidate1).withdrawRegisterFee()
-            ).to.be.revertedWith("withdraw not allowed");
+            ).to.be.revertedWithCustomError(Governance, ERRORS.CANDIDATE_WITHDRAW_NOT_ALLOWED);
         });
         it("Should transfer back register fee if all conditions are met", async function () {
             await expect(
@@ -310,8 +310,9 @@ describe("Governance", function () {
         });
 
         it("Should revert if caller is not SYS_CALL", async function () {
-            await expect(Governance.connect(user).onPersist()).to.be.revertedWith(
-                "side call not allowed"
+            await expect(Governance.connect(user).onPersist()).to.be.revertedWithCustomError(
+                Governance,
+                ERRORS.SIDE_CALL_OT_ALLOWED
             );
         });
 
