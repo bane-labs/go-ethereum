@@ -28,7 +28,7 @@ abstract contract GovernanceVote {
 
     modifier needVote(bytes32 methodKey, bytes32 paramKey) {
         address[] memory miners = IGovReward(govReward).getMiners();
-        if(!_contains(miners, msg.sender) revert Errors.NotMiner();
+        if(!_contains(miners, msg.sender)) revert Errors.NotMiner();
 
         // update vote map
         _vote(methodKey, paramKey);
