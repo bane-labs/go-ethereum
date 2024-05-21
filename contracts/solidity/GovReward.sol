@@ -1,25 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
+import "./Errors.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-
-library TransferHelper {
-    function safeTransfer(address token, address to, uint256 value) internal {
-        // bytes4(keccak256(bytes('transfer(address,uint256)')));
-        (bool success, bytes memory data) = token.call(
-            abi.encodeWithSelector(0xa9059cbb, to, value)
-        );
-        require(
-            success && (data.length == 0 || abi.decode(data, (bool))),
-            "safeTransfer: transfer failed"
-        );
-    }
-
-    function safeTransferETH(address to, uint256 value) internal {
-        (bool success, ) = to.call{value: value}(new bytes(0));
-        require(success, "safeTransferETH: ETH transfer failed");
-    }
-}
 
 interface IGovernance {
     // get current consensus group
@@ -42,12 +25,12 @@ contract GovReward is IGovReward, UUPSUpgradeable {
     receive() external payable {}
 
     modifier onlyGov() {
-        require(msg.sender == GOV, "not governance");
+        if (msg.sender != GOV) revert Errors.NotGovernance();
         _;
     }
 
     modifier onlyAdmin() {
-        require(msg.sender == GOV_ADMIN, "not admin");
+        if (msg.sender != GOV_ADMIN) revert Errors.NotAdmin();
         _;
     }
 
@@ -81,7 +64,12 @@ contract GovReward is IGovReward, UUPSUpgradeable {
 
     function withdraw() external onlyGov {
         if (address(this).balance > 0) {
-            TransferHelper.safeTransferETH(GOV, address(this).balance);
+            _safeTransferETH(GOV, address(this).balance);
         }
+    }
+
+    function _safeTransferETH(address to, uint value) internal {
+        (bool success, ) = to.call{value: value}(new bytes(0));
+        if (!success) revert Errors.TransferFailed();
     }
 }
