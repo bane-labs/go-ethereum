@@ -2,7 +2,6 @@
 pragma solidity ^0.8.25;
 
 import "./Errors.sol";
-
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 interface IGovReward {
