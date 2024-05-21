@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.25;
 
+import "./Errors.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -8,9 +9,9 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 interface IGovernance {
     event Register(address candidate);
     event Exit(address candidate);
-    event Vote(address voter, address to, uint amount);
-    event Revoke(address voter, address from, uint amount);
-    event VoterClaim(address voter, uint reward);
+    event Vote(address indexed voter, address indexed to, uint amount);
+    event Revoke(address indexed voter, address indexed from, uint amount);
+    event VoterClaim(address indexed voter, uint reward);
     event CandidateWithdraw(address candidate, uint amount);
     event Persist(address[] validators);
 
@@ -103,7 +104,7 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
 
     modifier onlyAdmin() {
-        require(msg.sender == GOV_ADMIN, "not admin");
+        if (msg.sender != GOV_ADMIN) revert Errors.NotAdmin();
         _;
     }
 
@@ -132,7 +133,7 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     }
 
     receive() external payable nonReentrant {
-        require(msg.sender == GOV_REWARD, "side call not allowed");
+        if (msg.sender != GOV_REWARD) revert Errors.SideCallNotAllowed();
         address[] memory validators = currentConsensus;
         uint length = validators.length;
         for (uint i = 0; i < length; i++) {
@@ -157,11 +158,11 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     }
 
     function registerCandidate(uint shareRate) external payable {
-        require(tx.origin == msg.sender, "only allow EOA");
-        require(msg.value >= registerFee, "insufficient amount");
-        require(shareRate < 1000, "invalid rate");
-        require(exitHeightOf[msg.sender] == 0, "left not claimed");
-        require(candidateList.add(msg.sender), "candidate exists");
+        if (tx.origin != msg.sender) revert Errors.OnlyEOA();
+        if (msg.value < registerFee) revert Errors.InsufficientValue();
+        if (shareRate > 1000) revert Errors.InvalidShareRate();
+        if (exitHeightOf[msg.sender] > 0) revert Errors.LeftNotClaimed();
+        if (!candidateList.add(msg.sender)) revert Errors.CandidateExists();
         if (receivedVotes[msg.sender] > 0) {
             totalVotes += receivedVotes[msg.sender];
         }
@@ -173,7 +174,8 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     }
 
     function exitCandidate() external {
-        require(candidateList.remove(msg.sender), "candidate not exists");
+        if (!candidateList.remove(msg.sender))
+            revert Errors.CandidateNotExists();
         // remove candidate list, balance still locked
         exitHeightOf[msg.sender] = block.number;
         if (receivedVotes[msg.sender] > 0) {
@@ -185,11 +187,10 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     function withdrawRegisterFee() external nonReentrant {
         // require 2 epochs to exit candidate list
         // NOTE: suppose epoch change always happens in time
-        require(
-            exitHeightOf[msg.sender] > 0 &&
-                block.number > exitHeightOf[msg.sender] + 2 * epochDuration,
-            "withdraw not allowed"
-        );
+        if (
+            exitHeightOf[msg.sender] <= 0 ||
+            block.number <= exitHeightOf[msg.sender] + 2 * epochDuration
+        ) revert Errors.CandidateWithdrawNotAllowed();
 
         // send back balance
         uint amount = candidateBalanceOf[msg.sender];
@@ -202,13 +203,12 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     }
 
     function vote(address candidateTo) external payable nonReentrant {
-        require(msg.value >= minVoteAmount, "insufficient amount");
-        require(candidateList.contains(candidateTo), "candidate not allowed");
+        if (msg.value < minVoteAmount) revert Errors.InsufficientValue();
+        if (!candidateList.contains(candidateTo))
+            revert Errors.CandidateNotExists();
         address votedCandidate = votedTo[msg.sender];
-        require(
-            votedCandidate == candidateTo || votedCandidate == address(0),
-            "only one choice is allowed"
-        );
+        if (votedCandidate != candidateTo && votedCandidate != address(0))
+            revert Errors.MultipleVoteNotAllowed();
 
         // settle reward here
         uint unclaimedReward = 0;
@@ -236,10 +236,7 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     function revokeVote() external nonReentrant {
         address candidateFrom = votedTo[msg.sender];
         uint amount = votedAmount[msg.sender];
-        require(
-            candidateFrom != address(0) && amount > 0,
-            "revoke not allowed"
-        );
+        if (candidateFrom == address(0) || amount <= 0) revert Errors.NoVote();
 
         // settle reward here
         uint unclaimedReward = _settleReward(msg.sender, candidateFrom);
@@ -263,7 +260,7 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
 
     function claimReward() external nonReentrant {
         address votedCandidate = votedTo[msg.sender];
-        require(votedCandidate != address(0), "claim not allowed");
+        if (votedCandidate == address(0)) revert Errors.NoVote();
         uint unclaimedReward = _settleReward(msg.sender, votedCandidate);
         if (unclaimedReward > 0) _safeTransferETH(msg.sender, unclaimedReward);
     }
@@ -276,7 +273,7 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
 
     function onPersist() external {
         // NOTE: suppose onPersist always happens at the beginning of every block
-        require(msg.sender == SYS_CALL, "side call not allowed");
+        if (msg.sender != SYS_CALL) revert Errors.SideCallNotAllowed();
         // only settle validator reward if there is no epoch change
         IGovReward(GOV_REWARD).withdraw();
         if (block.number < currentEpochStartHeight + epochDuration) return;
@@ -339,7 +336,7 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
 
     function _safeTransferETH(address to, uint value) internal {
         (bool success, ) = to.call{value: value}(new bytes(0));
-        require(success, "safeTransferETH: ETH transfer failed");
+        if (!success) revert Errors.TransferFailed();
     }
 
     function _computeConsensus(address[] memory candidates) internal view returns (address[] memory) {

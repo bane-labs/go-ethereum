@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.25;
+
+import "./Errors.sol";
 
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
@@ -15,8 +17,8 @@ abstract contract GovernanceVote {
     }
 
     // events for voting
-    event Vote(address voter, bytes32 methodKey, bytes32 paramKey);
-    event VotePass(bytes32 methodKey, bytes32 paramKey);
+    event Vote(address indexed voter, bytes32 indexed methodKey, bytes32 paramKey);
+    event VotePass(bytes32 indexed methodKey, bytes32 paramKey);
 
     // governance reward contact
     address public constant govReward =
@@ -27,7 +29,7 @@ abstract contract GovernanceVote {
 
     modifier needVote(bytes32 methodKey, bytes32 paramKey) {
         address[] memory miners = IGovReward(govReward).getMiners();
-        require(_contains(miners, msg.sender), "not Miner");
+        if(!_contains(miners, msg.sender) revert Errors.NotMiner();
 
         // update vote map
         _vote(methodKey, paramKey);

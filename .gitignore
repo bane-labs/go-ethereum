@@ -54,3 +54,15 @@ logs/
 /privnet/**/geth/
 
 tests/spec-tests/
+
+# contracts dev
+node_modules
+.env
+/contracts/cache
+/contracts/artifacts
+/contracts/typechain
+/contracts/typechain-types
+/contracts/coverage
+/contracts/coverage.json
+/contracts/ignition
+/contracts/package-lock.json

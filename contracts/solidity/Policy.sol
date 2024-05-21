@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.25;
 
+import "./Errors.sol";
 import "./GovernanceVote.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
@@ -13,13 +14,13 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
     uint256 public minGasTipCap;
     uint256 public baseFee;
 
-    event AddBlackList(address addr);
-    event RemoveBlackList(address addr);
+    event AddBlackList(address indexed addr);
+    event RemoveBlackList(address indexed addr);
     event SetMinGasTipCap(uint256 gasTipCap);
     event SetBaseFee(uint256 baseFee);
 
     modifier onlyAdmin() {
-        require(msg.sender == GOV_ADMIN, "not admin");
+        if (msg.sender != GOV_ADMIN) revert Errors.NotAdmin();
         _;
     }
 
@@ -59,7 +60,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
             keccak256(abi.encodePacked(_addr))
         )
     {
-        require(!isBlackListed[_addr], "Policy: Blacklist already exists");
+        if (isBlackListed[_addr]) revert Errors.BlacklistExists();
         isBlackListed[_addr] = true;
         emit AddBlackList(_addr);
     }
@@ -76,7 +77,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
             keccak256(abi.encodePacked(_addr))
         )
     {
-        require(isBlackListed[_addr], "Policy: Blacklist does not exist");
+        if (!isBlackListed[_addr]) revert Errors.BlacklistNotExists();
         delete isBlackListed[_addr];
         emit RemoveBlackList(_addr);
     }
@@ -93,7 +94,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
             keccak256(abi.encodePacked(_gasTipCap))
         )
     {
-        require(_gasTipCap > 0, "Policy: setMinGasTipCap invalid parameter");
+        if (_gasTipCap <= 0) revert Errors.InvalidMinGasTipCap();
         minGasTipCap = _gasTipCap;
         emit SetMinGasTipCap(_gasTipCap);
     }
@@ -110,7 +111,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
             keccak256(abi.encodePacked(_baseFee))
         )
     {
-        require(_baseFee > 0, "Policy: setBaseFee invalid parameter");
+        if (_baseFee <= 0) revert Errors.InvalidBaseFee();
         baseFee = _baseFee;
         emit SetBaseFee(_baseFee);
     }
