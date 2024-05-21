@@ -1,0 +1,345 @@
+import { ethers } from "hardhat";
+import { expect } from "chai";
+import { mine } from "@nomicfoundation/hardhat-network-helpers";
+
+
+// NATIVE ADDRESSES
+const GOV_ADMIN = "0x1212000000000000000000000000000000000000";
+const GOV_PROXY = "0x1212000000000000000000000000000000000001";
+const GOV_IMP = "0x1212100000000000000000000000000000000001";
+const POLICY_PROXY = "0x1212000000000000000000000000000000000002";
+const POLICY_IMP = "0x1212100000000000000000000000000000000002";
+const REWARD_PROXY = "0x1212000000000000000000000000000000000003";
+const REWARD_IMP = "0x1212100000000000000000000000000000000003";
+const SYS_CALL = "0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE";
+
+// CONFIG
+const CONSENSUS_SIZE = 7;
+const MIN_VOTE_AMOUNT = ethers.parseEther("1");
+const VOTE_TARGET_AMOUNT = 3000000;
+const REGISTER_FEE = ethers.parseEther("1000");
+const EPOCH_DURATION = 60480;
+const STANDBY_VALIDATORS = [
+    "0xcbbeca26e89011e32ba25610520b20741b809007",
+    "0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc",
+    "0xd10f47396dc6c76ad53546158751582d3e2683ef",
+    "0xa51fe05b0183d01607bf48c1718d1168a1c11171",
+    "0x01b517b301bb143476da35bb4a1399500d925514",
+    "0x7976ad987d572377d39fb4bab86c80e08b6f8327",
+    "0xd711da2d8c71a801fc351163337656f1321343a0"
+];
+
+describe("Governance", function () {
+
+    let Governance: any;
+    let user: any, candidate1: any, candidate2: any;
+
+    beforeEach(async function () {
+        // Signers
+        [user, candidate1, candidate2] = await ethers.getSigners();
+
+        // Reset blockchain state
+        await ethers.provider.send("hardhat_reset")
+
+        // Deploy Governance contract
+        const governance_deploy = await ethers.deployContract("Governance");
+
+        // Copy Bytecode to native address
+        const governance_code = await ethers.provider.send("eth_getCode", [governance_deploy.target]);
+        await ethers.provider.send("hardhat_setCode", [GOV_PROXY, governance_code]);
+        const contract = require("../artifacts/solidity/Governance.sol/Governance.json");
+        Governance = new ethers.Contract(GOV_PROXY, contract.abi, user);
+
+        // Write Governance config to storage
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1", ethers.toBeHex(CONSENSUS_SIZE, 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x2", ethers.toBeHex(MIN_VOTE_AMOUNT, 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x3", ethers.toBeHex(VOTE_TARGET_AMOUNT, 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x4", ethers.toBeHex(REGISTER_FEE, 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x5", ethers.toBeHex(EPOCH_DURATION, 32)]);
+
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x10", ethers.toBeHex(CONSENSUS_SIZE, 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c68", ethers.toBeHex(STANDBY_VALIDATORS[0], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c69", ethers.toBeHex(STANDBY_VALIDATORS[1], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6a", ethers.toBeHex(STANDBY_VALIDATORS[2], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6b", ethers.toBeHex(STANDBY_VALIDATORS[3], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6c", ethers.toBeHex(STANDBY_VALIDATORS[4], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6d", ethers.toBeHex(STANDBY_VALIDATORS[5], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6e", ethers.toBeHex(STANDBY_VALIDATORS[6], 32)]);
+
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x11", ethers.toBeHex(CONSENSUS_SIZE, 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae672", ethers.toBeHex(STANDBY_VALIDATORS[0], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae673", ethers.toBeHex(STANDBY_VALIDATORS[1], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae674", ethers.toBeHex(STANDBY_VALIDATORS[2], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae675", ethers.toBeHex(STANDBY_VALIDATORS[3], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae676", ethers.toBeHex(STANDBY_VALIDATORS[4], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae677", ethers.toBeHex(STANDBY_VALIDATORS[5], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae678", ethers.toBeHex(STANDBY_VALIDATORS[6], 32)]);
+    });
+
+    describe("genesis", function () {
+        it("Should get consensus size as expected", async function () {
+            expect(await Governance.consensusSize()).to.eq(CONSENSUS_SIZE);
+        });
+        it("Should get minimum vote amount as expected", async function () {
+            expect(await Governance.minVoteAmount()).to.eq(MIN_VOTE_AMOUNT);
+        });
+        it("Should get target vote amount as expected", async function () {
+            expect(await Governance.voteTargetAmount()).to.eq(VOTE_TARGET_AMOUNT);
+        });
+        it("Should get register fee as expected", async function () {
+            expect(await Governance.registerFee()).to.eq(REGISTER_FEE);
+        });
+        it("Should get epoch duration as expected", async function () {
+            expect(await Governance.epochDuration()).to.eq(EPOCH_DURATION);
+        });
+        it("Should get initial consensus as expected", async function () {
+            expect((await Governance.currentConsensus(0)).toLowerCase()).to.eq(STANDBY_VALIDATORS[0]);
+        });
+        it("Should get standby validators as expected", async function () {
+            expect((await Governance.standByValidators(0)).toLowerCase()).to.eq(STANDBY_VALIDATORS[0]);
+        });
+    });
+
+    describe("registerCandidate", function () {
+        it("Should revert if sender is not an EOA account", async function () {
+            const contract = await ethers.deployContract("MockContract");
+
+            await expect(
+                contract.call_registerCandidate(Governance, 500, { value: REGISTER_FEE })
+            ).to.be.revertedWith("only allow EOA");
+        });
+
+        it("Should revert if the sender is already a candidate", async function () {
+            await Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE });
+
+            await expect(
+                Governance
+                    .connect(candidate1)
+                    .registerCandidate(500, { value: REGISTER_FEE })
+            ).to.be.revertedWith("candidate exists");
+        });
+
+        it("Should revert if the value sent is less than the registration fee", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE - BigInt(1) })
+            ).to.be.revertedWith("insufficient amount");
+        });
+
+        it("Should revert if register a candidate with more than 1000 shareRate", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(1001, { value: REGISTER_FEE })
+            ).to.be.revertedWith("invalid rate");
+        });
+
+        it("Should register a new candidate if all conditions are met", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+
+            const candidates = await Governance.getCandidates();
+            expect(candidates.length).to.equal(1);
+            expect(candidates[0]).to.equal(candidate1.address);
+        });
+
+        it("Should emit an event when a new candidate is registered", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).emit(Governance, "Register");
+        });
+    });
+
+    describe("exitCandidate", function () {
+        it("Should revert if the sender is not a candidate", async function () {
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).to.be.revertedWith("candidate not exists");
+        });
+
+        it("Should remove a candidate if all conditions are met", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).not.to.be.reverted;
+
+            const candidates = await Governance.getCandidates();
+            expect(candidates.length).to.equal(0);
+        });
+
+        it("Should emit an event when a candidate exits", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).emit(Governance, "Exit");
+        });
+    });
+
+    describe("withdrawRegisterFee", function () {
+        it("Should revert if the sender is not a candidate", async function () {
+            await expect(
+                Governance.connect(candidate1).withdrawRegisterFee()
+            ).to.be.revertedWith("withdraw not allowed");
+        });
+        it("Should revert if the sender has not exited", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).withdrawRegisterFee()
+            ).to.be.revertedWith("withdraw not allowed");
+        });
+        it("Should revert if the sender has not waited for 2 epochs", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).withdrawRegisterFee()
+            ).to.be.revertedWith("withdraw not allowed");
+        });
+        it("Should transfer back register fee if all conditions are met", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).not.to.be.reverted;
+
+            await mine(2 * EPOCH_DURATION);
+
+            const balanceBefore = await ethers.provider.getBalance(candidate1.address);
+            await expect(
+                Governance.connect(candidate1).withdrawRegisterFee()
+            ).not.to.be.reverted;
+            const balanceAfter = await ethers.provider.getBalance(candidate1.address);
+            expect(balanceAfter).to.gt(balanceBefore);
+            expect(balanceAfter).to.lt(balanceBefore + REGISTER_FEE);
+        });
+        it("Should emit an event when a candidate withdraw register fee", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).not.to.be.reverted;
+
+            await mine(2 * EPOCH_DURATION);
+
+            await expect(
+                Governance.connect(candidate1).withdrawRegisterFee()
+            ).emit(Governance, "CandidateWithdraw");
+        });
+    });
+
+    describe("getCandidates", function () {
+        it("Should return an empty list of candidates initially", async function () {
+            const candidates = await Governance.getCandidates();
+            expect(candidates.length).to.equal(0);
+        });
+
+        it("Should return list of registered candidates", async function () {
+            // Register some candidates
+            await Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE });
+            await Governance.connect(candidate2).registerCandidate(700, { value: REGISTER_FEE });
+
+            const candidates = await Governance.getCandidates();
+            expect(candidates.length).to.equal(2);
+            expect(candidates).to.include(candidate1.address);
+            expect(candidates).to.include(candidate2.address);
+        });
+
+        it("Should return the updated list of candidates after a candidate exits", async function () {
+            // Register some candidates
+            await Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE });
+            await Governance.connect(candidate2).registerCandidate(700, { value: REGISTER_FEE });
+
+            // Exit of a candidate
+            await Governance.connect(candidate1).exitCandidate();
+
+            const candidates = await Governance.getCandidates();
+            expect(candidates.length).to.equal(1);
+            expect(candidates).to.not.include(candidate1.address);
+            expect(candidates).to.include(candidate2.address);
+        });
+    });
+
+    describe("standByValidators", function () {
+        it("Should return standByValidators", async function () {
+            expect((await Governance.standByValidators(0)).toLowerCase()).to.equal(STANDBY_VALIDATORS[0]);
+            expect((await Governance.standByValidators(1)).toLowerCase()).to.equal(STANDBY_VALIDATORS[1]);
+            expect((await Governance.standByValidators(2)).toLowerCase()).to.equal(STANDBY_VALIDATORS[2]);
+            expect((await Governance.standByValidators(3)).toLowerCase()).to.equal(STANDBY_VALIDATORS[3]);
+            expect((await Governance.standByValidators(4)).toLowerCase()).to.equal(STANDBY_VALIDATORS[4]);
+            expect((await Governance.standByValidators(5)).toLowerCase()).to.equal(STANDBY_VALIDATORS[5]);
+            expect((await Governance.standByValidators(6)).toLowerCase()).to.equal(STANDBY_VALIDATORS[6]);
+        });
+    });
+
+    describe("getCurrentConsensus", function () {
+        it("Should return standByValidators initially", async function () {
+            expect(await Governance.getCurrentConsensus()).to.deep.equal(STANDBY_VALIDATORS);
+        });
+    });
+
+    describe("onPersist", function () {
+        let MockSysCall: any;
+        let GovReward: any;
+
+        beforeEach(async function () {
+            // Deploy Mock SYS_CALL
+            const deploy_mock = await ethers.deployContract("MockSysCall");
+            const code_mock = await ethers.provider.send("eth_getCode", [deploy_mock.target]);
+            await ethers.provider.send("hardhat_setCode", [SYS_CALL, code_mock]);
+            const contract_mock = require("../artifacts/solidity/test/MockSysCall.sol/MockSysCall.json");
+            MockSysCall = new ethers.Contract(SYS_CALL, contract_mock.abi, user);
+            // Deploy GovReward to native address
+            const deploy_reward = await ethers.deployContract("GovReward");
+            const code_reward = await ethers.provider.send("eth_getCode", [deploy_reward.target]);
+            await ethers.provider.send("hardhat_setCode", [REWARD_PROXY, code_reward]);
+            const contract_reward = require("../artifacts/solidity/GovReward.sol/GovReward.json");
+            GovReward = new ethers.Contract(REWARD_PROXY, contract_reward.abi, user);
+        });
+
+        it("Should revert if caller is not SYS_CALL", async function () {
+            await expect(Governance.connect(user).onPersist()).to.be.revertedWith(
+                "side call not allowed"
+            );
+        });
+
+        it("Should allow SYS_CALL", async function () {
+            expect(await MockSysCall.call_onPersist(Governance)).not.to.be.reverted;
+        });
+
+        it("Should update currentEpochStartHeight on Epoch change", async function () {
+            expect(await Governance.currentEpochStartHeight()).to.equal(0);
+            await mine(EPOCH_DURATION);
+            await expect(
+                MockSysCall.call_onPersist(Governance)
+            ).emit(Governance, "Persist");
+            expect(await Governance.currentEpochStartHeight()).to.equal(
+                await ethers.provider.getBlockNumber()
+            );
+        });
+
+        it("Should get GovReward rewards", async function () {
+            const tx = await user.sendTransaction({
+                to: GovReward.target,
+                value: ethers.parseEther("3"),
+            });
+            await tx.wait();
+
+            await expect(
+                await MockSysCall.call_onPersist(Governance)
+            ).to.changeEtherBalance(Governance, +3);
+        });
+    });
+});
