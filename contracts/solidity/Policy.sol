@@ -53,7 +53,12 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         address _addr
     )
         external
-        needVote(keccak256("addBlackList"), keccak256(abi.encode(_addr)))
+        needVote(
+            bytes32(
+                0x4912b57f7ea75243ecaff76a75bdedbc13a6f58c1c967b0427b8aee0a276309e
+            ),
+            keccak256(abi.encodePacked(_addr))
+        )
     {
         if (isBlackListed[_addr]) revert Errors.BlacklistExists();
         isBlackListed[_addr] = true;
@@ -65,7 +70,12 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         address _addr
     )
         external
-        needVote(keccak256("removeBlackList"), keccak256(abi.encode(_addr)))
+        needVote(
+            bytes32(
+                0x310cc9bfce6443143f03d0cdc4d66afa0b3c689539eb3e65cb1820b56d672465
+            ),
+            keccak256(abi.encodePacked(_addr))
+        )
     {
         if (!isBlackListed[_addr]) revert Errors.BlacklistNotExists();
         delete isBlackListed[_addr];
@@ -78,8 +88,10 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
     )
         external
         needVote(
-            keccak256("setMinGasTipCap"),
-            keccak256(abi.encode(_gasTipCap))
+            bytes32(
+                0x089197e4f35b8ada456b5531e8c1759ee3fce703602a3a957b5c9d2831082156
+            ),
+            keccak256(abi.encodePacked(_gasTipCap))
         )
     {
         if (_gasTipCap <= 0) revert Errors.InvalidMinGasTipCap();
@@ -92,7 +104,12 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         uint256 _baseFee
     )
         external
-        needVote(keccak256("setBaseFee"), keccak256(abi.encode(_baseFee)))
+        needVote(
+            bytes32(
+                0x83113031fe9312a872d9176bc1a087dc38ca109c517a596998332e2fb8409acc
+            ),
+            keccak256(abi.encodePacked(_baseFee))
+        )
     {
         if (_baseFee <= 0) revert Errors.InvalidBaseFee();
         baseFee = _baseFee;
