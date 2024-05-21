@@ -76,6 +76,30 @@ describe("Governance", function () {
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae678", ethers.toBeHex(STANDBY_VALIDATORS[6], 32)]);
     });
 
+    describe("genesis", function () {
+        it("Should get consensus size as expected", async function () {
+            expect(await Governance.consensusSize()).to.eq(CONSENSUS_SIZE);
+        });
+        it("Should get minimum vote amount as expected", async function () {
+            expect(await Governance.minVoteAmount()).to.eq(MIN_VOTE_AMOUNT);
+        });
+        it("Should get target vote amount as expected", async function () {
+            expect(await Governance.voteTargetAmount()).to.eq(VOTE_TARGET_AMOUNT);
+        });
+        it("Should get register fee as expected", async function () {
+            expect(await Governance.registerFee()).to.eq(REGISTER_FEE);
+        });
+        it("Should get epoch duration as expected", async function () {
+            expect(await Governance.epochDuration()).to.eq(EPOCH_DURATION);
+        });
+        it("Should get initial consensus as expected", async function () {
+            expect((await Governance.currentConsensus(0)).toLowerCase()).to.eq(STANDBY_VALIDATORS[0]);
+        });
+        it("Should get standby validators as expected", async function () {
+            expect((await Governance.standByValidators(0)).toLowerCase()).to.eq(STANDBY_VALIDATORS[0]);
+        });
+    });
+
     describe("registerCandidate", function () {
         it("Should revert if sender is not an EOA account", async function () {
             const contract = await ethers.deployContract("MockContract");
@@ -121,6 +145,98 @@ describe("Governance", function () {
             await expect(
                 Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
             ).emit(Governance, "Register");
+        });
+    });
+
+    describe("exitCandidate", function () {
+        it("Should revert if the sender is not a candidate", async function () {
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).to.be.revertedWith("candidate not exists");
+        });
+
+        it("Should remove a candidate if all conditions are met", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).not.to.be.reverted;
+
+            const candidates = await Governance.getCandidates();
+            expect(candidates.length).to.equal(0);
+        });
+
+        it("Should emit an event when a candidate exits", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).emit(Governance, "Exit");
+        });
+    });
+
+    describe("withdrawRegisterFee", function () {
+        it("Should revert if the sender is not a candidate", async function () {
+            await expect(
+                Governance.connect(candidate1).withdrawRegisterFee()
+            ).to.be.revertedWith("withdraw not allowed");
+        });
+        it("Should revert if the sender has not exited", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).withdrawRegisterFee()
+            ).to.be.revertedWith("withdraw not allowed");
+        });
+        it("Should revert if the sender has not waited for 2 epochs", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).withdrawRegisterFee()
+            ).to.be.revertedWith("withdraw not allowed");
+        });
+        it("Should transfer back register fee if all conditions are met", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).not.to.be.reverted;
+
+            await mine(2 * EPOCH_DURATION);
+
+            const balanceBefore = await ethers.provider.getBalance(candidate1.address);
+            await expect(
+                Governance.connect(candidate1).withdrawRegisterFee()
+            ).not.to.be.reverted;
+            const balanceAfter = await ethers.provider.getBalance(candidate1.address);
+            expect(balanceAfter).to.gt(balanceBefore);
+            expect(balanceAfter).to.lt(balanceBefore + REGISTER_FEE);
+        });
+        it("Should emit an event when a candidate withdraw register fee", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).not.to.be.reverted;
+
+            await mine(2 * EPOCH_DURATION);
+
+            await expect(
+                Governance.connect(candidate1).withdrawRegisterFee()
+            ).emit(Governance, "CandidateWithdraw");
         });
     });
 

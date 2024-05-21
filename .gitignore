@@ -65,3 +65,4 @@ node_modules
 /contracts/coverage
 /contracts/coverage.json
 /contracts/ignition
+/contracts/package-lock.json
