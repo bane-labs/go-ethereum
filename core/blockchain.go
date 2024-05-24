@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -2469,6 +2470,12 @@ func (bc *BlockChain) ProcessState(block *types.Block) (*state.StateDB, types.Re
 	statedb, err := bc.StateAt(parent.Root())
 	if err != nil {
 		return nil, nil, nil, 0, fmt.Errorf("failed to retrieve state at %d, %s: %w", parent.NumberU64(), parent.Root(), err)
+	}
+
+	// verify baseFee
+	baseFee := eip1559.CalcBaseFeeDBFT(bc.chainConfig, parent.Header(), statedb)
+	if block.BaseFee().Cmp(baseFee) != 0 {
+		return nil, nil, nil, 0, fmt.Errorf("failed to verify policy baseFee, expected: %v, current: %v", baseFee, block.BaseFee())
 	}
 
 	receipts, logs, usedGas, err := bc.processor.Process(block, statedb, bc.vmConfig)

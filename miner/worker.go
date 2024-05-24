@@ -951,7 +951,12 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 	}
 	// Set baseFee and GasLimit if we are on an EIP-1559 chain
 	if w.chainConfig.IsLondon(header.Number) {
-		header.BaseFee = eip1559.CalcBaseFee(w.chainConfig, parent)
+		state, err := w.chain.StateAt(parent.Root)
+		if err != nil {
+			return nil, err
+		}
+		// Calculate baseFee with config
+		header.BaseFee = eip1559.CalcBaseFeeDBFT(w.chainConfig, parent, state)
 		if !w.chainConfig.IsLondon(parent.Number) {
 			parentGasLimit := parent.GasLimit * w.chainConfig.ElasticityMultiplier()
 			header.GasLimit = core.CalcGasLimit(parentGasLimit, w.config.GasCeil)

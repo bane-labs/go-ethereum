@@ -351,6 +351,7 @@ type ChainConfig struct {
 	CancunTime   *uint64 `json:"cancunTime,omitempty"`   // Cancun switch time (nil = no fork, 0 = already on cancun)
 	PragueTime   *uint64 `json:"pragueTime,omitempty"`   // Prague switch time (nil = no fork, 0 = already on prague)
 	VerkleTime   *uint64 `json:"verkleTime,omitempty"`   // Verkle switch time (nil = no fork, 0 = already on verkle)
+	NeoxburnTime *uint64 `json:"neoxburnTime,omitempty"` // Neoxburn switch time (nil = no fork, 0 = already on neoxburn)
 
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
@@ -489,6 +490,9 @@ func (c *ChainConfig) Description() string {
 	if c.VerkleTime != nil {
 		banner += fmt.Sprintf(" - Verkle:                      @%-10v\n", *c.VerkleTime)
 	}
+	if c.NeoxburnTime != nil {
+		banner += fmt.Sprintf(" - Neoxburn:                      @%-10v\n", *c.NeoxburnTime)
+	}
 	return banner
 }
 
@@ -575,6 +579,11 @@ func (c *ChainConfig) IsTerminalPoWBlock(parentTotalDiff *big.Int, totalDiff *bi
 // IsShanghai returns whether time is either equal to the Shanghai fork time or greater.
 func (c *ChainConfig) IsShanghai(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.ShanghaiTime, time)
+}
+
+// IsNeoxburn returns whether time is either equal to the Neoxburn fork time or greater.
+func (c *ChainConfig) IsNeoxburn(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.NeoxburnTime, time)
 }
 
 // IsCancun returns whether num is either equal to the Cancun fork time or greater.

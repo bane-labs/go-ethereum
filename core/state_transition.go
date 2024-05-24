@@ -294,13 +294,6 @@ func (st *StateTransition) preCheck() error {
 			return fmt.Errorf("%w: address %v, codehash: %s", ErrSenderNoEOA,
 				msg.From.Hex(), codeHash)
 		}
-		// Ensure the transaction is allowed by policy
-		// Apply policy minimum gas tip cap
-		var minGasTipCap = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash())
-		if msg.GasTipCap.Cmp(minGasTipCap.Big()) < 0 {
-			return fmt.Errorf("%w: address %v, gastipcap %v", ErrUnderpriced,
-				msg.From.Hex(), msg.GasTipCap)
-		}
 		// Apply policy blacklist
 		var blocked = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(msg.From))
 		if blocked != (common.Hash{}) {
@@ -330,6 +323,16 @@ func (st *StateTransition) preCheck() error {
 			if msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
 				return fmt.Errorf("%w: address %v, maxFeePerGas: %s, baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
+			}
+			// Ensure the transaction is allowed by policy, only for neoxburn fork
+			if st.evm.ChainConfig().IsNeoxburn(st.evm.Context.BlockNumber, st.evm.Context.Time) {
+				// Apply policy minimum gas tip cap
+				// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough
+				var minGasTipCap = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
+				if cmath.BigMin(msg.GasTipCap, new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee)).Cmp(minGasTipCap) < 0 {
+					return fmt.Errorf("%w: address %v, gastipcap %v, gasfeecap %v", ErrUnderpriced,
+						msg.From.Hex(), msg.GasTipCap, msg.GasFeeCap)
+				}
 			}
 		}
 	}

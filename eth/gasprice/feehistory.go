@@ -83,7 +83,11 @@ func (oracle *Oracle) processBlock(bf *blockFees, percentiles []float64) {
 		bf.results.baseFee = new(big.Int)
 	}
 	if chainconfig.IsLondon(big.NewInt(int64(bf.blockNumber + 1))) {
-		bf.results.nextBaseFee = eip1559.CalcBaseFee(chainconfig, bf.header)
+		state, _, err := oracle.backend.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(bf.blockNumber))
+		if err != nil {
+			log.Error("Failed to get state", "err", err, "header number", bf.blockNumber)
+		}
+		bf.results.nextBaseFee = eip1559.CalcBaseFeeDBFT(chainconfig, bf.header, state)
 	} else {
 		bf.results.nextBaseFee = new(big.Int)
 	}

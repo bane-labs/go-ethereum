@@ -24,6 +24,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/consensus/misc"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -92,4 +94,33 @@ func CalcBaseFee(config *params.ChainConfig, parent *types.Header) *big.Int {
 
 		return math.BigMax(baseFee, common.Big0)
 	}
+}
+
+// VerifyEIP1559HeaderDBFT verifies some header attributes which were changed in EIP-1559 with dbft consensus,
+// - gas limit check
+// - basefee check, basefee value check moved to VerifyBlock.
+func VerifyEIP1559HeaderDBFT(config *params.ChainConfig, parent, header *types.Header) error {
+	// Verify that the gas limit remains within allowed bounds
+	parentGasLimit := parent.GasLimit
+	if !config.IsLondon(parent.Number) {
+		parentGasLimit = parent.GasLimit * config.ElasticityMultiplier()
+	}
+	if err := misc.VerifyGaslimit(parentGasLimit, header.GasLimit); err != nil {
+		return err
+	}
+	// Verify the header is not malformed
+	if header.BaseFee == nil {
+		return errors.New("header is missing baseFee")
+	}
+	// Verifing the baseFee is moved to VerifyBlock.
+	return nil
+}
+
+// CalcBaseFeeDBFT calculates the basefee of the header.
+// if is neoxburn fork, get basefee from Policy contract.
+func CalcBaseFeeDBFT(config *params.ChainConfig, parent *types.Header, state *state.StateDB) *big.Int {
+	if !config.IsNeoxburn(parent.Number, parent.Time) {
+		return CalcBaseFee(config, parent)
+	}
+	return state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash()).Big()
 }

@@ -28,8 +28,10 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
@@ -169,9 +171,14 @@ func (api *FilterAPI) NewPendingTransactions(ctx context.Context, fullTx *bool) 
 				// To keep the original behaviour, send a single tx hash in one notification.
 				// TODO(rjl493456442) Send a batch of tx hashes in one notification
 				latest := api.sys.backend.CurrentHeader()
+				state, _, err := api.sys.backend.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(latest.Number.Int64()))
+				if err != nil {
+					log.Error("Failed to get state", "err", err, "header number", latest.Number)
+				}
+				baseFee := eip1559.CalcBaseFeeDBFT(chainConfig, latest, state)
 				for _, tx := range txs {
 					if fullTx != nil && *fullTx {
-						rpcTx := ethapi.NewRPCPendingTransaction(tx, latest, chainConfig)
+						rpcTx := ethapi.NewRPCPendingTransaction(tx, latest, chainConfig, baseFee)
 						notifier.Notify(rpcSub.ID, rpcTx)
 					} else {
 						notifier.Notify(rpcSub.ID, tx.Hash())
@@ -429,6 +436,11 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 
 	chainConfig := api.sys.backend.ChainConfig()
 	latest := api.sys.backend.CurrentHeader()
+	state, _, err := api.sys.backend.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(latest.Number.Int64()))
+	if err != nil {
+		log.Error("Failed to get state", "err", err, "header number", latest.Number)
+	}
+	baseFee := eip1559.CalcBaseFeeDBFT(chainConfig, latest, state)
 
 	if f, found := api.filters[id]; found {
 		if !f.deadline.Stop() {
@@ -447,7 +459,7 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 			if f.fullTx {
 				txs := make([]*ethapi.RPCTransaction, 0, len(f.txs))
 				for _, tx := range f.txs {
-					txs = append(txs, ethapi.NewRPCPendingTransaction(tx, latest, chainConfig))
+					txs = append(txs, ethapi.NewRPCPendingTransaction(tx, latest, chainConfig, baseFee))
 				}
 				f.txs = nil
 				return txs, nil

@@ -36,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -773,7 +774,12 @@ func (b *Block) NextBaseFeePerGas(ctx context.Context) (*hexutil.Big, error) {
 			return nil, nil
 		}
 	}
-	nextBaseFee := eip1559.CalcBaseFee(chaincfg, header)
+	state, _, err := b.r.backend.StateAndHeaderByNumber(ctx, rpc.BlockNumber(header.Number.Int64()))
+	if err != nil {
+		log.Error("Failed to get state", "err", err, "header number", header.Number)
+		return nil, err
+	}
+	nextBaseFee := eip1559.CalcBaseFeeDBFT(chaincfg, header, state)
 	return (*hexutil.Big)(nextBaseFee), nil
 }
 

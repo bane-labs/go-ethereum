@@ -177,11 +177,16 @@ func (s *TxPoolAPI) Content() map[string]map[string]map[string]*RPCTransaction {
 	}
 	pending, queue := s.b.TxPoolContent()
 	curHeader := s.b.CurrentHeader()
+	state, _, err := s.b.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(curHeader.Number.Int64()))
+	if err != nil {
+		log.Error("Failed to get state", "err", err, "header number", curHeader.Number)
+	}
+	baseFee := eip1559.CalcBaseFeeDBFT(s.b.ChainConfig(), curHeader, state)
 	// Flatten the pending transactions
 	for account, txs := range pending {
 		dump := make(map[string]*RPCTransaction)
 		for _, tx := range txs {
-			dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, s.b.ChainConfig())
+			dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, s.b.ChainConfig(), baseFee)
 		}
 		content["pending"][account.Hex()] = dump
 	}
@@ -189,7 +194,7 @@ func (s *TxPoolAPI) Content() map[string]map[string]map[string]*RPCTransaction {
 	for account, txs := range queue {
 		dump := make(map[string]*RPCTransaction)
 		for _, tx := range txs {
-			dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, s.b.ChainConfig())
+			dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, s.b.ChainConfig(), baseFee)
 		}
 		content["queued"][account.Hex()] = dump
 	}
@@ -201,18 +206,22 @@ func (s *TxPoolAPI) ContentFrom(addr common.Address) map[string]map[string]*RPCT
 	content := make(map[string]map[string]*RPCTransaction, 2)
 	pending, queue := s.b.TxPoolContentFrom(addr)
 	curHeader := s.b.CurrentHeader()
-
+	state, _, err := s.b.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(curHeader.Number.Int64()))
+	if err != nil {
+		log.Error("Failed to get state", "err", err, "header number", curHeader.Number)
+	}
+	baseFee := eip1559.CalcBaseFeeDBFT(s.b.ChainConfig(), curHeader, state)
 	// Build the pending transactions
 	dump := make(map[string]*RPCTransaction, len(pending))
 	for _, tx := range pending {
-		dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, s.b.ChainConfig())
+		dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, s.b.ChainConfig(), baseFee)
 	}
 	content["pending"] = dump
 
 	// Build the queued transactions
 	dump = make(map[string]*RPCTransaction, len(queue))
 	for _, tx := range queue {
-		dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, s.b.ChainConfig())
+		dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, s.b.ChainConfig(), baseFee)
 	}
 	content["queued"] = dump
 
@@ -1440,14 +1449,12 @@ func effectiveGasPrice(tx *types.Transaction, baseFee *big.Int) *big.Int {
 }
 
 // NewRPCPendingTransaction returns a pending transaction that will serialize to the RPC representation
-func NewRPCPendingTransaction(tx *types.Transaction, current *types.Header, config *params.ChainConfig) *RPCTransaction {
+func NewRPCPendingTransaction(tx *types.Transaction, current *types.Header, config *params.ChainConfig, baseFee *big.Int) *RPCTransaction {
 	var (
-		baseFee     *big.Int
 		blockNumber = uint64(0)
 		blockTime   = uint64(0)
 	)
 	if current != nil {
-		baseFee = eip1559.CalcBaseFee(config, current)
 		blockNumber = current.Number.Uint64()
 		blockTime = current.Time
 	}
@@ -1654,7 +1661,12 @@ func (s *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.H
 	if !found {
 		// No finalized transaction, try to retrieve it from the pool
 		if tx := s.b.GetPoolTransaction(hash); tx != nil {
-			return NewRPCPendingTransaction(tx, s.b.CurrentHeader(), s.b.ChainConfig()), nil
+			state, _, err := s.b.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(s.b.CurrentHeader().Number.Int64()))
+			if err != nil {
+				log.Error("Failed to get state", "err", err, "header number", s.b.CurrentHeader().Number)
+			}
+			baseFee := eip1559.CalcBaseFeeDBFT(s.b.ChainConfig(), s.b.CurrentHeader(), state)
+			return NewRPCPendingTransaction(tx, s.b.CurrentHeader(), s.b.ChainConfig(), baseFee), nil
 		}
 		if err == nil {
 			return nil, nil
@@ -1940,11 +1952,16 @@ func (s *TransactionAPI) PendingTransactions() ([]*RPCTransaction, error) {
 		}
 	}
 	curHeader := s.b.CurrentHeader()
+	state, _, err := s.b.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(curHeader.Number.Int64()))
+	if err != nil {
+		log.Error("Failed to get state", "err", err, "header number", curHeader.Number)
+	}
+	baseFee := eip1559.CalcBaseFeeDBFT(s.b.ChainConfig(), curHeader, state)
 	transactions := make([]*RPCTransaction, 0, len(pending))
 	for _, tx := range pending {
 		from, _ := types.Sender(s.signer, tx)
 		if _, exists := accounts[from]; exists {
-			transactions = append(transactions, NewRPCPendingTransaction(tx, curHeader, s.b.ChainConfig()))
+			transactions = append(transactions, NewRPCPendingTransaction(tx, curHeader, s.b.ChainConfig(), baseFee))
 		}
 	}
 	return transactions, nil

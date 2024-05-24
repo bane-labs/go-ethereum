@@ -22,6 +22,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
@@ -203,9 +204,11 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	}
 	// Ensure the transaction is allowed by policy
 	// Apply policy minimum gas tip cap
+	// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough
 	var minGasTipCap = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash())
-	if tx.GasTipCap().Cmp(minGasTipCap.Big()) < 0 {
-		return fmt.Errorf("%w: policy needed %v, tip permitted %v", ErrUnderpriced, minGasTipCap.Big(), tx.GasTipCap())
+	var baseFee = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash()).Big()
+	if math.BigMin(tx.GasTipCap(), new(big.Int).Sub(tx.GasFeeCap(), baseFee)).Cmp(minGasTipCap.Big()) < 0 {
+		return fmt.Errorf("%w: policy needed %v, gastipcap %v, gasfeecap %v ", ErrUnderpriced, minGasTipCap.Big(), tx.GasTipCap(), tx.GasFeeCap())
 	}
 	// Apply policy blacklist
 	var blocked = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(from))
