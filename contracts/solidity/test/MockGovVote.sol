@@ -6,7 +6,15 @@ import "../GovernanceVote.sol";
 contract MockGovVote is GovernanceVote {
     uint public v;
 
-    function changeV(uint newV) external needVote(keccak256(abi.encodePacked("changeV")), keccak256(abi.encodePacked(newV))) {
+    function changeV(
+        uint newV
+    )
+        external
+        needVote(
+            keccak256(abi.encodePacked("changeV")),
+            keccak256(abi.encodePacked(newV))
+        )
+    {
         v = newV;
     }
 }

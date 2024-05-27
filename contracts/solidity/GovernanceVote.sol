@@ -16,7 +16,11 @@ abstract contract GovernanceVote {
     }
 
     // events for voting
-    event Vote(address indexed voter, bytes32 indexed methodKey, bytes32 paramKey);
+    event Vote(
+        address indexed voter,
+        bytes32 indexed methodKey,
+        bytes32 paramKey
+    );
     event VotePass(bytes32 indexed methodKey, bytes32 paramKey);
 
     // governance reward contact
@@ -28,7 +32,7 @@ abstract contract GovernanceVote {
 
     modifier needVote(bytes32 methodKey, bytes32 paramKey) {
         address[] memory miners = IGovReward(govReward).getMiners();
-        if(!_contains(miners, msg.sender)) revert Errors.NotMiner();
+        if (!_contains(miners, msg.sender)) revert Errors.NotMiner();
 
         // update vote map
         _vote(methodKey, paramKey);

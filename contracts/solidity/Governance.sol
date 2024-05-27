@@ -339,7 +339,9 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
         if (!success) revert Errors.TransferFailed();
     }
 
-    function _computeConsensus(address[] memory candidates) internal view returns (address[] memory) {
+    function _computeConsensus(
+        address[] memory candidates
+    ) internal view returns (address[] memory) {
         // build up a votes array
         uint length = candidates.length;
         uint[] memory votes = new uint[](length);

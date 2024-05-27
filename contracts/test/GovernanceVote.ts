@@ -148,7 +148,7 @@ describe("GovernanceVote", function () {
             await expect(
                 Mock.connect(signers[3]).changeV(1)
             ).emit(Mock, "Vote")
-            .emit(Mock, "VotePass");
+                .emit(Mock, "VotePass");
         });
     });
 });
