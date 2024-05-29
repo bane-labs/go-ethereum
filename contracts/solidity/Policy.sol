@@ -13,11 +13,13 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
     mapping(address => bool) public isBlackListed;
     uint256 public minGasTipCap;
     uint256 public baseFee;
+    uint256 public candidateLimit;
 
     event AddBlackList(address indexed addr);
     event RemoveBlackList(address indexed addr);
     event SetMinGasTipCap(uint256 gasTipCap);
     event SetBaseFee(uint256 baseFee);
+    event SetCandidateLimit(uint256 candidateLimit);
 
     modifier onlyAdmin() {
         if (msg.sender != GOV_ADMIN) revert Errors.NotAdmin();
@@ -97,5 +99,23 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         if (_baseFee <= 0) revert Errors.InvalidBaseFee();
         baseFee = _baseFee;
         emit SetBaseFee(_baseFee);
+    }
+
+    // set candidate limit (increase only)
+    function setCandidateLimit(
+        uint256 _candidateLimit
+    )
+        external
+        needVote(
+            bytes32(
+                0x172d358b638a8ee3e962dd73800c4025c48eb0f79c479bc2cdd1f63e72779efc
+            ),
+            keccak256(abi.encodePacked(_candidateLimit))
+        )
+    {
+        if (_candidateLimit <= candidateLimit)
+            revert Errors.InvalidCandidateLimit();
+        candidateLimit = _candidateLimit;
+        emit SetCandidateLimit(_candidateLimit);
     }
 }

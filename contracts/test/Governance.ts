@@ -29,6 +29,10 @@ const STANDBY_VALIDATORS = [
     "0xd711da2d8c71a801fc351163337656f1321343a0"
 ];
 
+const MIN_GAS_TIP_CAP = ethers.parseUnits("1", "gwei");
+const BASE_FEE = ethers.parseUnits("1", "gwei");
+const CANDIDATE_LIMIT = 2000;
+
 describe("Governance", function () {
 
     let Governance: any;
@@ -43,10 +47,18 @@ describe("Governance", function () {
 
         // Deploy Governance contract
         const governance_deploy = await ethers.deployContract("Governance");
+        const reward_deploy = await ethers.deployContract("GovReward");
+        const policy_deploy = await ethers.deployContract("Policy");
 
         // Copy Bytecode to native address
         const governance_code = await ethers.provider.send("eth_getCode", [governance_deploy.target]);
         await ethers.provider.send("hardhat_setCode", [GOV_PROXY, governance_code]);
+
+        const reward_code = await ethers.provider.send("eth_getCode", [reward_deploy.target]);
+        await ethers.provider.send("hardhat_setCode", [REWARD_PROXY, reward_code]);
+
+        const policy_code = await ethers.provider.send("eth_getCode", [policy_deploy.target]);
+        await ethers.provider.send("hardhat_setCode", [POLICY_PROXY, policy_code]);
         const contract = require("../artifacts/solidity/Governance.sol/Governance.json");
         Governance = new ethers.Contract(GOV_PROXY, contract.abi, user);
 
@@ -74,6 +86,11 @@ describe("Governance", function () {
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae676", ethers.toBeHex(STANDBY_VALIDATORS[4], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae677", ethers.toBeHex(STANDBY_VALIDATORS[5], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae678", ethers.toBeHex(STANDBY_VALIDATORS[6], 32)]);
+
+        // Write Policy config to storage
+        await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x2", ethers.toBeHex(MIN_GAS_TIP_CAP, 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x3", ethers.toBeHex(BASE_FEE, 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x4", ethers.toBeHex(CANDIDATE_LIMIT, 32)]);
     });
 
     describe("genesis", function () {
@@ -141,6 +158,13 @@ describe("Governance", function () {
             await expect(
                 Governance.connect(candidate1).registerCandidate(1001, { value: REGISTER_FEE })
             ).to.be.revertedWithCustomError(Governance, ERRORS.INVALID_SHARE_RATE);
+        });
+
+        it("Should revert if the candidate amount exceeds limit", async function () {
+            await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x4", ethers.toBeHex(0, 32)]);
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).to.be.revertedWithCustomError(Governance, ERRORS.CANDIDATE_EXCEED_LIMIT);
         });
 
         it("Should register a new candidate if all conditions are met", async function () {

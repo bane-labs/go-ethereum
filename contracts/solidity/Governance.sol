@@ -47,12 +47,19 @@ interface IGovReward {
     function withdraw() external;
 }
 
+interface IPolicy {
+    function candidateLimit() external view returns (uint);
+}
+
 contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     address public constant SELF = 0x1212100000000000000000000000000000000001;
     address public constant GOV_ADMIN =
         0x1212000000000000000000000000000000000000;
+    // Policy contract
+    address public constant POLICY = 
+        0x1212000000000000000000000000000000000002;
     // GovReward contract
     address public constant GOV_REWARD =
         0x1212000000000000000000000000000000000003;
@@ -161,6 +168,8 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
         if (tx.origin != msg.sender) revert Errors.OnlyEOA();
         if (msg.value < registerFee) revert Errors.InsufficientValue();
         if (shareRate > 1000) revert Errors.InvalidShareRate();
+        if (candidateList.length() >= IPolicy(POLICY).candidateLimit())
+            revert Errors.CandidateExceedLimit();
         if (candidateList.contains(msg.sender)) revert Errors.CandidateExists();
         if (exitHeightOf[msg.sender] > 0) revert Errors.LeftNotClaimed();
         candidateList.add(msg.sender);

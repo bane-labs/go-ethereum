@@ -17,12 +17,14 @@ library Errors {
     error BlacklistNotExists();
     error InvalidMinGasTipCap();
     error InvalidBaseFee();
+    error InvalidCandidateLimit();
 
     // Governance Errors
     error SideCallNotAllowed();
     error OnlyEOA();
     error InsufficientValue();
     error InvalidShareRate();
+    error CandidateExceedLimit();
     error CandidateExists();
     error CandidateNotExists();
     error LeftNotClaimed();
