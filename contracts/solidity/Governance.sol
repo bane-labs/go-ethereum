@@ -1,58 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import "./Errors.sol";
+import "./interfaces/IGovReward.sol";
+import "./interfaces/IGovernance.sol";
+import "./base/GovProxyUpgradeable.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
-interface IGovernance {
-    event Register(address candidate);
-    event Exit(address candidate);
-    event Vote(address indexed voter, address indexed to, uint amount);
-    event Revoke(address indexed voter, address indexed from, uint amount);
-    event VoterClaim(address indexed voter, uint reward);
-    event CandidateWithdraw(address candidate, uint amount);
-    event Persist(address[] validators);
-
-    // register to be a candidate with gas
-    function registerCandidate(uint shareRate) external payable;
-
-    // exit candidates and wait for withdraw
-    function exitCandidate() external;
-
-    // withdraw register fee after 2 epoch
-    function withdrawRegisterFee() external;
-
-    // vote with gas, only 1 target is allowed
-    function vote(address to) external payable;
-
-    // revoke votes and claim rewards
-    function revokeVote() external;
-
-    // only claim rewards
-    function claimReward() external;
-
-    // get reward amount to be claimed when settle
-    function unclaimedRewardOf(address voter) external view returns (uint);
-
-    // get consensus group members
-    function getCurrentConsensus() external view returns (address[] memory);
-
-    // compute and update cached consensus group
-    function onPersist() external;
-}
-
-interface IGovReward {
-    function withdraw() external;
-}
-
-contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
+contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     address public constant SELF = 0x1212100000000000000000000000000000000001;
-    address public constant GOV_ADMIN =
-        0x1212000000000000000000000000000000000000;
     // GovReward contract
     address public constant GOV_REWARD =
         0x1212000000000000000000000000000000000003;
@@ -102,15 +60,6 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     mapping(address => uint) public voteHeight;
     // candidate=>height=>number
     mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
-
-    modifier onlyAdmin() {
-        if (msg.sender != GOV_ADMIN) revert Errors.NotAdmin();
-        _;
-    }
-
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal virtual override onlyAdmin {}
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.

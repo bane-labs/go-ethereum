@@ -22,7 +22,7 @@ These contracts are not deployed by transactions but allocated in the [genesis f
 
 ## GovernanceVote
 
-[GovernanceVote](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovernanceVote.sol) is a public "library" that is widely used in system contract management especially upgrade.
+[GovernanceVote](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/base/GovernanceVote.sol) is a public "library" that is widely used in system contract management especially upgrade.
 
 Any contract inheriting `GovernanceVote.sol` can set up a consensus vote on method execution, by calling internal `vote(bytes32 methodKey, bytes32 paramKey)`, which requires **more than half** of the **current consensus** votes for **the same method call and the same calling parameters**.
 

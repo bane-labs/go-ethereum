@@ -1,32 +1,16 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.25;
 
-import "./Errors.sol";
-import "./GovernanceVote.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "./interfaces/IPolicy.sol";
+import "./base/GovernanceVote.sol";
+import "./base/GovProxyUpgradeable.sol";
 
-contract Policy is GovernanceVote, UUPSUpgradeable {
+contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     address public constant SELF = 0x1212100000000000000000000000000000000002;
-    address public constant GOV_ADMIN =
-        0x1212000000000000000000000000000000000000;
 
     mapping(address => bool) public isBlackListed;
     uint256 public minGasTipCap;
     uint256 public baseFee;
-
-    event AddBlackList(address indexed addr);
-    event RemoveBlackList(address indexed addr);
-    event SetMinGasTipCap(uint256 gasTipCap);
-    event SetBaseFee(uint256 baseFee);
-
-    modifier onlyAdmin() {
-        if (msg.sender != GOV_ADMIN) revert Errors.NotAdmin();
-        _;
-    }
-
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal virtual override onlyAdmin {}
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
@@ -48,7 +32,6 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         }
     }
 
-    // add blacklist
     function addBlackList(
         address _addr
     )
@@ -65,7 +48,6 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         emit AddBlackList(_addr);
     }
 
-    // remove blacklist
     function removeBlackList(
         address _addr
     )
@@ -82,7 +64,6 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         emit RemoveBlackList(_addr);
     }
 
-    // set minimum gas tip cap
     function setMinGasTipCap(
         uint256 _gasTipCap
     )
@@ -99,7 +80,6 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         emit SetMinGasTipCap(_gasTipCap);
     }
 
-    // set base fee
     function setBaseFee(
         uint256 _baseFee
     )
