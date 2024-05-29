@@ -27,14 +27,14 @@ abstract contract GovernanceVote {
         _vote(methodKey, paramKey);
 
         // check vote, if not pass just return
-        uint mlength = miners.length;
+        uint length = miners.length;
         uint validVotes = 0;
-        for (uint i = 0; i < mlength; i++) {
+        for (uint i = 0; i < length; i++) {
             if (voteMap[methodKey][miners[i]] == paramKey) {
                 validVotes++;
             }
         }
-        if (validVotes < (miners.length + 1) / 2) return;
+        if (validVotes < (length + 1) / 2) return;
 
         // clear vote
         emit VotePass(methodKey, paramKey);
@@ -51,7 +51,8 @@ abstract contract GovernanceVote {
 
     function _clearVote(bytes32 methodKey) internal {
         address[] memory voters = IGovReward(govReward).getMiners();
-        for (uint i; i < voters.length; i++) {
+        uint length = voters.length;
+        for (uint i; i < length; i++) {
             delete voteMap[methodKey][voters[i]];
         }
     }
