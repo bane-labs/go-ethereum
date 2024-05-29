@@ -58,15 +58,6 @@ describe("Governance", function () {
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x5", ethers.toBeHex(EPOCH_DURATION, 32)]);
 
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x10", ethers.toBeHex(CONSENSUS_SIZE, 32)]);
-        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c68", ethers.toBeHex(STANDBY_VALIDATORS[0], 32)]);
-        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c69", ethers.toBeHex(STANDBY_VALIDATORS[1], 32)]);
-        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6a", ethers.toBeHex(STANDBY_VALIDATORS[2], 32)]);
-        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6b", ethers.toBeHex(STANDBY_VALIDATORS[3], 32)]);
-        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6c", ethers.toBeHex(STANDBY_VALIDATORS[4], 32)]);
-        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6d", ethers.toBeHex(STANDBY_VALIDATORS[5], 32)]);
-        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6e", ethers.toBeHex(STANDBY_VALIDATORS[6], 32)]);
-
-        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x11", ethers.toBeHex(CONSENSUS_SIZE, 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae672", ethers.toBeHex(STANDBY_VALIDATORS[0], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae673", ethers.toBeHex(STANDBY_VALIDATORS[1], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae674", ethers.toBeHex(STANDBY_VALIDATORS[2], 32)]);
@@ -74,6 +65,15 @@ describe("Governance", function () {
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae676", ethers.toBeHex(STANDBY_VALIDATORS[4], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae677", ethers.toBeHex(STANDBY_VALIDATORS[5], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1b6847dc741a1b0cd08d278845f9d819d87b734759afb55fe2de5cb82a9ae678", ethers.toBeHex(STANDBY_VALIDATORS[6], 32)]);
+
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x11", ethers.toBeHex(CONSENSUS_SIZE, 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c68", ethers.toBeHex(STANDBY_VALIDATORS[0], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c69", ethers.toBeHex(STANDBY_VALIDATORS[1], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6a", ethers.toBeHex(STANDBY_VALIDATORS[2], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6b", ethers.toBeHex(STANDBY_VALIDATORS[3], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6c", ethers.toBeHex(STANDBY_VALIDATORS[4], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6d", ethers.toBeHex(STANDBY_VALIDATORS[5], 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6e", ethers.toBeHex(STANDBY_VALIDATORS[6], 32)]);
     });
 
     describe("genesis", function () {

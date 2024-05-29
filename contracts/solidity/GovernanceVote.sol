@@ -16,57 +16,57 @@ abstract contract GovernanceVote {
     address public constant govReward =
         0x1212000000000000000000000000000000000003;
 
-    // vote mapping, method key ->(user address -> param key)
+    // vote mapping, method key -> (user address -> param key)
     mapping(bytes32 => mapping(address => bytes32)) private voteMap;
 
-    function isMiner(address addr) public view returns (bool) {
+    modifier needVote(bytes32 methodKey, bytes32 paramKey) {
         address[] memory miners = IGovReward(govReward).getMiners();
-        for (uint i = 0; i < miners.length; i++) {
-            if (addr == miners[i]) {
-                return true;
+        if (!_contains(miners, msg.sender)) revert Errors.NotMiner();
+
+        // update vote map
+        _vote(methodKey, paramKey);
+
+        // check vote, if not pass just return
+        uint length = miners.length;
+        uint validVotes = 0;
+        for (uint i = 0; i < length; i++) {
+            if (voteMap[methodKey][miners[i]] == paramKey) {
+                validVotes++;
             }
         }
-        return false;
+        if (validVotes < (length + 1) / 2) return;
+
+        // clear vote
+        emit VotePass(methodKey, paramKey);
+        _clearVote(methodKey);
+
+        // execute method
+        _;
     }
 
-    function vote(bytes32 methodKey, bytes32 paramKey) internal {
+    function _vote(bytes32 methodKey, bytes32 paramKey) internal {
         voteMap[methodKey][msg.sender] = paramKey;
         emit Vote(msg.sender, methodKey, paramKey);
     }
 
-    function clearVote(bytes32 methodKey) internal {
+    function _clearVote(bytes32 methodKey) internal {
         address[] memory voters = IGovReward(govReward).getMiners();
-        for (uint i; i < voters.length; i++) {
+        uint length = voters.length;
+        for (uint i; i < length; i++) {
             delete voteMap[methodKey][voters[i]];
         }
     }
 
-    function checkVote(
-        bytes32 methodKey,
-        bytes32 paramKey
-    ) internal view returns (bool isPass) {
-        address[] memory voters = IGovReward(govReward).getMiners();
-        uint votedCount;
-        for (uint i; i < voters.length; i++) {
-            if (voteMap[methodKey][voters[i]] == paramKey) {
-                votedCount++;
+    function _contains(
+        address[] memory list,
+        address addr
+    ) internal pure returns (bool) {
+        uint length = list.length;
+        for (uint i = 0; i < length; i++) {
+            if (addr == list[i]) {
+                return true;
             }
         }
-        return votedCount >= (voters.length + 1) / 2;
-    }
-
-    modifier needVote(bytes32 methodKey, bytes32 paramKey) {
-        if(!isMiner(msg.sender)) revert Errors.NotMiner();
-        // update vote map
-        vote(methodKey, paramKey);
-        // check vote, if not pass just return
-        if (!checkVote(methodKey, paramKey)) {
-            return;
-        }
-        // execute method
-        _;
-        emit VotePass(methodKey, paramKey);
-        // clear vote
-        clearVote(methodKey);
+        return false;
     }
 }

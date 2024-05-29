@@ -6,7 +6,10 @@ interface IGovernance {
 }
 
 contract MockContract {
-    function call_registerCandidate(IGovernance governanceAddr, uint shareRate) public payable {
+    function call_registerCandidate(
+        IGovernance governanceAddr,
+        uint shareRate
+    ) public payable {
         governanceAddr.registerCandidate{value: msg.value}(shareRate);
     }
 }
