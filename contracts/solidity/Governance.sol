@@ -170,9 +170,8 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
         if (shareRate > 1000) revert Errors.InvalidShareRate();
         if (candidateList.length() >= IPolicy(POLICY).candidateLimit())
             revert Errors.CandidateExceedLimit();
-        if (candidateList.contains(msg.sender)) revert Errors.CandidateExists();
         if (exitHeightOf[msg.sender] > 0) revert Errors.LeftNotClaimed();
-        candidateList.add(msg.sender);
+        if (!candidateList.add(msg.sender)) revert Errors.CandidateExists();
         if (receivedVotes[msg.sender] > 0) {
             totalVotes += receivedVotes[msg.sender];
         }
@@ -184,10 +183,9 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     }
 
     function exitCandidate() external {
-        if (!candidateList.contains(msg.sender))
+        if (!candidateList.remove(msg.sender))
             revert Errors.CandidateNotExists();
         // remove candidate list, balance still locked
-        candidateList.remove(msg.sender);
         exitHeightOf[msg.sender] = block.number;
         if (receivedVotes[msg.sender] > 0) {
             totalVotes -= receivedVotes[msg.sender];
@@ -303,7 +301,7 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
         if (length < consensusSize || totalVotes < voteTargetAmount) {
             currentConsensus = standByValidators;
         } else {
-            currentConsensus = _computeConsensus();
+            currentConsensus = _computeConsensus(candidates);
         }
         emit Persist(currentConsensus);
     }
@@ -318,9 +316,9 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     ) internal view returns (uint) {
         // NOTE: suppose onPersist always happens at the beginning of every block, then latestGasPerVote is always the latest
         uint height = voteHeight[voter];
+        if (currentEpochStartHeight <= height) return 0;
         uint lastGasPerVote = voterGasPerVote[voter];
         uint latestGasPerVote = candidateGasPerVote[candidate];
-        if (currentEpochStartHeight <= height) return 0;
 
         // NOTE: suppose epoch change always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
         uint voteEpochEndGasPerVote = epochStartGasPerVote[candidate][
@@ -350,9 +348,10 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
         if (!success) revert Errors.TransferFailed();
     }
 
-    function _computeConsensus() internal view returns (address[] memory) {
+    function _computeConsensus(
+        address[] memory candidates
+    ) internal view returns (address[] memory) {
         // build up a votes array
-        address[] memory candidates = getCandidates();
         uint length = candidates.length;
         uint[] memory votes = new uint[](length);
         for (uint i = 0; i < length; i++) {
