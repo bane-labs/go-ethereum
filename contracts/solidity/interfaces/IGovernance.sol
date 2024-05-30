@@ -25,6 +25,9 @@ interface IGovernance {
     // revoke votes and claim rewards
     function revokeVote() external;
 
+    // revoke votes, claim rewards and vote to another candidate
+    function transferVote(address candidateTo) external;
+
     // only claim rewards
     function claimReward() external;
 

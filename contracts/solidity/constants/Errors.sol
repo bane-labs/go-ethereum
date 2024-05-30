@@ -23,6 +23,7 @@ library Errors {
     error OnlyEOA();
     error InsufficientValue();
     error InvalidShareRate();
+    error SameCandidate();
     error CandidateExists();
     error CandidateNotExists();
     error LeftNotClaimed();
