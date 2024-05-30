@@ -127,7 +127,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
             bytes32(
                 0x172d358b638a8ee3e962dd73800c4025c48eb0f79c479bc2cdd1f63e72779efc
             ),
-            keccak256(abi.encodePacked(_candidateLimit))
+            keccak256(abi.encode(_candidateLimit))
         )
     {
         if (_candidateLimit <= candidateLimit)
