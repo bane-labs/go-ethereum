@@ -505,6 +505,66 @@ describe("Governance", function () {
         });
     });
 
+    describe("transferVote", function () {
+        it("Should revert if the sender has not voted", async function () {
+            await expect(
+                Governance.connect(candidate1).transferVote(candidate1)
+            ).to.be.revertedWithCustomError(Governance, ERRORS.NO_VOTE);
+        });
+
+        it("Should revert if the candidate from and to is the same", async function () {
+            await Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE });
+            await expect(
+                Governance.connect(candidate1).vote(candidate1, { value: MIN_VOTE_AMOUNT })
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).transferVote(candidate1)
+            ).to.be.revertedWithCustomError(Governance, ERRORS.SAME_CANDIDATE);
+        });
+
+        it("Should revert if the candidate to is not in the candidate list", async function () {
+            await Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE });
+            await expect(
+                Governance.connect(candidate1).vote(candidate1, { value: MIN_VOTE_AMOUNT })
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).transferVote(candidate2)
+            ).to.be.revertedWithCustomError(Governance, ERRORS.CANDIDATE_NOT_EXISTS);
+        });
+
+        it("Should update votes if all conditions are met", async function () {
+            await Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE });
+            await Governance.connect(candidate2).registerCandidate(500, { value: REGISTER_FEE });
+            await expect(
+                Governance.connect(candidate1).vote(candidate1, { value: MIN_VOTE_AMOUNT })
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).transferVote(candidate2)
+            ).not.to.be.reverted;
+
+            expect(await Governance.receivedVotes(candidate1.address)).to.eq(0);
+            expect(await Governance.receivedVotes(candidate2.address)).to.eq(MIN_VOTE_AMOUNT);
+            expect(await Governance.votedTo(candidate1.address)).to.eq(candidate2.address);
+            expect(await Governance.votedAmount(candidate1.address)).to.eq(MIN_VOTE_AMOUNT);
+            expect(await Governance.voteHeight(candidate1.address)).to.eq(await ethers.provider.getBlockNumber());
+        });
+
+        it("Should emit two events when a voter transfer votes", async function () {
+            await Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE });
+            await Governance.connect(candidate2).registerCandidate(500, { value: REGISTER_FEE });
+            await expect(
+                Governance.connect(candidate1).vote(candidate1, { value: MIN_VOTE_AMOUNT })
+            ).not.to.be.reverted;
+
+            await expect(
+                Governance.connect(candidate1).transferVote(candidate2)
+            ).emit(Governance, "Revoke").emit(Governance, "Vote");
+        });
+    });
+
     describe("claimReward", function () {
         let MockSysCall: any;
         let GovReward: any;

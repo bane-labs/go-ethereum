@@ -25,6 +25,7 @@ library Errors {
     error InsufficientValue();
     error InvalidShareRate();
     error CandidateExceedLimit();
+    error SameCandidate();
     error CandidateExists();
     error CandidateNotExists();
     error LeftNotClaimed();

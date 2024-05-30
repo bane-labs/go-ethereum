@@ -13,6 +13,7 @@ export const ERRORS = {
     INSUFFICIENT_VALUE: 'InsufficientValue()',
     INVALID_SHARE_RATE: 'InvalidShareRate()',
     CANDIDATE_EXCEED_LIMIT: 'CandidateExceedLimit()',
+    SAME_CANDIDATE: 'SameCandidate()',
     CANDIDATE_EXISTS: 'CandidateExists()',
     CANDIDATE_NOT_EXISTS: 'CandidateNotExists()',
     LEFT_NOT_CLAIMED: 'LeftNotClaimed()',
