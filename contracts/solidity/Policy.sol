@@ -57,7 +57,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
             bytes32(
                 0x4912b57f7ea75243ecaff76a75bdedbc13a6f58c1c967b0427b8aee0a276309e
             ),
-            keccak256(abi.encodePacked(_addr))
+            keccak256(abi.encode(_addr))
         )
     {
         if (isBlackListed[_addr]) revert Errors.BlacklistExists();
@@ -74,7 +74,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
             bytes32(
                 0x310cc9bfce6443143f03d0cdc4d66afa0b3c689539eb3e65cb1820b56d672465
             ),
-            keccak256(abi.encodePacked(_addr))
+            keccak256(abi.encode(_addr))
         )
     {
         if (!isBlackListed[_addr]) revert Errors.BlacklistNotExists();
@@ -91,7 +91,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
             bytes32(
                 0x089197e4f35b8ada456b5531e8c1759ee3fce703602a3a957b5c9d2831082156
             ),
-            keccak256(abi.encodePacked(_gasTipCap))
+            keccak256(abi.encode(_gasTipCap))
         )
     {
         if (_gasTipCap <= 0) revert Errors.InvalidMinGasTipCap();
@@ -108,7 +108,7 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
             bytes32(
                 0x83113031fe9312a872d9176bc1a087dc38ca109c517a596998332e2fb8409acc
             ),
-            keccak256(abi.encodePacked(_baseFee))
+            keccak256(abi.encode(_baseFee))
         )
     {
         if (_baseFee <= 0) revert Errors.InvalidBaseFee();
