@@ -26,7 +26,7 @@ contract Treasury is GovernanceVote {
     {
         (bool success, ) = BRIDGE_PROXY.call{value: _amount}("");
         if (!success) {
-            revert FundingFailed();
+            revert Errors.TransferFailed();
         }
         emit FundBridge(_amount);
     }
