@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "./GovernanceVote.sol";
+import {GovernanceVote} from "./base/GovernanceVote.sol";
+import {GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 
 /**
  * @dev This is an auxiliary contract meant to be assigned as the admin of a {Proxy}.
@@ -19,7 +19,7 @@ contract GovProxyAdmin is GovernanceVote {
      * - This contract must be the admin of `proxy`.
      */
     function upgradeAndCall(
-        UUPSUpgradeable proxy,
+        GovProxyUpgradeable proxy,
         address newImplementation,
         bytes memory data
     )

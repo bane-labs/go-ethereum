@@ -1,24 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import "./Errors.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {Errors} from "./libraries/Errors.sol";
+import {IGovReward} from "./interfaces/IGovReward.sol";
+import {IGovernance} from "./interfaces/IGovernance.sol";
+import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 
-interface IGovernance {
-    // get current consensus group
-    function getCurrentConsensus() external view returns (address[] memory);
-}
-
-interface IGovReward {
-    function getMiners() external view returns (address[] memory);
-
-    function withdraw() external;
-}
-
-contract GovReward is IGovReward, UUPSUpgradeable {
+contract GovReward is IGovReward, GovProxyUpgradeable {
     address public constant SELF = 0x1212100000000000000000000000000000000003;
-    address public constant GOV_ADMIN =
-        0x1212000000000000000000000000000000000000;
     // governance contact
     address public constant GOV = 0x1212000000000000000000000000000000000001;
 
@@ -28,15 +17,6 @@ contract GovReward is IGovReward, UUPSUpgradeable {
         if (msg.sender != GOV) revert Errors.NotGovernance();
         _;
     }
-
-    modifier onlyAdmin() {
-        if (msg.sender != GOV_ADMIN) revert Errors.NotAdmin();
-        _;
-    }
-
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal virtual override onlyAdmin {}
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
