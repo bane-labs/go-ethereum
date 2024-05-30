@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import "../libraries/Errors.sol";
-import "../interfaces/IGovReward.sol";
+import {Errors} from "../libraries/Errors.sol";
+import {IGovReward} from "../interfaces/IGovReward.sol";
 
 abstract contract GovernanceVote {
     // events for voting

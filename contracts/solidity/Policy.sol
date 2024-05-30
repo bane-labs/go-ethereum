@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.25;
 
-import "./interfaces/IPolicy.sol";
-import "./base/GovernanceVote.sol";
-import "./base/GovProxyUpgradeable.sol";
+import {Errors} from "./libraries/Errors.sol";
+import {IPolicy} from "./interfaces/IPolicy.sol";
+import {GovernanceVote} from "./base/GovernanceVote.sol";
+import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 
 contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     address public constant SELF = 0x1212100000000000000000000000000000000002;

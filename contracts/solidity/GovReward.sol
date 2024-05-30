@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import "./interfaces/IGovReward.sol";
-import "./interfaces/IGovernance.sol";
-import "./base/GovProxyUpgradeable.sol";
+import {Errors} from "./libraries/Errors.sol";
+import {IGovReward} from "./interfaces/IGovReward.sol";
+import {IGovernance} from "./interfaces/IGovernance.sol";
+import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 
 contract GovReward is IGovReward, GovProxyUpgradeable {
     address public constant SELF = 0x1212100000000000000000000000000000000003;

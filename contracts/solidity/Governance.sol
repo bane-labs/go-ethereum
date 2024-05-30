@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import "./interfaces/IGovReward.sol";
-import "./interfaces/IGovernance.sol";
-import "./base/GovProxyUpgradeable.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Errors} from "./libraries/Errors.sol";
+import {IGovReward} from "./interfaces/IGovReward.sol";
+import {IGovernance} from "./interfaces/IGovernance.sol";
+import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {ReentrancyGuard} from"@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
