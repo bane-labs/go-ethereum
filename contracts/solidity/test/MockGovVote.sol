@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "../GovernanceVote.sol";
+import {GovernanceVote} from "../base/GovernanceVote.sol";
 
 contract MockGovVote is GovernanceVote {
     uint public v;
@@ -11,8 +11,8 @@ contract MockGovVote is GovernanceVote {
     )
         external
         needVote(
-            keccak256(abi.encodePacked("changeV")),
-            keccak256(abi.encodePacked(newV))
+            keccak256(abi.encode("changeV")),
+            keccak256(abi.encode(newV))
         )
     {
         v = newV;

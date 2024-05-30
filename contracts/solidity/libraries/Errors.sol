@@ -5,8 +5,6 @@ library Errors {
     // Universal Errors
     error NotAdmin();
     error NotGovernance();
-
-    // GovReward Errors
     error TransferFailed();
 
     // GovernanceVote Errors

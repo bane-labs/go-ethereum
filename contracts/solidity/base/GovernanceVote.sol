@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import "./Errors.sol";
-
-interface IGovReward {
-    function getMiners() external view returns (address[] memory);
-}
+import {Errors} from "../libraries/Errors.sol";
+import {IGovReward} from "../interfaces/IGovReward.sol";
 
 abstract contract GovernanceVote {
     // events for voting
