@@ -3,15 +3,19 @@ pragma solidity ^0.8.25;
 
 import "./GovernanceVote.sol";
 
+interface ITreasury {
+    event FundBridge(uint256 amount);
+
+    function fundBridge(uint256 _amount) external;
+}
+
 /**
  * @dev This is an auxiliary contract meant to be assigned as the Neo X treasury for funding the native bridge proxy.
  * Use GovernanceVote to manage funding the bridge.
  */
-contract Treasury is GovernanceVote {
+contract Treasury is GovernanceVote, ITreasury {
     address public constant BRIDGE_PROXY =
         0x1212000000000000000000000000000000000004;
-
-    event FundBridge(uint256 amount);
 
     error FundingFailed();
 
