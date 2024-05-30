@@ -22,7 +22,12 @@ contract Treasury is GovernanceVote {
         uint256 _amount
     )
         external
-        needVote(keccak256("fundBridge"), keccak256(abi.encode(_amount)))
+        needVote(
+            bytes32(
+                0xdd6d322687f552c30b168d744bbd29145a2095a3557a58387f7e7230c9449179
+            ),
+            keccak256(abi.encode(_amount))
+        )
     {
         (bool success, ) = BRIDGE_PROXY.call{value: _amount}("");
         if (!success) {
