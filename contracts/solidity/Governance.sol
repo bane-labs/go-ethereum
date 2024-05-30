@@ -264,9 +264,9 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
     function transferVote(address candidateTo) external nonReentrant {
         address candidateFrom = votedTo[msg.sender];
         uint amount = votedAmount[msg.sender];
-        require(candidateFrom != address(0) && amount > 0, "no vote to change");
-        require(candidateFrom != candidateTo, "voting to the same candidate");
-        require(candidateList.contains(candidateTo), "candidate not allowed");
+        if (candidateFrom == address(0) || amount <= 0) revert Errors.NoVote();
+        if (candidateFrom == candidateTo) revert Errors.SameCandidate();
+        if (!candidateList.contains(candidateTo)) revert Errors.CandidateNotExists();
 
         // settle reward here
         uint unclaimedReward = _settleReward(msg.sender, candidateFrom);
