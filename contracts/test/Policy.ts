@@ -99,6 +99,9 @@ describe("Policy", function () {
         it("Should get base fee as expected", async function () {
             expect(await Policy.baseFee()).to.eq(BASE_FEE);
         });
+        it("Should get candidate limit as expected", async function () {
+            expect(await Policy.candidateLimit()).to.eq(CANDIDATE_LIMIT);
+        });
     });
 
     describe("addBlackList", function () {
