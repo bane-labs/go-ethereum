@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.25;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./GovernanceVote.sol";
@@ -27,8 +27,10 @@ contract GovProxyAdmin is GovernanceVote {
         payable
         virtual
         needVote(
-            keccak256("upgradeAndCall"),
-            keccak256(abi.encode(proxy, newImplementation, data))
+            bytes32(
+                0xe739b9109d83c1c6d0d640fe9ed476fc5862a6de5483b00678a3fffa7a2be2f6
+            ),
+            keccak256(abi.encodePacked(proxy, newImplementation, data))
         )
     {
         proxy.upgradeToAndCall{value: msg.value}(newImplementation, data);
