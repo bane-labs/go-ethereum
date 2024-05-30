@@ -1,7 +1,7 @@
 package dbft
 
 import (
-	"github.com/nspcc-dev/dbft/payload"
+	"github.com/nspcc-dev/dbft"
 )
 
 // recoveryRequest represents dBFT RecoveryRequest message.
@@ -9,10 +9,7 @@ type recoveryRequest struct {
 	TimestampExt uint64
 }
 
-var _ payload.RecoveryRequest = (*recoveryRequest)(nil)
+var _ dbft.RecoveryRequest = (*recoveryRequest)(nil)
 
 // Timestamp implements the payload.RecoveryRequest interface.
 func (m *recoveryRequest) Timestamp() uint64 { return m.TimestampExt }
-
-// SetTimestamp implements the payload.RecoveryRequest interface.
-func (m *recoveryRequest) SetTimestamp(ts uint64) { m.TimestampExt = ts }

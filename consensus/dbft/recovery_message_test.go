@@ -9,7 +9,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/nspcc-dev/neo-go/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,13 +40,13 @@ func TestRecoverMessage_RLP(t *testing.T) {
 			ExcessBlobGas:    nil,
 			ParentBeaconRoot: nil,
 		},
-		TxHashes:       []util.Uint256{util.Uint256{}},
+		TxHashes:       []common.Hash{common.Hash{}},
 		ParentSealHash: common.Hash{1, 2, 3},
 		ParentExtra:    []byte{1, 2, 3},
 	}
 
 	rm := &recoveryMessage{
-		PreparationHashExt: &util.Uint256{1, 2},
+		PreparationHashExt: &common.Hash{1, 2},
 		PreparationPayloads: []*preparationCompact{
 			{ValidatorIndex: 1, InvocationScript: []byte{1, 2, 3}}},
 		CommitPayloads:     []*commitCompact{{ViewNumber: 1, ValidatorIndex: 1, Signature: sign, InvocationScript: []byte{1, 2, 3, 4, 5}}},

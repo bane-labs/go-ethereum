@@ -7,13 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestChangeView_Setters(t *testing.T) {
-	var c changeView
+func TestChangeView_Getters(t *testing.T) {
+	var c = changeView{
+		newViewNumber: 2,
+	}
 
-	c.SetTimestamp(123) // in nanoseconds, no conversion expected.
-	require.EqualValues(t, 123, c.Timestamp())
-
-	c.SetNewViewNumber(2)
 	require.EqualValues(t, 2, c.NewViewNumber())
 }
 

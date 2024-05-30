@@ -3,10 +3,10 @@ package dbft
 import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
-	dbftCrypto "github.com/nspcc-dev/dbft/crypto"
+	"github.com/nspcc-dev/dbft"
 )
 
-var _ = dbftCrypto.PrivateKey(&Signer{})
+var _ = dbft.PrivateKey(&Signer{})
 
 // SignerFn hashes and signs the data to be signed by a backing account.
 type SignerFn func(signer accounts.Account, mimeType string, message []byte) ([]byte, error)

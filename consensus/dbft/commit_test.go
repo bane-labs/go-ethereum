@@ -15,7 +15,7 @@ func TestCommit_Setters(t *testing.T) {
 	r.Read(sign[:])
 
 	var c commit
-	c.SetSignature(sign[:])
+	copy(c.SignatureExt[:], sign[:])
 	require.Equal(t, sign[:], c.Signature())
 }
 

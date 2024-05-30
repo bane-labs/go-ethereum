@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.25;
 
+import "./Errors.sol";
 import "./GovernanceVote.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
@@ -13,13 +14,13 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
     uint256 public minGasTipCap;
     uint256 public baseFee;
 
-    event AddBlackList(address addr);
-    event RemoveBlackList(address addr);
+    event AddBlackList(address indexed addr);
+    event RemoveBlackList(address indexed addr);
     event SetMinGasTipCap(uint256 gasTipCap);
     event SetBaseFee(uint256 baseFee);
 
     modifier onlyAdmin() {
-        require(msg.sender == GOV_ADMIN, "not admin");
+        if (msg.sender != GOV_ADMIN) revert Errors.NotAdmin();
         _;
     }
 
@@ -52,9 +53,14 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         address _addr
     )
         external
-        needVote(keccak256("addBlackList"), keccak256(abi.encode(_addr)))
+        needVote(
+            bytes32(
+                0x4912b57f7ea75243ecaff76a75bdedbc13a6f58c1c967b0427b8aee0a276309e
+            ),
+            keccak256(abi.encode(_addr))
+        )
     {
-        require(!isBlackListed[_addr], "Policy: Blacklist already exists");
+        if (isBlackListed[_addr]) revert Errors.BlacklistExists();
         isBlackListed[_addr] = true;
         emit AddBlackList(_addr);
     }
@@ -64,9 +70,14 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         address _addr
     )
         external
-        needVote(keccak256("removeBlackList"), keccak256(abi.encode(_addr)))
+        needVote(
+            bytes32(
+                0x310cc9bfce6443143f03d0cdc4d66afa0b3c689539eb3e65cb1820b56d672465
+            ),
+            keccak256(abi.encode(_addr))
+        )
     {
-        require(isBlackListed[_addr], "Policy: Blacklist does not exist");
+        if (!isBlackListed[_addr]) revert Errors.BlacklistNotExists();
         delete isBlackListed[_addr];
         emit RemoveBlackList(_addr);
     }
@@ -77,11 +88,13 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
     )
         external
         needVote(
-            keccak256("setMinGasTipCap"),
+            bytes32(
+                0x089197e4f35b8ada456b5531e8c1759ee3fce703602a3a957b5c9d2831082156
+            ),
             keccak256(abi.encode(_gasTipCap))
         )
     {
-        require(_gasTipCap > 0, "Policy: setMinGasTipCap invalid parameter");
+        if (_gasTipCap <= 0) revert Errors.InvalidMinGasTipCap();
         minGasTipCap = _gasTipCap;
         emit SetMinGasTipCap(_gasTipCap);
     }
@@ -91,9 +104,14 @@ contract Policy is GovernanceVote, UUPSUpgradeable {
         uint256 _baseFee
     )
         external
-        needVote(keccak256("setBaseFee"), keccak256(abi.encode(_baseFee)))
+        needVote(
+            bytes32(
+                0x83113031fe9312a872d9176bc1a087dc38ca109c517a596998332e2fb8409acc
+            ),
+            keccak256(abi.encode(_baseFee))
+        )
     {
-        require(_baseFee > 0, "Policy: setBaseFee invalid parameter");
+        if (_baseFee <= 0) revert Errors.InvalidBaseFee();
         baseFee = _baseFee;
         emit SetBaseFee(_baseFee);
     }
