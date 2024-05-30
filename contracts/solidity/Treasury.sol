@@ -4,7 +4,7 @@ pragma solidity ^0.8.25;
 import "./GovernanceVote.sol";
 
 interface ITreasury {
-    event FundBridge(uint256 amount);
+    event BridgeFund(uint256 amount);
 
     function fundBridge(uint256 _amount) external;
 }
@@ -16,8 +16,6 @@ interface ITreasury {
 contract Treasury is GovernanceVote, ITreasury {
     address public constant BRIDGE_PROXY =
         0x1212000000000000000000000000000000000004;
-
-    error FundingFailed();
 
     /**
      * @dev Sends `amount` of ether to the bridge proxy.
@@ -37,6 +35,6 @@ contract Treasury is GovernanceVote, ITreasury {
         if (!success) {
             revert Errors.TransferFailed();
         }
-        emit FundBridge(_amount);
+        emit BridgeFund(_amount);
     }
 }
