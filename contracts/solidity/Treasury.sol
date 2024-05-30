@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
-import "./GovernanceVote.sol";
-
-interface ITreasury {
-    event BridgeFund(uint256 amount);
-
-    function fundBridge(uint256 _amount) external;
-}
+import {Errors} from "./libraries/Errors.sol";
+import {ITreasury} from "./interfaces/ITreasury.sol";
+import {GovernanceVote} from "./base/GovernanceVote.sol";
 
 /**
  * @dev This is an auxiliary contract meant to be assigned as the Neo X treasury for funding the native bridge proxy.
@@ -32,9 +28,7 @@ contract Treasury is GovernanceVote, ITreasury {
         )
     {
         (bool success, ) = BRIDGE_PROXY.call{value: _amount}("");
-        if (!success) {
-            revert Errors.TransferFailed();
-        }
+        if (!success) revert Errors.TransferFailed();
         emit BridgeFund(_amount);
     }
 }
