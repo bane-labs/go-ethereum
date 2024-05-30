@@ -11,8 +11,8 @@ contract MockGovVote is GovernanceVote {
     )
         external
         needVote(
-            keccak256(abi.encodePacked("changeV")),
-            keccak256(abi.encodePacked(newV))
+            keccak256(abi.encode("changeV")),
+            keccak256(abi.encode(newV))
         )
     {
         v = newV;
