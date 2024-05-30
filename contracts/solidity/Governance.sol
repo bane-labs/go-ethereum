@@ -30,6 +30,9 @@ interface IGovernance {
     // revoke votes and claim rewards
     function revokeVote() external;
 
+    // revoke votes, claim rewards and vote to another candidate
+    function transferVote(address candidateTo) external;
+
     // only claim rewards
     function claimReward() external;
 
@@ -256,6 +259,28 @@ contract Governance is IGovernance, ReentrancyGuard, UUPSUpgradeable {
 
         emit Revoke(msg.sender, candidateFrom, amount);
         _safeTransferETH(msg.sender, amount + unclaimedReward);
+    }
+
+    function transferVote(address candidateTo) external nonReentrant {
+        address candidateFrom = votedTo[msg.sender];
+        uint amount = votedAmount[msg.sender];
+        if (candidateFrom == address(0) || amount <= 0) revert Errors.NoVote();
+        if (candidateFrom == candidateTo) revert Errors.SameCandidate();
+        if (!candidateList.contains(candidateTo)) revert Errors.CandidateNotExists();
+
+        // settle reward here
+        uint unclaimedReward = _settleReward(msg.sender, candidateFrom);
+
+        // update votes
+        receivedVotes[candidateFrom] -= amount;
+        receivedVotes[candidateTo] += amount;
+        votedTo[msg.sender] = candidateTo;
+        voterGasPerVote[msg.sender] = candidateGasPerVote[candidateTo];
+        voteHeight[msg.sender] = block.number;
+
+        emit Revoke(msg.sender, candidateFrom, amount);
+        emit Vote(msg.sender, candidateTo, amount);
+        if (unclaimedReward > 0) _safeTransferETH(msg.sender, unclaimedReward);
     }
 
     function claimReward() external nonReentrant {
