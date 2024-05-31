@@ -20,6 +20,9 @@ interface IPolicy {
     // set a new value to base fee policy
     function setBaseFee(uint256 _baseFee) external;
 
+    // set candidate limit (increase only)
+    function setCandidateLimit(uint256 _candidateLimit) external;
+
     // return the value of candidate limit policy
     function candidateLimit() external view returns (uint256);
 }
