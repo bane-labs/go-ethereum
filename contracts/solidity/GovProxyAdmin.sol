@@ -28,6 +28,7 @@ contract GovProxyAdmin is GovernanceVote {
         virtual
         needVote(
             bytes32(
+                // keccak256("upgradeAndCall")
                 0xe739b9109d83c1c6d0d640fe9ed476fc5862a6de5483b00678a3fffa7a2be2f6
             ),
             keccak256(abi.encode(proxy, newImplementation, data))
