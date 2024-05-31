@@ -205,10 +205,11 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	// Ensure the transaction is allowed by policy
 	// Apply policy minimum gas tip cap
 	// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough
-	var minGasTipCap = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash())
+	var minGasTipCap = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
 	var baseFee = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash()).Big()
-	if math.BigMin(tx.GasTipCap(), new(big.Int).Sub(tx.GasFeeCap(), baseFee)).Cmp(minGasTipCap.Big()) < 0 {
-		return fmt.Errorf("%w: policy needed %v, gastipcap %v, gasfeecap %v ", ErrUnderpriced, minGasTipCap.Big(), tx.GasTipCap(), tx.GasFeeCap())
+	if math.BigMin(tx.GasTipCap(), new(big.Int).Sub(tx.GasFeeCap(), baseFee)).Cmp(minGasTipCap) < 0 {
+		return fmt.Errorf("%w: policy minGasTipCap needed %v, baseFee needed %v, gasTipCap %v, gasFeeCap %v ",
+			ErrUnderpriced, minGasTipCap, baseFee, tx.GasTipCap(), tx.GasFeeCap())
 	}
 	// Apply policy blacklist
 	var blocked = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(from))
