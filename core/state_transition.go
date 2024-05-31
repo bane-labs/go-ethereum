@@ -324,8 +324,8 @@ func (st *StateTransition) preCheck() error {
 				return fmt.Errorf("%w: address %v, maxFeePerGas: %s, baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
 			}
-			// Ensure the transaction is allowed by policy, only for neoxburn fork
-			if st.evm.ChainConfig().IsNeoxburn(st.evm.Context.BlockNumber, st.evm.Context.Time) {
+			// Ensure the transaction is allowed by policy, only for neoXBurn fork
+			if st.evm.ChainConfig().IsNeoXBurn(st.evm.Context.BlockNumber, st.evm.Context.Time) {
 				// Apply policy minimum gas tip cap
 				// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough
 				var minGasTipCap = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()

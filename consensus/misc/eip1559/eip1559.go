@@ -117,9 +117,9 @@ func VerifyEIP1559HeaderDBFT(config *params.ChainConfig, parent, header *types.H
 }
 
 // CalcBaseFeeDBFT calculates the basefee of the header.
-// if is neoxburn fork, get basefee from Policy contract.
+// if is neoXBurn fork, get basefee from Policy contract.
 func CalcBaseFeeDBFT(config *params.ChainConfig, parent *types.Header, state *state.StateDB) *big.Int {
-	if !config.IsNeoxburn(parent.Number, parent.Time) {
+	if !config.IsNeoXBurn(parent.Number, parent.Time) {
 		return CalcBaseFee(config, parent)
 	}
 	return state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash()).Big()
