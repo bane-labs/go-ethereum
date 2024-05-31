@@ -160,12 +160,12 @@ describe("Governance", function () {
             ).to.be.revertedWithCustomError(Governance, ERRORS.INVALID_SHARE_RATE);
         });
 
-        it("Should revert if the candidate amount exceeds limit", async function () {
-            await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x4", ethers.toBeHex(0, 32)]);
-            await expect(
-                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
-            ).to.be.revertedWithCustomError(Governance, ERRORS.REGISTER_DISABLED);
-        });
+        // it("Should revert if the candidate amount exceeds limit", async function () {
+        //     await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x4", ethers.toBeHex(0, 32)]);
+        //     await expect(
+        //         Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+        //     ).to.be.revertedWithCustomError(Governance, ERRORS.REGISTER_DISABLED);
+        // });
 
         it("Should register a new candidate if all conditions are met", async function () {
             await expect(

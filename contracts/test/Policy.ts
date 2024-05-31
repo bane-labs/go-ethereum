@@ -100,7 +100,7 @@ describe("Policy", function () {
             expect(await Policy.baseFee()).to.eq(BASE_FEE);
         });
         it("Should get candidate limit as expected", async function () {
-            expect(await Policy.candidateLimit()).to.eq(CANDIDATE_LIMIT);
+            expect(await Policy.getCandidateLimit()).to.eq(CANDIDATE_LIMIT);
         });
     });
 
@@ -287,7 +287,7 @@ describe("Policy", function () {
                     Policy.connect(signers[i]).setCandidateLimit(2001)
                 ).not.to.be.reverted;
             }
-            expect(await Policy.candidateLimit()).to.eq(2001);
+            expect(await Policy.getCandidateLimit()).to.eq(2001);
         });
 
         it("Should emit an event if meets the threshold", async function () {
@@ -299,6 +299,13 @@ describe("Policy", function () {
             await expect(
                 Policy.connect(signers[3]).setCandidateLimit(2001)
             ).emit(Policy, "SetCandidateLimit");
+        });
+    });
+
+    describe("setCandidateLimit", function () {
+        it("Should return default value if not setted", async function () {
+            await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x4", ethers.toBeHex(0, 32)]);
+            expect(await Policy.getCandidateLimit()).to.eq(CANDIDATE_LIMIT);
         });
     });
 });

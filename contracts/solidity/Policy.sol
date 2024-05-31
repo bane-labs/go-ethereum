@@ -8,11 +8,12 @@ import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol"
 
 contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     address public constant SELF = 0x1212100000000000000000000000000000000002;
+    uint256 public constant DEFAULT_CANDIDATE_LIMIT = 2000;
 
     mapping(address => bool) public isBlackListed;
     uint256 public minGasTipCap;
     uint256 public baseFee;
-    uint256 public candidateLimit;
+    uint256 internal candidateLimit;
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
@@ -114,9 +115,17 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
             keccak256(abi.encode(_candidateLimit))
         )
     {
-        if (_candidateLimit <= candidateLimit)
-            revert Errors.InvalidCandidateLimit();
+        if (
+            _candidateLimit <= candidateLimit ||
+            _candidateLimit <= DEFAULT_CANDIDATE_LIMIT
+        ) revert Errors.InvalidCandidateLimit();
         candidateLimit = _candidateLimit;
         emit SetCandidateLimit(_candidateLimit);
+    }
+
+    function getCandidateLimit() external view returns (uint256) {
+        uint256 limit = candidateLimit;
+        if (limit > DEFAULT_CANDIDATE_LIMIT) return limit;
+        else return DEFAULT_CANDIDATE_LIMIT;
     }
 }
