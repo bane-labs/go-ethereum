@@ -12,7 +12,7 @@ export const ERRORS = {
     ONLY_EOA: 'OnlyEOA()',
     INSUFFICIENT_VALUE: 'InsufficientValue()',
     INVALID_SHARE_RATE: 'InvalidShareRate()',
-    CANDIDATE_EXCEED_LIMIT: 'CandidateExceedLimit()',
+    REGISTER_DISABLED: 'RegisterDisabled()',
     SAME_CANDIDATE: 'SameCandidate()',
     CANDIDATE_EXISTS: 'CandidateExists()',
     CANDIDATE_NOT_EXISTS: 'CandidateNotExists()',

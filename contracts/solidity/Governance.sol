@@ -116,7 +116,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         if (msg.value < registerFee) revert Errors.InsufficientValue();
         if (shareRate > 1000) revert Errors.InvalidShareRate();
         if (candidateList.length() >= IPolicy(POLICY).candidateLimit())
-            revert Errors.CandidateExceedLimit();
+            revert Errors.RegisterDisabled();
         if (exitHeightOf[msg.sender] > 0) revert Errors.LeftNotClaimed();
         if (!candidateList.add(msg.sender)) revert Errors.CandidateExists();
         if (receivedVotes[msg.sender] > 0) {
