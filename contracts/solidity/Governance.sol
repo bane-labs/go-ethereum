@@ -6,7 +6,7 @@ import {IGovReward} from "./interfaces/IGovReward.sol";
 import {IGovernance} from "./interfaces/IGovernance.sol";
 import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-import {ReentrancyGuard} from"@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -87,19 +87,21 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         address[] memory validators = currentConsensus;
         uint length = validators.length;
         for (uint i = 0; i < length; i++) {
-            if (receivedVotes[validators[i]] != 0) {
+            uint shareRate = shareRateOf[validators[i]];
+            uint voteAmount = receivedVotes[validators[i]];
+            if (voteAmount != 0) {
                 candidateGasPerVote[validators[i]] +=
-                    (msg.value * shareRateOf[validators[i]] * SCALE_FACTOR) /
+                    (msg.value * shareRate * SCALE_FACTOR) /
                     consensusSize /
                     1000 /
-                    receivedVotes[validators[i]];
+                    voteAmount;
             }
-            _safeTransferETH(
-                validators[i],
-                (msg.value * (1000 - shareRateOf[validators[i]])) /
-                    consensusSize /
-                    1000
-            );
+            if (shareRate < 1000) {
+                _safeTransferETH(
+                    validators[i],
+                    (msg.value * (1000 - shareRate)) / consensusSize / 1000
+                );
+            }
         }
     }
 
