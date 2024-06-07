@@ -590,6 +590,31 @@ describe("Governance", function () {
             ).to.eq(166666666666666);
         });
 
+        it("Should work with 1000 share rate and 0 votes", async function () {
+            // Register enough candidates and change consensus
+            let signers = await ethers.getSigners();
+            await Governance.connect(signers[0]).registerCandidate(500, { value: REGISTER_FEE });
+            await Governance.connect(signers[1]).registerCandidate(1000, { value: REGISTER_FEE });
+            for (let i = 2; i < CONSENSUS_SIZE; i++) {
+                await Governance.connect(signers[i]).registerCandidate(500, { value: REGISTER_FEE });
+            }
+            for (let i = 1; i < CONSENSUS_SIZE; i++) {
+                await Governance.connect(signers[i]).vote(signers[i], { value: VOTE_TARGET_AMOUNT });
+            }
+            await mine(EPOCH_DURATION);
+            await MockSysCall.call_onPersist(Governance);
+
+            // Send GAS as governance reward and persist it
+            const tx = await user.sendTransaction({
+                to: GovReward.target,
+                value: ethers.parseEther("7"),
+            });
+            await tx.wait();
+            await expect(
+                MockSysCall.call_onPersist(Governance)
+            ).to.be.not.reverted;
+        });
+
         it("Should transfer back correct reward if all conditions are met", async function () {
             // Register enough candidates and change consensus
             let signers = await ethers.getSigners();
