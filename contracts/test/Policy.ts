@@ -270,17 +270,6 @@ describe("Policy", function () {
             ).to.be.revertedWithCustomError(Policy, ERRORS.NOT_MINER);
         });
 
-        it("Should revert if the new value is not larger than the old one", async function () {
-            for (let i = 0; i < 3; i++) {
-                await expect(
-                    Policy.connect(signers[i]).setCandidateLimit(2000)
-                ).not.to.be.reverted;
-            }
-            await expect(
-                Policy.connect(signers[3]).setCandidateLimit(2000)
-            ).to.be.revertedWithCustomError(Policy, ERRORS.INVALID_CANDIDATE_LIMIT);
-        });
-
         it("Should change the candidate limit if meets the threshold", async function () {
             for (let i = 0; i < 4; i++) {
                 await expect(

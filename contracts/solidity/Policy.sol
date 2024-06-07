@@ -115,17 +115,14 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
             keccak256(abi.encode(_candidateLimit))
         )
     {
-        if (
-            _candidateLimit <= candidateLimit ||
-            _candidateLimit <= DEFAULT_CANDIDATE_LIMIT
-        ) revert Errors.InvalidCandidateLimit();
+        if (_candidateLimit <= 0) revert Errors.InvalidCandidateLimit();
         candidateLimit = _candidateLimit;
         emit SetCandidateLimit(_candidateLimit);
     }
 
     function getCandidateLimit() external view returns (uint256) {
         uint256 limit = candidateLimit;
-        if (limit > DEFAULT_CANDIDATE_LIMIT) return limit;
+        if (limit > 0) return limit;
         else return DEFAULT_CANDIDATE_LIMIT;
     }
 }
