@@ -30,6 +30,7 @@ const STANDBY_VALIDATORS = [
 
 const MIN_GAS_TIP_CAP = ethers.parseUnits("1", "gwei");
 const BASE_FEE = ethers.parseUnits("1", "gwei");
+const CANDIDATE_LIMIT = 2000;
 
 describe("Policy", function () {
 
@@ -88,6 +89,7 @@ describe("Policy", function () {
         // Write Policy config to storage
         await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x2", ethers.toBeHex(MIN_GAS_TIP_CAP, 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x3", ethers.toBeHex(BASE_FEE, 32)]);
+        await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x4", ethers.toBeHex(CANDIDATE_LIMIT, 32)]);
     });
 
     describe("genesis", function () {
@@ -96,6 +98,9 @@ describe("Policy", function () {
         });
         it("Should get base fee as expected", async function () {
             expect(await Policy.baseFee()).to.eq(BASE_FEE);
+        });
+        it("Should get candidate limit as expected", async function () {
+            expect(await Policy.getCandidateLimit()).to.eq(CANDIDATE_LIMIT);
         });
     });
 
@@ -255,6 +260,41 @@ describe("Policy", function () {
             await expect(
                 Policy.connect(signers[3]).setBaseFee(ethers.parseEther("1"))
             ).emit(Policy, "SetBaseFee");
+        });
+    });
+
+    describe("setCandidateLimit", function () {
+        it("Should revert if the sender is not a validator", async function () {
+            await expect(
+                Policy.connect(signers[7]).setCandidateLimit(2001)
+            ).to.be.revertedWithCustomError(Policy, ERRORS.NOT_MINER);
+        });
+
+        it("Should change the candidate limit if meets the threshold", async function () {
+            for (let i = 0; i < 4; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setCandidateLimit(2001)
+                ).not.to.be.reverted;
+            }
+            expect(await Policy.getCandidateLimit()).to.eq(2001);
+        });
+
+        it("Should emit an event if meets the threshold", async function () {
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setCandidateLimit(2001)
+                ).not.to.be.reverted;
+            }
+            await expect(
+                Policy.connect(signers[3]).setCandidateLimit(2001)
+            ).emit(Policy, "SetCandidateLimit");
+        });
+    });
+
+    describe("setCandidateLimit", function () {
+        it("Should return default value if not setted", async function () {
+            await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x4", ethers.toBeHex(0, 32)]);
+            expect(await Policy.getCandidateLimit()).to.eq(CANDIDATE_LIMIT);
         });
     });
 });

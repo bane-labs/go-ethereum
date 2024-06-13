@@ -4,6 +4,7 @@ pragma solidity ^0.8.25;
 import {Errors} from "./libraries/Errors.sol";
 import {IGovReward} from "./interfaces/IGovReward.sol";
 import {IGovernance} from "./interfaces/IGovernance.sol";
+import {IPolicy} from "./interfaces/IPolicy.sol";
 import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -12,6 +13,9 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     address public constant SELF = 0x1212100000000000000000000000000000000001;
+    // Policy contract
+    address public constant POLICY = 
+        0x1212000000000000000000000000000000000002;
     // GovReward contract
     address public constant GOV_REWARD =
         0x1212000000000000000000000000000000000003;
@@ -113,6 +117,8 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         if (tx.origin != msg.sender) revert Errors.OnlyEOA();
         if (msg.value < registerFee) revert Errors.InsufficientValue();
         if (shareRate > 1000) revert Errors.InvalidShareRate();
+        if (candidateList.length() >= IPolicy(POLICY).getCandidateLimit())
+            revert Errors.RegisterDisabled();
         if (exitHeightOf[msg.sender] > 0) revert Errors.LeftNotClaimed();
         if (!candidateList.add(msg.sender)) revert Errors.CandidateExists();
         if (receivedVotes[msg.sender] > 0) {

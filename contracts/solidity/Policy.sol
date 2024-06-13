@@ -8,10 +8,12 @@ import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol"
 
 contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     address public constant SELF = 0x1212100000000000000000000000000000000002;
+    uint256 public constant DEFAULT_CANDIDATE_LIMIT = 2000;
 
     mapping(address => bool) public isBlackListed;
     uint256 public minGasTipCap;
     uint256 public baseFee;
+    uint256 internal candidateLimit;
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
@@ -39,6 +41,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
         external
         needVote(
             bytes32(
+                // keccak256("addBlackList")
                 0x4912b57f7ea75243ecaff76a75bdedbc13a6f58c1c967b0427b8aee0a276309e
             ),
             keccak256(abi.encode(_addr))
@@ -55,6 +58,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
         external
         needVote(
             bytes32(
+                // keccak256("removeBlackList")
                 0x310cc9bfce6443143f03d0cdc4d66afa0b3c689539eb3e65cb1820b56d672465
             ),
             keccak256(abi.encode(_addr))
@@ -71,6 +75,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
         external
         needVote(
             bytes32(
+                // keccak256("setMinGasTipCap")
                 0x089197e4f35b8ada456b5531e8c1759ee3fce703602a3a957b5c9d2831082156
             ),
             keccak256(abi.encode(_gasTipCap))
@@ -87,6 +92,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
         external
         needVote(
             bytes32(
+                // keccak256("setBaseFee")
                 0x83113031fe9312a872d9176bc1a087dc38ca109c517a596998332e2fb8409acc
             ),
             keccak256(abi.encode(_baseFee))
@@ -95,5 +101,28 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
         if (_baseFee <= 0) revert Errors.InvalidBaseFee();
         baseFee = _baseFee;
         emit SetBaseFee(_baseFee);
+    }
+
+    function setCandidateLimit(
+        uint256 _candidateLimit
+    )
+        external
+        needVote(
+            bytes32(
+                // keccak256("setCandidateLimit")
+                0x172d358b638a8ee3e962dd73800c4025c48eb0f79c479bc2cdd1f63e72779efc
+            ),
+            keccak256(abi.encode(_candidateLimit))
+        )
+    {
+        if (_candidateLimit <= 0) revert Errors.InvalidCandidateLimit();
+        candidateLimit = _candidateLimit;
+        emit SetCandidateLimit(_candidateLimit);
+    }
+
+    function getCandidateLimit() external view returns (uint256) {
+        uint256 limit = candidateLimit;
+        if (limit > 0) return limit;
+        else return DEFAULT_CANDIDATE_LIMIT;
     }
 }
