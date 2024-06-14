@@ -46,6 +46,11 @@ func VerifyEIP1559Header(config *params.ChainConfig, parent, header *types.Heade
 	if header.BaseFee == nil {
 		return errors.New("header is missing baseFee")
 	}
+	// For NeoXBurn block BaseFee verification is performed by consensus nodes and hence
+	// not included into the state-independent ordinary block verification rules.
+	if config.IsNeoXBurn(parent.Number, parent.Time) {
+		return nil
+	}
 	// Verify the baseFee is correct based on the parent header.
 	expectedBaseFee := CalcBaseFee(config, parent)
 	if header.BaseFee.Cmp(expectedBaseFee) != 0 {
@@ -94,26 +99,6 @@ func CalcBaseFee(config *params.ChainConfig, parent *types.Header) *big.Int {
 
 		return math.BigMax(baseFee, common.Big0)
 	}
-}
-
-// VerifyEIP1559HeaderDBFT verifies some header attributes which were changed in EIP-1559 with dbft consensus,
-// - gas limit check
-// - basefee check, basefee value check moved to VerifyBlock.
-func VerifyEIP1559HeaderDBFT(config *params.ChainConfig, parent, header *types.Header) error {
-	// Verify that the gas limit remains within allowed bounds
-	parentGasLimit := parent.GasLimit
-	if !config.IsLondon(parent.Number) {
-		parentGasLimit = parent.GasLimit * config.ElasticityMultiplier()
-	}
-	if err := misc.VerifyGaslimit(parentGasLimit, header.GasLimit); err != nil {
-		return err
-	}
-	// Verify the header is not malformed
-	if header.BaseFee == nil {
-		return errors.New("header is missing baseFee")
-	}
-	// Verifing the baseFee is moved to VerifyBlock.
-	return nil
 }
 
 // CalcBaseFeeDBFT calculates the basefee of the header.
