@@ -172,6 +172,9 @@ func Transition(ctx *cli.Context) error {
 	if err := applyLondonChecks(&prestate.Env, chainConfig); err != nil {
 		return err
 	}
+	if err := applyNeoXBurnChecks(&prestate.Env, chainConfig); err != nil {
+		return err
+	}
 	if err := applyShanghaiChecks(&prestate.Env, chainConfig); err != nil {
 		return err
 	}
@@ -190,6 +193,17 @@ func Transition(ctx *cli.Context) error {
 	collector := make(Alloc)
 	s.DumpToCollector(collector, nil)
 	return dispatchOutput(ctx, baseDir, result, collector, body)
+}
+
+func applyNeoXBurnChecks(env *stEnv, chainConfig *params.ChainConfig) error {
+	if !chainConfig.IsNeoXBurn(big.NewInt(int64(env.Number)), env.Timestamp) {
+		return nil
+	}
+	// Sanity check, to not `panic` in state_transition
+	if env.BaseFee == nil {
+		return NewError(ErrorConfig, errors.New("NeoXBurn config but missing 'currentBaseFee' in env section"))
+	}
+	return nil
 }
 
 func applyLondonChecks(env *stEnv, chainConfig *params.ChainConfig) error {

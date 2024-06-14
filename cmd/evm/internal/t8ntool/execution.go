@@ -24,11 +24,11 @@ import (
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/consensus/misc"
-	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -157,16 +157,12 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 		GasLimit:    pre.Env.GasLimit,
 		GetHash:     getHash,
 	}
-	env := &pre.Env
-	env.BaseFee = eip1559.CalcBaseFeeDBFT(chainConfig, &types.Header{
-		Number:   new(big.Int).SetUint64(env.Number - 1),
-		BaseFee:  env.ParentBaseFee,
-		GasUsed:  env.ParentGasUsed,
-		GasLimit: env.ParentGasLimit,
-	}, statedb)
-	// If currentBaseFee is defined, add it to the vmContext.
+	// If currentBaseFee is defined, add it to the vmContext and to the state DB.
 	if pre.Env.BaseFee != nil {
 		vmContext.BaseFee = new(big.Int).Set(pre.Env.BaseFee)
+		if chainConfig.IsNeoXBurn(vmContext.BlockNumber, vmContext.Time) {
+			statedb.SetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash(), common.BigToHash(pre.Env.BaseFee))
+		}
 	}
 	// If random is defined, add it to the vmContext.
 	if pre.Env.Random != nil {
