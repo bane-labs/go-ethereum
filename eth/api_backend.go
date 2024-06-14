@@ -31,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -365,15 +364,10 @@ func (b *EthAPIBackend) SyncProgress() ethereum.SyncProgress {
 }
 
 func (b *EthAPIBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
-	suggestTipCap, err := b.gpo.SuggestTipCap(ctx)
+	suggestTipCap, minGasTipCap, err := b.gpo.SuggestTipCap(ctx)
 	if err != nil {
 		return nil, err
 	}
-	stateDb, _, err := b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
-	if err != nil {
-		return nil, err
-	}
-	minGasTipCap := stateDb.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
 	return cmath.BigMax(suggestTipCap, minGasTipCap), nil
 }
 
