@@ -2473,7 +2473,7 @@ func (bc *BlockChain) getParentState(block *types.Block) (*state.StateDB, *types
 }
 
 // ProcessState processes the state changes according to the Ethereum rules by running
-// the transaction messages using the statedb and applying any rewards to both
+// the transaction messages using the statedb (if given) and applying any rewards to both
 // the processor (coinbase) and any included uncles. It doesn't persist any data.
 func (bc *BlockChain) ProcessState(block *types.Block, statedb *state.StateDB) (*state.StateDB, types.Receipts, []*types.Log, uint64, error) {
 	var err error
