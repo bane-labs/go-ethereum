@@ -187,9 +187,19 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 		chainConfig.DAOForkBlock.Cmp(new(big.Int).SetUint64(pre.Env.Number)) == 0 {
 		misc.ApplyDAOHardFork(statedb)
 	}
+	var evm *vm.EVM
 	if beaconRoot := pre.Env.ParentBeaconBlockRoot; beaconRoot != nil {
-		evm := vm.NewEVM(vmContext, vm.TxContext{}, statedb, chainConfig, vmConfig)
+		evm = vm.NewEVM(vmContext, vm.TxContext{}, statedb, chainConfig, vmConfig)
 		core.ProcessBeaconBlockRoot(*beaconRoot, evm, statedb)
+	}
+	if chainConfig.DBFT != nil {
+		if evm == nil {
+			evm = vm.NewEVM(vmContext, vm.TxContext{}, statedb, chainConfig, vmConfig)
+		}
+		err := core.ProcessOnPersist(evm, statedb)
+		if err != nil {
+			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not process OnPersist: %v", err))
+		}
 	}
 
 	for i := 0; txIt.Next(); i++ {
