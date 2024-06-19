@@ -346,6 +346,18 @@ var (
 		Value:    ethconfig.Defaults.TxPool.Lifetime,
 		Category: flags.TxPoolCategory,
 	}
+	TxPoolReannounceTimeThresholdFlag = &cli.DurationFlag{
+		Name:     "txpool.reannouncetimethreshold",
+		Usage:    "Threshold for announcing pending transactions again (default = 140 seconds, minimum = 1 minute)",
+		Value:    ethconfig.Defaults.TxPool.ReannounceTimeThreshold,
+		Category: flags.TxPoolCategory,
+	}
+	TxPoolReannounceRemotesFlag = &cli.BoolFlag{
+		Name:     "txpool.reannounceremotes",
+		Usage:    "Whether to reannounce remote transactions or not(default = true)",
+		Value:    ethconfig.Defaults.TxPool.ReannounceRemotes,
+		Category: flags.TxPoolCategory,
+	}
 	// Blob transaction pool settings
 	BlobPoolDataDirFlag = &cli.StringFlag{
 		Name:     "blobpool.datadir",
@@ -1492,6 +1504,12 @@ func setTxPool(ctx *cli.Context, cfg *legacypool.Config) {
 	}
 	if ctx.IsSet(TxPoolLifetimeFlag.Name) {
 		cfg.Lifetime = ctx.Duration(TxPoolLifetimeFlag.Name)
+	}
+	if ctx.IsSet(TxPoolReannounceTimeThresholdFlag.Name) {
+		cfg.ReannounceTimeThreshold = ctx.Duration(TxPoolReannounceTimeThresholdFlag.Name)
+	}
+	if ctx.IsSet(TxPoolReannounceRemotesFlag.Name) {
+		cfg.ReannounceRemotes = ctx.Bool(TxPoolReannounceRemotesFlag.Name)
 	}
 }
 
