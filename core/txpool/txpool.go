@@ -373,6 +373,18 @@ func (p *TxPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) 
 	return p.subs.Track(event.JoinSubscriptions(subs...))
 }
 
+// SubscribeReannoTransactions registers a subscription of reannounce transaction
+// events and starts sending event to the given channel.
+func (p *TxPool) SubscribeReannoTransactions(ch chan<- core.ReannoTxsEvent) event.Subscription {
+	subs := []event.Subscription{}
+	for _, subpool := range p.subpools {
+		if sub := subpool.SubscribeReannoTransactions(ch); sub != nil {
+			subs = append(subs, sub)
+		}
+	}
+	return p.subs.Track(event.JoinSubscriptions(subs...))
+}
+
 // Nonce returns the next nonce of an account, with all transactions executable
 // by the pool already applied on top.
 func (p *TxPool) Nonce(addr common.Address) uint64 {

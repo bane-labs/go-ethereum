@@ -234,6 +234,25 @@ func (ps *peerSet) allPeers() []*ethPeer {
 	return list
 }
 
+// headPeers retrieves a specified number list of peers.
+func (ps *peerSet) headPeers(num uint) []*ethPeer {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	if num > uint(len(ps.peers)) {
+		num = uint(len(ps.peers))
+	}
+
+	list := make([]*ethPeer, 0, num)
+	for _, p := range ps.peers {
+		if len(list) > int(num) {
+			break
+		}
+		list = append(list, p)
+	}
+	return list
+}
+
 // len returns if the current number of `eth` peers in the set. Since the `snap`
 // peers are tied to the existence of an `eth` connection, that will always be a
 // subset of `eth`.
