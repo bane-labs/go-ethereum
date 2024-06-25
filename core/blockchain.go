@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
+	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -310,18 +311,18 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 		vmConfig:      vmConfig,
 		logger:        vmConfig.Tracer,
 	}
-	bc.flushInterval.Store(int64(cacheConfig.TrieTimeLimit))
-	bc.forker = NewForkChoice(bc, shouldPreserve)
-	bc.stateCache = state.NewDatabaseWithNodeDB(bc.db, bc.triedb)
-	bc.validator = NewBlockValidator(chainConfig, bc, engine)
-	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
-	bc.processor = NewStateProcessor(chainConfig, bc, engine)
-
 	var err error
 	bc.hc, err = NewHeaderChain(db, chainConfig, engine, bc.insertStopped)
 	if err != nil {
 		return nil, err
 	}
+	bc.flushInterval.Store(int64(cacheConfig.TrieTimeLimit))
+	bc.forker = NewForkChoice(bc, shouldPreserve)
+	bc.stateCache = state.NewDatabaseWithNodeDB(bc.db, bc.triedb)
+	bc.validator = NewBlockValidator(chainConfig, bc)
+	bc.prefetcher = newStatePrefetcher(chainConfig, bc.hc)
+	bc.processor = NewStateProcessor(chainConfig, bc.hc)
+
 	bc.genesisBlock = bc.GetBlockByNumber(0)
 	if bc.genesisBlock == nil {
 		return nil, ErrNoGenesis
@@ -1889,7 +1890,14 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 		// while processing transactions. Before Byzantium the prefetcher is mostly
 		// useless due to the intermediate root hashing after each transaction.
 		if bc.chainConfig.IsByzantium(block.Number()) {
-			statedb.StartPrefetcher("chain", !bc.vmConfig.EnableWitnessCollection)
+			var witness *stateless.Witness
+			if bc.vmConfig.EnableWitnessCollection {
+				witness, err = stateless.NewWitness(bc, block)
+				if err != nil {
+					return it.index, err
+				}
+			}
+			statedb.StartPrefetcher("chain", witness)
 		}
 		activeState = statedb
 
@@ -2020,11 +2028,18 @@ func (bc *BlockChain) processBlock(block *types.Block, statedb *state.StateDB, s
 	ptime := time.Since(pstart)
 
 	vstart := time.Now()
-	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
+	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas, false); err != nil {
 		bc.reportBlock(block, receipts, err)
 		return nil, err
 	}
 	vtime := time.Since(vstart)
+
+	if witness := statedb.Witness(); witness != nil {
+		if err = bc.validator.ValidateWitness(witness, block.ReceiptHash(), block.Root()); err != nil {
+			bc.reportBlock(block, receipts, err)
+			return nil, fmt.Errorf("cross verification failed: %v", err)
+		}
+	}
 	proctime := time.Since(start) // processing + validation
 
 	// Update the metrics touched during block processing and validation
@@ -2714,7 +2729,7 @@ func (bc *BlockChain) VerifyBlock(block *types.Block, checkState bool) (*state.S
 		return nil, nil, 0, fmt.Errorf("failed to process block state: %w", err)
 	}
 
-	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
+	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas, false); err != nil {
 		return nil, nil, 0, fmt.Errorf("failed to verify state: %w", err)
 	}
 	return statedb, receipts, usedGas, nil
