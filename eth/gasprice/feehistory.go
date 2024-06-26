@@ -99,6 +99,7 @@ func (oracle *Oracle) processBlock(ctx context.Context, bf *blockFees, percentil
 	}
 	if bf.block == nil || (bf.receipts == nil && len(bf.block.Transactions()) != 0) {
 		log.Error("Block or receipts are missing while reward percentiles are requested")
+		return
 	}
 
 	bf.results.reward = make([]*big.Int, len(percentiles))
