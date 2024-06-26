@@ -162,7 +162,8 @@ func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, *big.Int, er
 }
 
 // suggestTipCapInternal return GAS price, BaseFee and minGasTipCap for the specified block.
-// It updates the cache for the specified block height if needed.
+// It updates the cache for the specified block height if needed. Zero BaseFee is returned if
+// London is not active yet. Zero minGasTipCap is returned if NeoXBurn is not active yet.
 func (oracle *Oracle) suggestTipCapInternal(ctx context.Context, head *types.Header) (*big.Int, *big.Int, *big.Int, error) {
 	headHash := head.Hash()
 
@@ -237,7 +238,12 @@ func (oracle *Oracle) suggestTipCapInternal(ctx context.Context, head *types.Hea
 		lastBaseFee = eip1559.CalcBaseFeeDBFT(cfg, head, state)
 		if cfg.IsNeoXBurn(head.Number, head.Time) {
 			lastMinGasTipCap = state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
+		} else {
+			lastMinGasTipCap = new(big.Int)
 		}
+	} else {
+		lastBaseFee = new(big.Int)
+		lastMinGasTipCap = new(big.Int)
 	}
 	oracle.cacheLock.Lock()
 	oracle.lastHead = headHash
