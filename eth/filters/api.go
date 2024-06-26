@@ -448,12 +448,6 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 
 	chainConfig := api.sys.backend.ChainConfig()
 	latest := api.sys.backend.CurrentHeader()
-	state, _, err := api.sys.backend.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(latest.Number.Int64()))
-	if err != nil {
-		log.Error("Failed to get state to retrieve filter changes", "err", err, "header number", latest.Number)
-		return []interface{}{}, err
-	}
-	baseFee := eip1559.CalcBaseFeeDBFT(chainConfig, latest, state)
 
 	if f, found := api.filters[id]; found {
 		if !f.deadline.Stop() {
@@ -471,6 +465,15 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 		case PendingTransactionsSubscription:
 			if f.fullTx {
 				txs := make([]*ethapi.RPCTransaction, 0, len(f.txs))
+				var baseFee *big.Int
+				if latest != nil {
+					state, _, err := api.sys.backend.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(latest.Number.Int64()))
+					if err != nil {
+						log.Error("Failed to get state to retrieve filter changes", "err", err, "header number", latest.Number)
+						return txs, err
+					}
+					baseFee = eip1559.CalcBaseFeeDBFT(chainConfig, latest, state)
+				}
 				for _, tx := range f.txs {
 					txs = append(txs, ethapi.NewRPCPendingTransaction(tx, latest, chainConfig, baseFee))
 				}
