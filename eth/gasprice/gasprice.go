@@ -234,7 +234,7 @@ func (oracle *Oracle) suggestTipCapInternal(ctx context.Context, head *types.Hea
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to get state at %d to calculate base fee: %w", head.Number.Uint64(), err)
 		}
-		lastBaseFee = eip1559.CalcBaseFeeDBFT(cfg, head, state) // OK
+		lastBaseFee = eip1559.CalcBaseFeeDBFT(cfg, head, state)
 		if cfg.IsNeoXBurn(head.Number, head.Time) {
 			lastMinGasTipCap = state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
 		}

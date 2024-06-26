@@ -170,7 +170,7 @@ func (api *FilterAPI) NewPendingTransactions(ctx context.Context, fullTx *bool) 
 			log.Error("Failed to get state to handle pending transactions", "err", err, "header number", currHeader.Number)
 			return
 		}
-		baseFee := eip1559.CalcBaseFeeDBFT(chainConfig, currHeader, state) // OK
+		baseFee := eip1559.CalcBaseFeeDBFT(chainConfig, currHeader, state)
 
 		for {
 			select {
