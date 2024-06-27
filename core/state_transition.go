@@ -297,7 +297,7 @@ func (st *StateTransition) preCheck() error {
 		// Ensure the transaction is allowed by policy
 		// Apply policy minimum gas tip cap
 		var minGasTipCap = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash())
-		if msg.GasTipCap.Cmp(minGasTipCap.Big()) < 0 {
+		if (msg.GasTipCap == nil && minGasTipCap.Big().Sign() == 1) || (msg.GasTipCap != nil && msg.GasTipCap.Cmp(minGasTipCap.Big()) < 0) {
 			return fmt.Errorf("%w: address %v, gastipcap %v", ErrUnderpriced,
 				msg.From.Hex(), msg.GasTipCap)
 		}
