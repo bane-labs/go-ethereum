@@ -17,15 +17,33 @@ const blackListSlotIndex = 1
 const minGasTipCapSlotIndex = 2
 const baseFeeSlotIndex = 3
 
-// A set of genesis contracts.
+// A set of genesis contract hashes.
 var (
-	// GovernanceProxyHash is a governing contract hash that manages validators
+	// GovernanceProxyAdminHash is a hash of the GovernanceProxyAdmin contract that
+	// that manages GovernanceProxy contract upgrades.
+	GovernanceProxyAdminHash = common.HexToAddress("0x1212000000000000000000000000000000000000")
+	// GovernanceProxyHash is a hash of GovernanceProxy contract that manages validators
 	// voting and rewards.
 	GovernanceProxyHash = common.HexToAddress("0x1212000000000000000000000000000000000001")
+	// PolicyProxyHash is a hash of PolicyProxy contract that manages system policy settings.
+	PolicyProxyHash = common.HexToAddress("0x1212000000000000000000000000000000000002")
+	// GovernanceRewardProxyHash is a hash of GovernanceRewardProxy contract that manages
+	// CN and voters reward distribution logic.
+	GovernanceRewardProxyHash = common.HexToAddress("0x1212000000000000000000000000000000000003")
+	// BridgeProxyHash is a hash of the BridgeProxy contract that manages Bridge funds.
+	BridgeProxyHash = common.HexToAddress("0x1212000000000000000000000000000000000004")
+	// BridgeManagementProxyHash is a hash of the BridgeManagementProxy contract that
+	// manages Bridge operations.
+	BridgeManagementProxyHash = common.HexToAddress("0x1212000000000000000000000000000000000005")
+	// TreasuryHash is a hash of the Treasury contract that contains all Bridge
+	// funds at the start of the network. Note that this contract is not upgradeable.
+	TreasuryHash = common.HexToAddress("0x1212000000000000000000000000000000000006")
+)
+
+// A set of genesis contract ABIs.
+var (
 	// GovernanceABI is a compiled ABI of Governance contract.
 	GovernanceABI abi.ABI
-	// PolicyProxyHash is a management contract hash for system policies.
-	PolicyProxyHash = common.HexToAddress("0x1212000000000000000000000000000000000002")
 )
 
 func init() {
