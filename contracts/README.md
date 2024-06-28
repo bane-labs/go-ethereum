@@ -6,19 +6,20 @@ Neo X system contracts are a set of build-in Solidity contracts with predefined 
 
 These contracts are not deployed by transactions but allocated in the [genesis file](https://github.com/bane-labs/go-ethereum/blob/bane-main/config). The address setting of existing pre-compiled contracts is listed as below.
 
-|Address|Contract|
-|--|--|
-|`0x1212000000000000000000000000000000000000`|GovProxyAdmin|
-|`0x1212000000000000000000000000000000000001`|Governance Proxy|
-|`0x1212100000000000000000000000000000000001`|Governance Implemention|
-|`0x1212000000000000000000000000000000000002`|Policy Proxy|
-|`0x1212100000000000000000000000000000000002`|Policy Implemention|
-|`0x1212000000000000000000000000000000000003`|GovernanceReward Proxy|
-|`0x1212100000000000000000000000000000000003`|GovernanceReward Implemention|
-|`0x1212000000000000000000000000000000000004`|Bridge Proxy|
-|`0x1212100000000000000000000000000000000004`|Bridge Implemention|
-|`0x1212000000000000000000000000000000000005`|BridgeManagement Proxy|
-|`0x1212100000000000000000000000000000000005`|BridgeManagement Implemention|
+| Address                                      | Contract                  |
+|----------------------------------------------|---------------------------|
+| `0x1212000000000000000000000000000000000000` | GovProxyAdmin             |
+| `0x1212000000000000000000000000000000000001` | Governance Proxy          |
+| `0x1212100000000000000000000000000000000001` | Governance Implemention   |
+| `0x1212000000000000000000000000000000000002` | Policy Proxy              |
+| `0x1212100000000000000000000000000000000002` | Policy Implemention       |
+| `0x1212000000000000000000000000000000000003` | GovernanceReward Proxy    |
+| `0x1212100000000000000000000000000000000003` | GovernanceReward Implemention |
+| `0x1212000000000000000000000000000000000004` | Bridge Proxy              |
+| `0x1212100000000000000000000000000000000004` | Bridge Implemention       |
+| `0x1212000000000000000000000000000000000005` | BridgeManagement Proxy    |
+| `0x1212100000000000000000000000000000000005` | BridgeManagement Implemention |
+| `0x1212000000000000000000000000000000000006` | Treasury                  |
 
 ## GovernanceVote
 
@@ -145,3 +146,15 @@ Since all the policy setters adopt the `needVote` modifier, any policy change re
 ## Bridge
 
 Refer to the [Bridge Contracts repository](https://github.com/bane-labs/bridge-evm-contracts).
+
+## Treasury
+
+[Treasury](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Treasury.sol)
+is a system contract assigned as the Neo X treasury for funding the native Bridge
+Proxy contract. The contract itself is rather simple and straightforward, its only
+purpose is to hold most of the initial Bridge funds distributed to this contract in
+the genesis block allocations. This contract is not upgradeable.
+
+This contract has a single `fundBridge` method that transfers specified `amount` of
+GAS to the Bridge Proxy contract. This method requires more than 1/2 of the current
+Neo X consensus nodes votes to be collected before the invocation.
