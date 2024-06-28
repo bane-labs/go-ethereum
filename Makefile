@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth android ios evm all test clean privnet_init privnet_nodes_stop privnet_bootnode_stop privnet_stop privnet_clean privnet_start privnet_start_four privnet_start_seven
+.PHONY: geth android ios evm all test clean privnet_nodes_stop privnet_bootnode_stop privnet_stop privnet_clean privnet_start privnet_start_four privnet_start_seven
 
 GETHBIN = ./build/bin
 GO ?= latest
@@ -71,33 +71,6 @@ BOOTNODE_LOGLEVEL = 5
 RESTRICTED_NETWORK = 127.0.0.0/24
 NAT_POLICY = none
 
-define generate_bootnode
-	@mkdir -p $(1)/$(BOOTNODE)
-	@$(GETHBIN)/bootnode -genkey $(1)/$(BOOTNODE)/bootnode.key
-	@echo $$($(GETHBIN)/bootnode --writeaddress -nodekey $(1)/$(BOOTNODE)/bootnode.key) > $(1)/$(BOOTNODE)/bootnode_address.txt
-endef
-
-define generate_password
-   $$(</dev/urandom tr -dc '12345qwertQWERTasdfgASDFGzxcvbZXCVB' | head -c$(PASSWORD_LEN); echo "")
-endef
-
-define replace_chainid
-	@sed -i "s/_chain_id_/$$(cat $(1)/networkid.txt)/gI" $(1)/$(GENESIS_WORK_JSON)
-endef
-
-define replace_node_address
-	@echo $$(cat $(1)/$(2)/keystore/* | sed -En 's/.*"address":"([^"]*).*/\1/p') > $(1)/$(2)/node_address.txt
-	@sed -i "s/$(2)/$$(cat $(1)/$(2)/node_address.txt)/gI" $(1)/$(GENESIS_WORK_JSON)
-endef
-
-define create_account
-    @mkdir -p $(1)/$(2)
-    @echo $(call generate_password) > $(1)/$(2)/password.txt
-    @$(GETHBIN)/geth --datadir $(1)/$(2) account new --password $(1)/$(2)/password.txt
-    $(call replace_node_address,$(1),$(2))
-    @echo "Account $(1): "$$(cat $(1)/$(2)/node_address.txt)
-endef
-
 define run_bootnode
     @$(GETHBIN)/bootnode -nodekey $(1)/$(BOOTNODE)/bootnode.key \
     	-addr :$(BOOTNODE_PORT) \
@@ -164,60 +137,6 @@ devtools:
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'
 
 # Privnet targets
-
-privnet_init: privnet_clean
-	@find $(SINGLE_DIR)/* -type d -name 'keystore' -exec rm -rf {} +
-	@mkdir -p $(SINGLE_DIR)
-	@echo "Generate  $(GENESIS_WORK_JSON) file"
-	@cp $(SINGLE_DIR)/genesis_template.json $(SINGLE_DIR)/$(GENESIS_WORK_JSON)
-	@echo $$(date +'%y%m%d%H%M') > $(SINGLE_DIR)/networkid.txt
-	@echo "Network ID is "$$(cat $(SINGLE_DIR)/networkid.txt)
-	@echo "Generate bootnode"
-	$(call generate_bootnode,$(SINGLE_DIR))
-	$(call replace_chainid,$(SINGLE_DIR))
-	@echo "Create accounts"
-	$(call create_account,$(SINGLE_DIR),$(NODE1))
-	$(call create_account,$(SINGLE_DIR),$(NODE2))
-	@echo "OK! For starting use 'make privnet_start'"
-
-privnet_init_four: privnet_clean
-	@find $(FOUR_DIR)/* -type d -name 'keystore' -exec rm -rf {} +
-	@mkdir -p $(FOUR_DIR)
-	@echo "Generate  $(GENESIS_WORK_JSON) file"
-	@cp $(FOUR_DIR)/genesis_template.json $(FOUR_DIR)/$(GENESIS_WORK_JSON)
-	@echo $$(date +'%y%m%d%H%M') > $(FOUR_DIR)/networkid.txt
-	@echo "Network ID is "$$(cat $(FOUR_DIR)/networkid.txt)
-	@echo "Generate bootnode"
-	$(call generate_bootnode,$(FOUR_DIR))
-	$(call replace_chainid,$(FOUR_DIR))
-	@echo "Create accounts"
-	$(call create_account,$(FOUR_DIR),$(NODE1))
-	$(call create_account,$(FOUR_DIR),$(NODE2))
-	$(call create_account,$(FOUR_DIR),$(NODE3))
-	$(call create_account,$(FOUR_DIR),$(NODE4))
-	$(call create_account,$(FOUR_DIR),$(NODE5))
-	@echo "OK! For starting use 'make privnet_start_four'"
-
-privnet_init_seven: privnet_clean
-	@find $(SEVEN_DIR)/* -type d -name 'keystore' -exec rm -rf {} +
-	@mkdir -p $(SEVEN_DIR)
-	@echo "Generate  $(GENESIS_WORK_JSON) file"
-	@cp $(SEVEN_DIR)/genesis_template.json $(SEVEN_DIR)/$(GENESIS_WORK_JSON)
-	@echo $$(date +'%y%m%d%H%M') > $(SEVEN_DIR)/networkid.txt
-	@echo "Network ID is "$$(cat $(SEVEN_DIR)/networkid.txt)
-	@echo "Generate bootnode"
-	$(call generate_bootnode,$(SEVEN_DIR))
-	$(call replace_chainid,$(SEVEN_DIR))
-	@echo "Create accounts"
-	$(call create_account,$(SEVEN_DIR),$(NODE1))
-	$(call create_account,$(SEVEN_DIR),$(NODE2))
-	$(call create_account,$(SEVEN_DIR),$(NODE3))
-	$(call create_account,$(SEVEN_DIR),$(NODE4))
-	$(call create_account,$(SEVEN_DIR),$(NODE5))
-	$(call create_account,$(SEVEN_DIR),$(NODE6))
-	$(call create_account,$(SEVEN_DIR),$(NODE7))
-	$(call create_account,$(SEVEN_DIR),$(NODE8))
-	@echo "OK! For starting use 'make privnet_start_seven'"
 
 privnet_nodes_stop:
 	@echo "Killing nodes processes"
