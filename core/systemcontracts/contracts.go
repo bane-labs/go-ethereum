@@ -30,6 +30,8 @@ var (
 	PolicyProxyHash = common.HexToAddress("0x1212000000000000000000000000000000000002")
 	// PolicyABI is a compiled ABI of Policy contract.
 	PolicyABI abi.ABI
+	// GovernanceRewardHash is a contract hash used to receive governance rewards.
+	GovernanceRewardHash = common.HexToAddress("0x1212000000000000000000000000000000000003")
 )
 
 func init() {
