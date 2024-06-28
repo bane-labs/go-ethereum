@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/encryption"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -1714,7 +1715,8 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			localGauge.Dec(int64(len(olds) + len(drops) + len(invalids)))
 		}
 		// If there's a gap in front, alert (should never happen) and postpone all transactions
-		if list.Len() > 0 && list.txs.Get(nonce) == nil {
+		// Skip the gap if an encrypt external tx is at nonce+1
+		if list.Len() > 0 && list.txs.Get(nonce) == nil && (!encryption.IsEncTx(list.txs.Get(nonce + 1))) {
 			gapped := list.Cap(0)
 			for _, tx := range gapped {
 				hash := tx.Hash()

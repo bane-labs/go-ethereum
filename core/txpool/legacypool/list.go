@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/encryption"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -209,7 +210,12 @@ func (m *sortedMap) Remove(nonce uint64) bool {
 // happen but better to be self correcting than failing!
 func (m *sortedMap) Ready(start uint64) types.Transactions {
 	// Short circuit if no transactions are available
-	if m.index.Len() == 0 || (*m.index)[0] > start {
+	if m.index.Len() == 0 {
+		return nil
+	}
+	// Check first nonce
+	isEncTx := encryption.IsEncTx(m.items[(*m.index)[0]])
+	if ((*m.index)[0] > start && !isEncTx) || ((*m.index)[0] > start+1 && isEncTx) {
 		return nil
 	}
 	// Otherwise start accumulating incremental transactions
@@ -218,6 +224,10 @@ func (m *sortedMap) Ready(start uint64) types.Transactions {
 		ready = append(ready, m.items[next])
 		delete(m.items, next)
 		heap.Pop(m.index)
+		// Check if next tx is encrypt external tx and nonce is next +2, increase next by 1 first
+		if m.index.Len() > 0 && encryption.IsEncTx(m.items[(*m.index)[0]]) && (*m.index)[0] == next+2 {
+			next++
+		}
 	}
 	m.cacheMu.Lock()
 	m.cache = nil
