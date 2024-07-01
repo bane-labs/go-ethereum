@@ -1,20 +1,19 @@
-## Go Ethereum
+## Neo X node based on Go Ethereum
 
-Golang execution layer implementation of the Ethereum protocol.
+Golang implementation of the Neo X node based on the [Ethereum protocol
+execution layer implementation](https://github.com/ethereum/go-ethereum) written in
+Go.
 
-[![API Reference](
-https://pkg.go.dev/badge/github.com/ethereum/go-ethereum
-)](https://pkg.go.dev/github.com/ethereum/go-ethereum?tab=doc)
-[![Go Report Card](https://goreportcard.com/badge/github.com/ethereum/go-ethereum)](https://goreportcard.com/report/github.com/ethereum/go-ethereum)
-[![Travis](https://travis-ci.com/ethereum/go-ethereum.svg?branch=master)](https://travis-ci.com/ethereum/go-ethereum)
-[![Discord](https://img.shields.io/badge/discord-join%20chat-blue.svg)](https://discord.gg/nthXNEv)
+[![GoDoc](https://godoc.org/github.com/bane-labs/go-ethereum?status.svg)](https://godoc.org/github.com/bane-labs/go-ethereum)
+![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/bane-labs/go-ethereum?sort=semver)
+[![Discord](https://img.shields.io/badge/discord-join%20chat-blue.svg)](https://discord.gg/n2QmWW9b)
 
-Automated builds are available for stable releases and the unstable master branch. Binary
-archives are published at https://geth.ethereum.org/downloads/.
+Automated builds are available for stable releases only. Binary archives are
+published at https://github.com/bane-labs/go-ethereum/releases.
 
 ## Building the source
 
-For prerequisites and detailed build instructions please read the [Installation Instructions](https://geth.ethereum.org/docs/getting-started/installing-geth).
+For prerequisites and detailed build instructions please read the [Installation Instructions](https://docs.banelabs.org/development/running-a-node-in-testnet).
 
 Building `geth` requires both a Go (version 1.19 or later) and a C compiler. You can install
 them using your favourite package manager. Once the dependencies are installed, run
@@ -57,7 +56,7 @@ Minimum:
 
 * CPU with 2+ cores
 * 4GB RAM
-* 1TB free storage space to sync the Mainnet
+* 200GB free storage space to sync the Testnet
 * 8 MBit/sec download Internet service
 
 Recommended:
@@ -67,55 +66,146 @@ Recommended:
 * High-performance SSD with at least 1TB of free space
 * 25+ MBit/sec download Internet service
 
-### Full node on the main Ethereum network
+### Full node on the Testnet Neo X network
 
-By far the most common scenario is people wanting to simply interact with the Ethereum
-network: create accounts; transfer funds; deploy and interact with contracts. For this
-particular use case, the user doesn't care about years-old historical data, so we can
-sync quickly to the current state of the network. To do so:
+To run a full node on the Neo X Testnet network follow the steps below.
 
-```shell
-$ geth console
-```
+1. Download the binaries from https://github.com/bane-labs/go-ethereum/releases or
+   build the node with the following command:
+   ```shell
+   make geth
+   ```
+2. Download the corresponding Neo X Testnet configuration from the
+   [GitHub repository](https://github.com/bane-labs/go-ethereum/blob/bane-main/config/genesis_testnet.json). 
+3. Initialize node database with the downloaded Neo X testnet genesis configuration:
+   ```shell
+   ./geth init --datadir ./nodes/node1 ./genesis_testnet.json
+   ```
+4. Create an account for the node operation or use an existing one. The following
+   command may be used to create a new account (you'll be prompted for a password):
+   ```shell
+   ./geth --datadir ./nodes/node1 account new
+   ```
+5. Run the node either as a consensus member or as a seed node.
+   1. **Running a seed node.** Seed node is a network member that does not take part
+      in a consensus process. This node may be used to interact with the Neo X
+      network: create accounts; transfer funds; deploy and interact with contracts;
+      query node APIs.
+      
+      To start the seed node use the following shell script as a template:
+      ```shell
+      #!/bin/bash
 
-This command will:
- * Start `geth` in snap sync mode (default, can be changed with the `--syncmode` flag),
-   causing it to download more data in exchange for avoiding processing the entire history
-   of the Ethereum network, which is very CPU intensive.
- * Start the built-in interactive [JavaScript console](https://geth.ethereum.org/docs/interacting-with-geth/javascript-console),
-   (via the trailing `console` subcommand) through which you can interact using [`web3` methods](https://github.com/ChainSafe/web3.js/blob/0.20.7/DOCUMENTATION.md) 
-   (note: the `web3` version bundled within `geth` is very old, and not up to date with official docs),
-   as well as `geth`'s own [management APIs](https://geth.ethereum.org/docs/interacting-with-geth/rpc).
-   This tool is optional and if you leave it out you can always attach it to an already running
-   `geth` instance with `geth attach`.
+      node="nodes/node1"
+   
+      startP2PPort=30300
+      startHttpPort=8545
+      startRPCPort=8561
+         
+      port=`expr $startP2PPort + 1`
+      httpport=`expr $startHttpPort + 1`
+      rpcport=`expr $startRPCPort + 1`
+      wsport=8570
+         
+      miner=$(<$node/node_address.txt)
+      echo "$node and the node address is $miner, rpc port $rpcport, p2p port $port"
+         
+      nohup ./geth \
+      --networkid 12227331 \
+      --nat extip:10.148.0.2 \
+      --port $port \
+      --authrpc.port $rpcport \
+      --identity=$node \
+      --maxpeers=50 \
+      --syncmode full \
+      --gcmode archive \
+      --datadir $node \
+      --bootnodes "enr:-KO4QFuNbtvEaHsiOpEe22LyYJ9FBNDfsvzhBcohnpLcOmopXlk9sKE9JJlT9_JjVb3K0KTPvfNjjArb8c8Qe-geeoaGAY7rxy0Wg2V0aMfGhBL8z2aAgmlkgnY0gmlwhCO764eJc2VjcDI1NmsxoQNhL5qj-6ycHfDYoD3oujZuxH20AOLdU1aoT5gGGSLSaoRzbmFwwIN0Y3CCdl2DdWRwgnZd" \
+      --http.api admin,eth,debug,miner,net,txpool,personal,web3,dbft \
+      --http --http.addr 0.0.0.0 --http.port $httpport --http.vhosts "*" --http.corsdomain '*' \
+      --ws --ws.addr 0.0.0.0 --ws.port $wsport --ws.api eth,net,web3 --ws.origins '*'  \
+      --verbosity 3  >> $node/node.log 2>&1 &
+         
+      sleep 3s;
+      ps -ef|grep geth|grep mine|grep -v grep;
+      ```
+   You may need to change the P2P/HTTP/RPC/WS ports to avoid conflicts. Please,
+   remember to change the `--nat` flag's extip if you want other nodes to be able
+   to find yours. Refer to
+   https://geth.ethereum.org/docs/fundamentals/command-line-options for more
+   details about start options.
 
-### A Full node on the Görli test network
+   This script expects node DB directory to be `./node/node1` and the address of
+   your account to be stored at `./node/node1/node_address.txt`.
+   
+   Once all necessary flags are applied to the `./geth` command, you may run the
+   seed node by running this script.
 
-Transitioning towards developers, if you'd like to play around with creating Ethereum
-contracts, you almost certainly would like to do that without any real money involved until
-you get the hang of the entire system. In other words, instead of attaching to the main
-network, you want to join the **test** network with your node, which is fully equivalent to
-the main network, but with play-Ether only.
+   2. **Running a consensus node.** Consensus node is a network member that takes
+      part in a block acceptance process. Every node is allowed take part in the
+      consensus process in watch-only mode. However, to become a block-producing
+      validator the candidate must register itself via Governance contract and earn
+      enough votes from the Neo X users. Please refer to the
+      [Neo X Governance documentation](https://docs.banelabs.org/governance/governance-in-neo-x)
+      and to the [Neo X candidate registration documentation](https://docs.banelabs.org/development/running-a-node-in-testnet#id-6.-registering-as-a-candidate)
+      for more details.
+      
+      To start a consensus node use `--mine` flag with addition to the script for the
+      seed node. The following script may be used as a template:
+      ```shell
+      #!/bin/bash
+      
+      node="nodes/node1"
+      
+      startP2PPort=30300
+      startRPCPort=8561
+      
+      port=`expr $startP2PPort + $nodeIndex`
+      rpcport=`expr $startRPCPort + $nodeIndex`
+      
+      miner=$(<$node/node_address.txt)
+      echo "$node and miner is $miner, rpc port $rpcport, p2p port $port"
+      
+      nohup ./geth \
+      --networkid 12227331 \
+      --nat extip:10.148.0.2 \
+      --port $port \
+      --mine --miner.etherbase=$miner \
+      --unlock $miner \
+      --password $node/password.txt \
+      --authrpc.port $rpcport \
+      --identity=$node \
+      --maxpeers=50 \
+      --syncmode full \
+      --gcmode archive \
+      --datadir $node \
+      --bootnodes "enr:-KO4QFuNbtvEaHsiOpEe22LyYJ9FBNDfsvzhBcohnpLcOmopXlk9sKE9JJlT9_JjVb3K0KTPvfNjjArb8c8Qe-geeoaGAY7rxy0Wg2V0aMfGhBL8z2aAgmlkgnY0gmlwhCO764eJc2VjcDI1NmsxoQNhL5qj-6ycHfDYoD3oujZuxH20AOLdU1aoT5gGGSLSaoRzbmFwwIN0Y3CCdl2DdWRwgnZd" \
+      --verbosity 3  >> $node/node.log 2>&1 &
+      
+      sleep 3s;
+      ps -ef|grep geth|grep mine|grep -v grep;
+      ```
+      You may need to change the P2P/HTTP/RPC/WS ports to avoid conflicts. Please,
+      remember to change the `--nat` flag's extip if you want other nodes to be able
+      to find yours. Refer to
+      https://geth.ethereum.org/docs/fundamentals/command-line-options for more
+      details about start options.
 
-```shell
-$ geth --goerli console
-```
+      This script expects node DB directory to be `./node/node1`, the address of
+      the consensus node account to be stored at `./node/node1/node_address.txt` and
+      the password to be stored at `./node/node1/password.txt`.
+   
+      Once all necessary flags are applied to the `./geth` command, you may run the
+      seed node by running this script.
 
-The `console` subcommand has the same meaning as above and is equally
-useful on the testnet too.
-
-Specifying the `--goerli` flag, however, will reconfigure your `geth` instance a bit:
-
- * Instead of connecting to the main Ethereum network, the client will connect to the Görli
-   test network, which uses different P2P bootnodes, different network IDs and genesis
-   states.
- * Instead of using the default data directory (`~/.ethereum` on Linux for example), `geth`
-   will nest itself one level deeper into a `goerli` subfolder (`~/.ethereum/goerli` on
-   Linux). Note, on OSX and Linux this also means that attaching to a running testnet node
-   requires the use of a custom endpoint since `geth attach` will try to attach to a
-   production node endpoint by default, e.g.,
-   `geth attach <datadir>/goerli/geth.ipc`. Windows users are not affected by
-   this.
+6. You may also start the built-in interactive
+   [JavaScript console](https://geth.ethereum.org/docs/interacting-with-geth/javascript-console),
+   (via the trailing `console` subcommand) through which you can interact using
+   [`web3` methods](https://github.com/ChainSafe/web3.js/blob/0.20.7/DOCUMENTATION.md) 
+   (note: the `web3` version bundled within `geth` is very old, and not up to date
+   with official docs), as well as `geth`'s own [management APIs](https://geth.ethereum.org/docs/interacting-with-geth/rpc).
+   This tool is optional and if you leave it out you can always attach it to an
+   already running `geth` instance with `geth attach`.
 
 *Note: Although some internal protective measures prevent transactions from
 crossing over between the main network and test network, you should always
