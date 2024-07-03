@@ -270,6 +270,17 @@ describe("Policy", function () {
             ).to.be.revertedWithCustomError(Policy, ERRORS.NOT_MINER);
         });
 
+        it("Should revert if the new value is lower than consensus size", async function () {
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setCandidateLimit(6)
+                ).not.to.be.reverted;
+            }
+            await expect(
+                Policy.connect(signers[3]).setCandidateLimit(6)
+            ).to.be.revertedWithCustomError(Policy, ERRORS.INVALID_CANDIDATE_LIMIT);
+        });
+
         it("Should change the candidate limit if meets the threshold", async function () {
             for (let i = 0; i < 4; i++) {
                 await expect(
@@ -291,7 +302,7 @@ describe("Policy", function () {
         });
     });
 
-    describe("setCandidateLimit", function () {
+    describe("getCandidateLimit", function () {
         it("Should return default value if not setted", async function () {
             await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x4", ethers.toBeHex(0, 32)]);
             expect(await Policy.getCandidateLimit()).to.eq(CANDIDATE_LIMIT);

@@ -39,4 +39,7 @@ interface IGovernance {
 
     // compute and update cached consensus group
     function onPersist() external;
+
+    // get consensus size
+    function consensusSize() external view returns (uint);
 }
