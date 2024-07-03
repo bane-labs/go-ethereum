@@ -96,14 +96,12 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
             if (voteAmount != 0) {
                 candidateGasPerVote[validators[i]] +=
                     (msg.value * shareRate * SCALE_FACTOR) /
-                    consensusSize /
-                    1000 /
-                    voteAmount;
+                    (consensusSize * 1000 * voteAmount);
             }
             if (shareRate < 1000) {
                 _safeTransferETH(
                     validators[i],
-                    (msg.value * (1000 - shareRate)) / consensusSize / 1000
+                    (msg.value * (1000 - shareRate)) / (consensusSize * 1000)
                 );
             }
         }
