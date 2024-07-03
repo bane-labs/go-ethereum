@@ -2,6 +2,59 @@
 
 This document outlines major changes between releases.
 
+## 0.2.0 "Vitaminization" (10 Jul 2024)
+
+A minor long-term supported version bringing new NeoXBurn hardfork that enables
+Policy-based transaction fees burning instead of dynamically evaluated fees of
+EIP-1559. This version contains compatible protocol extensions (transactions
+reannouncement mechanism), a set of enhanced system contract improvements
+(consensus candidates limit restrictions, registration deposit fee, voting transfer
+functionality, new Treasury system contract and more) and documentation upgrades.
+Additionally, as a result of security audit, this version contains a set of
+enhancements and stability/safety fixes for system contracts and dBFT protocol.
+This version is still based on v1.13.11 Geth implementation with Shanghai hardfork
+supported as the latest one.
+
+This version is aimed to be run on a fresh Neo X T4 network. Please, ensure your node
+configuration includes the NeoXBurn hardfork, an upgraded network ID and all genesis
+allocations properly set. A new database should be initialized for this version, it's
+not compatible with an existing Neo X T3 testnet.
+
+New features:
+ * Treasury system contract aimed to fund Bridge operations (#184, #236)
+ * reannouncement mechanism for pending mempooled transactions (#194)
+ * reserved system contracts support (#236)
+
+Behavior changes:
+ * limit the number of candidates via Policy system contract (#216, #238)
+ * NeoXBurn hardfork introducing BaseFee burning based on the Policy system contract
+   setting (#166, #230, #249)
+ * time lock is added for system contracts upgrade (#245)
+ * 5% deposit fee is charged by Governance on candidate exiting from the Governance
+   candidates list (#247)
+ * candidate registration fee is increased up to 20 GAS (#236)
+
+Improvements:
+ * system contracts documentation updates (#173, #236)
+ * `transferVote` method added to the Governance system contract (#182)
+ * updated dBFT library dependency (#185)
+ * optimize execution cost of system contracts (#195)
+ * better event indexing for system contracts (#196)
+ * Solidity compiler version upgraded for system contracts (#208)
+ * improved error reporting for system contracts (#209)
+ * better unit-test coverage for system contracts (#210, #211, #214, #215, #223)
+ * clear votes for method call once enough votes are collected in GovernanceVote
+   system contract (#227)
+ * system contracts stability improvements (#217, #221, #241)
+
+Bugs fixed:
+ * reentrancy problem in GovernanceVote system contract (#195)
+ * potential division by zero in Governance system contract (#225)
+ * OnPersist system call processing missed in t8ntool execution flow (#229)
+ * blacklisted accounts are allowed to be elected as consensus members (#242)
+ * dBFT protocol payloads are not verified against consensus members by non-consensus
+   nodes (#243)
+
 ## 0.1.1 "Backdating" (18 April 2024)
 
 An urgent patch release to fix the bug in T3 genesis configuration file introduced in 0.1.0.
