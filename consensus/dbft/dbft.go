@@ -198,11 +198,12 @@ type DBFT struct {
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
 	// received from dBFT or from chain. These fields have exactly those type
 	// that Eth offers, thus, they need to be converted before feeding to dBFT.
-	lastTimestamp     uint64 // in seconds, like Eth requires.
-	lastIndex         uint64
-	lastBlockHash     common.Hash
-	lastBlockSealHash common.Hash
-	lastBlockExtra    []byte
+	lastTimestamp       uint64 // in seconds, like Eth requires.
+	lastIndex           uint64
+	lastBlockHash       common.Hash
+	lastBlockSealHash   common.Hash
+	lastBlockExtra      []byte
+	extensibleWhitelist atomic.Value
 
 	// lastProposal holds the latest proposal submitted to dBFT by miner. It is updated
 	// irrespectively and concurrently to dBFT process, thus, access should be protected
@@ -721,7 +722,8 @@ func (c *DBFT) WithTxPool(pool txPool) {
 // last proposal data. It must be called every time new block arrives from chain
 // or from consensus. It must be called strictly after new block persist since
 // NextConsensus calculation depends on the storage state. It also clears all
-// BlockQueue tasks up to the accepted block height.
+// BlockQueue tasks up to the accepted block height and updates extensible whitelist
+// based on the state of the accepted block.
 func (c *DBFT) postBlock(b *types.Block) {
 	if c.lastIndex < b.NumberU64() {
 		h := b.Header()
@@ -733,7 +735,36 @@ func (c *DBFT) postBlock(b *types.Block) {
 		c.lastBlockExtra = h.Extra
 
 		c.blockQueue.ClearStaleTasks(b.NumberU64())
+
+		c.updateExtensibleWhitelist(b.NumberU64())
 	}
+}
+
+// IsExtensibleAllowed determines if address is allowed to send extensible payloads
+// (only consensus payloads for now).
+func (c *DBFT) IsExtensibleAllowed(u common.Address) bool {
+	us := c.extensibleWhitelist.Load().([]common.Address)
+	n := sort.Search(len(us), func(i int) bool { return us[i].Cmp(u) >= 0 })
+	return n < len(us)
+}
+
+// updateExtensibleWhitelist updates the list of addresses allowed to send extensible
+// payloads (only consensus payloads for now).
+func (c *DBFT) updateExtensibleWhitelist(height uint64) error {
+	// Only validators are included into extensible whitelist for now.
+	nextVals, err := c.getValidators(&height, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to get validators for height %d: %w", height, err)
+	}
+
+	newList := make([]common.Address, len(nextVals))
+	copy(newList, nextVals)
+	sort.Slice(newList, func(i, j int) bool {
+		return newList[i].Cmp(newList[j]) < 0
+	})
+
+	c.extensibleWhitelist.Store(newList)
+	return nil
 }
 
 // Author implements consensus.Engine, returning the Ethereum address recovered
@@ -1112,6 +1143,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.lastBlockHash = currHeader.Hash()
 		c.lastBlockSealHash = HonestSealHash(currHeader)
 		c.lastBlockExtra = currHeader.Extra
+		c.updateExtensibleWhitelist(currHeader.Number.Uint64())
 
 		// Before consensus start we should wait for initial sealing proposal to be
 		// initialised by miner. Start consensus once we have new sealing work in Seal.

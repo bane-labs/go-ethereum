@@ -7,6 +7,7 @@ package dbft
 import (
 	"sync"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -35,8 +36,8 @@ type Service struct {
 }
 
 // New creates a new instance of [Service].
-func New(bc BlockChainAPI, onPayload func(*Message) error) *Service {
-	poolLedger := newLedger(bc)
+func New(bc BlockChainAPI, onPayload func(*Message) error, isExtensibleAllowed func(common.Address) bool) *Service {
+	poolLedger := newLedger(bc, isExtensibleAllowed)
 	return &Service{
 		bc:        bc,
 		onPayload: onPayload,

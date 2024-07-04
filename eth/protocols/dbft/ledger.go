@@ -9,11 +9,15 @@ import (
 )
 
 type ledger struct {
-	bc BlockChainAPI
+	bc                  BlockChainAPI
+	isExtensibleAllowed func(addr common.Address) bool
 }
 
-func newLedger(bc BlockChainAPI) *ledger {
-	return &ledger{bc: bc}
+func newLedger(bc BlockChainAPI, isExtensibleAllowed func(common.Address) bool) *ledger {
+	return &ledger{
+		bc:                  bc,
+		isExtensibleAllowed: isExtensibleAllowed,
+	}
 }
 
 func (l *ledger) BlockHeight() uint64 {
@@ -21,6 +25,5 @@ func (l *ledger) BlockHeight() uint64 {
 }
 
 func (l *ledger) IsAddressAllowed(addr common.Address) bool {
-	// Call governance contract here.
-	return true
+	return l.isExtensibleAllowed(addr)
 }
