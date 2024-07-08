@@ -1,5 +1,6 @@
 import { ethers } from "hardhat";
 import { expect } from "chai";
+import { mine } from "@nomicfoundation/hardhat-network-helpers";
 import { ERRORS } from "./helpers/errors";
 
 // NATIVE ADDRESSES
@@ -34,7 +35,7 @@ const CANDIDATE_LIMIT = 2000;
 
 describe("Policy", function () {
 
-    let Policy: any;
+    let Policy: any, Governance: any;
     let signers: any;
 
     beforeEach(async function () {
@@ -58,6 +59,9 @@ describe("Policy", function () {
 
         const policy_code = await ethers.provider.send("eth_getCode", [policy_deploy.target]);
         await ethers.provider.send("hardhat_setCode", [POLICY_PROXY, policy_code]);
+
+        const governance_contract = require("../artifacts/solidity/Governance.sol/Governance.json");
+        Governance = new ethers.Contract(GOV_PROXY, governance_contract.abi, signers[0]);
         const contract = require("../artifacts/solidity/Policy.sol/Policy.json");
         Policy = new ethers.Contract(POLICY_PROXY, contract.abi, signers[0]);
 
@@ -142,6 +146,18 @@ describe("Policy", function () {
                 Policy.connect(signers[3]).addBlackList(signers[0])
             ).emit(Policy, "AddBlackList");
         });
+
+        it("Should deactivate governance if is a candidate", async function () {
+            await Governance.connect(signers[7]).registerCandidate(500, { value: REGISTER_FEE });
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).addBlackList(signers[7])
+                ).not.to.be.reverted;
+            }
+            await expect(
+                Policy.connect(signers[3]).addBlackList(signers[7])
+            ).emit(Governance, "Deactivate");
+        });
     });
 
     describe("removeBlackList", function () {
@@ -182,6 +198,27 @@ describe("Policy", function () {
             await expect(
                 Policy.connect(signers[3]).removeBlackList(signers[0])
             ).emit(Policy, "RemoveBlackList");
+        });
+
+        it("Should activate governance if is a candidate", async function () {
+            await Governance.connect(signers[7]).registerCandidate(500, { value: REGISTER_FEE });
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).addBlackList(signers[7])
+                ).not.to.be.reverted;
+            }
+            await expect(
+                Policy.connect(signers[3]).addBlackList(signers[7])
+            ).emit(Governance, "Deactivate");
+
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).removeBlackList(signers[7])
+                ).not.to.be.reverted;
+            }
+            await expect(
+                Policy.connect(signers[3]).removeBlackList(signers[7])
+            ).emit(Governance, "Activate");
         });
     });
 

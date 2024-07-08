@@ -52,6 +52,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     {
         if (isBlackListed[_addr]) revert Errors.BlacklistExists();
         isBlackListed[_addr] = true;
+        IGovernance(GOV).deactivateCandidate(_addr);
         emit AddBlackList(_addr);
     }
 
@@ -69,6 +70,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     {
         if (!isBlackListed[_addr]) revert Errors.BlacklistNotExists();
         delete isBlackListed[_addr];
+        IGovernance(GOV).activateCandidate(_addr);
         emit RemoveBlackList(_addr);
     }
 
