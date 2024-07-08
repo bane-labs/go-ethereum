@@ -61,7 +61,7 @@ An EOA account is allowed to become a candidate only after successful registrati
 
 1. Registrant invokes `registerCandidate(uint shareRate)` of `0x1212000000000000000000000000000000000001` as message sender;
 2. Registrant is an EOA account and not yet a candidate;
-3. Put `1000 GAS` deposit `value` along with the transaction as registration fee;
+3. Put `20000 GAS` deposit `value` along with the transaction as registration fee;
 4. Provide a `shareRate` ranges from `0` to `1000` in parameters, which is a distribution ratio in thousandths. It determines how many rewards of the total that voters can share, and can not be changed until the candidate exits;
 5. (optional) Withdraw past deposits if it has registered and exited before.
 
