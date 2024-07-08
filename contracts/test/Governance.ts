@@ -35,7 +35,7 @@ const CANDIDATE_LIMIT = 2000;
 
 describe("Governance", function () {
 
-    let Governance: any;
+    let Governance: any, Policy: any;
     let user: any, candidate1: any, candidate2: any;
 
     beforeEach(async function () {
@@ -59,8 +59,11 @@ describe("Governance", function () {
 
         const policy_code = await ethers.provider.send("eth_getCode", [policy_deploy.target]);
         await ethers.provider.send("hardhat_setCode", [POLICY_PROXY, policy_code]);
-        const contract = require("../artifacts/solidity/Governance.sol/Governance.json");
-        Governance = new ethers.Contract(GOV_PROXY, contract.abi, user);
+
+        const governance_contract = require("../artifacts/solidity/Governance.sol/Governance.json");
+        Governance = new ethers.Contract(GOV_PROXY, governance_contract.abi, user);
+        const policy_contract = require("../artifacts/solidity/Policy.sol/Policy.json");
+        Policy = new ethers.Contract(POLICY_PROXY, policy_contract.abi, user);
 
         // Write Governance config to storage
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x1", ethers.toBeHex(CONSENSUS_SIZE, 32)]);
@@ -86,7 +89,7 @@ describe("Governance", function () {
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6c", ethers.toBeHex(STANDBY_VALIDATORS[4], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6d", ethers.toBeHex(STANDBY_VALIDATORS[5], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6e", ethers.toBeHex(STANDBY_VALIDATORS[6], 32)]);
-      
+
         // Write Policy config to storage
         await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x2", ethers.toBeHex(MIN_GAS_TIP_CAP, 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x3", ethers.toBeHex(BASE_FEE, 32)]);
@@ -180,7 +183,7 @@ describe("Governance", function () {
         it("Should emit an event when a new candidate is registered", async function () {
             await expect(
                 Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
-            ).emit(Governance, "Register");
+            ).emit(Governance, "Activate");
         });
     });
 
@@ -211,7 +214,7 @@ describe("Governance", function () {
 
             await expect(
                 Governance.connect(candidate1).exitCandidate()
-            ).emit(Governance, "Exit");
+            ).emit(Governance, "Deactivate");
         });
     });
 
@@ -273,6 +276,110 @@ describe("Governance", function () {
             await expect(
                 Governance.connect(candidate1).withdrawRegisterFee()
             ).emit(Governance, "CandidateWithdraw");
+        });
+    });
+
+    describe("deactivateCandidate", function () {
+        let MockSysCall: any;
+        let GovReward: any;
+
+        beforeEach(async function () {
+            // Deploy Mock SYS_CALL
+            const deploy_mock = await ethers.deployContract("MockSysCall");
+            const code_mock = await ethers.provider.send("eth_getCode", [deploy_mock.target]);
+            await ethers.provider.send("hardhat_setCode", [SYS_CALL, code_mock]);
+            const contract_mock = require("../artifacts/solidity/test/MockSysCall.sol/MockSysCall.json");
+            MockSysCall = new ethers.Contract(SYS_CALL, contract_mock.abi, user);
+            // Deploy GovReward to native address
+            const deploy_reward = await ethers.deployContract("GovReward");
+            const code_reward = await ethers.provider.send("eth_getCode", [deploy_reward.target]);
+            await ethers.provider.send("hardhat_setCode", [REWARD_PROXY, code_reward]);
+            const contract_reward = require("../artifacts/solidity/GovReward.sol/GovReward.json");
+            GovReward = new ethers.Contract(REWARD_PROXY, contract_reward.abi, user);
+        });
+
+        it("Should revert if caller is not Policy", async function () {
+            await expect(Governance.connect(user).deactivateCandidate(user.address)).to.be.revertedWithCustomError(
+                Governance,
+                ERRORS.SIDE_CALL_OT_ALLOWED
+            );
+        });
+
+        it("Should update storage if a candidate is deactivated", async function () {
+            let signers = await ethers.getSigners();
+            for (let i = 0; i < CONSENSUS_SIZE; i++) {
+                await Governance.connect(signers[i]).registerCandidate(500, { value: REGISTER_FEE });
+                await Governance.connect(signers[i]).vote(signers[i], { value: VOTE_TARGET_AMOUNT });
+            }
+            await mine(EPOCH_DURATION);
+            await MockSysCall.call_onPersist(Governance);
+
+            for (let i = 0; i < 4; i++) {
+                await expect(
+                    Policy.connect(signers[i]).addBlackList(signers[0])
+                ).not.to.be.reverted;
+            }
+
+            expect(await Governance.blacklistedCandidates()).to.equal(1);
+            expect(await Governance.exitHeightOf(signers[0].address)).to.gt(0);
+            expect(await Governance.shareRateOf(signers[0].address)).to.equal(500);
+            expect(await Governance.receivedVotes(signers[0].address)).to.equal(VOTE_TARGET_AMOUNT);
+            expect(await Governance.totalVotes()).to.equal(BigInt(CONSENSUS_SIZE - 1) * VOTE_TARGET_AMOUNT);
+        });
+    });
+
+    describe("activateCandidate", function () {
+        let MockSysCall: any;
+        let GovReward: any;
+
+        beforeEach(async function () {
+            // Deploy Mock SYS_CALL
+            const deploy_mock = await ethers.deployContract("MockSysCall");
+            const code_mock = await ethers.provider.send("eth_getCode", [deploy_mock.target]);
+            await ethers.provider.send("hardhat_setCode", [SYS_CALL, code_mock]);
+            const contract_mock = require("../artifacts/solidity/test/MockSysCall.sol/MockSysCall.json");
+            MockSysCall = new ethers.Contract(SYS_CALL, contract_mock.abi, user);
+            // Deploy GovReward to native address
+            const deploy_reward = await ethers.deployContract("GovReward");
+            const code_reward = await ethers.provider.send("eth_getCode", [deploy_reward.target]);
+            await ethers.provider.send("hardhat_setCode", [REWARD_PROXY, code_reward]);
+            const contract_reward = require("../artifacts/solidity/GovReward.sol/GovReward.json");
+            GovReward = new ethers.Contract(REWARD_PROXY, contract_reward.abi, user);
+        });
+
+        it("Should revert if caller is not Policy", async function () {
+            await expect(Governance.connect(user).activateCandidate(user.address)).to.be.revertedWithCustomError(
+                Governance,
+                ERRORS.SIDE_CALL_OT_ALLOWED
+            );
+        });
+
+        it("Should update storage if a candidate is activated", async function () {
+            let signers = await ethers.getSigners();
+            for (let i = 0; i < CONSENSUS_SIZE; i++) {
+                await Governance.connect(signers[i]).registerCandidate(500, { value: REGISTER_FEE });
+                await Governance.connect(signers[i]).vote(signers[i], { value: VOTE_TARGET_AMOUNT });
+            }
+            await mine(EPOCH_DURATION);
+            await MockSysCall.call_onPersist(Governance);
+
+            for (let i = 0; i < 4; i++) {
+                await expect(
+                    Policy.connect(signers[i]).addBlackList(signers[0])
+                ).not.to.be.reverted;
+            }
+
+            for (let i = 0; i < 4; i++) {
+                await expect(
+                    Policy.connect(signers[i]).removeBlackList(signers[0])
+                ).not.to.be.reverted;
+            }
+
+            expect(await Governance.blacklistedCandidates()).to.equal(0);
+            expect(await Governance.exitHeightOf(signers[0].address)).to.equal(0);
+            expect(await Governance.shareRateOf(signers[0].address)).to.equal(500);
+            expect(await Governance.receivedVotes(signers[0].address)).to.equal(VOTE_TARGET_AMOUNT);
+            expect(await Governance.totalVotes()).to.equal(BigInt(CONSENSUS_SIZE) * VOTE_TARGET_AMOUNT);
         });
     });
 
@@ -410,7 +517,7 @@ describe("Governance", function () {
 
         it("Should revert if target is not a candidate", async function () {
             await expect(
-                Governance.connect(candidate1).vote(candidate1, { value: MIN_VOTE_AMOUNT})
+                Governance.connect(candidate1).vote(candidate1, { value: MIN_VOTE_AMOUNT })
             ).to.be.revertedWithCustomError(Governance, ERRORS.CANDIDATE_NOT_EXISTS);
         });
 
