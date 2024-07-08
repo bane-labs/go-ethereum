@@ -22,6 +22,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     address public constant SYS_CALL =
         0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
     uint public constant SCALE_FACTOR = 10 ** 18;
+    uint public constant EXIT_FEE_RATE = 5;
 
     uint public consensusSize;
     // the min balance for voting
@@ -115,7 +116,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
 
     function registerCandidate(uint shareRate) external payable {
         if (tx.origin != msg.sender) revert Errors.OnlyEOA();
-        if (msg.value < registerFee) revert Errors.InsufficientValue();
+        if (msg.value != registerFee) revert Errors.InsufficientValue();
         if (shareRate > 1000) revert Errors.InvalidShareRate();
         if (candidateList.length() >= IPolicy(POLICY).getCandidateLimit())
             revert Errors.RegisterDisabled();
@@ -151,7 +152,8 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         ) revert Errors.CandidateWithdrawNotAllowed();
 
         // send back balance
-        uint amount = candidateBalanceOf[msg.sender];
+        uint amount = (candidateBalanceOf[msg.sender] * (100 - EXIT_FEE_RATE)) /
+            100;
         delete candidateBalanceOf[msg.sender];
         delete exitHeightOf[msg.sender];
         delete shareRateOf[msg.sender];

@@ -257,7 +257,7 @@ describe("Governance", function () {
 
             await expect(
                 await Governance.connect(candidate1).withdrawRegisterFee()
-            ).to.changeEtherBalance(candidate1, REGISTER_FEE);
+            ).to.changeEtherBalance(candidate1, REGISTER_FEE * 95n / 100n);
         });
 
         it("Should emit an event when a candidate withdraw register fee", async function () {
