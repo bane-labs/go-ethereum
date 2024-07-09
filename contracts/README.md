@@ -34,7 +34,9 @@ Any contract inheriting `GovernanceVote.sol` can set up a consensus vote on meth
 
 [GovProxyAdmin](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovProxyAdmin.sol) controls the upgrade of other pre-compiled system contracts, since all of their `onlyOwner`/`onlyAdmin` point to `0x1212000000000000000000000000000000000000`.
 
-This contract inherits `GovernanceVote.sol` so that it requires a `50%` majority votes among current consensus to execute `upgradeAndCall(...)`, which means **more than half** of the **current consensus** votes for **the same contract implementation**.
+This contract inherits `GovernanceVote.sol` so that it requires a `50%` majority votes among current consensus to execute `scheduleUpgrade(...)`, which means **more than half** of the **current consensus** votes for **the same contract implementation**. 
+
+This contract inherits `TimelockController.sol` to implement a lock period(2 days) after the vote is passed before calling `executeUpgrade(...)` to upgrade the upgradable system contract. Anyone can call `executeUpgrade(...)`` after the lock period is reached.
 
 All of the upgradable Neo X system contracts use [ERC1967Proxy](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v5.0/contracts/proxy/ERC1967/ERC1967Proxy.sol) and [UUPSUpgradeable](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v5.0/contracts/proxy/utils/UUPSUpgradeable.sol).
 
