@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
@@ -31,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/scwallet"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
@@ -54,6 +56,10 @@ import (
 // estimateGasErrorRatio is the amount of overestimation eth_estimateGas is
 // allowed to produce in order to speed up calculations.
 const estimateGasErrorRatio = 0.015
+
+// baseFeeCacheCap is a capacity of nextBaseFee cache containing the cached
+// BasedFee values calculated for the recently requested heights.
+const baseFeeCacheCap = 5
 
 var errBlobTxNotSupported = errors.New("signing blob transactions not supported")
 
@@ -160,13 +166,36 @@ func (s *EthereumAPI) Syncing() (interface{}, error) {
 }
 
 // TxPoolAPI offers and API for the transaction pool. It only operates on data that is non-confidential.
+// It only operates with a full node backend.
 type TxPoolAPI struct {
 	b Backend
+
+	// nextBaseFeeCache is an LRU cache of block BaseFee.
+	nextBaseFeeCache *baseFeeCache
+}
+
+// baseFeeCache is an LRU cache of block BaseFee with capacity of [baseFeeCacheCap].
+type baseFeeCache struct {
+	b Backend
+
+	fetchLock sync.Mutex
+	cache     *lru.Cache[int64, *big.Int]
+}
+
+// newBaseFeeCache allocates an instance of baseFeeCache with capacity [baseFeeCacheCap].
+func newBaseFeeCache(b Backend) *baseFeeCache {
+	return &baseFeeCache{
+		b:     b,
+		cache: lru.NewCache[int64, *big.Int](baseFeeCacheCap),
+	}
 }
 
 // NewTxPoolAPI creates a new tx pool service that gives information about the transaction pool.
 func NewTxPoolAPI(b Backend) *TxPoolAPI {
-	return &TxPoolAPI{b}
+	return &TxPoolAPI{
+		b:                b,
+		nextBaseFeeCache: newBaseFeeCache(b),
+	}
 }
 
 // Content returns the transactions contained within the transaction pool.
@@ -177,11 +206,7 @@ func (s *TxPoolAPI) Content() map[string]map[string]map[string]*RPCTransaction {
 	}
 	pending, queue := s.b.TxPoolContent()
 	curHeader := s.b.CurrentHeader()
-	state, _, err := s.b.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(curHeader.Number.Int64()))
-	if err != nil {
-		log.Error("Failed to get state", "err", err, "header number", curHeader.Number)
-	}
-	baseFee := eip1559.CalcBaseFeeDBFT(s.b.ChainConfig(), curHeader, state)
+	baseFee := s.nextBaseFeeCache.getNextBaseFee(curHeader.Number.Int64())
 	// Flatten the pending transactions
 	for account, txs := range pending {
 		dump := make(map[string]*RPCTransaction)
@@ -206,11 +231,7 @@ func (s *TxPoolAPI) ContentFrom(addr common.Address) map[string]map[string]*RPCT
 	content := make(map[string]map[string]*RPCTransaction, 2)
 	pending, queue := s.b.TxPoolContentFrom(addr)
 	curHeader := s.b.CurrentHeader()
-	state, _, err := s.b.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(curHeader.Number.Int64()))
-	if err != nil {
-		log.Error("Failed to get state", "err", err, "header number", curHeader.Number)
-	}
-	baseFee := eip1559.CalcBaseFeeDBFT(s.b.ChainConfig(), curHeader, state)
+	baseFee := s.nextBaseFeeCache.getNextBaseFee(curHeader.Number.Int64())
 	// Build the pending transactions
 	dump := make(map[string]*RPCTransaction, len(pending))
 	for _, tx := range pending {
@@ -226,6 +247,33 @@ func (s *TxPoolAPI) ContentFrom(addr common.Address) map[string]map[string]*RPCT
 	content["queued"] = dump
 
 	return content
+}
+
+// getNextBaseFee returns next block BaseFee value calculated based on the specified
+// height. Cache is used if available.
+func (c *baseFeeCache) getNextBaseFee(head int64) *big.Int {
+	fee, ok := c.cache.Get(head)
+	if ok {
+		return fee
+	}
+
+	c.fetchLock.Lock()
+	defer c.fetchLock.Unlock()
+
+	// Try one more time if cache was updated by another thread.
+	fee, ok = c.cache.Get(head)
+	if ok {
+		return fee
+	}
+
+	state, header, err := c.b.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(head))
+	if err != nil {
+		log.Error("Failed to get state", "err", err, "header number", head)
+		return new(big.Int)
+	}
+	baseFee := eip1559.CalcBaseFeeDBFT(c.b.ChainConfig(), header, state)
+	c.cache.Add(head, baseFee)
+	return baseFee
 }
 
 // Status returns the number of pending and queued transaction in the pool.
@@ -1575,6 +1623,9 @@ type TransactionAPI struct {
 	b         Backend
 	nonceLock *AddrLocker
 	signer    types.Signer
+
+	// nextBaseFeeCache is an LRU cache of block BaseFee.
+	nextBaseFeeCache *baseFeeCache
 }
 
 // NewTransactionAPI creates a new RPC service with methods for interacting with transactions.
@@ -1582,7 +1633,12 @@ func NewTransactionAPI(b Backend, nonceLock *AddrLocker) *TransactionAPI {
 	// The signer used by the API should always be the 'latest' known one because we expect
 	// signers to be backwards-compatible with old transactions.
 	signer := types.LatestSigner(b.ChainConfig())
-	return &TransactionAPI{b, nonceLock, signer}
+	return &TransactionAPI{
+		b:                b,
+		nonceLock:        nonceLock,
+		signer:           signer,
+		nextBaseFeeCache: newBaseFeeCache(b),
+	}
 }
 
 // GetBlockTransactionCountByNumber returns the number of transactions in the block with the given block number.
@@ -1661,11 +1717,7 @@ func (s *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.H
 	if !found {
 		// No finalized transaction, try to retrieve it from the pool
 		if tx := s.b.GetPoolTransaction(hash); tx != nil {
-			state, _, err := s.b.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(s.b.CurrentHeader().Number.Int64()))
-			if err != nil {
-				log.Error("Failed to get state", "err", err, "header number", s.b.CurrentHeader().Number)
-			}
-			baseFee := eip1559.CalcBaseFeeDBFT(s.b.ChainConfig(), s.b.CurrentHeader(), state)
+			baseFee := s.nextBaseFeeCache.getNextBaseFee(s.b.CurrentHeader().Number.Int64())
 			return NewRPCPendingTransaction(tx, s.b.CurrentHeader(), s.b.ChainConfig(), baseFee), nil
 		}
 		if err == nil {
@@ -1952,11 +2004,7 @@ func (s *TransactionAPI) PendingTransactions() ([]*RPCTransaction, error) {
 		}
 	}
 	curHeader := s.b.CurrentHeader()
-	state, _, err := s.b.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(curHeader.Number.Int64()))
-	if err != nil {
-		log.Error("Failed to get state", "err", err, "header number", curHeader.Number)
-	}
-	baseFee := eip1559.CalcBaseFeeDBFT(s.b.ChainConfig(), curHeader, state)
+	baseFee := s.nextBaseFeeCache.getNextBaseFee(s.b.CurrentHeader().Number.Int64())
 	transactions := make([]*RPCTransaction, 0, len(pending))
 	for _, tx := range pending {
 		from, _ := types.Sender(s.signer, tx)

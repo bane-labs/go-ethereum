@@ -26,8 +26,10 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/eth/tracers/logger"
@@ -172,6 +174,9 @@ func Transition(ctx *cli.Context) error {
 	if err := applyLondonChecks(&prestate.Env, chainConfig); err != nil {
 		return err
 	}
+	if err := applyNeoXBurnChecks(&prestate.Env, chainConfig); err != nil {
+		return err
+	}
 	if err := applyShanghaiChecks(&prestate.Env, chainConfig); err != nil {
 		return err
 	}
@@ -192,6 +197,17 @@ func Transition(ctx *cli.Context) error {
 	return dispatchOutput(ctx, baseDir, result, collector, body)
 }
 
+func applyNeoXBurnChecks(env *stEnv, chainConfig *params.ChainConfig) error {
+	if !chainConfig.IsNeoXBurn(big.NewInt(int64(env.Number)), env.Timestamp) {
+		return nil
+	}
+	// Sanity check, to not `panic` in state_transition
+	if env.BaseFee == nil {
+		return NewError(ErrorConfig, errors.New("NeoXBurn config but missing 'currentBaseFee' in env section"))
+	}
+	return nil
+}
+
 func applyLondonChecks(env *stEnv, chainConfig *params.ChainConfig) error {
 	if !chainConfig.IsLondon(big.NewInt(int64(env.Number))) {
 		return nil
@@ -204,6 +220,12 @@ func applyLondonChecks(env *stEnv, chainConfig *params.ChainConfig) error {
 	if env.ParentBaseFee == nil || env.Number == 0 {
 		return NewError(ErrorConfig, errors.New("EIP-1559 config but missing 'currentBaseFee' in env section"))
 	}
+	env.BaseFee = eip1559.CalcBaseFee(chainConfig, &types.Header{
+		Number:   new(big.Int).SetUint64(env.Number - 1),
+		BaseFee:  env.ParentBaseFee,
+		GasUsed:  env.ParentGasUsed,
+		GasLimit: env.ParentGasLimit,
+	})
 	return nil
 }
 

@@ -26,7 +26,6 @@ import (
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -77,17 +76,19 @@ type txGasAndReward struct {
 // processBlock takes a blockFees structure with the blockNumber, the header and optionally
 // the block field filled in, retrieves the block from the backend if not present yet and
 // fills in the rest of the fields.
-func (oracle *Oracle) processBlock(bf *blockFees, percentiles []float64) {
+func (oracle *Oracle) processBlock(ctx context.Context, bf *blockFees, percentiles []float64) {
 	chainconfig := oracle.backend.ChainConfig()
 	if bf.results.baseFee = bf.header.BaseFee; bf.results.baseFee == nil {
 		bf.results.baseFee = new(big.Int)
 	}
 	if chainconfig.IsLondon(big.NewInt(int64(bf.blockNumber + 1))) {
-		state, _, err := oracle.backend.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(bf.blockNumber))
+		_, baseFee, _, err := oracle.suggestTipCapInternal(ctx, bf.header)
 		if err != nil {
-			log.Error("Failed to get state", "err", err, "header number", bf.blockNumber)
+			log.Error(fmt.Sprintf("Failed to calculate BaseFee: %s", err))
+			bf.results.nextBaseFee = new(big.Int)
+		} else {
+			bf.results.nextBaseFee = baseFee
 		}
-		bf.results.nextBaseFee = eip1559.CalcBaseFeeDBFT(chainconfig, bf.header, state)
 	} else {
 		bf.results.nextBaseFee = new(big.Int)
 	}
@@ -267,7 +268,7 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks uint64, unresolvedL
 				if pendingBlock != nil && blockNumber >= pendingBlock.NumberU64() {
 					fees.block, fees.receipts = pendingBlock, pendingReceipts
 					fees.header = fees.block.Header()
-					oracle.processBlock(fees, rewardPercentiles)
+					oracle.processBlock(ctx, fees, rewardPercentiles)
 					results <- fees
 				} else {
 					cacheKey := cacheKey{number: blockNumber, percentiles: string(percentileKey)}
@@ -286,7 +287,7 @@ func (oracle *Oracle) FeeHistory(ctx context.Context, blocks uint64, unresolvedL
 							fees.header, fees.err = oracle.backend.HeaderByNumber(ctx, rpc.BlockNumber(blockNumber))
 						}
 						if fees.header != nil && fees.err == nil {
-							oracle.processBlock(fees, rewardPercentiles)
+							oracle.processBlock(ctx, fees, rewardPercentiles)
 							if fees.err == nil {
 								oracle.historyCache.Add(cacheKey, fees.results)
 							}
