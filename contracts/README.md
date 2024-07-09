@@ -52,13 +52,13 @@ An EOA account is allowed to become a candidate only after successful registrati
 
 1. Registrant invokes `registerCandidate(uint shareRate)` of `0x1212000000000000000000000000000000000001` as message sender;
 2. Registrant is an EOA account and not yet a candidate;
-3. Put at least `1000 GAS` deposit `value` along with the transaction as registration fee;
+3. Put `1000 GAS` deposit `value` along with the transaction as registration fee;
 4. Provide a `shareRate` ranges from `0` to `1000` in parameters, which is a distribution ratio in thousandths. It determines how many rewards of the total that voters can share, and can not be changed until the candidate exits;
 5. (optional) Withdraw past deposits if it has registered and exited before.
 
 If all conditions are met, the new candidate will be added to the candidate list. Only registered candidates can receive votes to be elected as a consensus node.
 
-A candidate can exit without any permission, but it requires 2 epochs to pass until the candidate is allowed to withdraw its registeration deposit. During this period, the candidate can't receive any votes or become a consensus node, but voters can revoke their votes and choose other candidates to share rewards.
+A candidate can exit without any permission, but it requires 2 epochs to pass until the candidate is allowed to withdraw its registeration deposit. During this period, the candidate can't receive any votes or become a consensus node, but voters can revoke their votes and choose other candidates to share rewards. As a prevention of malicious resources occupation, `5%` of the deposited registration fee will be charged by Governance when a candidate tries to exit and claim back.
 
 ### Election
 
