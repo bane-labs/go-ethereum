@@ -18,12 +18,16 @@ package gasprice
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -57,18 +61,21 @@ type OracleBackend interface {
 	PendingBlockAndReceipts() (*types.Block, types.Receipts)
 	ChainConfig() *params.ChainConfig
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
+	StateAndHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*state.StateDB, *types.Header, error)
 }
 
 // Oracle recommends gas prices based on the content of recent
-// blocks. Suitable for both light and full clients.
+// blocks. Suitable only for full clients.
 type Oracle struct {
-	backend     OracleBackend
-	lastHead    common.Hash
-	lastPrice   *big.Int
-	maxPrice    *big.Int
-	ignorePrice *big.Int
-	cacheLock   sync.RWMutex
-	fetchLock   sync.Mutex
+	backend          OracleBackend
+	lastHead         common.Hash
+	lastPrice        *big.Int
+	lastBaseFee      *big.Int // lastBaseFee contains next BaseFee value calculated based on the lastHead block.
+	lastMinGasTipCap *big.Int // lastMinGasTipCap contains next MinGasTipCap value calculated based on the lastHead block.
+	maxPrice         *big.Int
+	ignorePrice      *big.Int
+	cacheLock        sync.RWMutex
+	fetchLock        sync.Mutex
 
 	checkBlocks, percentile           int
 	maxHeaderHistory, maxBlockHistory uint64
@@ -147,26 +154,35 @@ func NewOracle(backend OracleBackend, params Config) *Oracle {
 // Note, for legacy transactions and the legacy eth_gasPrice RPC call, it will be
 // necessary to add the basefee to the returned number to fall back to the legacy
 // behavior.
-func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, error) {
+func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, *big.Int, error) {
 	head, _ := oracle.backend.HeaderByNumber(ctx, rpc.LatestBlockNumber)
+
+	price, _, minGasTipCap, err := oracle.suggestTipCapInternal(ctx, head)
+	return price, minGasTipCap, err
+}
+
+// suggestTipCapInternal return GAS price, BaseFee and minGasTipCap for the specified block.
+// It updates the cache for the specified block height if needed. Zero BaseFee is returned if
+// London is not active yet. Zero minGasTipCap is returned if NeoXBurn is not active yet.
+func (oracle *Oracle) suggestTipCapInternal(ctx context.Context, head *types.Header) (*big.Int, *big.Int, *big.Int, error) {
 	headHash := head.Hash()
 
 	// If the latest gasprice is still available, return it.
 	oracle.cacheLock.RLock()
-	lastHead, lastPrice := oracle.lastHead, oracle.lastPrice
+	lastHead, lastPrice, lastBaseFee, lastMinGasTipCap := oracle.lastHead, oracle.lastPrice, oracle.lastBaseFee, oracle.lastMinGasTipCap
 	oracle.cacheLock.RUnlock()
 	if headHash == lastHead {
-		return new(big.Int).Set(lastPrice), nil
+		return new(big.Int).Set(lastPrice), new(big.Int).Set(lastBaseFee), new(big.Int).Set(lastMinGasTipCap), nil
 	}
 	oracle.fetchLock.Lock()
 	defer oracle.fetchLock.Unlock()
 
 	// Try checking the cache again, maybe the last fetch fetched what we need
 	oracle.cacheLock.RLock()
-	lastHead, lastPrice = oracle.lastHead, oracle.lastPrice
+	lastHead, lastPrice, lastBaseFee, lastMinGasTipCap = oracle.lastHead, oracle.lastPrice, oracle.lastBaseFee, oracle.lastMinGasTipCap
 	oracle.cacheLock.RUnlock()
 	if headHash == lastHead {
-		return new(big.Int).Set(lastPrice), nil
+		return new(big.Int).Set(lastPrice), new(big.Int).Set(lastBaseFee), new(big.Int).Set(lastMinGasTipCap), nil
 	}
 	var (
 		sent, exp int
@@ -185,7 +201,7 @@ func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 		res := <-result
 		if res.err != nil {
 			close(quit)
-			return new(big.Int).Set(lastPrice), res.err
+			return new(big.Int).Set(lastPrice), new(big.Int).Set(lastBaseFee), new(big.Int).Set(lastMinGasTipCap), res.err
 		}
 		exp--
 		// Nothing returned. There are two special cases here:
@@ -214,12 +230,29 @@ func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 	if price.Cmp(oracle.maxPrice) > 0 {
 		price = new(big.Int).Set(oracle.maxPrice)
 	}
+	if cfg := oracle.backend.ChainConfig(); cfg.IsLondon(head.Number) {
+		state, _, err := oracle.backend.StateAndHeaderByNumber(ctx, rpc.BlockNumber(head.Number.Uint64()))
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to get state at %d to calculate base fee: %w", head.Number.Uint64(), err)
+		}
+		lastBaseFee = eip1559.CalcBaseFeeDBFT(cfg, head, state)
+		if cfg.DBFT != nil {
+			lastMinGasTipCap = state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
+		} else {
+			lastMinGasTipCap = new(big.Int)
+		}
+	} else {
+		lastBaseFee = new(big.Int)
+		lastMinGasTipCap = new(big.Int)
+	}
 	oracle.cacheLock.Lock()
 	oracle.lastHead = headHash
 	oracle.lastPrice = price
+	oracle.lastBaseFee = lastBaseFee
+	oracle.lastMinGasTipCap = lastMinGasTipCap
 	oracle.cacheLock.Unlock()
 
-	return new(big.Int).Set(price), nil
+	return new(big.Int).Set(price), new(big.Int).Set(lastBaseFee), new(big.Int).Set(lastMinGasTipCap), nil
 }
 
 type results struct {

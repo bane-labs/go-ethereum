@@ -24,6 +24,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/consensus/misc"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -43,6 +45,11 @@ func VerifyEIP1559Header(config *params.ChainConfig, parent, header *types.Heade
 	// Verify the header is not malformed
 	if header.BaseFee == nil {
 		return errors.New("header is missing baseFee")
+	}
+	// For NeoXBurn block BaseFee verification is performed by consensus nodes and hence
+	// not included into the state-independent ordinary block verification rules.
+	if config.IsNeoXBurn(parent.Number, parent.Time) {
+		return nil
 	}
 	// Verify the baseFee is correct based on the parent header.
 	expectedBaseFee := CalcBaseFee(config, parent)
@@ -92,4 +99,13 @@ func CalcBaseFee(config *params.ChainConfig, parent *types.Header) *big.Int {
 
 		return math.BigMax(baseFee, common.Big0)
 	}
+}
+
+// CalcBaseFeeDBFT calculates the basefee of the header.
+// if is neoXBurn fork, get basefee from Policy contract.
+func CalcBaseFeeDBFT(config *params.ChainConfig, parent *types.Header, state *state.StateDB) *big.Int {
+	if !config.IsNeoXBurn(parent.Number, parent.Time) {
+		return CalcBaseFee(config, parent)
+	}
+	return state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash()).Big()
 }

@@ -426,7 +426,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			dbftBlock.transactions = c.sealingTransactions
 			ethBlock := dbftBlock.ToEthBlock()
 
-			state, _, _, _, err := c.chain.ProcessState(ethBlock)
+			state, _, _, _, err := c.chain.ProcessState(ethBlock, nil)
 			if err != nil {
 				log.Crit("failed to process state from proposal",
 					"err", err,

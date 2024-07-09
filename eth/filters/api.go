@@ -28,8 +28,10 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
@@ -162,16 +164,33 @@ func (api *FilterAPI) NewPendingTransactions(ctx context.Context, fullTx *bool) 
 		defer pendingTxSub.Unsubscribe()
 
 		chainConfig := api.sys.backend.ChainConfig()
+		currHeader := api.sys.backend.CurrentHeader()
+		state, _, err := api.sys.backend.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(currHeader.Number.Int64()))
+		if err != nil {
+			log.Error("Failed to get state to handle pending transactions", "err", err, "header number", currHeader.Number)
+			return
+		}
+		baseFee := eip1559.CalcBaseFeeDBFT(chainConfig, currHeader, state)
 
 		for {
 			select {
 			case txs := <-txs:
+				// Update base fee cache only if new block is available.
+				if latestHeader := api.sys.backend.CurrentHeader(); latestHeader.Number.Cmp(currHeader.Number) > 0 {
+					currHeader = latestHeader
+					state, _, err = api.sys.backend.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(currHeader.Number.Int64()))
+					if err != nil {
+						// We're toast, use the old base fee value.
+						log.Error("Failed to get state to handle pending transactions", "err", err, "header number", currHeader.Number)
+					} else {
+						baseFee = eip1559.CalcBaseFeeDBFT(chainConfig, currHeader, state)
+					}
+				}
 				// To keep the original behaviour, send a single tx hash in one notification.
 				// TODO(rjl493456442) Send a batch of tx hashes in one notification
-				latest := api.sys.backend.CurrentHeader()
 				for _, tx := range txs {
 					if fullTx != nil && *fullTx {
-						rpcTx := ethapi.NewRPCPendingTransaction(tx, latest, chainConfig)
+						rpcTx := ethapi.NewRPCPendingTransaction(tx, currHeader, chainConfig, baseFee)
 						notifier.Notify(rpcSub.ID, rpcTx)
 					} else {
 						notifier.Notify(rpcSub.ID, tx.Hash())
@@ -446,8 +465,17 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 		case PendingTransactionsSubscription:
 			if f.fullTx {
 				txs := make([]*ethapi.RPCTransaction, 0, len(f.txs))
+				var baseFee *big.Int
+				if latest != nil {
+					state, _, err := api.sys.backend.StateAndHeaderByNumber(context.Background(), rpc.BlockNumber(latest.Number.Int64()))
+					if err != nil {
+						log.Error("Failed to get state to retrieve filter changes", "err", err, "header number", latest.Number)
+						return txs, err
+					}
+					baseFee = eip1559.CalcBaseFeeDBFT(chainConfig, latest, state)
+				}
 				for _, tx := range f.txs {
-					txs = append(txs, ethapi.NewRPCPendingTransaction(tx, latest, chainConfig))
+					txs = append(txs, ethapi.NewRPCPendingTransaction(tx, latest, chainConfig, baseFee))
 				}
 				f.txs = nil
 				return txs, nil
