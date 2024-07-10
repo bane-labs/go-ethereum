@@ -6,19 +6,33 @@ Neo X system contracts are a set of build-in Solidity contracts with predefined 
 
 These contracts are not deployed by transactions but allocated in the [genesis file](https://github.com/bane-labs/go-ethereum/blob/bane-main/config). The address setting of existing pre-compiled contracts is listed as below.
 
-|Address|Contract|
-|--|--|
-|`0x1212000000000000000000000000000000000000`|GovProxyAdmin|
-|`0x1212000000000000000000000000000000000001`|Governance Proxy|
-|`0x1212100000000000000000000000000000000001`|Governance Implemention|
-|`0x1212000000000000000000000000000000000002`|Policy Proxy|
-|`0x1212100000000000000000000000000000000002`|Policy Implemention|
-|`0x1212000000000000000000000000000000000003`|GovernanceReward Proxy|
-|`0x1212100000000000000000000000000000000003`|GovernanceReward Implemention|
-|`0x1212000000000000000000000000000000000004`|Bridge Proxy|
-|`0x1212100000000000000000000000000000000004`|Bridge Implemention|
-|`0x1212000000000000000000000000000000000005`|BridgeManagement Proxy|
-|`0x1212100000000000000000000000000000000005`|BridgeManagement Implemention|
+| Address                                      | Contract                                                      |
+|----------------------------------------------|---------------------------------------------------------------|
+| `0x1212000000000000000000000000000000000000` | GovProxyAdmin                                                 |
+| `0x1212000000000000000000000000000000000001` | Governance Proxy                                              |
+| `0x1212100000000000000000000000000000000001` | Governance Implementation                                     |
+| `0x1212000000000000000000000000000000000002` | Policy Proxy                                                  |
+| `0x1212100000000000000000000000000000000002` | Policy Implementation                                         |
+| `0x1212000000000000000000000000000000000003` | GovernanceReward Proxy                                        |
+| `0x1212100000000000000000000000000000000003` | GovernanceReward Implementation                               |
+| `0x1212000000000000000000000000000000000004` | Bridge Proxy                                                  |
+| `0x1212100000000000000000000000000000000004` | Bridge Implementation                                         |
+| `0x1212000000000000000000000000000000000005` | BridgeManagement Proxy                                        |
+| `0x1212100000000000000000000000000000000005` | BridgeManagement Implementation                               |
+| `0x1212000000000000000000000000000000000006` | Treasury                                                      |
+| `0x1212000000000000000000000000000000000007` | DKG Proxy                                                     |
+| `0x1212100000000000000000000000000000000007` | DKG Implementation                                            |
+| `0x1212000000000000000000000000000000000008` | Stub0 Proxy                                                   |
+| `0x1212100000000000000000000000000000000008` | Stub Implementation (shared between all Stub Proxy contracts) |
+| `0x1212000000000000000000000000000000000009` | Stub1 Proxy                                                   |
+| `0x121200000000000000000000000000000000000a` | Stub2 Proxy                                                   |
+| `0x121200000000000000000000000000000000000b` | Stub3 Proxy                                                   |
+| `0x121200000000000000000000000000000000000c` | Stub4 Proxy                                                   |
+| `0x121200000000000000000000000000000000000d` | Stub5 Proxy                                                   |
+| `0x121200000000000000000000000000000000000e` | Stub6 Proxy                                                   |
+| `0x121200000000000000000000000000000000000f` | Stub7 Proxy                                                   |
+| `0x1212000000000000000000000000000000000010` | Stub8 Proxy                                                   |
+| `0x1212000000000000000000000000000000000011` | Stub9 Proxy                                                   |
 
 ## GovernanceVote
 
@@ -54,7 +68,7 @@ An EOA account is allowed to become a candidate only after successful registrati
 
 1. Registrant invokes `registerCandidate(uint shareRate)` of `0x1212000000000000000000000000000000000001` as message sender;
 2. Registrant is an EOA account and not yet a candidate;
-3. Put `1000 GAS` deposit `value` along with the transaction as registration fee;
+3. Put `20000 GAS` deposit `value` along with the transaction as registration fee;
 4. Provide a `shareRate` ranges from `0` to `1000` in parameters, which is a distribution ratio in thousandths. It determines how many rewards of the total that voters can share, and can not be changed until the candidate exits;
 5. (optional) Withdraw past deposits if it has registered and exited before.
 
@@ -145,3 +159,34 @@ Since all the policy setters adopt the `needVote` modifier, any policy change re
 ## Bridge
 
 Refer to the [Bridge Contracts repository](https://github.com/bane-labs/bridge-evm-contracts).
+
+## Treasury
+
+[Treasury](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Treasury.sol)
+is a system contract assigned as the Neo X treasury for funding the native Bridge
+Proxy contract. The contract itself is rather simple and straightforward, its only
+purpose is to hold most of the initial Bridge funds distributed to this contract in
+the genesis block allocations. This contract is not upgradeable.
+
+This contract has a single `fundBridge` method that transfers specified `amount` of
+GAS to the Bridge Proxy contract. This method requires more than 1/2 of the current
+Neo X consensus nodes votes to be collected before the invocation.
+
+## DKG
+
+[DKG](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/DKG.sol)
+is a system contract assigned as the Neo X Distributed Key Generation contract. This
+contract manages anti-MEV related cryptography operations needed for consensus nodes
+to participate in the Envelope transactions processing.
+
+This contract is not yet implemented, and thus, a contract stub is deployed in the
+network. Once the implementation is finished, this contract will be updated to
+provide fully-qualified DKG functionality to the consensus members.
+
+## System contract stubs
+
+[Stub](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Stub.sol)
+is reserved system contract implementation that has pre-assigned addresses in the
+genesis allocations (Stup0-Stub9 Proxies). Once designated role for the stub contract
+is created, its code will be updated correspondingly to serve the needs of the Neo X
+chain.  
