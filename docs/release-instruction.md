@@ -11,6 +11,14 @@ These should run successfully:
 * privnet with consensus nodes
 * mainnet/testnet synchronization for compatible releases
 
+## Update network configuration files
+
+For releases aimed to be run on a fresh network, i.e. incompatible with the existing
+networks, genesis configuration file should be updated, which includes:
+* Network ID upgrade;
+* Update of the genesis allocations (code/binary/storage) for system contracts;
+* Hardforks schedule update.
+
 ## Update CHANGELOG
 
 Add an entry to the CHANGELOG.md following the style established there. Add a
