@@ -111,7 +111,7 @@ To run a full node on the Neo X Testnet network follow the steps below.
       echo "$node and the node address is $miner, rpc port $rpcport, p2p port $port"
          
       nohup ./geth \
-      --networkid 12227331 \
+      --networkid 12227332 \
       --nat extip:10.148.0.2 \
       --port $port \
       --authrpc.port $rpcport \
@@ -167,7 +167,7 @@ To run a full node on the Neo X Testnet network follow the steps below.
       echo "$node and miner is $miner, rpc port $rpcport, p2p port $port"
       
       nohup ./geth \
-      --networkid 12227331 \
+      --networkid 12227332 \
       --nat extip:10.148.0.2 \
       --port $port \
       --mine --miner.etherbase=$miner \
