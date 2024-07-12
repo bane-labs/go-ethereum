@@ -222,6 +222,9 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         // update votes
         receivedVotes[candidateFrom] -= amount;
         receivedVotes[candidateTo] += amount;
+        if (!candidateList.contains(candidateFrom)) {
+            totalVotes += amount;
+        }
         votedTo[msg.sender] = candidateTo;
         voterGasPerVote[msg.sender] = candidateGasPerVote[candidateTo];
         voteHeight[msg.sender] = block.number;

@@ -207,6 +207,20 @@ describe("Governance", function () {
             expect(candidates.length).to.equal(0);
         });
 
+        it("Should decrease total votes if exited candidates received votes", async function () {
+            await expect(
+                Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
+            ).not.to.be.reverted;
+            await expect(
+                Governance.connect(candidate1).vote(candidate1, { value: MIN_VOTE_AMOUNT })
+            ).not.to.be.reverted;
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).not.to.be.reverted;
+
+            expect(await Governance.totalVotes()).to.equal(0);
+        });
+
         it("Should emit an event when a candidate exits", async function () {
             await expect(
                 Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE })
@@ -657,6 +671,23 @@ describe("Governance", function () {
             expect(await Governance.votedTo(candidate1.address)).to.eq(candidate2.address);
             expect(await Governance.votedAmount(candidate1.address)).to.eq(MIN_VOTE_AMOUNT);
             expect(await Governance.voteHeight(candidate1.address)).to.eq(await ethers.provider.getBlockNumber());
+        });
+
+        it("Should update total votes if transfer from a deactivated candidate", async function () {
+            await Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE });
+            await Governance.connect(candidate2).registerCandidate(500, { value: REGISTER_FEE });
+            await expect(
+                Governance.connect(candidate1).vote(candidate1, { value: MIN_VOTE_AMOUNT })
+            ).not.to.be.reverted;
+            await expect(
+                Governance.connect(candidate1).exitCandidate()
+            ).not.to.be.reverted;
+
+            expect(await Governance.totalVotes()).to.equal(0);
+            await expect(
+                Governance.connect(candidate1).transferVote(candidate2)
+            ).not.to.be.reverted;
+            expect(await Governance.totalVotes()).to.equal(MIN_VOTE_AMOUNT);
         });
 
         it("Should emit two events when a voter transfer votes", async function () {
