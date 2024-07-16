@@ -1284,6 +1284,9 @@ func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNr
 // configuration (if non-zero).
 // Note: Required blob gas is not computed in this method.
 func (s *BlockChainAPI) EstimateGas(ctx context.Context, args TransactionArgs, blockNrOrHash *rpc.BlockNumberOrHash, overrides *StateOverride) (hexutil.Uint64, error) {
+	if err := args.setFeeMinAllowed(ctx, s.b); err != nil {
+		return 0, err
+	}
 	bNrOrHash := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
 	if blockNrOrHash != nil {
 		bNrOrHash = *blockNrOrHash
