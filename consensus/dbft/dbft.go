@@ -722,17 +722,16 @@ func (c *DBFT) WithTxPool(pool txPool) {
 // or from consensus. It must be called strictly after new block persist since
 // NextConsensus calculation depends on the storage state. It also clears all
 // BlockQueue tasks up to the accepted block height.
-func (c *DBFT) postBlock(b *types.Block) {
-	if c.lastIndex < b.NumberU64() {
-		h := b.Header()
-
+func (c *DBFT) postBlock(h *types.Header) {
+	num := h.Number.Uint64()
+	if c.lastIndex < num {
 		c.lastTimestamp = h.Time
 		c.lastIndex = h.Number.Uint64()
-		c.lastBlockHash = b.Hash()
+		c.lastBlockHash = h.Hash()
 		c.lastBlockSealHash = HonestSealHash(h)
 		c.lastBlockExtra = h.Extra
 
-		c.blockQueue.ClearStaleTasks(b.NumberU64())
+		c.blockQueue.ClearStaleTasks(num)
 	}
 }
 
@@ -1189,8 +1188,8 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 		log.Info("New chain segment detected",
 			"dBFT latest block index", c.lastIndex,
 			"sealing proposal index", b.NumberU64())
-		ltstBlock := c.chain.GetBlockByNumber(b.NumberU64() - 1)
-		c.postBlock(ltstBlock)
+		ltstHeader := c.chain.GetHeaderByNumber(b.NumberU64() - 1)
+		c.postBlock(ltstHeader)
 	}
 
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
@@ -1279,7 +1278,7 @@ events:
 		case tx := <-c.txs:
 			c.dbft.OnTransaction(&Transaction{Tx: tx})
 		case b := <-c.chainHeadEvents:
-			err := c.handleChainBlock(b.Block)
+			err := c.handleChainBlock(b.Block.Header())
 			if err != nil {
 				log.Warn("Failed to handle chain block",
 					"index", b.Block.NumberU64(),
@@ -1307,7 +1306,7 @@ events:
 			}
 		}
 		if latestBlock.Block != nil {
-			err := c.handleChainBlock(latestBlock.Block)
+			err := c.handleChainBlock(latestBlock.Block.Header())
 			if err != nil {
 				log.Warn("Failed to handle latest chain block",
 					"index", latestBlock.Block.NumberU64(),
@@ -1449,7 +1448,7 @@ func (c *DBFT) newPayload(ctx *dbft.Context[common.Hash], t dbft.MessageType, ms
 	return cp
 }
 
-func (c *DBFT) handleChainBlock(b *types.Block) error {
+func (c *DBFT) handleChainBlock(h *types.Header) error {
 	// A short path if miner is not active and the node is in the process of block
 	// sync. In this case dBFT can't react properly on the newcoming blocks since no
 	// sealing task is expected from miner.
@@ -1458,16 +1457,16 @@ func (c *DBFT) handleChainBlock(b *types.Block) error {
 	}
 
 	// We can get our own block here, so check for index.
-	if uint32(b.Number().Uint64()) >= c.dbft.BlockIndex {
+	if uint32(h.Number.Uint64()) >= c.dbft.BlockIndex {
 		log.Info("New block in the chain",
 			"dbft index", c.dbft.BlockIndex,
 			"chain index", c.chain.CurrentBlock().Number.Uint64(),
-			"hash", b.Hash().String(),
-			"parent hash", b.ParentHash().String(),
-			"primary", b.Primary(),
-			"coinbase", b.Coinbase(),
-			"mix digest", b.MixDigest().String())
-		c.postBlock(b)
+			"hash", h.Hash().String(),
+			"parent hash", h.ParentHash.String(),
+			"primary", h.Primary(),
+			"coinbase", h.Coinbase,
+			"mix digest", h.MixDigest.String())
+		c.postBlock(h)
 
 		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
 		if err != nil {
