@@ -32,7 +32,7 @@ Behavior changes:
  * time lock is added for system contracts upgrade (#245)
  * 5% deposit fee is charged by Governance on candidate exiting from the Governance
    candidates list (#247)
- * candidate registration fee is increased up to 20 GAS (#236)
+ * candidate registration fee is increased from 1000 up to 20000 GAS (#236)
 
 Improvements:
  * system contracts documentation updates (#173, #236)
