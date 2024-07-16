@@ -71,7 +71,7 @@ abstract contract GovernanceVote {
                 votedCount++;
             }
         }
-        return votedCount >= (voters.length + 1) / 2;
+        return votedCount > voters.length / 2;
     }
 
     function _contains(
