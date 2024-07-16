@@ -143,6 +143,32 @@ func (args *TransactionArgs) setDefaults(ctx context.Context, b Backend) error {
 	return nil
 }
 
+// setFeeMinAllowed fills in minimum allowed fee values for underpriced tx.
+func (args *TransactionArgs) setFeeMinAllowed(ctx context.Context, b Backend) error {
+	if head := b.CurrentHeader(); b.ChainConfig().IsNeoXBurn(head.Number, head.Time) {
+		if args.GasPrice != nil || args.MaxFeePerGas != nil || args.MaxPriorityFeePerGas != nil {
+			gastip, err := b.SuggestGasTipCap(ctx)
+			if err != nil {
+				return err
+			}
+			gasprice := new(big.Int).Add(gastip, head.BaseFee)
+			if args.GasPrice != nil {
+				if args.GasPrice.ToInt().Cmp(gasprice) < 0 {
+					args.GasPrice = (*hexutil.Big)(gasprice)
+				}
+			} else {
+				if args.MaxPriorityFeePerGas == nil || args.MaxPriorityFeePerGas.ToInt().Cmp(gastip) < 0 {
+					args.MaxPriorityFeePerGas = (*hexutil.Big)(gastip)
+				}
+				if args.MaxFeePerGas == nil || args.MaxFeePerGas.ToInt().Cmp(gasprice) < 0 {
+					args.MaxFeePerGas = (*hexutil.Big)(gasprice)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // setFeeDefaults fills in default fee values for unspecified tx fields.
 func (args *TransactionArgs) setFeeDefaults(ctx context.Context, b Backend) error {
 	// If both gasPrice and at least one of the EIP-1559 fee parameters are specified, error.
