@@ -43,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/eth/downloader"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -180,9 +181,12 @@ type DBFT struct {
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
 	chainHeadEvents chan core.ChainHeadEvent
-	// minerInterrupted is the callback indicating whether miner is temporary interrupted
-	// due to the node sync.
-	minerInterrupted func() bool
+	// mux is a subscriptions dispatcher for various chain events including chain
+	// downloader events. Downloader events are used to track miner's state since
+	// miner work may be temporary suspended due to the node sync.
+	mux *event.TypeMux
+	// syncing indicates whether the node is still syncing.
+	syncing atomic.Bool
 
 	config *params.DBFTConfig // Consensus engine configuration parameters
 
@@ -705,10 +709,11 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 	c.requestTxs = f
 }
 
-// WithMinerInterrupted sets callback to indicate whether miner is interrupted due
-// to the ongoing node sync process.
-func (c *DBFT) WithMinerInterrupted(f func() bool) {
-	c.minerInterrupted = f
+// WithMux sets subscriptions dispatcher service to provide a way for dBFT to watch
+// over chain downloader progress. It's needed because miner work is suspended during
+// the ongoing node sync process.
+func (c *DBFT) WithMux(mux *event.TypeMux) {
+	c.mux = mux
 }
 
 // WithTxPool initializes transaction pool API for DBFT interactions with memory pool
@@ -722,17 +727,16 @@ func (c *DBFT) WithTxPool(pool txPool) {
 // or from consensus. It must be called strictly after new block persist since
 // NextConsensus calculation depends on the storage state. It also clears all
 // BlockQueue tasks up to the accepted block height.
-func (c *DBFT) postBlock(b *types.Block) {
-	if c.lastIndex < b.NumberU64() {
-		h := b.Header()
-
+func (c *DBFT) postBlock(h *types.Header) {
+	num := h.Number.Uint64()
+	if c.lastIndex < num {
 		c.lastTimestamp = h.Time
 		c.lastIndex = h.Number.Uint64()
-		c.lastBlockHash = b.Hash()
+		c.lastBlockHash = h.Hash()
 		c.lastBlockSealHash = HonestSealHash(h)
 		c.lastBlockExtra = h.Extra
 
-		c.blockQueue.ClearStaleTasks(b.NumberU64())
+		c.blockQueue.ClearStaleTasks(num)
 	}
 }
 
@@ -1189,8 +1193,8 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 		log.Info("New chain segment detected",
 			"dBFT latest block index", c.lastIndex,
 			"sealing proposal index", b.NumberU64())
-		ltstBlock := c.chain.GetBlockByNumber(b.NumberU64() - 1)
-		c.postBlock(ltstBlock)
+		ltstHeader := c.chain.GetHeaderByNumber(b.NumberU64() - 1)
+		c.postBlock(ltstHeader)
 	}
 
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
@@ -1235,6 +1239,21 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 func (c *DBFT) eventLoop() {
 	c.eventLoopStarted.Store(true)
 	log.Info("dBFT event loop started")
+
+	// Track of the downloader events to be in sync with miner's status since miner's
+	// work is suspended during the initial chain sync. Please be aware that this is
+	// a one shot type of update loop. It's entered once and as soon as `Done` has
+	// been broadcasted the events are unregistered and the loop is exited. This to
+	// prevent a major security vuln where external parties can DOS you with blocks
+	// and halt your dBFT operation for as long as the DOS continues.
+	downloaderEvents := c.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
+	defer func() {
+		if !downloaderEvents.Closed() {
+			downloaderEvents.Unsubscribe()
+		}
+	}()
+	dlEventCh := downloaderEvents.Chan()
+
 events:
 	for {
 		oldView := c.dbft.ViewNumber
@@ -1279,7 +1298,7 @@ events:
 		case tx := <-c.txs:
 			c.dbft.OnTransaction(&Transaction{Tx: tx})
 		case b := <-c.chainHeadEvents:
-			err := c.handleChainBlock(b.Block)
+			err := c.handleChainBlock(b.Block.Header())
 			if err != nil {
 				log.Warn("Failed to handle chain block",
 					"index", b.Block.NumberU64(),
@@ -1294,6 +1313,43 @@ events:
 					"error", err.Error())
 			}
 			break events
+		case ev := <-dlEventCh:
+			if ev == nil {
+				// Unsubscription done, stop listening.
+				dlEventCh = nil
+				continue
+			}
+			switch ev.Data.(type) {
+			case downloader.StartEvent:
+				c.syncing.Store(true)
+
+			case downloader.FailedEvent:
+				c.syncing.Store(false)
+
+				latest := c.chain.CurrentHeader()
+				err := c.handleChainBlock(latest)
+				if err != nil {
+					log.Warn("Failed to handle latest chain block",
+						"index", latest.Number.Uint64(),
+						"err", err.Error())
+					break events
+				}
+
+			case downloader.DoneEvent:
+				c.syncing.Store(false)
+
+				// Stop reacting to downloader events.
+				downloaderEvents.Unsubscribe()
+
+				latest := c.chain.CurrentHeader()
+				err := c.handleChainBlock(latest)
+				if err != nil {
+					log.Warn("Failed to handle latest chain block",
+						"index", latest.Number.Uint64(),
+						"err", err.Error())
+					break events
+				}
+			}
 		}
 		// Always process block event if there is any, we can add one above or external
 		// services can add several blocks during message processing.
@@ -1307,7 +1363,7 @@ events:
 			}
 		}
 		if latestBlock.Block != nil {
-			err := c.handleChainBlock(latestBlock.Block)
+			err := c.handleChainBlock(latestBlock.Block.Header())
 			if err != nil {
 				log.Warn("Failed to handle latest chain block",
 					"index", latestBlock.Block.NumberU64(),
@@ -1449,25 +1505,29 @@ func (c *DBFT) newPayload(ctx *dbft.Context[common.Hash], t dbft.MessageType, ms
 	return cp
 }
 
-func (c *DBFT) handleChainBlock(b *types.Block) error {
+func (c *DBFT) handleChainBlock(h *types.Header) error {
 	// A short path if miner is not active and the node is in the process of block
 	// sync. In this case dBFT can't react properly on the newcoming blocks since no
 	// sealing task is expected from miner.
-	if c.minerInterrupted() {
+	if c.syncing.Load() {
+		log.Info("Skipping dBFT block callback due to sync",
+			"block index", h.Number.Int64(),
+			"dbft index", c.dbft.BlockIndex,
+		)
 		return nil
 	}
 
 	// We can get our own block here, so check for index.
-	if uint32(b.Number().Uint64()) >= c.dbft.BlockIndex {
+	if uint32(h.Number.Uint64()) >= c.dbft.BlockIndex {
 		log.Info("New block in the chain",
 			"dbft index", c.dbft.BlockIndex,
 			"chain index", c.chain.CurrentBlock().Number.Uint64(),
-			"hash", b.Hash().String(),
-			"parent hash", b.ParentHash().String(),
-			"primary", b.Primary(),
-			"coinbase", b.Coinbase(),
-			"mix digest", b.MixDigest().String())
-		c.postBlock(b)
+			"hash", h.Hash().String(),
+			"parent hash", h.ParentHash.String(),
+			"primary", h.Primary(),
+			"coinbase", h.Coinbase,
+			"mix digest", h.MixDigest.String())
+		c.postBlock(h)
 
 		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
 		if err != nil {
