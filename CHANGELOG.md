@@ -2,6 +2,46 @@
 
 This document outlines major changes between releases.
 
+## 0.2.1 "Graphitization" (24 Jul 2024)
+
+A patch version compatible with v0.2.0 release of Neo X node that brings a set of
+minor compatible improvements and bug fixes to system contracts, dBFT consensus
+engine and RPC APIs. This version is aimed to be run on the initial version of Neo X
+MainNet.
+
+A new `config/genesis_mainnet.json` configuration file is added, please use this file
+to initialize a database for MainNet nodes. Ensure your MainNet node running script
+contains an updated network ID (`47763`) and a proper MainNet bootnode identifiers
+set. For T4 node operators it should be noted that this release does not require a DB
+resynchronisation. However, we recommend to update the node binary since it contains
+a dBFT-related bug fix that may affect the consensus functionality in a very specific
+set of conditions.
+
+New features:
+ * Multisignature system contract aimed to serve as an owner of Bridge and Bridge
+   Management system contracts instead of a simple EOA account (#279)
+ * genesis configuration for Neo X MainNet (#271)
+
+Behavior changes:
+ * initial candidate registration fee is lowered down to 1000 GAS in Governance
+   system contract (#275, #281)
+ * candidate exit fee ratio is increased up to 50% from the deposited value in
+   Governance system contract (#275, #280, #281) 
+
+Improvements:
+ * disable initialization code for every UUPS implementation (#259)
+ * Bridge and Bridge Management system contracts update (#274)
+
+Bugs fixed:
+ * missing total votes update on transferring votes from exited candidate in
+   Governance system contract (#260)
+ * non-strict GovernanceVote system contract check for the number of voters (#267)
+ * improper GAS estimation in `eth_estimateGas` Blockchain RPC API caused by changes
+   in fee policies of Neo X (#263)
+ * missing track of miner's work resume event which leads to dBFT hanging on next
+   block awaiting when miner is suspended due to the node sync (#268)
+
+
 ## 0.2.0 "Vitaminization" (10 Jul 2024)
 
 A minor long-term supported version bringing new NeoXBurn hardfork that enables
