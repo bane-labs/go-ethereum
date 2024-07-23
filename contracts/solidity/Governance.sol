@@ -21,7 +21,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     address public constant SYS_CALL =
         0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
     uint public constant SCALE_FACTOR = 10 ** 18;
-    uint public constant EXIT_FEE_RATE = 5;
+    uint public constant EXIT_FEE_RATE = 50;
 
     uint public consensusSize;
     // the min balance for voting
