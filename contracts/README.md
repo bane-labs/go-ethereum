@@ -74,7 +74,7 @@ An EOA account is allowed to become a candidate only after successful registrati
 
 If all conditions are met, the new candidate will be added to the candidate list. Only registered candidates can receive votes to be elected as a consensus node.
 
-A candidate can exit without any permission, but it requires 2 epochs to pass until the candidate is allowed to withdraw its registeration deposit. During this period, the candidate can't receive any votes or become a consensus node, but voters can revoke their votes and choose other candidates to share rewards. As a prevention of malicious resources occupation, `1000 GAS` will be charged by Governance when a candidate tries to exit and claim back.
+A candidate can exit without any permission, but it requires 2 epochs to pass until the candidate is allowed to withdraw its registeration deposit. During this period, the candidate can't receive any votes or become a consensus node, but voters can revoke their votes and choose other candidates to share rewards. As a prevention of malicious resources occupation, a specific rate of the deposited value will be charged by Governance when a candidate tries to exit and claim back (5% for TestNet and 50% for MainNet).
 
 ### Election
 
