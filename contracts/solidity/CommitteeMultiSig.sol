@@ -6,7 +6,7 @@ import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol"
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
 contract CommitteeMultiSig is GovernanceVote, GovProxyUpgradeable {
-    address public constant SELF = 0x1212100000000000000000000000000000000008;
+    address public constant SELF = 0x1212100000000000000000000000000000000007;
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.

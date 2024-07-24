@@ -20,8 +20,8 @@ These contracts are not deployed by transactions but allocated in the [genesis f
 | `0x1212000000000000000000000000000000000005` | BridgeManagement Proxy                                        |
 | `0x1212100000000000000000000000000000000005` | BridgeManagement Implementation                               |
 | `0x1212000000000000000000000000000000000006` | Treasury                                                      |
-| `0x1212000000000000000000000000000000000007` | DKG Proxy                                                     |
-| `0x1212100000000000000000000000000000000007` | DKG Implementation                                            |
+| `0x1212000000000000000000000000000000000007` | CommitteeMultiSig Proxy                                       |
+| `0x1212100000000000000000000000000000000007` | CommitteeMultiSig Implementation                              |
 | `0x1212000000000000000000000000000000000008` | Stub0 Proxy                                                   |
 | `0x1212100000000000000000000000000000000008` | Stub Implementation (shared between all Stub Proxy contracts) |
 | `0x1212000000000000000000000000000000000009` | Stub1 Proxy                                                   |
