@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
 
+import {GovernanceVote} from "./base/GovernanceVote.sol";
 import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 
-/**
- * @dev This is a system contract stub to be replaced by the DKG contract once
- * it's properly implemented.
- */
-contract DKG is GovProxyUpgradeable {
+contract CommitteeMultiSig is GovernanceVote, GovProxyUpgradeable {
     address public constant SELF = 0x1212100000000000000000000000000000000007;
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
@@ -28,5 +26,17 @@ contract DKG is GovProxyUpgradeable {
             // Must not be called through delegatecall
             revert UUPSUnauthorizedCallContext();
         }
+    }
+
+    // Execute an operation that calls a function on the `target` contract
+    function execute(
+        address target,
+        bytes calldata data
+    )
+        external
+        needVote(keccak256(abi.encode(target)), keccak256(abi.encode(data)))
+        returns (bytes memory returndata)
+    {
+        returndata = Address.functionCall(target, data);
     }
 }
