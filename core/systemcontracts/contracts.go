@@ -38,9 +38,9 @@ var (
 	// TreasuryHash is a hash of the Treasury contract that contains all Bridge
 	// funds at the start of the network. Note that this contract is not upgradeable.
 	TreasuryHash = common.HexToAddress("0x1212000000000000000000000000000000000006")
-	// DKGProxyHash is a hash of the DKGProxy contract that manages the distributed key
-	// generation process for consensus members.
-	DKGProxyHash = common.HexToAddress("0x1212000000000000000000000000000000000007")
+	// CommitteeMultiSigProxyHash is a hash of the CommitteeMultiSigProxy contract that
+	// manages external invocations which needs a Committee agreement.
+	CommitteeMultiSigProxyHash = common.HexToAddress("0x1212000000000000000000000000000000000007")
 	// Reserved0ProxyHash is a hash of the reserved system contract #0.
 	Reserved0ProxyHash = common.HexToAddress("0x1212000000000000000000000000000000000008")
 	// Reserved1ProxyHash is a hash of the reserved system contract #1.

@@ -162,31 +162,24 @@ Refer to the [Bridge Contracts repository](https://github.com/bane-labs/bridge-e
 
 ## Treasury
 
-[Treasury](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Treasury.sol)
-is a system contract assigned as the Neo X treasury for funding the native Bridge
-Proxy contract. The contract itself is rather simple and straightforward, its only
-purpose is to hold most of the initial Bridge funds distributed to this contract in
-the genesis block allocations. This contract is not upgradeable.
+[Treasury](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Treasury.sol) is a system contract assigned as the Neo X treasury for funding the native Bridge Proxy contract. The contract itself is rather simple and straightforward, its only purpose is to hold most of the initial Bridge funds distributed to this contract in the genesis block allocations. This contract is not upgradeable.
 
-This contract has a single `fundBridge` method that transfers specified `amount` of
-GAS to the Bridge Proxy contract. This method requires more than 1/2 of the current
-Neo X consensus nodes votes to be collected before the invocation.
+This contract has a single `fundBridge()` method that transfers specified `amount` of GAS to the Bridge Proxy contract. This method requires more than 1/2 of the current Neo X consensus nodes votes to be collected before the invocation.
 
-## DKG
+## CommitteeMultiSig
 
-[DKG](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/DKG.sol)
-is a system contract assigned as the Neo X Distributed Key Generation contract. This
-contract manages anti-MEV related cryptography operations needed for consensus nodes
-to participate in the Envelope transactions processing.
+[CommitteeMultiSig](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/CommitteeMultiSig.sol) is a system contract assigned as an external contract invocation delegator based on Governance vote.
 
-This contract is not yet implemented, and thus, a contract stub is deployed in the
-network. Once the implementation is finished, this contract will be updated to
-provide fully-qualified DKG functionality to the consensus members.
+Different from [GovProxyAdmin](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovProxyAdmin.sol), this contract can be used as an onchain multisig solution for any other contract management, which is upgradable and extendable.
+
+This contract has a single `execute(...)` method that adopts the `needVote` modifier, so it requires more than 1/2 of the current Neo X consensus nodes votes to be collected. Besides, it has to be mentioned that `execute(...)` is not `payable` and this contract has no `fallback()` or `receive()` function.
 
 ## System contract stubs
 
-[Stub](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Stub.sol)
-is reserved system contract implementation that has pre-assigned addresses in the
-genesis allocations (Stup0-Stub9 Proxies). Once designated role for the stub contract
-is created, its code will be updated correspondingly to serve the needs of the Neo X
-chain.  
+[Stub](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Stub.sol) is reserved system contract implementation that has pre-assigned addresses in the genesis allocations (Stup0-Stub9 Proxies). Once designated role for the stub contract is created, its code will be updated correspondingly to serve the needs of the Neo X chain.
+
+## DKG (in progress)
+
+DKG (in progress) is a system contract assigned as the Neo X Distributed Key Generation contract. This contract manages anti-MEV related cryptography operations needed for consensus nodes to participate in the Envelope transactions processing.
+
+This contract is not yet implemented, and thus, a contract stub is deployed in the network. Once the implementation is finished, this contract will be updated to provide fully-qualified DKG functionality to the consensus members.
