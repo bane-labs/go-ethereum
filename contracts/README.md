@@ -50,7 +50,7 @@ Any contract inheriting `GovernanceVote.sol` can set up a consensus vote on meth
 
 This contract inherits `GovernanceVote.sol` so that it requires a `50%` majority votes among current consensus to execute `scheduleUpgrade(...)`, which means **more than half** of the **current consensus** votes for **the same contract implementation**. 
 
-This contract inherits `TimelockController.sol` to implement a lock period(2 days) after the vote is passed before calling `executeUpgrade(...)` to upgrade the upgradable system contract. Anyone can call `executeUpgrade(...)`` after the lock period is reached.
+This contract inherits `TimelockController.sol` to implement a lock period (2 days on both Testnet and Mainnet) after the vote is passed before calling `executeUpgrade(...)` to upgrade the upgradable system contract. Anyone can call `executeUpgrade(...)`` after the lock period is reached.
 
 All of the upgradable Neo X system contracts use [ERC1967Proxy](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v5.0/contracts/proxy/ERC1967/ERC1967Proxy.sol) and [UUPSUpgradeable](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v5.0/contracts/proxy/utils/UUPSUpgradeable.sol).
 
@@ -60,7 +60,7 @@ All of the upgradable Neo X system contracts use [ERC1967Proxy](https://github.c
 
 An [election](#election) is, **GAS holders** vote for **registered candidates** and the Governance contract selects **top 7 candidates** as consensus nodes for **the next epoch\***.
 
-*<font size="2">Epoch is a unit of measurement for blocks. Currently, 1 epoch on testnet is the equivalent of `60480` blocks, which is the storage value `epochDuration` may be retrieved by contract calls.</font>
+*<font size="2">Epoch is a unit of measurement for blocks. Currently, 1 epoch is the equivalent of `60480` blocks on both Testnet and Mainnet, which is the storage value `epochDuration` may be retrieved by contract calls.</font>
 
 ### Candidate
 
@@ -68,7 +68,7 @@ An EOA account is allowed to become a candidate only after successful registrati
 
 1. Registrant invokes `registerCandidate(uint shareRate)` of `0x1212000000000000000000000000000000000001` as message sender;
 2. Registrant is an EOA account and not yet a candidate;
-3. Put `2000 GAS` (mainnet) or `20000 GAS` (testnet) deposit `value` along with the transaction as registration fee;
+3. Put `20000 GAS` (TestNet) or `1000 GAS` (MainNet) deposit `value` along with the transaction as registration fee;
 4. Provide a `shareRate` ranges from `0` to `1000` in parameters, which is a distribution ratio in thousandths. It determines how many rewards of the total that voters can share, and can not be changed until the candidate exits;
 5. (optional) Withdraw past deposits if it has registered and exited before.
 
@@ -92,7 +92,7 @@ If it is necessary to change the vote target (e.g. the current voted candidate e
 At the end of every election epoch, the 7 candidates with the highest amount of votes will be selected by Governance and become consensus nodes of the next epoch. However, this consensus set recalculation has two prerequisites:
 
 1. The size of candidate list is larger than `7`;
-2. The amount of total valid votes is higher than `3,000,000 GAS`.
+2. The amount of total valid votes is higher than `3,000,000 GAS` (TestNet) or `6,000,000 GAS` (MainNet).
 
 Otherwise, the consensus nodes of the next epoch will be the following predefined stand-by members.
 
