@@ -256,7 +256,7 @@ func NewLondonSigner(chainId *big.Int) Signer {
 }
 
 func (s londonSigner) Sender(tx *Transaction) (common.Address, error) {
-	if tx.Type() != DynamicFeeTxType {
+	if tx.Type() != DynamicFeeTxType && tx.Type() != EncryptedTxType {
 		return s.eip2930Signer.Sender(tx)
 	}
 	V, R, S := tx.RawSignatureValues()
@@ -292,7 +292,7 @@ func (s londonSigner) SignatureValues(tx *Transaction, sig []byte) (R, S, V *big
 // Hash returns the hash to be signed by the sender.
 // It does not uniquely identify the transaction.
 func (s londonSigner) Hash(tx *Transaction) common.Hash {
-	if tx.Type() != DynamicFeeTxType {
+	if tx.Type() != DynamicFeeTxType && tx.Type() != EncryptedTxType {
 		return s.eip2930Signer.Hash(tx)
 	}
 	return prefixedRlpHash(

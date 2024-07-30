@@ -508,6 +508,7 @@ func TestYParityJSONUnmarshalling(t *testing.T) {
 	for _, txType := range []uint64{
 		AccessListTxType,
 		DynamicFeeTxType,
+		EncryptedTxType,
 		BlobTxType,
 	} {
 		txType := txType
