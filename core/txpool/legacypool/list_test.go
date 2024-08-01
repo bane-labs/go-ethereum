@@ -17,10 +17,13 @@
 package legacypool
 
 import (
+	"container/heap"
 	"math/big"
 	"math/rand"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
@@ -47,6 +50,43 @@ func TestStrictListAdd(t *testing.T) {
 	for i, tx := range txs {
 		if list.txs.items[tx.Nonce()] != tx {
 			t.Errorf("item %d: transaction mismatch: have %v, want %v", i, list.txs.items[tx.Nonce()], tx)
+		}
+	}
+}
+
+func TestPriceHeap(t *testing.T) {
+	// Generate a list of transactions to insert
+	key, _ := crypto.GenerateKey()
+	txs := make(types.Transactions, 20)
+	for i := 0; i < 10; i++ {
+		txs[i*2] = pricedTransaction(0, 10000, big.NewInt(int64(i+1)), key)
+		txs[i*2+1] = pricedToTransaction(0, 10000, big.NewInt(int64(i+1)), key, systemcontracts.GovernanceRewardProxyHash)
+	}
+	// Insert the transactions in a random order
+	pheap := &priceHeap{
+		baseFee: big.NewInt(1),
+	}
+	for _, v := range rand.Perm(len(txs)) {
+		heap.Push(pheap, txs[v])
+	}
+	// Verify order, pop should get non wrapper txs first
+	for i := 0; i < len(txs)/2; i++ {
+		item := heap.Pop(pheap).(*types.Transaction)
+		emptyAddr := common.Address{}
+		if *item.To() != emptyAddr {
+			t.Errorf("transaction to mismatch: have %s, want %s", *item.To(), emptyAddr)
+		}
+		if item.GasPrice().Cmp(big.NewInt(int64(i+1))) != 0 {
+			t.Errorf("transaction gasPrice mismatch: have %v, want %v", item.GasPrice(), big.NewInt(int64(i+1)))
+		}
+	}
+	for i := 0; i < len(txs)/2; i++ {
+		item := heap.Pop(pheap).(*types.Transaction)
+		if *item.To() != systemcontracts.GovernanceRewardProxyHash {
+			t.Errorf("transaction to mismatch: have %s, want %s", *item.To(), systemcontracts.GovernanceRewardProxyHash)
+		}
+		if item.GasPrice().Cmp(big.NewInt(int64(i+1))) != 0 {
+			t.Errorf("transaction gasPrice mismatch: have %v, want %v", item.GasPrice(), big.NewInt(int64(i+1)))
 		}
 	}
 }

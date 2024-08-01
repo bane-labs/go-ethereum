@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -484,6 +485,14 @@ func (h *priceHeap) Less(i, j int) bool {
 }
 
 func (h *priceHeap) cmp(a, b *types.Transaction) int {
+	// put encrypted tx wrapper tx before others
+	if systemcontracts.IsEncWrapperTx(a) && !systemcontracts.IsEncWrapperTx(b) {
+		return 1
+	}
+	if !systemcontracts.IsEncWrapperTx(a) && systemcontracts.IsEncWrapperTx(b) {
+		return -1
+	}
+
 	if h.baseFee != nil {
 		// Compare effective tips if baseFee is specified
 		if c := a.EffectiveGasTipCmp(b, h.baseFee); c != 0 {

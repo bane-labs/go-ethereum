@@ -6,6 +6,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -79,4 +80,10 @@ func GetBaseFeeStateHash() common.Hash {
 // in policy contract with an address, for reading corresponding values from statedb.
 func GetBlackListStateHash(addr common.Address) common.Hash {
 	return crypto.Keccak256Hash(common.LeftPadBytes(addr.Bytes(), 32), common.LeftPadBytes([]byte{blackListSlotIndex}, 32))
+}
+
+// IsEncWrapperTx Checks whether a transaction is a wrapper transaction of an encrypted transaction
+func IsEncWrapperTx(tx *types.Transaction) bool {
+	// TODO: now we only check to address is reward contract, consider add gasPrice and data check in future
+	return tx != nil && tx.To() != nil && *(tx.To()) == GovernanceRewardProxyHash
 }

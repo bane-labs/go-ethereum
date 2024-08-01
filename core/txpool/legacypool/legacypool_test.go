@@ -114,6 +114,11 @@ func pricedDataTransaction(nonce uint64, gaslimit uint64, gasprice *big.Int, key
 	return tx
 }
 
+func pricedToTransaction(nonce uint64, gaslimit uint64, gasprice *big.Int, key *ecdsa.PrivateKey, to common.Address) *types.Transaction {
+	tx, _ := types.SignTx(types.NewTransaction(nonce, to, big.NewInt(100), gaslimit, gasprice, nil), types.HomesteadSigner{}, key)
+	return tx
+}
+
 func dynamicFeeTx(nonce uint64, gaslimit uint64, gasFee *big.Int, tip *big.Int, key *ecdsa.PrivateKey) *types.Transaction {
 	tx, _ := types.SignNewTx(key, types.LatestSignerForChainID(params.TestChainConfig.ChainID), &types.DynamicFeeTx{
 		ChainID:    params.TestChainConfig.ChainID,
