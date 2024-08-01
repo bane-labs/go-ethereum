@@ -695,8 +695,7 @@ func (w *worker) resultLoop() {
 
 // makeEnv creates a new environment for the sealing block.
 func (w *worker) makeEnv(parent *types.Header, header *types.Header, coinbase common.Address) (*environment, error) {
-	// Retrieve the parent state to execute on top and start a prefetcher for
-	// the miner to speed block sealing up a bit.
+	// Retrieve the parent state to execute on top.
 	state, err := w.chain.StateAt(parent.Root)
 	if err != nil {
 		return nil, err
