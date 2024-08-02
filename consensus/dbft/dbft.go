@@ -626,6 +626,21 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				log.Warn("can't broadcast consensus message", "error", err)
 			}
 		}),
+		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash](0),
+		dbft.WithNewPreCommit[common.Hash](func(data []byte) dbft.PreCommit {
+			return &preCommit{
+				data: data,
+			}
+		}),
+		dbft.WithNewPreBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.PreBlock[common.Hash] {
+			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
+			if prepareReq == nil {
+				panic("can't create new block from context: prepare request is nil")
+			}
+			b := c.newBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
+			return &PreBlock{Block: *b}
+		}),
+		dbft.WithProcessPreBlock(func(b dbft.PreBlock[common.Hash]) {}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize dBFT: %w", err)

@@ -113,3 +113,17 @@ func (b *Block) ToEthBlock() *types.Block {
 	res = res.WithBody(b.transactions, nil).WithWithdrawals(b.withdrawals)
 	return res
 }
+
+// PreBlock is a wrapper around Eth block that implements block.PreBlock interface and is
+// sufficient for dBFT operations.
+type PreBlock struct {
+	Block
+
+	data []byte
+}
+
+func (p *PreBlock) Data() []byte                    { return p.data }
+func (p *PreBlock) SetData(_ dbft.PrivateKey) error { return nil }
+
+// Verify implements PreBlock interface, it's a stub
+func (p *PreBlock) Verify(_ dbft.PublicKey, _ []byte) error { return nil }

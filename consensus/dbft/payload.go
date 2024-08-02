@@ -44,6 +44,7 @@ const (
 	prepareRequestType  messageType = 0x20
 	prepareResponseType messageType = 0x21
 	commitType          messageType = 0x30
+	preCommitType       messageType = 0x31
 	recoveryRequestType messageType = 0x40
 	recoveryMessageType messageType = 0x41
 )
@@ -78,6 +79,11 @@ func (p Payload) GetPrepareRequest() dbft.PrepareRequest[common.Hash] {
 // GetPrepareResponse implements the payload.ConsensusPayload interface.
 func (p Payload) GetPrepareResponse() dbft.PrepareResponse[common.Hash] {
 	return p.msgPayload.(*prepareResponse)
+}
+
+// GetPreCommit implements the payload.ConsensusPayload interface.
+func (p Payload) GetPreCommit() dbft.PreCommit {
+	return p.msgPayload.(*preCommit)
 }
 
 // GetCommit implements the payload.ConsensusPayload interface.
@@ -188,6 +194,8 @@ func (m *message) DecodeRLP(s *rlp.Stream) error {
 		m.msgPayload = new(prepareRequest)
 	case prepareResponseType:
 		m.msgPayload = new(prepareResponse)
+	case preCommitType:
+		m.msgPayload = new(preCommit)
 	case commitType:
 		m.msgPayload = &commit{}
 	case recoveryRequestType:
