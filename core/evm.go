@@ -43,7 +43,8 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 		beneficiary common.Address
 		baseFee     *big.Int
 		blobBaseFee *big.Int
-		random      *common.Hash
+		// use zero for random
+		random *common.Hash = &common.Hash{}
 	)
 
 	// If we don't have an explicit author (i.e. not mining), extract from the header
