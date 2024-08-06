@@ -97,7 +97,7 @@ func (m *recoveryMessage) AddPayload(p dbft.ConsensusPayload[common.Hash]) {
 		m.PreCommitPayloads = append(m.PreCommitPayloads, &preCommitCompact{
 			ValidatorIndex:   validator,
 			ViewNumber:       p.ViewNumber(),
-			Data:             p.GetPreCommit().(*preCommit).data,
+			Data:             p.GetPreCommit().(*preCommit).DataExt,
 			InvocationScript: p.(*Payload).Witness,
 		})
 	case dbft.CommitType:
@@ -183,7 +183,7 @@ func (m *recoveryMessage) GetPreCommits(p dbft.ConsensusPayload[common.Hash], va
 	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.PreCommitPayloads))
 
 	for i, c := range m.PreCommitPayloads {
-		cc := fromPayload(preCommitType, p.(*Payload), &preCommit{data: c.Data})
+		cc := fromPayload(preCommitType, p.(*Payload), &preCommit{DataExt: c.Data})
 		cc.SetValidatorIndex(uint16(c.ValidatorIndex))
 		cc.Sender = validators[c.ValidatorIndex].(*PublicKey).Account
 		cc.Witness = c.InvocationScript

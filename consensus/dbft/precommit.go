@@ -6,10 +6,10 @@ import (
 
 // preCommit represents dBFT PreCommit message.
 type preCommit struct {
-	data []byte
+	DataExt []byte
 }
 
 var _ dbft.PreCommit = (*preCommit)(nil)
 
 // Data implements the payload.PreCommit interface.
-func (p preCommit) Data() []byte { return p.data }
+func (p preCommit) Data() []byte { return p.DataExt }

@@ -629,7 +629,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash](0),
 		dbft.WithNewPreCommit[common.Hash](func(data []byte) dbft.PreCommit {
 			return &preCommit{
-				data: data,
+				DataExt: data,
 			}
 		}),
 		dbft.WithNewPreBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.PreBlock[common.Hash] {
