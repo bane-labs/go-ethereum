@@ -24,6 +24,7 @@ type (
 	// recoveryMessageAux is an auxiliary structure for recoveryMessage RLP encoding.
 	recoveryMessageAux struct {
 		PreparationPayloads []*preparationCompact
+		PreCommitPayloads   []*preCommitCompact
 		CommitPayloads      []*commitCompact
 		ChangeViewPayloads  []*changeViewCompact
 		PreparationHashExt  *common.Hash `rlp:"optional"`
@@ -240,6 +241,7 @@ func (m *recoveryMessage) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, &recoveryMessageAux{
 		PreparationPayloads: m.PreparationPayloads,
 		CommitPayloads:      m.CommitPayloads,
+		PreCommitPayloads:   m.PreCommitPayloads,
 		ChangeViewPayloads:  m.ChangeViewPayloads,
 		PreparationHashExt:  m.PreparationHashExt,
 		PrepareRequest:      m.PrepareRequest,
@@ -259,6 +261,7 @@ func (m *recoveryMessage) DecodeRLP(s *rlp.Stream) error {
 	}
 
 	m.PreparationPayloads = aux.PreparationPayloads
+	m.PreCommitPayloads = aux.PreCommitPayloads
 	m.CommitPayloads = aux.CommitPayloads
 	m.ChangeViewPayloads = aux.ChangeViewPayloads
 	m.PreparationHashExt = aux.PreparationHashExt
