@@ -2499,31 +2499,25 @@ func (bc *BlockChain) ProcessState(block *types.Block, statedb *state.StateDB) (
 	return statedb, receipts, logs, usedGas, nil
 }
 
-// VerifyBlock validates block body, processes block and validates the resulting state, receipts and gas used.
-func (bc *BlockChain) VerifyBlock(block *types.Block) (*state.StateDB, types.Receipts, error) {
+// VerifyPreBlock validates PreBlock body. This method does not perform in-block
+// transactions processing or resulting state/receipts/gas used validation since
+// it's aimed to work with encrypted Enveloped transactions.
+func (bc *BlockChain) VerifyPreBlock(block *types.Block) error {
 	err := bc.validator.ValidateBody(block)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to validate body: %w", err)
+		return fmt.Errorf("failed to validate body: %w", err)
 	}
 
 	statedb, parentHeader, err := bc.getParentState(block)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 
 	// verify baseFee
 	baseFee := eip1559.CalcBaseFeeDBFT(bc.chainConfig, parentHeader, statedb)
 	if block.BaseFee().Cmp(baseFee) != 0 {
-		return nil, nil, fmt.Errorf("failed to verify policy baseFee, expected: %v, current: %v", baseFee, block.BaseFee())
+		return fmt.Errorf("failed to verify policy baseFee, expected: %v, current: %v", baseFee, block.BaseFee())
 	}
 
-	statedb, receipts, _, usedGas, err := bc.ProcessState(block, statedb)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to process block state: %w", err)
-	}
-
-	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
-		return nil, nil, fmt.Errorf("failed to verify state: %w", err)
-	}
-	return statedb, receipts, nil
+	return nil
 }
