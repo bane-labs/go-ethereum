@@ -345,7 +345,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			// of code is guaranteed to be called once by dBFT.
 			dbftBlock.header.Extra = append(dbftBlock.header.Extra, c.getBlockWitness()...) // Extra version isn't changed, validators addresses and signatures are added.
 
-			res := dbftBlock.ToEthBlock()
+			res := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
+
 			// Firstly, notify chain about new block.
 			if err := c.blockQueue.PutBlock(res, dbftBlock.state, dbftBlock.receipts); err != nil {
 				// The block might already be added via the regular network
@@ -358,11 +359,80 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			c.postBlock(res.Header())
 		}),
 		dbft.WithNewBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
-			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
-			if prepareReq == nil {
-				panic("can't create new block from context: prepare request is nil")
+			var (
+				pre       = ctx.PreBlock().(*PreBlock)
+				sharedKey any
+			)
+			for _, c := range ctx.PreCommitPayloads {
+				if c != nil && c.ViewNumber() == ctx.ViewNumber {
+					// TODO: use PreCommits' data to collect and build shared key to decrypt encrypted transactions
+					// and then construct the list of final Block's transactions.
+					_ = c.GetPreCommit().Data()
+				}
 			}
-			return c.newBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
+
+			// TODO: ensure that NewBlockFromContext is called only after _all_ PreBlock's transactions are
+			// fetched on the dBFT library side.
+			var txx []*types.Transaction
+			for _, tx := range pre.transactions {
+				if isEnvelope(tx) {
+					outer, inner := (Envelope)(tx).Decrypt(sharedKey)
+					txx = append(txx, outer, inner) // TODO: ensure the outer/inner order.
+				} else {
+					txx = append(txx, tx)
+				}
+			}
+
+			// Recalculate Block state based on PreBlock and updated transactions list.
+			// Avoid changing the original PreHeader.
+			b := &PreBlock{
+				header:       pre.header,
+				transactions: txx,
+				withdrawals:  pre.withdrawals,
+			}
+			ethBlock := b.ToEthBlock()
+			state, receipts, _, _, err := c.chain.ProcessState(ethBlock, nil)
+			if err != nil {
+				log.Crit("failed to process final Block state from PreBlock",
+					"err", err,
+					"number", ethBlock.NumberU64(),
+					"seal hash", c.SealHash(ethBlock.Header()),
+					"parent hash", ethBlock.ParentHash().String(),
+					"intermediate merkle root", ethBlock.Root(),
+					"coinbase", ethBlock.Coinbase().String(),
+					"gas limit", ethBlock.GasLimit(),
+					"gas used", ethBlock.GasUsed(),
+					"difficulty", ethBlock.Difficulty().String(),
+					"mix digest", ethBlock.MixDigest().String(),
+					"nonce", ethBlock.Nonce(),
+					"time", ethBlock.Time(),
+					"uncle hash", ethBlock.UncleHash().String(),
+					"txs", len(ethBlock.Transactions()))
+			}
+			// Manually update header's next consensus based on fresh state.
+			h := ethBlock.Header()
+			nextVals, err := c.getValidators(nil, state, h)
+			if err != nil {
+				log.Crit("Failed to compute next block validators while constructing final Block",
+					"err", err)
+			}
+			h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
+
+			// Update state root, transactions root, receipts hash and bloom.
+			res, err := c.FinalizeAndAssemble(c.chain, h, state, txx, nil, receipts, ethBlock.Withdrawals())
+			if err != nil {
+				log.Crit("Failed to finalize and assemble final Block",
+					"err", err)
+			}
+
+			return &Block{
+				header:              res.Header(),
+				withdrawals:         res.Withdrawals(),
+				transactions:        res.Transactions(),
+				localSignatureBytes: nil,
+				state:               state,
+				receipts:            receipts,
+			}
 		}),
 		dbft.WithWatchOnly[common.Hash](func() bool {
 			return false
@@ -426,7 +496,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			// Recalculate block state provided by miner and update sealing proposal if context-related
 			// block fields were changed.
-			dbftBlock := c.newBlockFromContext(c.sealingProposal)
+			dbftBlock := c.newPreBlockFromContext(c.sealingProposal)
 			dbftBlock.transactions = c.sealingTransactions
 			ethBlock := dbftBlock.ToEthBlock()
 
@@ -569,49 +639,40 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			return nil
 		}),
-		dbft.WithVerifyBlock[common.Hash](func(b dbft.Block[common.Hash]) bool {
-			dbftBlock := b.(*Block)
+		dbft.WithVerifyPreBlock[common.Hash](func(b dbft.PreBlock[common.Hash]) bool {
+			dbftBlock := b.(*PreBlock)
 			parent := c.chain.CurrentBlock()
 			if parent.Number.Cmp(dbftBlock.header.Number) >= 0 {
-				log.Warn("proposed block has already outdated",
+				log.Warn("proposed PreBlock has already outdated",
 					"current block number", parent.Number.Uint64(),
 					"proposed block number", dbftBlock.header.Number)
 				return false
 			}
 			if c.lastTimestamp > dbftBlock.header.Time {
-				log.Warn("proposed block has small timestamp",
+				log.Warn("proposed PreBlock has small timestamp",
 					"ts", dbftBlock.header.Time,
 					"last", c.lastTimestamp)
 				return false
 			}
+
+			// TODO: consider an old-way verification for those blocks that do not
+			// contain enveloped transactions? I.e. verify state-dependent fields in
+			// this callback if there's no encrypted transactions in the proposed
+			// block.
 			ethBlock := dbftBlock.ToEthBlock()
-			state, receipts, err := c.chain.VerifyBlock(ethBlock)
+			err := c.chain.VerifyPreBlock(ethBlock)
 			if err != nil {
-				log.Warn("proposed block verification failed",
+				log.Warn("proposed PreBlock verification failed",
 					"err", err.Error())
 				return false
 			}
 
-			// Verify NextConsensus based on the state got after in-block transactions processing. Make a
-			// state copy in order to avoid state modifications potentially made by getValidators call.
-			// The original state will be committed if block is accepted.
-			nextVals, err := c.getValidators(nil, state.Copy(), dbftBlock.header)
-			if err != nil {
-				log.Crit("Failed to compute next block validators",
-					"err", err)
-			}
-			expectedMixDigest := dbftutil.GetNextConsensusHash(nextVals)
-			if dbftBlock.header.MixDigest != expectedMixDigest {
-				log.Warn("Invalid NextConsensus in the proposed block",
-					"expected", expectedMixDigest.String(),
-					"actual", dbftBlock.header.MixDigest.String())
-				return false
-			}
-
-			dbftBlock.state = state
-			dbftBlock.receipts = receipts
-
 			return true
+		}),
+		dbft.WithVerifyBlock[common.Hash](func(b dbft.Block[common.Hash]) bool {
+			log.Crit("unexpected call to VerifyBlock")
+
+			return false
 		}),
 		dbft.WithBroadcast[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) {
 			if err := p.(*Payload).Sign(c.dbft.Priv.(*Signer)); err != nil {
@@ -635,10 +696,12 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			if prepareReq == nil {
 				panic("can't create new block from context: prepare request is nil")
 			}
-			b := c.newBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
-			return &PreBlock{Block: *b}
+
+			return c.newPreBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
 		}),
-		dbft.WithProcessPreBlock(func(b dbft.PreBlock[common.Hash]) {}),
+		dbft.WithProcessPreBlock(func(b dbft.PreBlock[common.Hash]) {
+			// TODO: this callback seems to be redundant, consider removing it from dBFT.
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize dBFT: %w", err)
@@ -647,10 +710,10 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 	return c, nil
 }
 
-// newBlockFromContext is a dBFT callback that builds [Block] from the provided dBFT proposal
+// newPreBlockFromContext is a dBFT callback that builds [PreBlock] from the provided dBFT proposal
 // filling all appropriate fields from dBFT context. It doesn't set transactions or any
 // other information except the header itself.
-func (c *DBFT) newBlockFromContext(sealingProposal *types.Header) *Block {
+func (c *DBFT) newPreBlockFromContext(sealingProposal *types.Header) *PreBlock {
 	ctx := c.dbft.Context
 
 	// Avoid changing PrepareRequest itself.
@@ -664,13 +727,13 @@ func (c *DBFT) newBlockFromContext(sealingProposal *types.Header) *Block {
 
 	h.Difficulty = c.getDifficulty(int(ctx.PrimaryIndex), uint64(ctx.BlockIndex))
 
-	// Do not fill block's transactions. First of all, transactions are not
+	// Do not fill PreBlock's transactions. First of all, transactions are not
 	// needed for block signing or block signature verification. Secondly, some
 	// transactions may be missing by the moment of call to NewBlockFromContext
 	// (dBFT has only the full set of their hashes). Once all transactions are
 	// fetched and the commits are collected, SetTransactions callback will be
-	// called by dBFT library to properly initialize block's transactions.
-	res := &Block{
+	// called by dBFT library to properly initialize PreBlock's transactions.
+	res := &PreBlock{
 		header: h,
 	}
 	// Withdrawals are temporary empty if Shanghai is passed.
@@ -679,6 +742,7 @@ func (c *DBFT) newBlockFromContext(sealingProposal *types.Header) *Block {
 	}
 	return res
 }
+
 func (c *DBFT) getBlockWitness() []byte {
 	dctx := c.dbft.Context
 

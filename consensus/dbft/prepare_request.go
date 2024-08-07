@@ -8,6 +8,13 @@ import (
 
 // prepareRequest represents dBFT prepareRequest message.
 type prepareRequest struct {
+	// TODO: after anti-MEV extension addition we need to remove useless fields from
+	// PrepareRequest. Useless fields are those fields that depend on the final Block
+	// state:
+	//  - ReceiptHash
+	//  - MixDigest
+	//  - Root
+	// These fields can't be verified by CNs at PrepareRequest level with AMEV logic.
 	SealingProposal *types.Header
 	TxHashes        []common.Hash
 
