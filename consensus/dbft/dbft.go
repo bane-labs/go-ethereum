@@ -342,9 +342,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 
 			// Avoid copying and may safely change the block itself, as this part
-			// of code is guaranteed to be called once thanks to condition above,
-			// c.lastIndex is updated in postBlock callback every time new block
-			// with higher index is accepted.
+			// of code is guaranteed to be called once by dBFT.
 			dbftBlock.header.Extra = append(dbftBlock.header.Extra, c.getBlockWitness()...) // Extra version isn't changed, validators addresses and signatures are added.
 
 			res := dbftBlock.ToEthBlock()
