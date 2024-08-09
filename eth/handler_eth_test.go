@@ -444,7 +444,6 @@ func testTransactionPropagation(t *testing.T, protocol uint) {
 
 // Tests that transactions get propagated to attached peers, either via
 // reannouncements/retrievals.
-func TestTransactionReannounce67(t *testing.T) { testTransactionReannounce(t, eth.ETH67) }
 func TestTransactionReannounce68(t *testing.T) { testTransactionReannounce(t, eth.ETH68) }
 
 func testTransactionReannounce(t *testing.T, protocol uint) {
