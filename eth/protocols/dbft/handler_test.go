@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -28,9 +29,9 @@ func TestHandling(t *testing.T) {
 		key, _         = crypto.GenerateKey()
 		addr           = crypto.PubkeyToAddress(key.PublicKey)
 		bc             = &testBC{height: 10}
-		s1             = New(bc, nil)
-		s2             = New(bc, nil)
-		s3             = New(bc, nil)
+		s1             = New(bc, nil, func(u uint64, address common.Address) bool { return true })
+		s2             = New(bc, nil, func(u uint64, address common.Address) bool { return true })
+		s3             = New(bc, nil, func(u uint64, address common.Address) bool { return true })
 		p1             = p2p.NewPeer(enode.ID{1}, "peer1", nil)
 		p2             = p2p.NewPeer(enode.ID{2}, "peer2", nil)
 		p3             = p2p.NewPeer(enode.ID{3}, "peer3", nil)

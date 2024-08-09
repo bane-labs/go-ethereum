@@ -2,8 +2,8 @@
 pragma solidity ^0.8.25;
 
 interface IGovernance {
-    event Register(address candidate);
-    event Exit(address candidate);
+    event Activate(address candidate);
+    event Deactivate(address candidate);
     event Vote(address indexed voter, address indexed to, uint amount);
     event Revoke(address indexed voter, address indexed from, uint amount);
     event VoterClaim(address indexed voter, uint reward);
@@ -39,4 +39,13 @@ interface IGovernance {
 
     // compute and update cached consensus group
     function onPersist() external;
+
+    // activate a candidate in election
+    function activateCandidate(address candidate) external;
+
+    // deactivate a candidate in election
+    function deactivateCandidate(address candidate) external;
+
+    // get consensus size
+    function consensusSize() external view returns (uint);
 }

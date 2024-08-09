@@ -2,12 +2,15 @@
 pragma solidity ^0.8.25;
 
 import {Errors} from "./libraries/Errors.sol";
+import {IGovernance} from "./interfaces/IGovernance.sol";
 import {IPolicy} from "./interfaces/IPolicy.sol";
 import {GovernanceVote} from "./base/GovernanceVote.sol";
 import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 
 contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     address public constant SELF = 0x1212100000000000000000000000000000000002;
+    // governance contact
+    address public constant GOV = 0x1212000000000000000000000000000000000001;
     uint256 public constant DEFAULT_CANDIDATE_LIMIT = 2000;
 
     mapping(address => bool) public isBlackListed;
@@ -49,6 +52,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     {
         if (isBlackListed[_addr]) revert Errors.BlacklistExists();
         isBlackListed[_addr] = true;
+        IGovernance(GOV).deactivateCandidate(_addr);
         emit AddBlackList(_addr);
     }
 
@@ -66,6 +70,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     {
         if (!isBlackListed[_addr]) revert Errors.BlacklistNotExists();
         delete isBlackListed[_addr];
+        IGovernance(GOV).activateCandidate(_addr);
         emit RemoveBlackList(_addr);
     }
 
@@ -115,7 +120,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
             keccak256(abi.encode(_candidateLimit))
         )
     {
-        if (_candidateLimit <= 0) revert Errors.InvalidCandidateLimit();
+        if (_candidateLimit < IGovernance(GOV).consensusSize()) revert Errors.InvalidCandidateLimit();
         candidateLimit = _candidateLimit;
         emit SetCandidateLimit(_candidateLimit);
     }

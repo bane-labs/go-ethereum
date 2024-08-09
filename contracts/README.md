@@ -6,19 +6,33 @@ Neo X system contracts are a set of build-in Solidity contracts with predefined 
 
 These contracts are not deployed by transactions but allocated in the [genesis file](https://github.com/bane-labs/go-ethereum/blob/bane-main/config). The address setting of existing pre-compiled contracts is listed as below.
 
-|Address|Contract|
-|--|--|
-|`0x1212000000000000000000000000000000000000`|GovProxyAdmin|
-|`0x1212000000000000000000000000000000000001`|Governance Proxy|
-|`0x1212100000000000000000000000000000000001`|Governance Implemention|
-|`0x1212000000000000000000000000000000000002`|Policy Proxy|
-|`0x1212100000000000000000000000000000000002`|Policy Implemention|
-|`0x1212000000000000000000000000000000000003`|GovernanceReward Proxy|
-|`0x1212100000000000000000000000000000000003`|GovernanceReward Implemention|
-|`0x1212000000000000000000000000000000000004`|Bridge Proxy|
-|`0x1212100000000000000000000000000000000004`|Bridge Implemention|
-|`0x1212000000000000000000000000000000000005`|BridgeManagement Proxy|
-|`0x1212100000000000000000000000000000000005`|BridgeManagement Implemention|
+| Address                                      | Contract                                                      |
+|----------------------------------------------|---------------------------------------------------------------|
+| `0x1212000000000000000000000000000000000000` | GovProxyAdmin                                                 |
+| `0x1212000000000000000000000000000000000001` | Governance Proxy                                              |
+| `0x1212100000000000000000000000000000000001` | Governance Implementation                                     |
+| `0x1212000000000000000000000000000000000002` | Policy Proxy                                                  |
+| `0x1212100000000000000000000000000000000002` | Policy Implementation                                         |
+| `0x1212000000000000000000000000000000000003` | GovernanceReward Proxy                                        |
+| `0x1212100000000000000000000000000000000003` | GovernanceReward Implementation                               |
+| `0x1212000000000000000000000000000000000004` | Bridge Proxy                                                  |
+| `0x1212100000000000000000000000000000000004` | Bridge Implementation                                         |
+| `0x1212000000000000000000000000000000000005` | BridgeManagement Proxy                                        |
+| `0x1212100000000000000000000000000000000005` | BridgeManagement Implementation                               |
+| `0x1212000000000000000000000000000000000006` | Treasury                                                      |
+| `0x1212000000000000000000000000000000000007` | CommitteeMultiSig Proxy                                       |
+| `0x1212100000000000000000000000000000000007` | CommitteeMultiSig Implementation                              |
+| `0x1212000000000000000000000000000000000008` | Stub0 Proxy                                                   |
+| `0x1212100000000000000000000000000000000008` | Stub Implementation (shared between all Stub Proxy contracts) |
+| `0x1212000000000000000000000000000000000009` | Stub1 Proxy                                                   |
+| `0x121200000000000000000000000000000000000a` | Stub2 Proxy                                                   |
+| `0x121200000000000000000000000000000000000b` | Stub3 Proxy                                                   |
+| `0x121200000000000000000000000000000000000c` | Stub4 Proxy                                                   |
+| `0x121200000000000000000000000000000000000d` | Stub5 Proxy                                                   |
+| `0x121200000000000000000000000000000000000e` | Stub6 Proxy                                                   |
+| `0x121200000000000000000000000000000000000f` | Stub7 Proxy                                                   |
+| `0x1212000000000000000000000000000000000010` | Stub8 Proxy                                                   |
+| `0x1212000000000000000000000000000000000011` | Stub9 Proxy                                                   |
 
 ## GovernanceVote
 
@@ -34,7 +48,9 @@ Any contract inheriting `GovernanceVote.sol` can set up a consensus vote on meth
 
 [GovProxyAdmin](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovProxyAdmin.sol) controls the upgrade of other pre-compiled system contracts, since all of their `onlyOwner`/`onlyAdmin` point to `0x1212000000000000000000000000000000000000`.
 
-This contract inherits `GovernanceVote.sol` so that it requires a `50%` majority votes among current consensus to execute `upgradeAndCall(...)`, which means **more than half** of the **current consensus** votes for **the same contract implementation**.
+This contract inherits `GovernanceVote.sol` so that it requires a `50%` majority votes among current consensus to execute `scheduleUpgrade(...)`, which means **more than half** of the **current consensus** votes for **the same contract implementation**. 
+
+This contract inherits `TimelockController.sol` to implement a lock period (2 days on both Testnet and Mainnet) after the vote is passed before calling `executeUpgrade(...)` to upgrade the upgradable system contract. Anyone can call `executeUpgrade(...)`` after the lock period is reached.
 
 All of the upgradable Neo X system contracts use [ERC1967Proxy](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v5.0/contracts/proxy/ERC1967/ERC1967Proxy.sol) and [UUPSUpgradeable](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v5.0/contracts/proxy/utils/UUPSUpgradeable.sol).
 
@@ -44,7 +60,7 @@ All of the upgradable Neo X system contracts use [ERC1967Proxy](https://github.c
 
 An [election](#election) is, **GAS holders** vote for **registered candidates** and the Governance contract selects **top 7 candidates** as consensus nodes for **the next epoch\***.
 
-*<font size="2">Epoch is a unit of measurement for blocks. Currently, 1 epoch on testnet is the equivalent of `60480` blocks, which is the storage value `epochDuration` may be retrieved by contract calls.</font>
+*<font size="2">Epoch is a unit of measurement for blocks. Currently, 1 epoch is the equivalent of `60480` blocks on both Testnet and Mainnet, which is the storage value `epochDuration` may be retrieved by contract calls.</font>
 
 ### Candidate
 
@@ -52,13 +68,13 @@ An EOA account is allowed to become a candidate only after successful registrati
 
 1. Registrant invokes `registerCandidate(uint shareRate)` of `0x1212000000000000000000000000000000000001` as message sender;
 2. Registrant is an EOA account and not yet a candidate;
-3. Put at least `1000 GAS` deposit `value` along with the transaction as registration fee;
+3. Put `20000 GAS` (TestNet) or `1000 GAS` (MainNet) deposit `value` along with the transaction as registration fee;
 4. Provide a `shareRate` ranges from `0` to `1000` in parameters, which is a distribution ratio in thousandths. It determines how many rewards of the total that voters can share, and can not be changed until the candidate exits;
 5. (optional) Withdraw past deposits if it has registered and exited before.
 
 If all conditions are met, the new candidate will be added to the candidate list. Only registered candidates can receive votes to be elected as a consensus node.
 
-A candidate can exit without any permission, but it requires 2 epochs to pass until the candidate is allowed to withdraw its registeration deposit. During this period, the candidate can't receive any votes or become a consensus node, but voters can revoke their votes and choose other candidates to share rewards.
+A candidate can exit without any permission, but it requires 2 epochs to pass until the candidate is allowed to withdraw its registeration deposit. During this period, the candidate can't receive any votes or become a consensus node, but voters can revoke their votes and choose other candidates to share rewards. As a prevention of malicious resources occupation, a specific rate of the deposited value will be charged by Governance when a candidate tries to exit and claim back (50% for both Testnet and Mainnet).
 
 ### Election
 
@@ -76,19 +92,19 @@ If it is necessary to change the vote target (e.g. the current voted candidate e
 At the end of every election epoch, the 7 candidates with the highest amount of votes will be selected by Governance and become consensus nodes of the next epoch. However, this consensus set recalculation has two prerequisites:
 
 1. The size of candidate list is larger than `7`;
-2. The amount of total valid votes is higher than `3,000,000 GAS`.
+2. The amount of total valid votes is higher than `3,000,000 GAS` (TestNet) or `6,000,000 GAS` (MainNet).
 
 Otherwise, the consensus nodes of the next epoch will be the following predefined stand-by members.
 
-|Testnet Stand-by Address|
-|--|
-|`0xcbbeca26e89011e32ba25610520b20741b809007`|
-|`0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc`|
-|`0xd10f47396dc6c76ad53546158751582d3e2683ef`|
-|`0xa51fe05b0183d01607bf48c1718d1168a1c11171`|
-|`0x01b517b301bb143476da35bb4a1399500d925514`|
-|`0x7976ad987d572377d39fb4bab86c80e08b6f8327`|
-|`0xd711da2d8c71a801fc351163337656f1321343a0`|
+|Testnet Stand-by Address|Mainnet Stand-by Address|
+|--|--|
+|`0xcbbeca26e89011e32ba25610520b20741b809007`|`0x34a3b2abb99b4c128acf61dcbbd1fcac0b161652`|
+|`0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc`|`0x641ec1c538fa17e6ad8193c9b580f6850b114280`|
+|`0xd10f47396dc6c76ad53546158751582d3e2683ef`|`0xe3973f57e8a0aa312c1917ab0e6a05d8b6af6609`|
+|`0xa51fe05b0183d01607bf48c1718d1168a1c11171`|`0xa61ac4a4f006f4fceeb72ee0012a2d3367168d10`|
+|`0x01b517b301bb143476da35bb4a1399500d925514`|`0xe6d1a9db6a0893926bd81c0ef93aaaa543c116f0`|
+|`0x7976ad987d572377d39fb4bab86c80e08b6f8327`|`0x4fe8af0dbb633283d8e9703668142fd130f2818d`|
+|`0xd711da2d8c71a801fc351163337656f1321343a0`|`0x763452f65353fffe73d46539e51a6ddfc0e2c86a`|
 
 ### Reward
 
@@ -133,11 +149,37 @@ The current Neo X Policy maintains following parameters. All these policies are 
 
 |Name|Parameter|Usage|
 |--|--|--|
-|Address Blacklist|`isBlackListed`|Prevent blacklisted addresses to send transactions in Neo X network|
+|Address Blacklist|`isBlackListed`|Prevent blacklisted addresses to send transactions or be elected as block validators in Neo X network|
 |Minimum Transaction Tip Cap|`minGasTipCap`|Force transaction senders to pay a minimum tip to Neo X Governance|
+|Base Fee|`baseFee`|Burn a fixed part of transaction fees instead of following EIP-1559's dynamic evaluation|
+|Candidate Limit|`candidateLimit`|Limit the number of candidates in Governance registration and election|
 
 Since all the policy setters adopt the `needVote` modifier, any policy change requires more than 1/2 of the current Neo X consensus nodes votes to be collected.
 
 ## Bridge
 
 Refer to the [Bridge Contracts repository](https://github.com/bane-labs/bridge-evm-contracts).
+
+## Treasury
+
+[Treasury](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Treasury.sol) is a system contract assigned as the Neo X treasury for funding the native Bridge Proxy contract. The contract itself is rather simple and straightforward, its only purpose is to hold most of the initial Bridge funds distributed to this contract in the genesis block allocations. This contract is not upgradeable.
+
+This contract has a single `fundBridge()` method that transfers specified `amount` of GAS to the Bridge Proxy contract. This method requires more than 1/2 of the current Neo X consensus nodes votes to be collected before the invocation.
+
+## CommitteeMultiSig
+
+[CommitteeMultiSig](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/CommitteeMultiSig.sol) is a system contract assigned as an external contract invocation delegator based on Governance vote.
+
+Different from [GovProxyAdmin](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovProxyAdmin.sol), this contract can be used as an onchain multisig solution for any other contract management, which is upgradable and extendable.
+
+This contract has a single `execute(...)` method that adopts the `needVote` modifier, so it requires more than 1/2 of the current Neo X consensus nodes votes to be collected. Besides, it has to be mentioned that `execute(...)` is not `payable` and this contract has no `fallback()` or `receive()` function.
+
+## System contract stubs
+
+[Stub](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Stub.sol) is reserved system contract implementation that has pre-assigned addresses in the genesis allocations (Stup0-Stub9 Proxies). Once designated role for the stub contract is created, its code will be updated correspondingly to serve the needs of the Neo X chain.
+
+## DKG (in progress)
+
+DKG (in progress) is a system contract assigned as the Neo X Distributed Key Generation contract. This contract manages anti-MEV related cryptography operations needed for consensus nodes to participate in the Envelope transactions processing.
+
+This contract is not yet implemented, and thus, a contract stub is deployed in the network. Once the implementation is finished, this contract will be updated to provide fully-qualified DKG functionality to the consensus members.

@@ -3,22 +3,36 @@ pragma solidity ^0.8.25;
 
 import {GovernanceVote} from "./base/GovernanceVote.sol";
 import {GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 
 /**
  * @dev This is an auxiliary contract meant to be assigned as the admin of a {Proxy}.
  * Use GovernanceVote to manage upgrade
  */
-contract GovProxyAdmin is GovernanceVote {
+contract GovProxyAdmin is GovernanceVote, TimelockController {
+    //bytes4(keccak256(bytes('upgradeToAndCall(address,bytes)')))
+    bytes4 public constant UPGRADE_SELECTOR = 0x4f1ef286;
+
     /**
-     * @dev Upgrades the implementation in proxy to `newImplementation`, and
-     * subsequently executes the function call encoded in `data`. See
-     * {UUPSUpgradeable-upgradeToAndCall}.
+     * @dev This constructor does not affect the deployment code in the genesis file because we use GovProxyAdmin as a pre-deployment contract.
+     * This constructor is only there because the inheritance of TimelockController requires a constructor to compile properly.
+     */
+    constructor(
+        uint256 minDelay,
+        address[] memory proposers,
+        address[] memory executors,
+        address admin
+    ) TimelockController(minDelay, proposers, executors, admin) {}
+
+    /**
+     * @dev Schedule an operation that upgrades `proxy` to `newImplementation` and calls a function on the new implementation.
      *
      * Requirements:
      *
+     * - need voting pass
      * - This contract must be the admin of `proxy`.
      */
-    function upgradeAndCall(
+    function scheduleUpgrade(
         GovProxyUpgradeable proxy,
         address newImplementation,
         bytes memory data
@@ -34,6 +48,34 @@ contract GovProxyAdmin is GovernanceVote {
             keccak256(abi.encode(proxy, newImplementation, data))
         )
     {
-        proxy.upgradeToAndCall{value: msg.value}(newImplementation, data);
+        this.schedule(
+            address(proxy),
+            msg.value,
+            abi.encodeWithSelector(UPGRADE_SELECTOR, newImplementation, data),
+            0,
+            0,
+            getMinDelay()
+        );
+    }
+
+    /**
+     * @dev Execute an (ready) operation that upgrades `proxy` to `implementation` and calls a function on the new implementation.
+     *
+     * Requirements:
+     *
+     * - This contract must be the admin of `proxy`.
+     */
+    function executeUpgrade(
+        GovProxyUpgradeable proxy,
+        address newImplementation,
+        bytes memory data
+    ) public payable {
+        this.execute(
+            address(proxy),
+            msg.value,
+            abi.encodeWithSelector(UPGRADE_SELECTOR, newImplementation, data),
+            0,
+            0
+        );
     }
 }

@@ -14,14 +14,14 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
 
     address public constant SELF = 0x1212100000000000000000000000000000000001;
     // Policy contract
-    address public constant POLICY = 
-        0x1212000000000000000000000000000000000002;
+    address public constant POLICY = 0x1212000000000000000000000000000000000002;
     // GovReward contract
     address public constant GOV_REWARD =
         0x1212000000000000000000000000000000000003;
     address public constant SYS_CALL =
         0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
     uint public constant SCALE_FACTOR = 10 ** 18;
+    uint public constant EXIT_FEE_RATE = 50;
 
     uint public consensusSize;
     // the min balance for voting
@@ -65,6 +65,8 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     mapping(address => uint) public voteHeight;
     // candidate=>height=>number
     mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
+    // blacklisted candidate amount
+    uint public blacklistedCandidates;
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
@@ -96,14 +98,12 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
             if (voteAmount != 0) {
                 candidateGasPerVote[validators[i]] +=
                     (msg.value * shareRate * SCALE_FACTOR) /
-                    consensusSize /
-                    1000 /
-                    voteAmount;
+                    (consensusSize * 1000 * voteAmount);
             }
             if (shareRate < 1000) {
                 _safeTransferETH(
                     validators[i],
-                    (msg.value * (1000 - shareRate)) / consensusSize / 1000
+                    (msg.value * (1000 - shareRate)) / (consensusSize * 1000)
                 );
             }
         }
@@ -115,31 +115,23 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
 
     function registerCandidate(uint shareRate) external payable {
         if (tx.origin != msg.sender) revert Errors.OnlyEOA();
-        if (msg.value < registerFee) revert Errors.InsufficientValue();
+        if (msg.value != registerFee) revert Errors.InsufficientValue();
         if (shareRate > 1000) revert Errors.InvalidShareRate();
-        if (candidateList.length() >= IPolicy(POLICY).getCandidateLimit())
-            revert Errors.RegisterDisabled();
+        if (
+            candidateList.length() + blacklistedCandidates >=
+            IPolicy(POLICY).getCandidateLimit()
+        ) revert Errors.RegisterDisabled();
         if (exitHeightOf[msg.sender] > 0) revert Errors.LeftNotClaimed();
-        if (!candidateList.add(msg.sender)) revert Errors.CandidateExists();
-        if (receivedVotes[msg.sender] > 0) {
-            totalVotes += receivedVotes[msg.sender];
-        }
+        if (!_activateCandidate(msg.sender)) revert Errors.CandidateExists();
 
         // record share rate and balance
         shareRateOf[msg.sender] = shareRate;
         candidateBalanceOf[msg.sender] = msg.value;
-        emit Register(msg.sender);
     }
 
     function exitCandidate() external {
-        if (!candidateList.remove(msg.sender))
+        if (!_deactivateCandidate(msg.sender))
             revert Errors.CandidateNotExists();
-        // remove candidate list, balance still locked
-        exitHeightOf[msg.sender] = block.number;
-        if (receivedVotes[msg.sender] > 0) {
-            totalVotes -= receivedVotes[msg.sender];
-        }
-        emit Exit(msg.sender);
     }
 
     function withdrawRegisterFee() external nonReentrant {
@@ -151,7 +143,8 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         ) revert Errors.CandidateWithdrawNotAllowed();
 
         // send back balance
-        uint amount = candidateBalanceOf[msg.sender];
+        uint amount = (candidateBalanceOf[msg.sender] * (100 - EXIT_FEE_RATE)) /
+            100;
         delete candidateBalanceOf[msg.sender];
         delete exitHeightOf[msg.sender];
         delete shareRateOf[msg.sender];
@@ -229,6 +222,9 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         // update votes
         receivedVotes[candidateFrom] -= amount;
         receivedVotes[candidateTo] += amount;
+        if (!candidateList.contains(candidateFrom)) {
+            totalVotes += amount;
+        }
         votedTo[msg.sender] = candidateTo;
         voterGasPerVote[msg.sender] = candidateGasPerVote[candidateTo];
         voteHeight[msg.sender] = block.number;
@@ -277,8 +273,40 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         emit Persist(currentConsensus);
     }
 
+    function activateCandidate(address candidate) external {
+        if (msg.sender != POLICY) revert Errors.SideCallNotAllowed();
+        if (exitHeightOf[candidate] > 0 && _activateCandidate(candidate))
+            blacklistedCandidates -= 1;
+    }
+
+    function deactivateCandidate(address candidate) external {
+        if (msg.sender != POLICY) revert Errors.SideCallNotAllowed();
+        if (_deactivateCandidate(candidate)) blacklistedCandidates += 1;
+    }
+
     function getCurrentConsensus() public view returns (address[] memory) {
         return currentConsensus;
+    }
+
+    function _activateCandidate(address candidate) internal returns (bool) {
+        if (!candidateList.add(candidate)) return false;
+        delete exitHeightOf[candidate];
+        if (receivedVotes[candidate] > 0) {
+            totalVotes += receivedVotes[candidate];
+        }
+        emit Activate(candidate);
+        return true;
+    }
+
+    function _deactivateCandidate(address candidate) internal returns (bool) {
+        if (!candidateList.remove(candidate)) return false;
+        // remove candidate list, balance still locked
+        exitHeightOf[candidate] = block.number;
+        if (receivedVotes[candidate] > 0) {
+            totalVotes -= receivedVotes[candidate];
+        }
+        emit Deactivate(candidate);
+        return true;
     }
 
     function _computeReward(

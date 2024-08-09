@@ -13,6 +13,11 @@ abstract contract GovProxyUpgradeable is UUPSUpgradeable {
         _;
     }
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     function _authorizeUpgrade(
         address newImplementation
     ) internal virtual override onlyAdmin {}

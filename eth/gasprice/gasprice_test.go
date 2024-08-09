@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -182,6 +183,11 @@ func (b *testBackend) GetBlockByNumber(number uint64) *types.Block {
 	return b.chain.GetBlockByNumber(number)
 }
 
+func (b *testBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
+	header, err := b.HeaderByNumber(ctx, number)
+	return nil, header, err
+}
+
 func TestSuggestTipCap(t *testing.T) {
 	config := Config{
 		Blocks:     3,
@@ -203,7 +209,7 @@ func TestSuggestTipCap(t *testing.T) {
 		oracle := NewOracle(backend, config)
 
 		// The gas price sampled is: 32G, 31G, 30G, 29G, 28G, 27G
-		got, err := oracle.SuggestTipCap(context.Background())
+		got, _, err := oracle.SuggestTipCap(context.Background())
 		backend.teardown()
 		if err != nil {
 			t.Fatalf("Failed to retrieve recommended gas price: %v", err)

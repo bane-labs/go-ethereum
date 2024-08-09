@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -2460,10 +2461,8 @@ func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 	return time.Duration(bc.flushInterval.Load())
 }
 
-// ProcessState processes the state changes according to the Ethereum rules by running
-// the transaction messages using the statedb and applying any rewards to both
-// the processor (coinbase) and any included uncles. It doesn't persist any data.
-func (bc *BlockChain) ProcessState(block *types.Block) (*state.StateDB, types.Receipts, []*types.Log, uint64, error) {
+// getParentState retrieves statedb and parent header by hash or block number
+func (bc *BlockChain) getParentState(block *types.Block) (*state.StateDB, *types.Header, error) {
 	parent := bc.GetBlockByHash(block.ParentHash())
 	if parent == nil {
 		log.Error("failed to retrieve parent by hash to process block state",
@@ -2471,12 +2470,26 @@ func (bc *BlockChain) ProcessState(block *types.Block) (*state.StateDB, types.Re
 			"parent hash", block.ParentHash().String())
 		parent = bc.GetBlockByNumber(block.NumberU64() - 1)
 		if parent == nil {
-			return nil, nil, nil, 0, fmt.Errorf("failed to retrieve canonical parent by number to process block state (number %d, hash %s)", block.NumberU64()-1, block.ParentHash().String())
+			return nil, nil, fmt.Errorf("failed to retrieve canonical parent by number to process block state (number %d, hash %s)", block.NumberU64()-1, block.ParentHash().String())
 		}
 	}
 	statedb, err := bc.StateAt(parent.Root())
 	if err != nil {
-		return nil, nil, nil, 0, fmt.Errorf("failed to retrieve state at %d, %s: %w", parent.NumberU64(), parent.Root(), err)
+		return nil, parent.Header(), fmt.Errorf("failed to retrieve state at %d, %s: %w", parent.NumberU64(), parent.Root(), err)
+	}
+	return statedb, parent.Header(), nil
+}
+
+// ProcessState processes the state changes according to the Ethereum rules by running
+// the transaction messages using the statedb (if given) and applying any rewards to both
+// the processor (coinbase) and any included uncles. It doesn't persist any data.
+func (bc *BlockChain) ProcessState(block *types.Block, statedb *state.StateDB) (*state.StateDB, types.Receipts, []*types.Log, uint64, error) {
+	var err error
+	if statedb == nil {
+		statedb, _, err = bc.getParentState(block)
+		if err != nil {
+			return nil, nil, nil, 0, err
+		}
 	}
 
 	receipts, logs, usedGas, err := bc.processor.Process(block, statedb, bc.vmConfig)
@@ -2493,7 +2506,18 @@ func (bc *BlockChain) VerifyBlock(block *types.Block) (*state.StateDB, types.Rec
 		return nil, nil, fmt.Errorf("failed to validate body: %w", err)
 	}
 
-	statedb, receipts, _, usedGas, err := bc.ProcessState(block)
+	statedb, parentHeader, err := bc.getParentState(block)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// verify baseFee
+	baseFee := eip1559.CalcBaseFeeDBFT(bc.chainConfig, parentHeader, statedb)
+	if block.BaseFee().Cmp(baseFee) != 0 {
+		return nil, nil, fmt.Errorf("failed to verify policy baseFee, expected: %v, current: %v", baseFee, block.BaseFee())
+	}
+
+	statedb, receipts, _, usedGas, err := bc.ProcessState(block, statedb)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to process block state: %w", err)
 	}

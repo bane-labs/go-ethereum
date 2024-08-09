@@ -274,8 +274,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, gpoParams)
 
 	var (
-		bft       *dbft.DBFT
-		onPayload func(*dbftproto.Message) error
+		bft                 *dbft.DBFT
+		onPayload           func(*dbftproto.Message) error
+		isExtensibleAllowed func(uint64, common.Address) bool
 	)
 	switch t := eth.engine.(type) {
 	case *dbft.DBFT:
@@ -288,15 +289,16 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	if bft != nil {
 		onPayload = bft.OnPayload
+		isExtensibleAllowed = bft.IsExtensibleAllowed
 	}
-	eth.dbftSrv = dbftproto.New(ethapi.NewBlockChainAPI(eth.APIBackend), onPayload)
+	eth.dbftSrv = dbftproto.New(ethapi.NewBlockChainAPI(eth.APIBackend), onPayload, isExtensibleAllowed)
 	if bft != nil {
 		ethAPI := ethapi.NewBlockChainAPI(eth.APIBackend)
 		bft.WithEthAPI(ethAPI)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
 		bft.WithTxPool(eth.TxPool())
 		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
-		bft.WithMinerInterrupted(eth.miner.Syncing)
+		bft.WithMux(eth.EventMux())
 	}
 
 	// Setup DNS discovery iterators.
