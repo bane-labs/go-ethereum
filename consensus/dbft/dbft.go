@@ -402,9 +402,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 
 			var sorted = make([]common.Hash, len(hashes))
-			for i := range hashes {
-				sorted[i] = hashes[i]
-			}
+			copy(sorted, hashes)
 			sort.Slice(sorted, func(i, j int) bool {
 				return sorted[i].Cmp(sorted[j]) < 0
 			})

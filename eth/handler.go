@@ -768,7 +768,7 @@ func (h *handler) BroadcastRequestTxs(txHashes []common.Hash) {
 		}
 		// Broadcast RequestTxs
 		for _, peer := range peers {
-			err := peer.RequestTxs(txHashes)
+			err := peer.RequestTxs(txHashes[start:stop])
 			if err != nil {
 				log.Error("BroadcastRequestTxs", "txHashes", txHashes,
 					"peer", peer.ID(),
