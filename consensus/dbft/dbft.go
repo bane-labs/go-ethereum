@@ -1446,6 +1446,10 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 		log.Debug("Skip dBFT payload handling: dbft is inactive or not started yet", "hash", cp.Hash())
 		return nil
 	}
+	if c.syncing.Load() {
+		log.Debug("Skip dBFT payload handling due to sync", "hash", cp.Hash())
+		return nil
+	}
 
 	p := payloadFromMessage(cp)
 	// decode payload data into message
