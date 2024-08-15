@@ -107,20 +107,25 @@ define init_node
     @$(GETHBIN)/geth init --datadir $(1)/$(2) $(1)/$(GENESIS_WORK_JSON) > $(1)/$(2)/geth_init.log 2>&1
 endef
 
+#? geth: Build geth
 geth:
 	$(GORUN) build/ci.go install ./cmd/geth
 	@echo "Done building."
 	@echo "Run \"$(GETHBIN)/geth\" to launch geth."
 
+#? all: Build all packages and executables
 all:
 	$(GORUN) build/ci.go install
 
+#? test: Run the tests
 test: all
 	$(GORUN) build/ci.go test
 
+#? lint: Run certain pre-selected linters
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
 
+#? clean: Clean go cache, built executables, and the auto generated folder
 clean:
 	go clean -cache
 	rm -fr build/_workspace/pkg/ $(GETHBIN)/*
@@ -128,6 +133,7 @@ clean:
 # The devtools target installs tools required for 'go generate'.
 # You need to put $GOBIN (or $GOPATH/bin) in your PATH to use 'go generate'.
 
+#? devtools: Install recommended developer tools
 devtools:
 	env GOBIN= go install golang.org/x/tools/cmd/stringer@latest
 	env GOBIN= go install github.com/fjl/gencodec@latest
@@ -242,3 +248,9 @@ privnet_start_seven: $(SEVEN_DIR)/$(NODE1)/geth $(SEVEN_DIR)/$(NODE2)/geth $(SEV
 	$(call run_miner_node,$(SEVEN_DIR),$(NODE7),$(NODE7_PORT),$(NODE7_AUTH_PORT),$(NODE7_HTTP_PORT),$(NODE7_WS_PORT),$(NODE7))
 	$(call run_node,$(SEVEN_DIR),$(NODE8),$(NODE8_PORT),$(NODE8_AUTH_PORT),$(NODE8_HTTP_PORT),$(NODE8_WS_PORT))
 	@echo "OK! Check logs in $(SEVEN_DIR)/<node_dir>/geth_node.log"
+
+#? help: Get more info on make commands.
+help: Makefile
+	@echo " Choose a command run in go-ethereum:"
+	@sed -n 's/^#?//p' $< | column -t -s ':' |  sort | sed -e 's/^/ /'
+.PHONY: help
