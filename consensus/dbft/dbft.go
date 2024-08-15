@@ -185,7 +185,9 @@ type DBFT struct {
 	// downloader events. Downloader events are used to track miner's state since
 	// miner work may be temporary suspended due to the node sync.
 	mux *event.TypeMux
-	// syncing indicates whether the node is still syncing.
+	// syncing indicates whether the node is still syncing. This variable is updated
+	// irrespectively from the engine activity, and thus, may be relied on even when
+	// dBFT engine is not started.
 	syncing atomic.Bool
 
 	config *params.DBFTConfig // Consensus engine configuration parameters
@@ -712,6 +714,47 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 // the ongoing node sync process.
 func (c *DBFT) WithMux(mux *event.TypeMux) {
 	c.mux = mux
+
+	go c.syncWatcher()
+}
+
+// syncWatcher is a standalone loop aimed to be active irrespectively of dBFT engine
+// activity. It tracks the first chain sync attempt till its end.
+func (c *DBFT) syncWatcher() {
+	downloaderEvents := c.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
+	defer func() {
+		if !downloaderEvents.Closed() {
+			downloaderEvents.Unsubscribe()
+		}
+	}()
+	dlEventCh := downloaderEvents.Chan()
+
+events:
+	for {
+		select {
+		case <-c.quit:
+			break events
+		case ev := <-dlEventCh:
+			if ev == nil {
+				// Unsubscription done, stop listening.
+				dlEventCh = nil
+				break events
+			}
+			switch ev.Data.(type) {
+			case downloader.StartEvent:
+				c.syncing.Store(true)
+
+			case downloader.FailedEvent:
+				c.syncing.Store(false)
+
+			case downloader.DoneEvent:
+				c.syncing.Store(false)
+
+				// Stop reacting to downloader events.
+				downloaderEvents.Unsubscribe()
+			}
+		}
+	}
 }
 
 // WithTxPool initializes transaction pool API for DBFT interactions with memory pool
@@ -1244,7 +1287,7 @@ func (c *DBFT) eventLoop() {
 	// been broadcasted the events are unregistered and the loop is exited. This to
 	// prevent a major security vuln where external parties can DOS you with blocks
 	// and halt your dBFT operation for as long as the DOS continues.
-	downloaderEvents := c.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
+	downloaderEvents := c.mux.Subscribe(downloader.DoneEvent{}, downloader.FailedEvent{})
 	defer func() {
 		if !downloaderEvents.Closed() {
 			downloaderEvents.Unsubscribe()
@@ -1296,7 +1339,7 @@ events:
 		case tx := <-c.txs:
 			c.dbft.OnTransaction(&Transaction{Tx: tx})
 		case b := <-c.chainHeadEvents:
-			err := c.handleChainBlock(b.Block.Header())
+			err := c.handleChainBlock(b.Block.Header(), true)
 			if err != nil {
 				log.Warn("Failed to handle chain block",
 					"index", b.Block.NumberU64(),
@@ -1318,14 +1361,9 @@ events:
 				continue
 			}
 			switch ev.Data.(type) {
-			case downloader.StartEvent:
-				c.syncing.Store(true)
-
 			case downloader.FailedEvent:
-				c.syncing.Store(false)
-
 				latest := c.chain.CurrentHeader()
-				err := c.handleChainBlock(latest)
+				err := c.handleChainBlock(latest, false)
 				if err != nil {
 					log.Warn("Failed to handle latest chain block",
 						"index", latest.Number.Uint64(),
@@ -1334,13 +1372,11 @@ events:
 				}
 
 			case downloader.DoneEvent:
-				c.syncing.Store(false)
-
 				// Stop reacting to downloader events.
 				downloaderEvents.Unsubscribe()
 
 				latest := c.chain.CurrentHeader()
-				err := c.handleChainBlock(latest)
+				err := c.handleChainBlock(latest, false)
 				if err != nil {
 					log.Warn("Failed to handle latest chain block",
 						"index", latest.Number.Uint64(),
@@ -1361,7 +1397,7 @@ events:
 			}
 		}
 		if latestBlock.Block != nil {
-			err := c.handleChainBlock(latestBlock.Block.Header())
+			err := c.handleChainBlock(latestBlock.Block.Header(), true)
 			if err != nil {
 				log.Warn("Failed to handle latest chain block",
 					"index", latestBlock.Block.NumberU64(),
@@ -1503,11 +1539,11 @@ func (c *DBFT) newPayload(ctx *dbft.Context[common.Hash], t dbft.MessageType, ms
 	return cp
 }
 
-func (c *DBFT) handleChainBlock(h *types.Header) error {
+func (c *DBFT) handleChainBlock(h *types.Header, checkForSync bool) error {
 	// A short path if miner is not active and the node is in the process of block
 	// sync. In this case dBFT can't react properly on the newcoming blocks since no
 	// sealing task is expected from miner.
-	if c.syncing.Load() {
+	if checkForSync && c.syncing.Load() {
 		log.Info("Skipping dBFT block callback due to sync",
 			"block index", h.Number.Int64(),
 			"dbft index", c.dbft.BlockIndex,
