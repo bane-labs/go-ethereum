@@ -1518,6 +1518,10 @@ func (c *DBFT) validatePayload(p *Payload) error {
 // IsExtensibleAllowed determines if address is allowed to send extensible payloads
 // (only consensus payloads for now) at the specified height.
 func (c *DBFT) IsExtensibleAllowed(h uint64, u common.Address) bool {
+	// Can't verify extensible sender if the node has an outdated state.
+	if c.syncing.Load() {
+		return true
+	}
 	// Only validators are included into extensible whitelist for now.
 	validators, err := c.getValidators(&h, nil, nil)
 	if err != nil {
