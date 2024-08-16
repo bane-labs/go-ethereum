@@ -70,6 +70,72 @@ func (g *G1) Q() *big.Int {
 	return new(big.Int).Set(q)
 }
 
+// FromCompressed expects byte slice at least 48 bytes and given bytes returns a new point in G1.
+// Serialization rules are in line with zcash library. See below for details.
+// https://github.com/zcash/librustzcash/blob/master/pairing/src/bls12_381/README.md#serialization
+// https://docs.rs/bls12_381/0.1.1/bls12_381/notes/serialization/index.html
+func (g *G1) FromCompressed(compressed []byte) (*PointG1, error) {
+	if len(compressed) != 48 {
+		return nil, errors.New("input string length must be equal to 48 bytes")
+	}
+	var in [48]byte
+	copy(in[:], compressed[:])
+	if in[0]&(1<<7) == 0 {
+		return nil, errors.New("compression flag must be set")
+	}
+	if in[0]&(1<<6) != 0 {
+		// in[0] == (1 << 6) + (1 << 7)
+		for i, v := range in {
+			if (i == 0 && v != 0xc0) || (i != 0 && v != 0x00) {
+				return nil, errors.New("input string must be zero when infinity flag is set")
+			}
+		}
+		return g.Zero(), nil
+	}
+	a := in[0]&(1<<5) != 0
+	in[0] &= 0x1f
+	x, err := fromBytes(in[:])
+	if err != nil {
+		return nil, err
+	}
+	// solve curve equation
+	y := &fe{}
+	square(y, x)
+	mul(y, y, x)
+	add(y, y, b)
+	if ok := sqrt(y, y); !ok {
+		return nil, errors.New("point is not on curve")
+	}
+	if y.signBE() == a {
+		neg(y, y)
+	}
+	z := new(fe).one()
+	p := &PointG1{*x, *y, *z}
+	if !g.InCorrectSubgroup(p) {
+		return nil, errors.New("point is not on correct subgroup")
+	}
+	return p, nil
+}
+
+// ToCompressed given a G1 point returns bytes in compressed form of the point.
+// Serialization rules are in line with zcash library. See below for details.
+// https://github.com/zcash/librustzcash/blob/master/pairing/src/bls12_381/README.md#serialization
+// https://docs.rs/bls12_381/0.1.1/bls12_381/notes/serialization/index.html
+func (g *G1) ToCompressed(p *PointG1) []byte {
+	out := make([]byte, 48)
+	g.Affine(p)
+	if g.IsZero(p) {
+		out[0] |= 1 << 6
+	} else {
+		copy(out[:], toBytes(&p[0]))
+		if !p[1].signBE() {
+			out[0] |= 1 << 5
+		}
+	}
+	out[0] |= 1 << 7
+	return out
+}
+
 func (g *G1) fromBytesUnchecked(in []byte) (*PointG1, error) {
 	p0, err := fromBytes(in[:48])
 	if err != nil {

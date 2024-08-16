@@ -170,6 +170,13 @@ func (fe *fe) equal(fe2 *fe) bool {
 	return fe2[0] == fe[0] && fe2[1] == fe[1] && fe2[2] == fe[2] && fe2[3] == fe[3] && fe2[4] == fe[4] && fe2[5] == fe[5]
 }
 
+func (e *fe) signBE() bool {
+	negZ, z := new(fe), new(fe)
+	fromMont(z, e)
+	neg(negZ, z)
+	return negZ.cmp(z) > -1
+}
+
 func (e *fe) sign() bool {
 	r := new(fe)
 	fromMont(r, e)
@@ -236,6 +243,13 @@ func (e *fe2) isZero() bool {
 
 func (e *fe2) equal(e2 *fe2) bool {
 	return e[0].equal(&e2[0]) && e[1].equal(&e2[1])
+}
+
+func (e *fe2) signBE() bool {
+	if !e[1].isZero() {
+		return e[1].signBE()
+	}
+	return e[0].signBE()
 }
 
 func (e *fe2) sign() bool {
