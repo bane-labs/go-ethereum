@@ -714,6 +714,7 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 // the ongoing node sync process.
 func (c *DBFT) WithMux(mux *event.TypeMux) {
 	c.mux = mux
+	c.blockQueue.SetMux(mux)
 
 	go c.syncWatcher()
 }
@@ -776,8 +777,6 @@ func (c *DBFT) postBlock(h *types.Header) {
 		c.lastBlockHash = h.Hash()
 		c.lastBlockSealHash = HonestSealHash(h)
 		c.lastBlockExtra = h.Extra
-
-		c.blockQueue.ClearStaleTasks(num)
 	}
 }
 
@@ -1193,9 +1192,6 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	c.lastProposalLock.Lock()
 	c.lastProposal = b
 	c.lastProposalLock.Unlock()
-
-	sealHash := c.SealHash(b.Header())
-	c.blockQueue.SubmitTask(sealHash, b.NumberU64(), results, stop)
 
 	return nil
 }
