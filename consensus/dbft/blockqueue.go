@@ -3,6 +3,7 @@ package dbft
 import (
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
@@ -49,6 +50,10 @@ func (bq *blockQueue) PutBlock(b *types.Block, state *state.StateDB, receipts []
 			return fmt.Errorf("failed to insert block into chain: %w", err)
 		}
 		log.Info("Successfully inserted new block", "number", b.Number(), "hash", hash)
+
+		// Broadcast the block and announce chain insertion event
+		bq.mux.Post(core.NewMinedBlockEvent{Block: b})
+		
 		return nil
 	}
 
@@ -77,6 +82,9 @@ func (bq *blockQueue) PutBlock(b *types.Block, state *state.StateDB, receipts []
 		return fmt.Errorf("failed to write block into chain: %w", err)
 	}
 	log.Info("Successfully wrote new block with state", "number", b.Number(), "hash", hash)
+
+	// Broadcast the block and announce chain insertion event
+	bq.mux.Post(core.NewMinedBlockEvent{Block: b})
 
 	return nil
 }
