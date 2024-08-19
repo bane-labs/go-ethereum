@@ -36,7 +36,7 @@ type Service struct {
 }
 
 // New creates a new instance of [Service].
-func New(bc BlockChainAPI, onPayload func(*Message) error, isExtensibleAllowed func(uint64, common.Address) bool) *Service {
+func New(bc BlockChainAPI, onPayload func(*Message) error, isExtensibleAllowed func(uint64, common.Address) error) *Service {
 	poolLedger := newLedger(bc, isExtensibleAllowed)
 	return &Service{
 		bc:        bc,

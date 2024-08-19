@@ -34,6 +34,10 @@ const (
 	maxMessageSize = 4 * 1024 * 1024
 )
 
+// ErrSyncing is returned when operation can't be performed due to the fact that
+// the node is in the process of chain sync.
+var ErrSyncing = errors.New("node is syncing")
+
 var (
 	errMsgTooLarge    = errors.New("message too long")
 	errDecode         = errors.New("invalid message")

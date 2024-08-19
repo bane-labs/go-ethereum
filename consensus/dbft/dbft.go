@@ -1517,19 +1517,21 @@ func (c *DBFT) validatePayload(p *Payload) error {
 
 // IsExtensibleAllowed determines if address is allowed to send extensible payloads
 // (only consensus payloads for now) at the specified height.
-func (c *DBFT) IsExtensibleAllowed(h uint64, u common.Address) bool {
+func (c *DBFT) IsExtensibleAllowed(h uint64, u common.Address) error {
 	// Can't verify extensible sender if the node has an outdated state.
 	if c.syncing.Load() {
-		return true
+		return dbftproto.ErrSyncing
 	}
 	// Only validators are included into extensible whitelist for now.
 	validators, err := c.getValidators(&h, nil, nil)
 	if err != nil {
-		return false
+		return fmt.Errorf("failed to get validators: %w", err)
 	}
 	n := sort.Search(len(validators), func(i int) bool { return validators[i].Cmp(u) >= 0 })
-	res := n < len(validators)
-	return res
+	if n >= len(validators) {
+		return fmt.Errorf("address is not a validator")
+	}
+	return nil
 }
 
 func (c *DBFT) newPayload(ctx *dbft.Context[common.Hash], t dbft.MessageType, msg any) dbft.ConsensusPayload[common.Hash] {

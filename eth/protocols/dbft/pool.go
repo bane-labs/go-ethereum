@@ -14,7 +14,7 @@ import (
 // Ledger is enough of Blockchain to satisfy Pool.
 type Ledger interface {
 	BlockHeight() uint64
-	IsAddressAllowed(common.Address) bool
+	IsAddressAllowed(common.Address) error
 }
 
 // Pool represents a pool of extensible payloads.
@@ -90,8 +90,13 @@ func (p *Pool) verify(m *Message) (bool, error) {
 		}
 		return false, errInvalidHeight
 	}
-	if !p.chain.IsAddressAllowed(m.Sender) {
-		return false, errDisallowedSender
+	err = p.chain.IsAddressAllowed(m.Sender)
+	if err != nil {
+		// There's no reliable way to check sender for syncing node.
+		if errors.Is(err, ErrSyncing) {
+			return false, nil
+		}
+		return false, err
 	}
 	return true, nil
 }
@@ -120,7 +125,7 @@ func (p *Pool) RemoveStale(index uint64) {
 			old := elem
 			elem = elem.Next()
 
-			if m.ValidBlockEnd <= index || !p.chain.IsAddressAllowed(m.Sender) {
+			if m.ValidBlockEnd <= index || p.chain.IsAddressAllowed(m.Sender) != nil {
 				delete(p.verified, h)
 				lst.Remove(old)
 				continue
