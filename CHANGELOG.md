@@ -2,6 +2,24 @@
 
 This document outlines major changes between releases.
 
+## 0.2.2 "Disjunction" (21 Aug 2024)
+
+Another v0.2.0 compatible version of Neo X node that includes Geth update to v1.13.15
+and a set of bugfixes critical for both MainNet and T4 TestNet functioning.
+
+Node operators should update the binary for both T4 and MainNet nodes, no DB resync
+is needed.
+
+Improvements:
+ * base Geth source code is updated to v1.13.15 (#232)
+
+Bug fixed:
+ * panic during `PREVRANDAO` opcode handling (#289)
+ * duplicated transactions requests are sending by dBFT (#292)
+ * transaction receipts carrying non-canonical block hash (#232)
+ * race in sealed block submission to miner (#302)
+ * frequent peer disconnections due to invalid extensible dBFT payload sender (#298)
+
 ## 0.2.1 "Graphitization" (24 Jul 2024)
 
 A patch version compatible with v0.2.0 release of Neo X node that brings a set of
