@@ -4,6 +4,8 @@ go 1.23.0
 
 toolchain go1.23.1
 
+toolchain go1.22.0
+
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.2.0
 	github.com/Microsoft/go-winio v0.6.2
