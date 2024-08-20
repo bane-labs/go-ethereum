@@ -276,7 +276,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	var (
 		bft                 *dbft.DBFT
 		onPayload           func(*dbftproto.Message) error
-		isExtensibleAllowed func(uint64, common.Address) bool
+		isExtensibleAllowed func(uint64, common.Address) error
 	)
 	switch t := eth.engine.(type) {
 	case *dbft.DBFT:
