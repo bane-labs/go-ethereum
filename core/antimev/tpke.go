@@ -64,19 +64,17 @@ func (ks *AMEVKeyStore) AggregateAndDecryptWithShare(cts []*tpke.CipherText, msg
 	if ks.shared == nil {
 		return nil, ErrNoPubKey
 	}
-	// Try decrypt the aes keys
-	// TODO: Handle single keys that are not generated as committed
+	// Try decrypt the aes keys, err will be nil if the provided shares are valid,
+	// but it doesn't promise the following aes decryption will succeed
 	aesKeys, err := ks.shared.aggregateAndDecrypt(cts, inputs, ks.threshold, ks.scaler)
 	if err != nil {
 		return nil, err
 	}
-	// Decrypt the messages
+	// Decrypt the messages, err will be nil if the user encryption is valid
 	decryptedMsgs := make([][]byte, len(msg))
 	for i := 0; i < len(decryptedMsgs); i++ {
-		m, err := tpke.AESDecrypt(aesKeys[i], msg[i])
-		if err != nil {
-			return nil, err
-		}
+		// Set nil if the aes fails
+		m, _ := tpke.AESDecrypt(aesKeys[i], msg[i])
 		decryptedMsgs[i] = m
 	}
 	return decryptedMsgs, nil
@@ -88,19 +86,17 @@ func (ks *AMEVKeyStore) AggregateAndDecryptWithReshare(cts []*tpke.CipherText, m
 	if ks.reshared == nil {
 		return nil, ErrNoPubKey
 	}
-	// Try decrypt the aes keys
-	// TODO: Handle single keys that are not generated as committed
+	// Try decrypt the aes keys, err will be nil if the provided shares are valid,
+	// but it doesn't promise the following aes decryption will succeed
 	aesKeys, err := ks.reshared.aggregateAndDecrypt(cts, inputs, ks.threshold, ks.scaler)
 	if err != nil {
 		return nil, err
 	}
-	// Decrypt the messages
+	// Decrypt the messages, err will be nil if the user encryption is valid
 	decryptedMsgs := make([][]byte, len(msg))
 	for i := 0; i < len(decryptedMsgs); i++ {
-		raw, err := tpke.AESDecrypt(aesKeys[i], msg[i])
-		if err != nil {
-			return nil, err
-		}
+		// Set nil if the aes fails
+		raw, _ := tpke.AESDecrypt(aesKeys[i], msg[i])
 		decryptedMsgs[i] = raw
 	}
 	return decryptedMsgs, nil
@@ -164,7 +160,7 @@ func (tkg *thresholdKeyGroup) aggregateAndDecrypt(cts []*tpke.CipherText, inputs
 			s[i] = shares[v[i]]
 		}
 		// The parallel verification of decryption is contained, refer to crypto/tpke
-		// TODO: Return some information about single failures to help to pass them
+		// Any failure here means an invalid decryption combination, should continue
 		results, err := tpke.AggregateAndDecrypt(cts, m, s, tkg.globalPubKey, scaler)
 		if err == nil {
 			return results, nil

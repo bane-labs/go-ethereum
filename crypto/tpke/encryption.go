@@ -127,7 +127,9 @@ func AggregateAndDecrypt(cts []*CipherText, matrix [][]int, shares [][]*Decrypti
 		// Verify the decryption
 		go parallelVerify(i, cts[i], pub.pg1, rpk, ch)
 	}
-	// TODO: return the index of failed decryption for further usage
+	// Verification passes if the decrypted rpk contains the same r as the ciphertext declares
+	// If a user (the encryptor) use a different r to generate cMsg, no error will be detected
+	// here, but the following aes decryption will fail
 	for i := 0; i < len(cts); i++ {
 		err := <-ch
 		if err != nil {
@@ -140,7 +142,6 @@ func AggregateAndDecrypt(cts []*CipherText, matrix [][]int, shares [][]*Decrypti
 
 // parallelVerify verifies if the decrypted rpk is the same as the message declares
 func parallelVerify(index int, ct *CipherText, pk *bls12381.PointG1, rpk *bls12381.PointG1, ch chan<- error) {
-	// User sends an invalid commitment for his random r
 	g2 := bls12381.NewG2()
 	pairing := bls12381.NewPairingEngine()
 	// Decrypted rpk is not correct, e(pk,rG2)!=e(rpk,G2), decryption fails
