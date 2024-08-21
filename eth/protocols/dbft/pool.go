@@ -6,6 +6,7 @@ package dbft
 import (
 	"container/list"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -96,7 +97,7 @@ func (p *Pool) verify(m *Message) (bool, error) {
 		if errors.Is(err, ErrSyncing) {
 			return false, nil
 		}
-		return false, err
+		return false, fmt.Errorf("%w: %w", errDisallowedSender, err)
 	}
 	return true, nil
 }

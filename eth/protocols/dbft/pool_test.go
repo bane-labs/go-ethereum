@@ -22,6 +22,12 @@ func TestAddGet(t *testing.T) {
 		m := someMessage(t, 100, bc.goodAddrs[0], bc.badKey)
 		p.testAdd(t, false, invalidSig, m)
 	})
+	t.Run("syncing", func(t *testing.T) {
+		bc.syncing = true
+		m := bc.badMessage(t, 100)
+		p.testAdd(t, false, nil, m)
+		bc.syncing = false
+	})
 	t.Run("disallowed sender", func(t *testing.T) {
 		m := bc.badMessage(t, 100)
 		p.testAdd(t, false, errDisallowedSender, m)
@@ -106,6 +112,7 @@ type testChain struct {
 	badKey    *ecdsa.PrivateKey
 	goodAddrs []common.Address
 	badAddr   common.Address
+	syncing   bool
 }
 
 var errVerification = errors.New("verification failed")
@@ -120,13 +127,16 @@ func newTestChain() *testChain {
 		badAddr:   crypto.PubkeyToAddress(bk.PublicKey),
 	}
 }
-func (c *testChain) IsAddressAllowed(u common.Address) bool {
+func (c *testChain) IsAddressAllowed(u common.Address) error {
+	if c.syncing {
+		return ErrSyncing
+	}
 	for i := range c.goodAddrs {
 		if u == c.goodAddrs[i] {
-			return true
+			return nil
 		}
 	}
-	return false
+	return errors.New("address not allowed")
 }
 func (c *testChain) BlockHeight() uint64 { return c.height }
 
