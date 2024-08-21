@@ -356,6 +356,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					log.Warn("error on enqueue block", "error", err.Error())
 				}
 			}
+
+			c.postBlock(res.Header())
 		}),
 		dbft.WithNewBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
 			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
@@ -714,6 +716,7 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 // the ongoing node sync process.
 func (c *DBFT) WithMux(mux *event.TypeMux) {
 	c.mux = mux
+	c.blockQueue.SetMux(mux)
 
 	go c.syncWatcher()
 }
@@ -765,9 +768,7 @@ func (c *DBFT) WithTxPool(pool txPool) {
 
 // postBlock is a callback that updates latest accepted block data and resets
 // last proposal data. It must be called every time new block arrives from chain
-// or from consensus. It must be called strictly after new block persist since
-// NextConsensus calculation depends on the storage state. It also clears all
-// BlockQueue tasks up to the accepted block height.
+// or from consensus.
 func (c *DBFT) postBlock(h *types.Header) {
 	num := h.Number.Uint64()
 	if c.lastIndex < num {
@@ -776,8 +777,6 @@ func (c *DBFT) postBlock(h *types.Header) {
 		c.lastBlockHash = h.Hash()
 		c.lastBlockSealHash = HonestSealHash(h)
 		c.lastBlockExtra = h.Extra
-
-		c.blockQueue.ClearStaleTasks(num)
 	}
 }
 
@@ -1193,9 +1192,6 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 	c.lastProposalLock.Lock()
 	c.lastProposal = b
 	c.lastProposalLock.Unlock()
-
-	sealHash := c.SealHash(b.Header())
-	c.blockQueue.SubmitTask(sealHash, b.NumberU64(), results, stop)
 
 	return nil
 }
