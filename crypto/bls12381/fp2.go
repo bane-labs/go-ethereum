@@ -76,6 +76,11 @@ func (e *fp2) one() *fe2 {
 	return new(fe2).one()
 }
 
+func fp2Neg(c, a *fe2) {
+	neg(&c[0], &a[0])
+	neg(&c[1], &a[1])
+}
+
 func (e *fp2) add(c, a, b *fe2) {
 	add(&c[0], &a[0], &b[0])
 	add(&c[1], &a[1], &b[1])

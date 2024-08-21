@@ -79,6 +79,72 @@ func (g *G2) Q() *big.Int {
 	return new(big.Int).Set(q)
 }
 
+// FromCompressed expects byte slice at least 96 bytes and given bytes returns a new point in G2.
+// Serialization rules are in line with zcash library. See below for details.
+// https://github.com/zcash/librustzcash/blob/master/pairing/src/bls12_381/README.md#serialization
+// https://docs.rs/bls12_381/0.1.1/bls12_381/notes/serialization/index.html
+func (g *G2) FromCompressed(compressed []byte) (*PointG2, error) {
+	if len(compressed) != 2*48 {
+		return nil, errors.New("input string length must be equal to 96 bytes")
+	}
+	var in [2 * 48]byte
+	copy(in[:], compressed[:])
+	if in[0]&(1<<7) == 0 {
+		return nil, errors.New("compression flag must be set")
+	}
+	if in[0]&(1<<6) != 0 {
+		// in[0] == (1 << 6) + (1 << 7)
+		for i, v := range in {
+			if (i == 0 && v != 0xc0) || (i != 0 && v != 0x00) {
+				return nil, errors.New("input string must be zero when infinity flag is set")
+			}
+		}
+		return g.Zero(), nil
+	}
+	a := in[0]&(1<<5) != 0
+	in[0] &= 0x1f
+	x, err := g.f.fromBytes(in[:])
+	if err != nil {
+		return nil, err
+	}
+	// solve curve equation
+	y := &fe2{}
+	g.f.square(y, x)
+	g.f.mul(y, y, x)
+	g.f.add(y, y, b2)
+	if ok := g.f.sqrt(y, y); !ok {
+		return nil, errors.New("point is not on curve")
+	}
+	if y.signBE() == a {
+		fp2Neg(y, y)
+	}
+	z := new(fe2).one()
+	p := &PointG2{*x, *y, *z}
+	if !g.InCorrectSubgroup(p) {
+		return nil, errors.New("point is not on correct subgroup")
+	}
+	return p, nil
+}
+
+// ToCompressed given a G2 point returns bytes in compressed form of the point.
+// Serialization rules are in line with zcash library. See below for details.
+// https://github.com/zcash/librustzcash/blob/master/pairing/src/bls12_381/README.md#serialization
+// https://docs.rs/bls12_381/0.1.1/bls12_381/notes/serialization/index.html
+func (g *G2) ToCompressed(p *PointG2) []byte {
+	out := make([]byte, 2*48)
+	g.Affine(p)
+	if g.IsZero(p) {
+		out[0] |= 1 << 6
+	} else {
+		copy(out[:], g.f.toBytes(&p[0]))
+		if !p[1].signBE() {
+			out[0] |= 1 << 5
+		}
+	}
+	out[0] |= 1 << 7
+	return out
+}
+
 func (g *G2) fromBytesUnchecked(in []byte) (*PointG2, error) {
 	p0, err := g.f.fromBytes(in[:96])
 	if err != nil {
@@ -452,4 +518,27 @@ func (g *G2) MapToCurve(in []byte) (*PointG2, error) {
 	q := &PointG2{*x, *y, *z}
 	g.ClearCofactor(q)
 	return g.Affine(q), nil
+}
+
+// HashToCurve given a message and domain seperator tag returns the hash result
+// which is a valid curve point.
+// Implementation follows BLS12381G1_XMD:SHA-256_SSWU_RO_ suite at
+// https://tools.ietf.org/html/draft-irtf-cfrg-hash-to-curve-06
+func (g *G2) HashToCurve(msg, domain []byte) (*PointG2, error) {
+	hashRes, err := hashToFpXMDSHA256(msg, domain, 4)
+	if err != nil {
+		return nil, err
+	}
+	fp2 := g.f
+	u0, u1 := &fe2{*hashRes[0], *hashRes[1]}, &fe2{*hashRes[2], *hashRes[3]}
+	x0, y0 := swuMapG2(fp2, u0)
+	x1, y1 := swuMapG2(fp2, u1)
+	z0 := new(fe2).one()
+	z1 := new(fe2).one()
+	p0, p1 := &PointG2{*x0, *y0, *z0}, &PointG2{*x1, *y1, *z1}
+	g.Add(p0, p0, p1)
+	g.Affine(p0)
+	isogenyMapG2(fp2, &p0[0], &p0[1])
+	g.ClearCofactor(p0)
+	return g.Affine(p0), nil
 }
