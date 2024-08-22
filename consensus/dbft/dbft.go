@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"math/rand"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -39,10 +40,13 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/antimev"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/ecies"
+	"github.com/ethereum/go-ethereum/crypto/tpke"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -192,9 +196,10 @@ type DBFT struct {
 
 	config *params.DBFTConfig // Consensus engine configuration parameters
 
-	signer common.Address // Ethereum address of the signing key
-	signFn SignerFn       // Signer function to authorize hashes with
-	lock   sync.RWMutex   // Protects the signer field
+	signer       common.Address        // Ethereum address of the signing key
+	signFn       SignerFn              // Signer function to authorize hashes with
+	amevKeystore *antimev.AMEVKeyStore // anti-MEV keystore responsible for DKG and encrypted transactions decryption
+	lock         sync.RWMutex          // Protects signer, signFn and amevKeystore fields
 
 	dbft             *dbft.DBFT[common.Hash]
 	dbftStarted      atomic.Bool
@@ -277,15 +282,16 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithSecondsPerBlock[common.Hash](time.Duration(conf.SecondsPerBlock)*time.Second),
 		dbft.WithGetKeyPair[common.Hash](func(keys []dbft.PublicKey) (int, dbft.PrivateKey, dbft.PublicKey) {
 			c.lock.RLock()
-			signer, signFn := c.signer, c.signFn
+			signer, signFn, ks := c.signer, c.signFn, c.amevKeystore
 			c.lock.RUnlock()
 
 			// Bail out if we're unauthorized to sign a block
 			for i, validator := range keys {
 				if validator.(*PublicKey).Account.Cmp(signer) == 0 {
 					s := &Signer{
-						Signer: signer,
-						SignFn: signFn,
+						Signer:       signer,
+						SignFn:       signFn,
+						AmevKeystore: ks,
 					}
 					return i,
 						s,
@@ -359,18 +365,64 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			c.postBlock(res.Header())
 		}),
 		dbft.WithNewBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
-			var pre = ctx.PreBlock().(*PreBlock)
-			for _, c := range ctx.PreCommitPayloads {
-				if c != nil && c.ViewNumber() == ctx.ViewNumber {
-					// TODO: use PreCommits' data to collect and build shared key to decrypt encrypted transactions
-					// and then construct the list of final Block's transactions.
-					_ = c.GetPreCommit().Data()
+			var (
+				pre = ctx.PreBlock().(*PreBlock)
+				// TODO: shares verification should be performed earlier; we must ensure that the number of shares matches the
+				// number of Envelopes in this block.
+				shares = make(map[int][]*tpke.DecryptionShare)
+			)
+			for _, preC := range ctx.PreCommitPayloads {
+				if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
+					// Indexes in shares map must start with 1, thus increment validator's index.
+					shares[int(preC.ValidatorIndex())+1] = preC.GetPreCommit().(*preCommit).Shares()
 				}
 			}
+			encryptedTxs := decodeEnvelopesData(pre.transactions)
+			var (
+				encryptedKeys = make([]*tpke.CipherText, len(encryptedTxs))
+				encryptedMsgs = make([][]byte, len(encryptedTxs))
+			)
+			for i := range encryptedTxs {
+				encryptedKeys[i] = encryptedTxs[i].encryptedKey
+				encryptedMsgs[i] = encryptedTxs[i].encryptedMsg
+			}
+			c.lock.RLock()
+			ks := c.amevKeystore
+			c.lock.RUnlock()
 
-			var txx []*types.Transaction
-			for _, tx := range pre.transactions {
-				txx = append(txx, tx)
+			var decryptFailed bool
+			decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
+			if err != nil {
+				// We're toast, accept Envelopes instead of decrypted transactions.
+				log.Error("failed to decrypt Encrypted transactions: %w", err)
+				decryptFailed = true
+			}
+
+			var txx = make([]*types.Transaction, len(pre.transactions))
+		blockTxLoop:
+			for i := range pre.transactions {
+				if !isEnvelope(pre.transactions[i]) || decryptFailed {
+					txx[i] = pre.transactions[i]
+					continue
+				}
+				// TODO: get rid of this cycle, it may be done without cycle.
+				for j := range encryptedTxs {
+					if encryptedTxs[j].index > i {
+						txx[i] = pre.transactions[i]
+						continue blockTxLoop
+					}
+					if encryptedTxs[j].index < i {
+						continue
+					}
+					var decryptedTx = new(types.Transaction)
+					err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
+					if err != nil {
+						txx[i] = pre.transactions[i]
+						continue blockTxLoop
+					}
+					txx[i] = decryptedTx
+					continue blockTxLoop
+				}
 			}
 
 			// Recalculate Block state based on PreBlock and updated transactions list.
@@ -675,7 +727,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash](0),
 		dbft.WithNewPreCommit[common.Hash](func(data []byte) dbft.PreCommit {
 			return &preCommit{
-				DataExt: data,
+				dataExt: data,
 			}
 		}),
 		dbft.WithNewPreBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.PreBlock[common.Hash] {
@@ -1201,6 +1253,15 @@ func (c *DBFT) Authorize(signer common.Address, signFn SignerFn) {
 
 	c.signer = signer
 	c.signFn = signFn
+
+	// TODO: replace with key from the node configuration.
+	source := rand.NewSource(time.Now().UnixNano())
+	random := rand.New(source)
+	key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
+	n := len(c.config.StandByValidators)
+	m := crypto.GetBFTHonestNodeCount(n)
+	ks, _ := antimev.NewKeyStore(signer, key, n, m)
+	c.amevKeystore = ks
 }
 
 // Start initializes last block cache, fetches fresh proposal from miner, starts
