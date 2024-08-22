@@ -275,18 +275,28 @@ func (s londonSigner) Equal(s2 Signer) bool {
 }
 
 func (s londonSigner) SignatureValues(tx *Transaction, sig []byte) (R, S, V *big.Int, err error) {
-	txdata, ok := tx.inner.(*DynamicFeeTx)
-	if !ok {
+	switch txdata := tx.inner.(type) {
+	case *DynamicFeeTx:
+		// Check that chain ID of tx matches the signer. We also accept ID zero here,
+		// because it indicates that the chain ID was not specified in the tx.
+		if txdata.ChainID.Sign() != 0 && txdata.ChainID.Cmp(s.chainId) != 0 {
+			return nil, nil, nil, fmt.Errorf("%w: have %d want %d", ErrInvalidChainId, txdata.ChainID, s.chainId)
+		}
+		R, S, _ = decodeSignature(sig)
+		V = big.NewInt(int64(sig[64]))
+		return R, S, V, nil
+	case *EncryptedTx:
+		// Check that chain ID of tx matches the signer. We also accept ID zero here,
+		// because it indicates that the chain ID was not specified in the tx.
+		if txdata.ChainID.Sign() != 0 && txdata.ChainID.Cmp(s.chainId) != 0 {
+			return nil, nil, nil, fmt.Errorf("%w: have %d want %d", ErrInvalidChainId, txdata.ChainID, s.chainId)
+		}
+		R, S, _ = decodeSignature(sig)
+		V = big.NewInt(int64(sig[64]))
+		return R, S, V, nil
+	default:
 		return s.eip2930Signer.SignatureValues(tx, sig)
 	}
-	// Check that chain ID of tx matches the signer. We also accept ID zero here,
-	// because it indicates that the chain ID was not specified in the tx.
-	if txdata.ChainID.Sign() != 0 && txdata.ChainID.Cmp(s.chainId) != 0 {
-		return nil, nil, nil, fmt.Errorf("%w: have %d want %d", ErrInvalidChainId, txdata.ChainID, s.chainId)
-	}
-	R, S, _ = decodeSignature(sig)
-	V = big.NewInt(int64(sig[64]))
-	return R, S, V, nil
 }
 
 // Hash returns the hash to be signed by the sender.

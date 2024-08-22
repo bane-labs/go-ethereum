@@ -355,6 +355,95 @@ func allTransactionTypes(addr common.Address, config *params.ChainConfig) []txDa
 				"s": "0x7626abc15834f391a117c63450047309dbf84c5ce3e8e609b607062641e2de43",
 				"yParity": "0x0"
 			}`,
+		}, {
+			Tx: &types.EncryptedTx{
+				DynamicFeeTx: types.DynamicFeeTx{
+					ChainID:   config.ChainID,
+					Nonce:     5,
+					GasTipCap: big.NewInt(6),
+					GasFeeCap: big.NewInt(9),
+					Gas:       7,
+					To:        &addr,
+					Value:     big.NewInt(8),
+					Data:      []byte{0, 1, 2, 3, 4},
+					AccessList: types.AccessList{
+						types.AccessTuple{
+							Address:     common.Address{0x2},
+							StorageKeys: []common.Hash{types.EmptyRootHash},
+						},
+					},
+					V: big.NewInt(32),
+					R: big.NewInt(10),
+					S: big.NewInt(11),
+				}},
+			Want: `{
+				"blockHash": null,
+				"blockNumber": null,
+				"from": "0x71562b71999873db5b286df957af199ec94617f7",
+				"gas": "0x7",
+				"gasPrice": "0x9",
+				"maxFeePerGas": "0x9",
+				"maxPriorityFeePerGas": "0x6",
+				"hash": "0x6942f8a24cc15fb0c382e0167f44cdd485e9361176f06ddb1a5a696304d7bd34",
+				"input": "0x0001020304",
+				"nonce": "0x5",
+				"to": "0xdead000000000000000000000000000000000000",
+				"transactionIndex": null,
+				"value": "0x8",
+				"type": "0x7",
+				"accessList": [
+					{
+						"address": "0x0200000000000000000000000000000000000000",
+						"storageKeys": [
+							"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
+						]
+					}
+				],
+				"chainId": "0x539",
+				"v": "0x1",
+				"r": "0x465ab239d3f8c23abcef068d3f5f8e7802a98064c0bbddb27e2bc6fa91785003",
+				"s": "0x5a7dbc10aaeb09b4971ebe3a6db561e0af78180371fd2a7a8e73977948719ef0",
+				"yParity": "0x1"
+			}`,
+		}, {
+			Tx: &types.EncryptedTx{
+				DynamicFeeTx: types.DynamicFeeTx{
+					ChainID:    config.ChainID,
+					Nonce:      5,
+					GasTipCap:  big.NewInt(6),
+					GasFeeCap:  big.NewInt(9),
+					Gas:        7,
+					To:         nil,
+					Value:      big.NewInt(8),
+					Data:       []byte{0, 1, 2, 3, 4},
+					AccessList: types.AccessList{},
+					V:          big.NewInt(32),
+					R:          big.NewInt(10),
+					S:          big.NewInt(11),
+				},
+			},
+			Want: `{
+				"blockHash": null,
+				"blockNumber": null,
+				"from": "0x71562b71999873db5b286df957af199ec94617f7",
+				"gas": "0x7",
+				"gasPrice": "0x9",
+				"maxFeePerGas": "0x9",
+				"maxPriorityFeePerGas": "0x6",
+				"hash": "0x3f8604e85fc021595c19a2d3f39384552815f7e2f073056eb211e77503377b75",
+				"input": "0x0001020304",
+				"nonce": "0x5",
+				"to": null,
+				"transactionIndex": null,
+				"value": "0x8",
+				"type": "0x7",
+				"accessList": [],
+				"chainId": "0x539",
+				"v": "0x1",
+				"r": "0x53a1209cd7bb645a1a584680a6c32fc7fd3c511ec9c76f98637f7cd959b8eaa5",
+				"s": "0x4a7f2079e6863e9da526f3b167d507e23626ad695abc2d63e93e1d374df8f85f",
+				"yParity": "0x1"
+			}`,
 		},
 	}
 }

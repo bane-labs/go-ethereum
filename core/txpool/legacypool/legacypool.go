@@ -291,8 +291,7 @@ func New(config Config, chain BlockChain) *LegacyPool {
 // pool, specifically, whether it is a Legacy, AccessList or Dynamic transaction.
 func (pool *LegacyPool) Filter(tx *types.Transaction) bool {
 	switch tx.Type() {
-	// TODO: Will remove types.EncryptedTxType after tx type testing, EncryptedTx should not be in memory pool
-	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.EncryptedTxType:
+	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType:
 		return true
 	default:
 		return false
@@ -645,8 +644,7 @@ func (pool *LegacyPool) validateTxBasics(tx *types.Transaction, local bool) erro
 		Accept: 0 |
 			1<<types.LegacyTxType |
 			1<<types.AccessListTxType |
-			1<<types.DynamicFeeTxType |
-			1<<types.EncryptedTxType, // TODO: Will remove types.EncryptedTxType after tx type testing, EncryptedTx should not be in memory pool
+			1<<types.DynamicFeeTxType,
 		MaxSize: txMaxSize,
 		MinTip:  pool.gasTip.Load(),
 	}

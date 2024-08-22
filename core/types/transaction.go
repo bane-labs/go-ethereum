@@ -49,7 +49,7 @@ const (
 	DynamicFeeTxType = 0x02
 	BlobTxType       = 0x03
 
-	EncryptedTxType = 0x7 // EncryptedTx is identical to DynamicFeeTx except for the type field.
+	EncryptedTxType = 0x07 // EncryptedTx is identical to DynamicFeeTx except for the type field.
 )
 
 // Transaction is an Ethereum transaction.
