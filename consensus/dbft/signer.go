@@ -3,6 +3,7 @@ package dbft
 import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/antimev"
 	"github.com/nspcc-dev/dbft"
 )
 
@@ -14,8 +15,9 @@ type SignerFn func(signer accounts.Account, mimeType string, message []byte) ([]
 // Signer is a wrapper around Eth signer function that implements dbftCrypto.PrivateKey
 // interface and is sufficient for dBFT operations.
 type Signer struct {
-	Signer common.Address
-	SignFn SignerFn
+	Signer       common.Address
+	SignFn       SignerFn
+	AmevKeystore *antimev.AMEVKeyStore
 }
 
 // Sign implements dbftCrypto.PrivateKey interface and signs the given message.
