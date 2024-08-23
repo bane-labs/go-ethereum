@@ -1,13 +1,40 @@
 package tpke
 
 import (
+	"io"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/crypto/bls12381"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type PrivateKey struct {
 	fr *big.Int // A secret number aggregated from DKG sharing
+}
+
+var (
+	_ rlp.Encoder = &PrivateKey{}
+	_ rlp.Decoder = &PrivateKey{}
+)
+
+type privateKeyAux struct {
+	Fr []byte
+}
+
+func (priv *PrivateKey) EncodeRLP(w io.Writer) error {
+	return rlp.Encode(w, &privateKeyAux{
+		Fr: priv.fr.Bytes(),
+	})
+}
+
+// DecodeRLP decodes recoveryMessage from RLP.
+func (priv *PrivateKey) DecodeRLP(s *rlp.Stream) error {
+	aux := new(privateKeyAux)
+	if err := s.Decode(aux); err != nil {
+		return err
+	}
+	priv.fr = new(big.Int).SetBytes(aux.Fr)
+	return nil
 }
 
 func RandomPrivateKey() *PrivateKey {

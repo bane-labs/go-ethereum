@@ -1,11 +1,37 @@
 package tpke
 
 import (
+	"io"
 	"math/big"
+
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type Secret struct {
 	poly *Poly // a local secret polynomial for secret sharing
+}
+
+var (
+	_ rlp.Encoder = &Secret{}
+	_ rlp.Decoder = &Secret{}
+)
+
+type secretAux struct {
+	Poly *Poly
+}
+
+func (sec *Secret) EncodeRLP(w io.Writer) error {
+	return rlp.Encode(w, &secretAux{sec.poly})
+}
+
+// DecodeRLP decodes recoveryMessage from RLP.
+func (sec *Secret) DecodeRLP(s *rlp.Stream) error {
+	aux := &secretAux{}
+	if err := s.Decode(aux); err != nil {
+		return err
+	}
+	sec.poly = aux.Poly
+	return nil
 }
 
 // RandomSecret returns a random polynomial with zero δ

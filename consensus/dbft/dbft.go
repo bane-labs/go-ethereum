@@ -397,6 +397,10 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			ks := c.amevKeystore
 			c.lock.RUnlock()
 
+			// TODO: this decryption part must be moved to another dBFT callback.
+			// If AggregateAndDecryptWithShare returns error, then there's not enough
+			// correct shares and we need to wait more PreCommit messages. At the same time,
+			// calling AggregateAndDecryptWithShare for less than M shares is useless by default.
 			var decryptFailed bool
 			decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
 			if err != nil {

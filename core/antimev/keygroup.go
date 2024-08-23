@@ -2,6 +2,7 @@ package antimev
 
 import (
 	"errors"
+	"io"
 	"math/big"
 	"math/rand"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var (
@@ -38,6 +40,88 @@ type thresholdKeyGroup struct {
 type thresholdKeyHolder struct {
 	address   common.Address   // The account address
 	ethPubKey *ecies.PublicKey // The account public key
+}
+
+var (
+	_ rlp.Encoder = &thresholdKeyGroup{}
+	_ rlp.Decoder = &thresholdKeyGroup{}
+)
+
+type thresholdKeyGroupAux struct {
+	Holders []*thresholdKeyHolder // Members of this dkg group
+	Pvsses  []*tpke.PVSS          // Public verifiable sharing commitments
+
+	SelfAddr        common.Address // Self address
+	LocalSecret     *tpke.Secret   // The local random secret
+	ReceivedSecrets [][]byte       // Received secret sharings
+
+	GlobalPubKey *tpke.PublicKey  // The aggregated global public key
+	LocalPrvKey  *tpke.PrivateKey // The aggregated local secret key
+}
+
+func (tkg *thresholdKeyGroup) EncodeRLP(w io.Writer) error {
+	secrets := make([][]byte, len(tkg.receivedSecrets))
+	for i, s := range tkg.receivedSecrets {
+		secrets[i] = s.Bytes()
+	}
+	return rlp.Encode(w, thresholdKeyGroupAux{
+		Holders:         tkg.holders,
+		Pvsses:          tkg.pvsses,
+		SelfAddr:        tkg.selfAddr,
+		LocalSecret:     tkg.localSecret,
+		ReceivedSecrets: secrets,
+		GlobalPubKey:    tkg.globalPubKey,
+		LocalPrvKey:     tkg.localPrvKey,
+	})
+}
+
+// DecodeRLP decodes recoveryMessage from RLP.
+func (tkg *thresholdKeyGroup) DecodeRLP(s *rlp.Stream) error {
+	aux := &thresholdKeyGroupAux{}
+	if err := s.Decode(aux); err != nil {
+		return err
+	}
+	var secrets []*big.Int
+	for _, s := range aux.ReceivedSecrets {
+		secret := new(big.Int).SetBytes(s)
+		secrets = append(secrets, secret)
+	}
+	tkg.holders = aux.Holders
+	tkg.pvsses = aux.Pvsses
+	tkg.selfAddr = aux.SelfAddr
+	tkg.localSecret = aux.LocalSecret
+	tkg.receivedSecrets = secrets
+	tkg.globalPubKey = aux.GlobalPubKey
+	tkg.localPrvKey = aux.LocalPrvKey
+	return nil
+}
+
+var (
+	_ rlp.Encoder = &thresholdKeyHolder{}
+	_ rlp.Decoder = &thresholdKeyHolder{}
+)
+
+type thresholdKeyHolderAux struct {
+	Address   common.Address   // The account address
+	EthPubKey *ecies.PublicKey // The account public key
+}
+
+func (h *thresholdKeyHolder) EncodeRLP(w io.Writer) error {
+	return rlp.Encode(w, &thresholdKeyHolderAux{
+		Address:   h.address,
+		EthPubKey: h.ethPubKey,
+	})
+}
+
+// DecodeRLP decodes recoveryMessage from RLP.
+func (h *thresholdKeyHolder) DecodeRLP(s *rlp.Stream) error {
+	aux := &thresholdKeyHolderAux{}
+	if err := s.Decode(aux); err != nil {
+		return err
+	}
+	h.address = aux.Address
+	h.ethPubKey = aux.EthPubKey
+	return nil
 }
 
 // newThresholdKeyGroup returns a new key group with the input address list.

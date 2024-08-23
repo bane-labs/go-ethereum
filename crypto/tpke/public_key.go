@@ -1,13 +1,41 @@
 package tpke
 
 import (
+	"io"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/crypto/bls12381"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type PublicKey struct {
 	pg1 *bls12381.PointG1 // A public value for tpke encryption
+}
+
+var (
+	_ rlp.Encoder = &PublicKey{}
+	_ rlp.Decoder = &PublicKey{}
+)
+
+type publicKeyAux struct {
+	Pg1 []byte
+}
+
+func (pub *PublicKey) EncodeRLP(w io.Writer) error {
+	return rlp.Encode(w, &publicKeyAux{
+		Pg1: bls12381.NewG1().ToBytes(pub.pg1),
+	})
+}
+
+// DecodeRLP decodes recoveryMessage from RLP.
+func (pub *PublicKey) DecodeRLP(s *rlp.Stream) error {
+	aux := new(publicKeyAux)
+	if err := s.Decode(aux); err != nil {
+		return err
+	}
+	var err error
+	pub.pg1, err = bls12381.NewG1().FromBytes(aux.Pg1)
+	return err
 }
 
 // NewGlobalPublicKey aggregates and returns a PublicKey

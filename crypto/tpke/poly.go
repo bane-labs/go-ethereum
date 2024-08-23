@@ -1,13 +1,48 @@
 package tpke
 
 import (
+	"io"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/crypto/bls12381"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type Poly struct {
 	coeff []*big.Int
+}
+
+var (
+	_ rlp.Encoder = &Poly{}
+	_ rlp.Decoder = &Poly{}
+)
+
+type polyAux struct {
+	Coeff [][]byte
+}
+
+func (p *Poly) EncodeRLP(w io.Writer) error {
+	coeffs := make([][]byte, len(p.coeff))
+	for i := range p.coeff {
+		coeffs[i] = p.coeff[i].Bytes()
+	}
+	return rlp.Encode(w, &polyAux{
+		Coeff: coeffs,
+	})
+}
+
+// DecodeRLP decodes recoveryMessage from RLP.
+func (p *Poly) DecodeRLP(s *rlp.Stream) error {
+	aux := new(polyAux)
+	if err := s.Decode(&aux); err != nil {
+		return err
+	}
+	coeffs := make([]*big.Int, len(aux.Coeff))
+	for i := range aux.Coeff {
+		coeffs[i] = new(big.Int).SetBytes(aux.Coeff[i])
+	}
+	p.coeff = coeffs
+	return nil
 }
 
 func randomPoly(degree int) *Poly {
@@ -69,6 +104,43 @@ func (p *Poly) commitment() *Commitment {
 
 type Commitment struct {
 	coeff []*bls12381.PointG1
+}
+
+var (
+	_ rlp.Encoder = &Commitment{}
+	_ rlp.Decoder = &Commitment{}
+)
+
+type commitmentAux struct {
+	Coeff [][]byte
+}
+
+func (c *Commitment) EncodeRLP(w io.Writer) error {
+	coeff := make([][]byte, len(c.coeff))
+	for i := range c.coeff {
+		coeff[i] = bls12381.NewG1().ToBytes(c.coeff[i])
+	}
+	return rlp.Encode(w, &commitmentAux{
+		Coeff: coeff,
+	})
+}
+
+// DecodeRLP decodes recoveryMessage from RLP.
+func (c *Commitment) DecodeRLP(s *rlp.Stream) error {
+	aux := new(commitmentAux)
+	if err := s.Decode(&aux); err != nil {
+		return err
+	}
+	coeff := make([]*bls12381.PointG1, len(aux.Coeff))
+	for i := range aux.Coeff {
+		var err error
+		coeff[i], err = bls12381.NewG1().FromBytes(aux.Coeff[i])
+		if err != nil {
+			return err
+		}
+	}
+	c.coeff = coeff
+	return nil
 }
 
 func (c *Commitment) Clone() *Commitment {

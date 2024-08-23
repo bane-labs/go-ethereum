@@ -1,9 +1,11 @@
 package tpke
 
 import (
+	"io"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/crypto/bls12381"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type PVSS struct {
@@ -11,6 +13,40 @@ type PVSS struct {
 	r1         *bls12381.PointG1   // The commitment of of random r
 	r2         *bls12381.PointG2   // The verifiable commitment of of r1
 	bigf       []*bls12381.PointG1 // The commitment of secret sharing
+}
+
+var (
+	_ rlp.Encoder = &PVSS{}
+	_ rlp.Decoder = &PVSS{}
+)
+
+type pvssAux struct {
+	Commitment *Commitment         // The commitment of local secret polynomial
+	R1         *bls12381.PointG1   // The commitment of of random r
+	R2         *bls12381.PointG2   // The verifiable commitment of of r1
+	Bigf       []*bls12381.PointG1 // The commitment of secret sharing
+}
+
+func (p *PVSS) EncodeRLP(w io.Writer) error {
+	return rlp.Encode(w, &pvssAux{
+		Commitment: p.commitment,
+		R1:         p.r1,
+		R2:         p.r2,
+		Bigf:       p.bigf,
+	})
+}
+
+// DecodeRLP decodes recoveryMessage from RLP.
+func (p *PVSS) DecodeRLP(s *rlp.Stream) error {
+	aux := &pvssAux{}
+	if err := s.Decode(aux); err != nil {
+		return err
+	}
+	p.commitment = aux.Commitment
+	p.r1 = aux.R1
+	p.r2 = aux.R2
+	p.bigf = aux.Bigf
+	return nil
 }
 
 // GenerateSecretShares takes a random r to generate PVSS
