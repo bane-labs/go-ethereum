@@ -227,8 +227,10 @@ type DBFT struct {
 	sealingTransactions types.Transactions
 
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
-	chain    ChainHeaderReader
-	txpool   txPool
+	chain      ChainHeaderReader
+	txpool     txPool
+	legacypool legacyPool
+
 	quit     chan struct{}
 	finished chan struct{}
 
@@ -416,6 +418,11 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					}
 					var decryptedTx = new(types.Transaction)
 					err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
+					if err != nil {
+						txx[i] = pre.transactions[i]
+						continue blockTxLoop
+					}
+					err = c.legacypool.ValidateDecryptedTx(decryptedTx, pre.transactions[i])
 					if err != nil {
 						txx[i] = pre.transactions[i]
 						continue blockTxLoop
@@ -880,6 +887,11 @@ events:
 // (fetching unknown transactions).
 func (c *DBFT) WithTxPool(pool txPool) {
 	c.txpool = pool
+}
+
+// WithLegacyPool initializes transaction legacy pool API for ValidateDecryptedTx
+func (c *DBFT) WithLegacyPool(pool legacyPool) {
+	c.legacypool = pool
 }
 
 // postBlock is a callback that updates latest accepted block data and resets
