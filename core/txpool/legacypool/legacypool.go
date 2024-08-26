@@ -19,6 +19,7 @@ package legacypool
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"sort"
@@ -41,6 +42,10 @@ import (
 )
 
 const (
+	// TxMinSize is the minimum size a single transaction can have.
+	// The size of a simple gas transfer with 1 gwei is 105 bytes, we use this as the minimum tx.
+	TxMinSize = 105
+
 	// txSlotSize is used to calculate how many data slots a single transaction
 	// takes up based on its size. The slots are used as DoS protection, ensuring
 	// that validating a new transaction remains a constant operation (in reality
@@ -2010,4 +2015,34 @@ func (t *lookup) RemotesBelowTip(threshold *big.Int) types.Transactions {
 // numSlots calculates the number of slots needed for a single transaction.
 func numSlots(tx *types.Transaction) int {
 	return int((tx.Size() + txSlotSize - 1) / txSlotSize)
+}
+
+// ValidateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
+func (p *LegacyPool) ValidateDecryptedTx(decryptedTx *types.Transaction, envelope *types.Transaction) error {
+	err := p.validateTxBasics(decryptedTx, false)
+	if err != nil {
+		return err
+	}
+	// Make sure the transaction is signed properly and has the same sender and nonce with envelope
+	if decryptedTx.Nonce() != envelope.Nonce() {
+		return fmt.Errorf("decryptedTx nonce mismatch: decryptedNonce %v, envelopeNonce %v", decryptedTx.Nonce(), envelope.Nonce())
+	}
+	// Ensure the gasprice is high enough to replace the envelope transaction
+	baseFee := p.currentHead.Load().BaseFee
+	if decryptedTx.EffectiveGasTipCmp(envelope, baseFee) < 0 {
+		return fmt.Errorf("decryptedTx underpriced: EffectiveGasTip needed %v, EffectiveGasTip permitted %v", envelope.EffectiveGasTipValue(baseFee), decryptedTx.EffectiveGasTipValue(baseFee))
+	}
+	signer := p.signer
+	envelopeFrom, err := types.Sender(signer, envelope)
+	if err != nil {
+		return txpool.ErrInvalidSender
+	}
+	decryptedFrom, err := types.Sender(signer, decryptedTx)
+	if err != nil {
+		return txpool.ErrInvalidSender
+	}
+	if envelopeFrom != decryptedFrom {
+		return fmt.Errorf("decryptedTx from mismatch: decryptedFrom %v, envelopeFrom %v", decryptedFrom, envelopeFrom)
+	}
+	return p.validateTx(decryptedTx, false)
 }
