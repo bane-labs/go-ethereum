@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"math/rand"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -45,7 +44,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
@@ -1259,21 +1257,13 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 
 // Authorize injects a private key into the consensus engine to mint new blocks
 // with.
-func (c *DBFT) Authorize(signer common.Address, signFn SignerFn) {
+func (c *DBFT) Authorize(signer common.Address, signFn SignerFn, amevKeystore *antimev.AMEVKeyStore) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
 	c.signer = signer
 	c.signFn = signFn
-
-	// TODO: replace with key from the node configuration.
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
-	key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-	n := len(c.config.StandByValidators)
-	m := crypto.GetBFTHonestNodeCount(n)
-	ks, _ := antimev.NewKeyStore(signer, key, n, m)
-	c.amevKeystore = ks
+	c.amevKeystore = amevKeystore
 }
 
 // Start initializes last block cache, fetches fresh proposal from miner, starts

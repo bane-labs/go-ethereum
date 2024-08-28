@@ -502,6 +502,14 @@ var (
 		Category: flags.AccountCategory,
 	}
 
+	// Anti-MEV settings.
+	AMEVKeystoreFlag = &cli.StringFlag{
+		Name:     "amev.keystore",
+		Usage:    "Path to anti-MEV keystore",
+		Value:    "",
+		Category: flags.AMEVCategory,
+	}
+
 	// EVM settings
 	VMEnableDebugFlag = &cli.BoolFlag{
 		Name:     "vmdebug",
@@ -1859,6 +1867,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	log.Info("Initializing the KZG library", "backend", ctx.String(CryptoKZGFlag.Name))
 	if err := kzg4844.UseCKZG(ctx.String(CryptoKZGFlag.Name) == "ckzg"); err != nil {
 		Fatalf("Failed to set KZG library implementation to %s: %v", ctx.String(CryptoKZGFlag.Name), err)
+	}
+	if ctx.IsSet(CacheNoPrefetchFlag.Name) {
+		cfg.NoPrefetch = ctx.Bool(CacheNoPrefetchFlag.Name)
+	}
+	if ctx.IsSet(AMEVKeystoreFlag.Name) {
+		cfg.AMEVKeystorePath = ctx.String(AMEVKeystoreFlag.Name)
 	}
 }
 

@@ -1,8 +1,11 @@
 package antimev
 
 import (
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"math/big"
+	"os"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
@@ -107,6 +110,24 @@ func (ks *AMEVKeyStore) FromBytes(buf []byte) error {
 	//ks.sharing = aux.Sharing
 
 	return nil
+}
+
+// LoadAMEVKeyStore loads hex-encoded anti-MEV keystore from the provided filepath.
+func LoadAMEVKeyStore(file string) (*AMEVKeyStore, error) {
+	buf, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	ksBytes, err := hex.DecodeString(string(buf))
+	if err != nil {
+		return nil, fmt.Errorf("hex decoding failed: %w", err)
+	}
+	var ks = new(AMEVKeyStore)
+	err = ks.FromBytes(ksBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decoding from bytes failed: %w", err)
+	}
+	return ks, nil
 }
 
 // OnValidatorList initializes sharing and resharing, should be called
