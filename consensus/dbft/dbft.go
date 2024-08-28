@@ -438,7 +438,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				withdrawals:  pre.withdrawals,
 			}
 			ethBlock := b.ToEthBlock()
-			state, receipts, _, _, err := c.chain.ProcessState(ethBlock, nil)
+			state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
 			if err != nil {
 				log.Crit("failed to process final Block state from PreBlock",
 					"err", err,
@@ -456,8 +456,10 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					"uncle hash", ethBlock.UncleHash().String(),
 					"txs", len(ethBlock.Transactions()))
 			}
-			// Manually update header's next consensus based on fresh state.
+			// Manually update header's fields based on fresh state.
 			h := ethBlock.Header()
+			h.GasUsed = gasUsed
+
 			// Use a copy of state to avoid changing block's state. The original state will be reused
 			// during block insertion into chain.
 			nextVals, err := c.getValidators(nil, state.Copy(), h)
@@ -549,7 +551,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			dbftBlock.transactions = c.sealingTransactions
 			ethBlock := dbftBlock.ToEthBlock()
 
-			state, _, _, _, err := c.chain.ProcessState(ethBlock, nil)
+			state, _, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
 			if err != nil {
 				log.Crit("failed to process state from proposal",
 					"err", err,
@@ -569,6 +571,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 
 			header := ethBlock.Header()
+			header.GasUsed = gasUsed
 			header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
 
 			c.sealingProposal = header
