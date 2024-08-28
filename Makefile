@@ -78,7 +78,7 @@ define run_bootnode
 endef
 
 define run_miner_node
-	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)")
+	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)" --amev.keystore=$(1)/$(7)/amev_keystore.txt)
 endef
 
 define run_node

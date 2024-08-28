@@ -414,6 +414,10 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					if encryptedTxs[j].index < i {
 						continue
 					}
+					log.Info("Envelope data decrypted",
+						"envelope hash", pre.transactions[i].Hash(),
+						"envelope index", i,
+						"data", string(decryptedTxsBytes[j]))
 					var decryptedTx = new(types.Transaction)
 					err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
 					if err != nil {
