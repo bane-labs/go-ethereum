@@ -5,10 +5,21 @@ import (
 	"math/big"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
+)
+
+const (
+	// FPSize is the number of bytes needed to represent a field element in
+	// Montgomery form.
+	FPSize = fp.Bytes
+	// CipherTextSize is the number of bytes needed to represent CipherText
+	// in serialized representation.
+	CipherTextSize = 4 * FPSize
+	// DecryptionShareSize is the size of a single decryption message.
+	DecryptionShareSize = FPSize
 )
 
 var (
-	fpByteSize            = 48
 	workerCount           = 24
 	ErrTPKECiphertext     = errors.New("crypto/tpke: invalid tpke ciphertext")
 	ErrTPKEDecryption     = errors.New("crypto/tpke: tpke decryption failed")
@@ -25,33 +36,33 @@ type CipherText struct {
 
 // ToBytes encodes a CipherText into a byte array whose length is 192
 func (ct *CipherText) ToBytes() []byte {
-	out := make([]byte, 4*fpByteSize)
+	out := make([]byte, CipherTextSize)
 	bmsg := ct.cMsg.Bytes()
 	br := ct.bigR.Bytes()
 	bc := ct.commitment.Bytes()
-	copy(out[:fpByteSize], bmsg[:])
-	copy(out[fpByteSize:2*fpByteSize], br[:])
-	copy(out[2*fpByteSize:4*fpByteSize], bc[:])
+	copy(out[:FPSize], bmsg[:])
+	copy(out[FPSize:2*FPSize], br[:])
+	copy(out[2*FPSize:4*FPSize], bc[:])
 	return out
 }
 
 // FromBytes reads the first 192 bytes of input array and decodes as CipherText
 func (ct *CipherText) FromBytes(b []byte) (*CipherText, error) {
-	if len(b) != 4*fpByteSize {
+	if len(b) != CipherTextSize {
 		return nil, ErrTPKEDecoding
 	}
 	cMsg := new(bls12381.G1Affine)
 	bigR := new(bls12381.G1Affine)
 	commitment := new(bls12381.G2Affine)
-	_, err := cMsg.SetBytes(b[:fpByteSize])
+	_, err := cMsg.SetBytes(b[:FPSize])
 	if err != nil {
 		return nil, err
 	}
-	_, err = bigR.SetBytes(b[fpByteSize : 2*fpByteSize])
+	_, err = bigR.SetBytes(b[FPSize : 2*FPSize])
 	if err != nil {
 		return nil, err
 	}
-	_, err = commitment.SetBytes(b[2*fpByteSize : 4*fpByteSize])
+	_, err = commitment.SetBytes(b[2*FPSize : 4*FPSize])
 	if err != nil {
 		return nil, err
 	}
