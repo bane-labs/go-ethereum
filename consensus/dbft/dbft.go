@@ -365,80 +365,12 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			c.postBlock(res.Header())
 		}),
 		dbft.WithNewBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
-			var (
-				pre = ctx.PreBlock().(*PreBlock)
-				// TODO: shares verification should be performed earlier; we must ensure that the number of shares matches the
-				// number of Envelopes in this block.
-				shares = make(map[int][]*tpke.DecryptionShare)
-			)
-			for _, preC := range ctx.PreCommitPayloads {
-				if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
-					// Indexes in shares map must start with 1, thus increment validator's index.
-					shares[int(preC.ValidatorIndex())+1] = preC.GetPreCommit().(*preCommit).Shares()
-				}
-			}
-			encryptedTxs := decodeEnvelopesData(pre.transactions)
-			var (
-				encryptedKeys = make([]*tpke.CipherText, len(encryptedTxs))
-				encryptedMsgs = make([][]byte, len(encryptedTxs))
-			)
-			for i := range encryptedTxs {
-				encryptedKeys[i] = encryptedTxs[i].encryptedKey
-				encryptedMsgs[i] = encryptedTxs[i].encryptedMsg
-			}
-			c.lock.RLock()
-			ks := c.amevKeystore
-			c.lock.RUnlock()
-
-			var decryptFailed bool
-			decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
-			if err != nil {
-				// We're toast, accept Envelopes instead of decrypted transactions.
-				log.Error("failed to decrypt Encrypted transactions: %w", err)
-				decryptFailed = true
-			}
-
-			var txx = make([]*types.Transaction, len(pre.transactions))
-		blockTxLoop:
-			for i := range pre.transactions {
-				if !isEnvelope(pre.transactions[i]) || decryptFailed {
-					txx[i] = pre.transactions[i]
-					continue
-				}
-				// TODO: get rid of this cycle, it may be done without cycle.
-				for j := range encryptedTxs {
-					if encryptedTxs[j].index > i {
-						txx[i] = pre.transactions[i]
-						continue blockTxLoop
-					}
-					if encryptedTxs[j].index < i {
-						continue
-					}
-					log.Info("Envelope data decrypted",
-						"envelope hash", pre.transactions[i].Hash(),
-						"envelope index", i,
-						"data", string(decryptedTxsBytes[j]))
-					var decryptedTx = new(types.Transaction)
-					err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
-					if err != nil {
-						txx[i] = pre.transactions[i]
-						continue blockTxLoop
-					}
-					err = c.legacypool.ValidateDecryptedTx(decryptedTx, pre.transactions[i])
-					if err != nil {
-						txx[i] = pre.transactions[i]
-						continue blockTxLoop
-					}
-					txx[i] = decryptedTx
-					continue blockTxLoop
-				}
-			}
-
+			pre := ctx.PreBlock().(*PreBlock)
 			// Recalculate Block state based on PreBlock and updated transactions list.
 			// Avoid changing the original PreHeader.
 			b := &PreBlock{
 				header:       pre.header,
-				transactions: txx,
+				transactions: pre.finalTransactions,
 				withdrawals:  pre.withdrawals,
 			}
 			ethBlock := b.ToEthBlock()
@@ -474,7 +406,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
 
 			// Update state root, transactions root, receipts hash and bloom.
-			res, err := c.FinalizeAndAssemble(c.chain, h, state, txx, nil, receipts, ethBlock.Withdrawals())
+			res, err := c.FinalizeAndAssemble(c.chain, h, state, pre.finalTransactions, nil, receipts, ethBlock.Withdrawals())
 			if err != nil {
 				log.Crit("Failed to finalize and assemble final Block",
 					"err", err)
@@ -619,6 +551,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		}),
 		dbft.WithNewRecoveryMessage[common.Hash](func() dbft.RecoveryMessage[common.Hash] { return new(recoveryMessage) }),
 		dbft.WithVerifyPrepareResponse[common.Hash](func(_ dbft.ConsensusPayload[common.Hash]) error { return nil }),
+		dbft.WithVerifyPreCommit[common.Hash](func(preCommit dbft.ConsensusPayload[common.Hash]) error { return nil }),
 		dbft.WithVerifyPrepareRequest[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) error {
 			req := p.GetPrepareRequest().(*prepareRequest)
 			if req.SealingProposal == nil {
@@ -745,13 +678,81 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithNewPreBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.PreBlock[common.Hash] {
 			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
 			if prepareReq == nil {
-				panic("can't create new block from context: prepare request is nil")
+				panic("can't create new PreBlock from context: prepare request is nil")
 			}
 
 			return c.newPreBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
 		}),
-		dbft.WithProcessPreBlock(func(b dbft.PreBlock[common.Hash]) {
-			// TODO: this callback seems to be redundant, consider removing it from dBFT.
+		dbft.WithProcessPreBlock(func(b dbft.PreBlock[common.Hash]) error {
+			var (
+				ctx    = c.dbft.Context
+				pre    = ctx.PreBlock().(*PreBlock)
+				shares = make(map[int][]*tpke.DecryptionShare)
+			)
+			for _, preC := range ctx.PreCommitPayloads {
+				if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
+					// Indexes in shares map must start with 1, thus increment validator's index.
+					shares[int(preC.ValidatorIndex())+1] = preC.GetPreCommit().(*preCommit).Shares()
+				}
+			}
+			encryptedTxs := decodeEnvelopesData(pre.transactions)
+			var (
+				encryptedKeys = make([]*tpke.CipherText, len(encryptedTxs))
+				encryptedMsgs = make([][]byte, len(encryptedTxs))
+			)
+			for i := range encryptedTxs {
+				encryptedKeys[i] = encryptedTxs[i].encryptedKey
+				encryptedMsgs[i] = encryptedTxs[i].encryptedMsg
+			}
+			c.lock.RLock()
+			ks := c.amevKeystore
+			c.lock.RUnlock()
+
+			var decryptFailed bool
+			decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
+			if err != nil {
+				// We're toast, accept Envelopes instead of decrypted transactions.
+				log.Error("failed to decrypt Encrypted transactions: %w", err)
+				decryptFailed = true
+			}
+
+			var txx = make([]*types.Transaction, len(pre.transactions))
+		blockTxLoop:
+			for i := range pre.transactions {
+				if !isEnvelope(pre.transactions[i]) || decryptFailed {
+					txx[i] = pre.transactions[i]
+					continue
+				}
+				// TODO: get rid of this cycle, it may be done without cycle.
+				for j := range encryptedTxs {
+					if encryptedTxs[j].index > i {
+						txx[i] = pre.transactions[i]
+						continue blockTxLoop
+					}
+					if encryptedTxs[j].index < i {
+						continue
+					}
+					log.Info("Envelope data decrypted",
+						"envelope hash", pre.transactions[i].Hash(),
+						"envelope index", i,
+						"data", string(decryptedTxsBytes[j]))
+					var decryptedTx = new(types.Transaction)
+					err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
+					if err != nil {
+						txx[i] = pre.transactions[i]
+						continue blockTxLoop
+					}
+					err = c.legacypool.ValidateDecryptedTx(decryptedTx, pre.transactions[i])
+					if err != nil {
+						txx[i] = pre.transactions[i]
+						continue blockTxLoop
+					}
+					txx[i] = decryptedTx
+					continue blockTxLoop
+				}
+			}
+			pre.finalTransactions = txx
+			return nil
 		}),
 	)
 	if err != nil {
@@ -785,12 +786,14 @@ func (c *DBFT) newPreBlockFromContext(sealingProposal *types.Header) *PreBlock {
 	// fetched and the commits are collected, SetTransactions callback will be
 	// called by dBFT library to properly initialize PreBlock's transactions.
 	res := &PreBlock{
-		header: h,
+		header:         h,
+		envelopesCount: -1,
 	}
 	// Withdrawals are temporary empty if Shanghai is passed.
 	if c.chain.Config().IsShanghai(h.Number, h.Time) {
 		res.withdrawals = emptyWithdrawals
 	}
+
 	return res
 }
 

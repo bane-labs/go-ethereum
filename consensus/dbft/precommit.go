@@ -57,10 +57,12 @@ func (m *preCommit) DecodeRLP(s *rlp.Stream) error {
 	}
 
 	m.dataExt = aux.DataExt
-	err := m.decodeShares()
+	shares, err := decodeShares(m.dataExt)
 	if err != nil {
 		return fmt.Errorf("decode shares: %w", err)
 	}
+	m.shares = shares
+	m.cached = true
 
 	return nil
 }
@@ -68,10 +70,12 @@ func (m *preCommit) DecodeRLP(s *rlp.Stream) error {
 // Shares returns the slice of tpke.DecryptionShare that preCommit carries.
 func (m *preCommit) Shares() []*tpke.DecryptionShare {
 	if !m.cached {
-		err := m.decodeShares()
+		shares, err := decodeShares(m.dataExt)
 		if err != nil {
 			panic(fmt.Errorf("bug: invalid locally constructed shares: %w", err))
 		}
+		m.shares = shares
+		m.cached = true
 	}
 	return m.shares
 }
@@ -87,24 +91,23 @@ func encodeShares(shares []*tpke.DecryptionShare) []byte {
 	return res
 }
 
-// decodeShares decodes the list of tpke.DecryptionShare from the underlying
-// preCommit data.
-func (m *preCommit) decodeShares() error {
-	if len(m.dataExt) < 4 {
-		return errors.New("shares slice is too short")
+// decodeShares decodes the list of tpke.DecryptionShare from the provided
+// data following preCommit serialization rules.
+func decodeShares(data []byte) ([]*tpke.DecryptionShare, error) {
+	if len(data) < 4 {
+		return nil, errors.New("shares slice is too short")
 	}
-	n := binary.LittleEndian.Uint32(m.dataExt[:4])
+	n := binary.LittleEndian.Uint32(data[:4])
 	if n > maxDecryptionSharesPerBlock {
-		return fmt.Errorf("too many shares: got %d, allowed %d", n, maxDecryptionSharesPerBlock)
+		return nil, fmt.Errorf("too many shares: got %d, allowed %d", n, maxDecryptionSharesPerBlock)
 	}
-	m.shares = make([]*tpke.DecryptionShare, n)
-	for i := range m.shares {
-		m.shares[i] = &tpke.DecryptionShare{}
-		_, err := m.shares[i].FromBytes(m.dataExt[4+i*tpke.DecryptionShareSize : 4+(i+1)*tpke.DecryptionShareSize])
+	shares := make([]*tpke.DecryptionShare, n)
+	for i := range shares {
+		shares[i] = &tpke.DecryptionShare{}
+		_, err := shares[i].FromBytes(data[4+i*tpke.DecryptionShareSize : 4+(i+1)*tpke.DecryptionShareSize])
 		if err != nil {
 			fmt.Errorf("share %d: %w", i, err)
 		}
 	}
-	m.cached = true
-	return nil
+	return shares, nil
 }

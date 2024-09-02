@@ -19,6 +19,13 @@ type PreBlock struct {
 	withdrawals  []*types.Withdrawal
 	transactions []*types.Transaction
 	localShares  []byte
+
+	// envelopesCount is the cached number of Envelopes in the proposed PreBlock.
+	envelopesCount int
+	// finalTransactions is the cached final list of transactions formed after TPKE
+	// decryption of Envelopes content. This list includes both simple standard and
+	// decrypted transactions.
+	finalTransactions []*types.Transaction
 }
 
 // Data implements [dbft.PreBlock] interface.
@@ -41,17 +48,30 @@ func (p *PreBlock) SetData(pk dbft.PrivateKey) error {
 }
 
 // Verify implements [dbft.PreBlock] interface.
-func (p *PreBlock) Verify(_ dbft.PublicKey, _ []byte) error {
-	// TODO: in this method we should verify that provided part of shared key
-	// (shares received from other CNs) is valid. But we can't easily do this
-	// because for shares verification we need at least M shares (whereas this method
-	// is called for a single PreCommit), and even with M shares if some of them is
-	// invalid, we don't know which one. Thus, here we can check only serialization
-	// format, and the rest goes to the Block constructor level. This problem also
-	// requires dBFT modification, because if M shares can't properly decrypt transactions
-	// then we need to collect more shares from other CNs, ref.
-	// https://github.com/bane-labs/go-ethereum/pull/301#discussion_r1726514210.
+func (p *PreBlock) Verify(_ dbft.PublicKey, data []byte) error {
+	shares, err := decodeShares(data)
+	if err != nil {
+		return fmt.Errorf("decode shares: %w", err)
+	}
+	p.calculateEnvelopes()
+	if len(shares) != p.envelopesCount {
+		return fmt.Errorf("invalid envelopes count: expected %d, got %d", p.envelopesCount, len(shares))
+	}
 	return nil
+}
+
+// calculateEnvelopes calculates the number of Envelope transactions in the proposed
+// PreBlock and caches resulting value. It's not thread-safe and aimed to be used in
+// dBFT callbacks only.
+func (p *PreBlock) calculateEnvelopes() {
+	if p.envelopesCount == -1 {
+		p.envelopesCount = 0
+		for i := range p.transactions {
+			if isEnvelope(p.transactions[i]) {
+				p.envelopesCount++
+			}
+		}
+	}
 }
 
 // Transactions implements [dbft.PreBlock] interface.

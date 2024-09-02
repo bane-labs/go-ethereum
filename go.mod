@@ -51,7 +51,7 @@ require (
 	github.com/mattn/go-colorable v0.1.13
 	github.com/mattn/go-isatty v0.0.19
 	github.com/naoina/toml v0.1.2-0.20170918210437-9fafd6967416
-	github.com/nspcc-dev/dbft v0.3.1-0.20240828111442-3b0a52287b5b
+	github.com/nspcc-dev/dbft v0.3.1-0.20240904101105-212d1768bdcf
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/peterh/liner v1.1.1-0.20190123174540-a2c9a5303de7
 	github.com/protolambda/bls12-381-util v0.0.0-20220416220906-d8552aa452c7
