@@ -1746,6 +1746,39 @@ func (s *TransactionAPI) GetRawTransactionByHash(ctx context.Context, hash commo
 	return tx.MarshalBinary()
 }
 
+// Recover the signer address from a signed nonce and signature
+func recoverSignerAddress(nonce hexutil.Uint64, signature hexutil.Bytes) (*common.Address, error) {
+	// Ensure the signature length is exactly 65 bytes (R, S, V)
+	if len(signature) != 65 {
+		return nil, errors.New("signature length must be 65 bytes")
+	}
+
+	// Split the signature into R, S, and V components
+	r, s, v := signature[:32], signature[32:64], signature[64]
+	if v < 27 {
+		v += 27 // Adjust V to match Ethereum's EIP-155 signature convention
+	}
+	signature = append(r, append(s, v-27)...)
+	recoveredPubkey, err := crypto.SigToPub(accounts.TextHash([]byte(fmt.Sprintf("%d", nonce))), signature)
+	if err != nil || recoveredPubkey == nil {
+		return nil, fmt.Errorf("signature verification failed: %v", err)
+	}
+	recoveredAddress := crypto.PubkeyToAddress(*recoveredPubkey)
+	return &recoveredAddress, nil
+}
+
+// GetEncryptedTransaction will get the encrypted transaction from txpool.
+func (s *TransactionAPI) GetEncryptedTransaction(ctx context.Context, Nonce hexutil.Uint64, signature hexutil.Bytes) (hexutil.Bytes, error) {
+	sender, err := recoverSignerAddress(Nonce, signature)
+	if err != nil {
+		return nil, err
+	}
+	if tx := s.b.GetEncryptedTransaction(uint64(Nonce), *sender); tx != nil {
+		return tx.MarshalBinary()
+	}
+	return nil, nil
+}
+
 // GetTransactionReceipt returns the transaction receipt for the given transaction hash.
 func (s *TransactionAPI) GetTransactionReceipt(ctx context.Context, hash common.Hash) (map[string]interface{}, error) {
 	found, tx, blockHash, blockNumber, index, err := s.b.GetTransaction(ctx, hash)

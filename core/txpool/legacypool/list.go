@@ -344,6 +344,35 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 	return true, old
 }
 
+// Replace tries to insert a new transaction, any previous transaction it replaced.
+//
+// If the new transaction is accepted into the list, the lists' cost and gas
+// thresholds are also potentially updated.
+func (l *list) Replace(tx *types.Transaction) (bool, *types.Transaction) {
+	// If there's an older better transaction, abort
+	old := l.txs.Get(tx.Nonce())
+	if old != nil {
+		// Old is being replaced, subtract old cost
+		l.subTotalCost([]*types.Transaction{old})
+	}
+	// Add new tx cost to totalcost
+	cost, overflow := uint256.FromBig(tx.Cost())
+	if overflow {
+		return false, nil
+	}
+	l.totalcost.Add(l.totalcost, cost)
+
+	// Otherwise overwrite the old transaction with the current one
+	l.txs.Put(tx)
+	if l.costcap.Cmp(cost) < 0 {
+		l.costcap = cost
+	}
+	if gas := tx.Gas(); l.gascap < gas {
+		l.gascap = gas
+	}
+	return true, old
+}
+
 // Forward removes all transactions from the list with a nonce lower than the
 // provided threshold. Every removed transaction is returned for any post-removal
 // maintenance.

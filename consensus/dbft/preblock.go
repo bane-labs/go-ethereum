@@ -3,6 +3,7 @@ package dbft
 import (
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -95,7 +96,7 @@ func (b *PreBlock) SetTransactions(txx []dbft.Transaction[common.Hash]) {
 	)
 	for i, tx := range txx {
 		txs[i] = tx.(*Transaction).Tx
-		if !b.enforceECDSASignatures && isEnvelope(txs[i]) {
+		if !b.enforceECDSASignatures && antimev.IsEnvelope(txs[i]) {
 			d, err := decodeEnvelopeData(txs[i].Data())
 			if err != nil {
 				// Not an Envelope in fact since it contains malformed data. Include

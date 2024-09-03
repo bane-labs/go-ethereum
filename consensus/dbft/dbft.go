@@ -1040,7 +1040,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 				"envelope index", i,
 				"data", hex.EncodeToString(decryptedTxsBytes[j]))
 			var decryptedTx = new(types.Transaction)
-			err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
+			err := decryptedTx.UnmarshalBinary(decryptedTxsBytes[j])
 			if err != nil {
 				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction decoding failed: %s", err)) {
 					continue
