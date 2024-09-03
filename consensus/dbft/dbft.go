@@ -716,40 +716,51 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				decryptFailed = true
 			}
 
-			var txx = make([]*types.Transaction, len(pre.transactions))
-		blockTxLoop:
+			if len(decryptedTxsBytes) != pre.envelopesCount {
+				log.Error("invalid number of Decrypted transactions",
+					"expected", pre.envelopesCount,
+					"actual", len(decryptedTxsBytes))
+				decryptFailed = true
+			}
+			var (
+				txx = make([]*types.Transaction, len(pre.transactions))
+				j   int
+			)
 			for i := range pre.transactions {
 				if !isEnvelope(pre.transactions[i]) || decryptFailed {
 					txx[i] = pre.transactions[i]
 					continue
 				}
-				// TODO: get rid of this cycle, it may be done without cycle.
-				for j := range encryptedTxs {
-					if encryptedTxs[j].index > i {
-						txx[i] = pre.transactions[i]
-						continue blockTxLoop
-					}
-					if encryptedTxs[j].index < i {
-						continue
-					}
-					log.Info("Envelope data decrypted",
+				log.Info("Envelope data decrypted",
+					"envelope hash", pre.transactions[i].Hash(),
+					"envelope index", i,
+					"data", string(decryptedTxsBytes[j]))
+				var decryptedTx = new(types.Transaction)
+				err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
+				if err != nil {
+					log.Info("Decrypted transaction decoding failed",
 						"envelope hash", pre.transactions[i].Hash(),
 						"envelope index", i,
-						"data", string(decryptedTxsBytes[j]))
-					var decryptedTx = new(types.Transaction)
-					err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
-					if err != nil {
-						txx[i] = pre.transactions[i]
-						continue blockTxLoop
-					}
-					err = c.legacypool.ValidateDecryptedTx(decryptedTx, pre.transactions[i])
-					if err != nil {
-						txx[i] = pre.transactions[i]
-						continue blockTxLoop
-					}
-					txx[i] = decryptedTx
-					continue blockTxLoop
+						"data", string(decryptedTxsBytes[j]),
+						"error", err.Error())
+					txx[i] = pre.transactions[i]
+					j++
+					continue
 				}
+				err = c.legacypool.ValidateDecryptedTx(decryptedTx, pre.transactions[i])
+				if err != nil {
+					txx[i] = pre.transactions[i]
+					log.Info("Decrypted transaction is invalid",
+						"envelope hash", pre.transactions[i].Hash(),
+						"envelope index", i,
+						"data", string(decryptedTxsBytes[j]),
+						"error", err.Error())
+					j++
+					continue
+				}
+				txx[i] = decryptedTx
+				j++
+				continue
 			}
 			pre.finalTransactions = txx
 			return nil
