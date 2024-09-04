@@ -685,10 +685,15 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		}),
 		dbft.WithProcessPreBlock(func(b dbft.PreBlock[common.Hash]) error {
 			var (
-				ctx    = c.dbft.Context
-				pre    = ctx.PreBlock().(*PreBlock)
-				shares = make(map[int][]*tpke.DecryptionShare)
+				ctx = c.dbft.Context
+				pre = ctx.PreBlock().(*PreBlock)
 			)
+			// A short path: there's no envelopes at all, use proposed transactions as-is.
+			if len(pre.envelopesData) == 0 {
+				pre.finalTransactions = pre.transactions
+				return nil
+			}
+			shares := make(map[int][]*tpke.DecryptionShare)
 			for _, preC := range ctx.PreCommitPayloads {
 				if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
 					// Indexes in shares map must start with 1, thus increment validator's index.
@@ -707,26 +712,23 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			ks := c.amevKeystore
 			c.lock.RUnlock()
 
-			var decryptFailed bool
 			decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
 			if err != nil {
-				// We're toast, accept Envelopes instead of decrypted transactions.
-				log.Error("failed to decrypt Encrypted transactions: %w", err)
-				decryptFailed = true
+				// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
+				return fmt.Errorf("failed to decrypt Encrypted transactions, not enough valid shares: %w", err)
 			}
 
 			if len(decryptedTxsBytes) != len(pre.envelopesData) {
-				log.Error("invalid number of Decrypted transactions",
-					"expected", len(pre.envelopesData),
-					"actual", len(decryptedTxsBytes))
-				decryptFailed = true
+				// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
+				return fmt.Errorf("invalid number of Decrypted transactions: expected %d, actual %d", len(pre.envelopesData), len(decryptedTxsBytes))
 			}
 			var (
 				txx = make([]*types.Transaction, len(pre.transactions))
 				j   int
 			)
 			for i := range pre.transactions {
-				if decryptFailed || pre.envelopesData[j].index != i {
+				if pre.envelopesData[j].index != i || // pre.transactions[i] is not an envelope, use it as-is.
+					decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
 					txx[i] = pre.transactions[i]
 					continue
 				}
