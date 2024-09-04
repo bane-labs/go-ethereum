@@ -672,7 +672,7 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 	dbftBlock.transactions = c.sealingTransactions
 	ethBlock := dbftBlock.ToEthBlock()
 
-	state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
+	state, result, err := c.chain.ProcessState(ethBlock, nil)
 	if err != nil {
 		log.Crit("failed to process state from proposal",
 			"err", err,
@@ -692,7 +692,7 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 	}
 
 	header := ethBlock.Header()
-	header.GasUsed = gasUsed
+	header.GasUsed = result.GasUsed
 	multisig, threshold := c.getNextConsensus(header, state)
 	if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne)) {
 		header.MixDigest = threshold
@@ -708,7 +708,7 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: dbftBlock.transactions, Withdrawals: ethBlock.Withdrawals()}
-	res, err := c.FinalizeAndAssemble(c.chain, header, state, &body, receipts)
+	res, err := c.FinalizeAndAssemble(c.chain, header, state, &body, result.Receipts)
 	if err != nil {
 		log.Crit("Failed to finalize and assemble proposed block",
 			"err", err)
@@ -717,7 +717,7 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 	c.sealingProposal = res.Header()
 	c.sealingState = state
 	c.sealingBlock = res
-	c.sealingReceipts = receipts
+	c.sealingReceipts = result.Receipts
 
 	req.SealingProposal = c.sealingProposal
 	if len(c.lastBlockSealHash) == common.HashLength {
@@ -1239,7 +1239,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 		enforceECDSASignatures: pre.enforceECDSASignatures,
 	}
 	ethBlock := finalBlock.ToEthBlock()
-	state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
+	state, res, err := c.chain.ProcessState(ethBlock, nil)
 	if err != nil {
 		// Something went wrong, fallback to the original set of transactions and cached
 		// processing results.
@@ -1262,7 +1262,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 		return nil
 	}
 
-	pre.finalState, pre.finalReceipts, pre.finalGASUsed = state, receipts, gasUsed
+	pre.finalState, pre.finalReceipts, pre.finalGASUsed = state, res.Receipts, res.GasUsed
 	return nil
 }
 
