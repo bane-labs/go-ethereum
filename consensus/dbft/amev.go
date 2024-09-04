@@ -44,23 +44,6 @@ func isEnvelope(tx *types.Transaction) bool {
 	return true
 }
 
-// decodeEnvelopesData finds Envelope transactions in the provided list and returns
-// their data in deserialized form.
-func decodeEnvelopesData(txs []*types.Transaction) []envelopeData {
-	var res []envelopeData
-	for i, tx := range txs {
-		if isEnvelope(tx) {
-			d, err := decodeEnvelopeData(tx.Data())
-			if err != nil {
-				continue
-			}
-			d.index = i
-			res = append(res, d)
-		}
-	}
-	return res
-}
-
 // envelopeData is a structure used for Envelope transaction's data serialization.
 type envelopeData struct {
 	// index is an index of the corresponding Envelope transaction in the block. This

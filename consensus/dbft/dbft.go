@@ -695,14 +695,13 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					shares[int(preC.ValidatorIndex())+1] = preC.GetPreCommit().(*preCommit).Shares()
 				}
 			}
-			encryptedTxs := decodeEnvelopesData(pre.transactions)
 			var (
-				encryptedKeys = make([]*tpke.CipherText, len(encryptedTxs))
-				encryptedMsgs = make([][]byte, len(encryptedTxs))
+				encryptedKeys = make([]*tpke.CipherText, len(pre.envelopesData))
+				encryptedMsgs = make([][]byte, len(pre.envelopesData))
 			)
-			for i := range encryptedTxs {
-				encryptedKeys[i] = encryptedTxs[i].encryptedKey
-				encryptedMsgs[i] = encryptedTxs[i].encryptedMsg
+			for i := range pre.envelopesData {
+				encryptedKeys[i] = pre.envelopesData[i].encryptedKey
+				encryptedMsgs[i] = pre.envelopesData[i].encryptedMsg
 			}
 			c.lock.RLock()
 			ks := c.amevKeystore
@@ -716,9 +715,9 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				decryptFailed = true
 			}
 
-			if len(decryptedTxsBytes) != pre.envelopesCount {
+			if len(decryptedTxsBytes) != len(pre.envelopesData) {
 				log.Error("invalid number of Decrypted transactions",
-					"expected", pre.envelopesCount,
+					"expected", len(pre.envelopesData),
 					"actual", len(decryptedTxsBytes))
 				decryptFailed = true
 			}
@@ -727,21 +726,21 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				j   int
 			)
 			for i := range pre.transactions {
-				if !isEnvelope(pre.transactions[i]) || decryptFailed {
+				if decryptFailed || pre.envelopesData[j].index != i {
 					txx[i] = pre.transactions[i]
 					continue
 				}
 				log.Info("Envelope data decrypted",
 					"envelope hash", pre.transactions[i].Hash(),
 					"envelope index", i,
-					"data", string(decryptedTxsBytes[j]))
+					"data", hex.EncodeToString(decryptedTxsBytes[j]))
 				var decryptedTx = new(types.Transaction)
 				err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
 				if err != nil {
 					log.Info("Decrypted transaction decoding failed",
 						"envelope hash", pre.transactions[i].Hash(),
 						"envelope index", i,
-						"data", string(decryptedTxsBytes[j]),
+						"data", hex.EncodeToString(decryptedTxsBytes[j]),
 						"error", err.Error())
 					txx[i] = pre.transactions[i]
 					j++
@@ -753,7 +752,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 					log.Info("Decrypted transaction is invalid",
 						"envelope hash", pre.transactions[i].Hash(),
 						"envelope index", i,
-						"data", string(decryptedTxsBytes[j]),
+						"data", hex.EncodeToString(decryptedTxsBytes[j]),
 						"error", err.Error())
 					j++
 					continue
@@ -796,10 +795,7 @@ func (c *DBFT) newPreBlockFromContext(sealingProposal *types.Header) *PreBlock {
 	// (dBFT has only the full set of their hashes). Once all transactions are
 	// fetched and the commits are collected, SetTransactions callback will be
 	// called by dBFT library to properly initialize PreBlock's transactions.
-	res := &PreBlock{
-		header:         h,
-		envelopesCount: -1,
-	}
+	res := &PreBlock{header: h}
 	// Withdrawals are temporary empty if Shanghai is passed.
 	if c.chain.Config().IsShanghai(h.Number, h.Time) {
 		res.withdrawals = emptyWithdrawals

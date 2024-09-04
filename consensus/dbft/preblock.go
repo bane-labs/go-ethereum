@@ -20,8 +20,9 @@ type PreBlock struct {
 	transactions []*types.Transaction
 	localShares  []byte
 
-	// envelopesCount is the cached number of Envelopes in the proposed PreBlock.
-	envelopesCount int
+	// envelopesData is the ordered list of decoded content of Envelopes
+	// transactions of the proposed PreBlock.
+	envelopesData []envelopeData
 	// finalTransactions is the cached final list of transactions formed after TPKE
 	// decryption of Envelopes content. This list includes both simple standard and
 	// decrypted transactions.
@@ -33,10 +34,9 @@ func (p *PreBlock) Data() []byte { return p.localShares }
 
 // SetData implements [dbft.PreBlock] interface.
 func (p *PreBlock) SetData(pk dbft.PrivateKey) error {
-	encryptedTxs := decodeEnvelopesData(p.transactions)
-	var encryptedKeys []*tpke.CipherText
-	for i := range encryptedTxs {
-		encryptedKeys = append(encryptedKeys, encryptedTxs[i].encryptedKey)
+	encryptedKeys := make([]*tpke.CipherText, len(p.envelopesData))
+	for i := range p.envelopesData {
+		encryptedKeys[i] = p.envelopesData[i].encryptedKey
 	}
 	shares, err := pk.(*Signer).AmevKeystore.DecryptWithShare(encryptedKeys)
 	if err != nil {
@@ -53,25 +53,10 @@ func (p *PreBlock) Verify(_ dbft.PublicKey, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("decode shares: %w", err)
 	}
-	p.calculateEnvelopes()
-	if len(shares) != p.envelopesCount {
-		return fmt.Errorf("invalid envelopes count: expected %d, got %d", p.envelopesCount, len(shares))
+	if len(shares) != len(p.envelopesData) {
+		return fmt.Errorf("invalid Envelopes count: expected %d, got %d", len(p.envelopesData), len(shares))
 	}
 	return nil
-}
-
-// calculateEnvelopes calculates the number of Envelope transactions in the proposed
-// PreBlock and caches resulting value. It's not thread-safe and aimed to be used in
-// dBFT callbacks only.
-func (p *PreBlock) calculateEnvelopes() {
-	if p.envelopesCount == -1 {
-		p.envelopesCount = 0
-		for i := range p.transactions {
-			if isEnvelope(p.transactions[i]) {
-				p.envelopesCount++
-			}
-		}
-	}
 }
 
 // Transactions implements [dbft.PreBlock] interface.
@@ -88,11 +73,25 @@ func (b *PreBlock) Transactions() []dbft.Transaction[common.Hash] {
 // SetTransactions implements [dbft.PreBlock] interface. txx may contain encrypted
 // Envelope transactions.
 func (b *PreBlock) SetTransactions(txx []dbft.Transaction[common.Hash]) {
-	txs := make([]*types.Transaction, len(txx))
+	var (
+		txs       = make([]*types.Transaction, len(txx))
+		envelopes []envelopeData // don't allocate, Envelopes supposed to be rare.
+	)
 	for i, tx := range txx {
 		txs[i] = tx.(*Transaction).Tx
+		if isEnvelope(txs[i]) {
+			d, err := decodeEnvelopeData(txs[i].Data())
+			if err != nil {
+				// Not an Envelope in fact since it contains malformed data. Include
+				// it as a simple transaction.
+				continue
+			}
+			d.index = i
+			envelopes = append(envelopes, d)
+		}
 	}
 	b.transactions = txs
+	b.envelopesData = envelopes
 }
 
 // ToEthBlock converts [dbft.PreBlock] to [types.Block].
