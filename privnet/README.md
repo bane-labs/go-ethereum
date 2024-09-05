@@ -322,8 +322,8 @@ eth.getBalance('745c8f1af649651f46dcaec2c6eb94068843ae96')
 You can send a transaction between these accounts:
 ```
 eth.sendTransaction({
-from: '625eafa3473492007c0dd331e23b1035f6a7fb64',
-to: '745c8f1af649651f46dcaec2c6eb94068843ae96',
+from: '74f4effb0b538baec703346b03b6d9292f53a4cd',
+to: '625eafa3473492007c0dd331e23b1035f6a7fb64',
 value: 250,
 gas_price: 10,
 gas: 30000
