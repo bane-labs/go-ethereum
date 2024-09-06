@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"os"
 	"sort"
@@ -2789,10 +2790,10 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 	defer cancel()
 	var result *core.ExecutionResult
 	if state != nil {
-		result, err = ethapi.DoCallAtState(ctx, *c.backend, args, state, header, nil, nil, 0, 0)
+		result, err = ethapi.DoCallAtState(ctx, *c.backend, args, state, header, nil, nil, 0, math.MaxUint64)
 	} else if blockNum != nil {
 		blockNr := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(*blockNum))
-		result, err = ethapi.DoCall(ctx, *c.backend, args, blockNr, nil, nil, 0, 0)
+		result, err = ethapi.DoCall(ctx, *c.backend, args, blockNr, nil, nil, 0, math.MaxUint64)
 	} else {
 		return nil, fmt.Errorf("failed to compute validators: both block number and state are nil")
 	}
