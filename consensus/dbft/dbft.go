@@ -679,6 +679,7 @@ func (c *DBFT) newBlockFromContext(sealingProposal *types.Header) *Block {
 	}
 	return res
 }
+
 func (c *DBFT) getBlockWitness() []byte {
 	dctx := c.dbft.Context
 
