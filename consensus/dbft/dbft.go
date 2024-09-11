@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -460,12 +459,8 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				return
 			}
 
-			var sorted = make([]common.Hash, len(hashes))
-			copy(sorted, hashes)
-			sort.Slice(sorted, func(i, j int) bool {
-				return sorted[i].Cmp(sorted[j]) < 0
-			})
-
+			sorted := slices.Clone(hashes)
+			slices.SortFunc(sorted, common.Hash.Cmp)
 			c.txCbList.Store(sorted)
 
 			c.requestTxs(sorted)
@@ -1621,11 +1616,8 @@ func (c *DBFT) OnTransaction(txs []*types.Transaction) {
 	var cbList = c.txCbList.Load()
 	if cbList != nil {
 		for _, tx := range txs {
-			var list = cbList.([]common.Hash)
-			var i = sort.Search(len(list), func(i int) bool {
-				return list[i].Cmp(tx.Hash()) >= 0
-			})
-			if i < len(list) && list[i].Cmp(tx.Hash()) == 0 {
+			_, found := slices.BinarySearchFunc(cbList.([]common.Hash), tx.Hash(), common.Hash.Cmp)
+			if found {
 				c.txs <- tx
 			}
 		}
