@@ -1669,8 +1669,8 @@ func (c *DBFT) IsExtensibleAllowed(h uint64, u common.Address) error {
 	if err != nil {
 		return fmt.Errorf("failed to get validators: %w", err)
 	}
-	n := sort.Search(len(validators), func(i int) bool { return validators[i].Cmp(u) >= 0 })
-	if n >= len(validators) {
+	_, found := slices.BinarySearchFunc(validators, u, common.Address.Cmp)
+	if !found {
 		return fmt.Errorf("address is not a validator")
 	}
 	return nil
