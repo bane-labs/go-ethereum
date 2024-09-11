@@ -1,12 +1,16 @@
 package antimev
 
 import (
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"math/big"
+	"os"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var (
@@ -46,6 +50,84 @@ func NewKeyStore(addr common.Address, prvkey *ecies.PrivateKey, groupSize int, t
 		address:   addr,
 		ethPrvKey: prvkey,
 	}, nil
+}
+
+// keystoreAux is an auxiliary structure for AMEVKeyStore RLP marshalling.
+type keystoreAux struct {
+	Size      byte   // The size of each key group
+	Threshold byte   // The threshold of each key group
+	Scaler    uint32 // The scaler to speed up computation, refer to crypto/tpke
+
+	Address   common.Address    // Self account address
+	EthPrvKey *ecies.PrivateKey // Self account secret key
+
+	//	Recovering *thresholdKeyGroup `rlp:"optional"` // The recovering key group
+	//	Resharing  *thresholdKeyGroup `rlp:"optional"` // The resharing key group
+	//	Reshared   *thresholdKeyGroup `rlp:"optional"` // The group can decrypt old messages
+	Shared *thresholdKeyGroup `rlp:"optional"` // The sharing key group
+	//	Sharing    *thresholdKeyGroup `rlp:"optional"` // The group can encrypt and decrypt new messages
+}
+
+// Bytes returns serialized RLP AMEVKeyStore bytes.
+func (ks *AMEVKeyStore) Bytes() ([]byte, error) {
+	return rlp.EncodeToBytes(&keystoreAux{
+		Size:      byte(ks.size),
+		Threshold: byte(ks.threshold),
+		Scaler:    uint32(ks.scaler),
+		Address:   ks.address,
+		EthPrvKey: ks.ethPrvKey,
+		Shared:    ks.shared,
+		// Don't serialize the rest of fields intentionally since this serialization
+		// code is used only for testing purposes and only for keystore in the shared
+		// state.
+		//Recovering: ks.recovering,
+		//Resharing:  ks.resharing,
+		//Reshared:   ks.reshared,
+		//Sharing:    ks.sharing,
+	})
+}
+
+// FromBytes deserializes AMEVKeyStore from provided RLP-encoded buffer.
+func (ks *AMEVKeyStore) FromBytes(buf []byte) error {
+	aux := &keystoreAux{}
+	err := rlp.DecodeBytes(buf, aux)
+	if err != nil {
+		return err
+	}
+
+	ks.size = int(aux.Size)
+	ks.threshold = int(aux.Threshold)
+	ks.scaler = int(aux.Scaler)
+	ks.address = aux.Address
+	ks.ethPrvKey = aux.EthPrvKey
+	ks.shared = aux.Shared
+	// Don't deserialize the rest of fields intentionally since this deserialization
+	// code is used only for testing purposes and only for keystore in the shared
+	// state.
+	//ks.recovering = aux.Recovering
+	//ks.resharing = aux.Resharing
+	//ks.reshared = aux.Reshared
+	//ks.sharing = aux.Sharing
+
+	return nil
+}
+
+// LoadAMEVKeyStore loads hex-encoded anti-MEV keystore from the provided filepath.
+func LoadAMEVKeyStore(file string) (*AMEVKeyStore, error) {
+	buf, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	ksBytes, err := hex.DecodeString(string(buf))
+	if err != nil {
+		return nil, fmt.Errorf("hex decoding failed: %w", err)
+	}
+	var ks = new(AMEVKeyStore)
+	err = ks.FromBytes(ksBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decoding from bytes failed: %w", err)
+	}
+	return ks, nil
 }
 
 // OnValidatorList initializes sharing and resharing, should be called

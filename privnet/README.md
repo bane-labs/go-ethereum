@@ -322,11 +322,23 @@ eth.getBalance('745c8f1af649651f46dcaec2c6eb94068843ae96')
 You can send a transaction between these accounts:
 ```
 eth.sendTransaction({
-from: '625eafa3473492007c0dd331e23b1035f6a7fb64',
-to: '745c8f1af649651f46dcaec2c6eb94068843ae96',
+from: '74f4effb0b538baec703346b03b6d9292f53a4cd',
+to: '625eafa3473492007c0dd331e23b1035f6a7fb64',
 value: 250,
 gas_price: 10,
 gas: 30000
+});
+```
+
+Example of Envelope transaction with encrypted data inside:
+```
+eth.sendTransaction({
+from: '74f4effb0b538baec703346b03b6d9292f53a4cd',
+to: '1212000000000000000000000000000000000003',
+value: 250,
+gas_price: 10,
+gas: 30000,
+data: '0xffffffffb7830f498956da5ed15a1fde62b2bbf53d4ac1b6a2dbba729758df74ad7d59c1fdde7de863419d75e47fb5cba3d7e306abc83518948d553f8258208f22e397f9807e5b78621ea4ce5d8f6abed9e2dbe6014ab9ec5561ea46bf87101c9fbf4343abff9fb739b3af4961afdb77f987a3e7b396bccbd567d20c178e07ba1821ccf2cecb0eccce1119e1d8518f0e43b2db520bedfa4ac7c979ae5c9f68f89c835b8f2331d8830099bf99548c140a9a5ccc736ca790cba03a91de65aebab1d842ea4cb388b8251d23d9207d1d74e0d19f4c08f2757e2fcaed806e4a23dc82f29837ff047ee5d76a1fee57aa1c03a020dbf4693e8c7bd19ce3887d152954851fe5c1c46efacb985c7584d4c7aa2c8c99f6eba8d1f7bf2acc23a62ef0f1da41fde5ae7a22cf47d8a04e2962766c443a2ce636943af19c84892ff5331a9847ea57107e8b'
 });
 ```
 

@@ -14,6 +14,7 @@ type (
 	// recoveryMessage represents dBFT Recovery message.
 	recoveryMessage struct {
 		PreparationPayloads []*preparationCompact
+		PreCommitPayloads   []*preCommitCompact
 		CommitPayloads      []*commitCompact
 		ChangeViewPayloads  []*changeViewCompact
 		PreparationHashExt  *common.Hash
@@ -23,6 +24,7 @@ type (
 	// recoveryMessageAux is an auxiliary structure for recoveryMessage RLP encoding.
 	recoveryMessageAux struct {
 		PreparationPayloads []*preparationCompact
+		PreCommitPayloads   []*preCommitCompact
 		CommitPayloads      []*commitCompact
 		ChangeViewPayloads  []*changeViewCompact
 		PreparationHashExt  *common.Hash `rlp:"optional"`
@@ -34,6 +36,13 @@ type (
 		OriginalViewNumber byte
 		Timestamp          uint64
 		InvocationScript   []byte
+	}
+
+	preCommitCompact struct {
+		ViewNumber       byte
+		ValidatorIndex   uint8
+		Data             []byte
+		InvocationScript []byte
 	}
 
 	commitCompact struct {
@@ -84,6 +93,13 @@ func (m *recoveryMessage) AddPayload(p dbft.ConsensusPayload[common.Hash]) {
 			OriginalViewNumber: p.ViewNumber(),
 			Timestamp:          p.GetChangeView().(*changeView).TimestampExt,
 			InvocationScript:   p.(*Payload).Witness,
+		})
+	case dbft.PreCommitType:
+		m.PreCommitPayloads = append(m.PreCommitPayloads, &preCommitCompact{
+			ValidatorIndex:   validator,
+			ViewNumber:       p.ViewNumber(),
+			Data:             p.GetPreCommit().(*preCommit).dataExt,
+			InvocationScript: p.(*Payload).Witness,
 		})
 	case dbft.CommitType:
 		m.CommitPayloads = append(m.CommitPayloads, &commitCompact{
@@ -163,6 +179,22 @@ func (m *recoveryMessage) GetChangeViews(p dbft.ConsensusPayload[common.Hash], v
 	return ps
 }
 
+// GetPreCommits implements the payload.RecoveryMessage interface.
+func (m *recoveryMessage) GetPreCommits(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash] {
+	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.PreCommitPayloads))
+
+	for i, c := range m.PreCommitPayloads {
+		cc := fromPayload(preCommitType, p.(*Payload), &preCommit{dataExt: c.Data})
+		cc.SetValidatorIndex(uint16(c.ValidatorIndex))
+		cc.Sender = validators[c.ValidatorIndex].(*PublicKey).Account
+		cc.Witness = c.InvocationScript
+
+		ps[i] = cc
+	}
+
+	return ps
+}
+
 // GetCommits implements the payload.RecoveryMessage interface.
 func (m *recoveryMessage) GetCommits(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash] {
 	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.CommitPayloads))
@@ -209,6 +241,7 @@ func (m *recoveryMessage) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, &recoveryMessageAux{
 		PreparationPayloads: m.PreparationPayloads,
 		CommitPayloads:      m.CommitPayloads,
+		PreCommitPayloads:   m.PreCommitPayloads,
 		ChangeViewPayloads:  m.ChangeViewPayloads,
 		PreparationHashExt:  m.PreparationHashExt,
 		PrepareRequest:      m.PrepareRequest,
@@ -228,6 +261,7 @@ func (m *recoveryMessage) DecodeRLP(s *rlp.Stream) error {
 	}
 
 	m.PreparationPayloads = aux.PreparationPayloads
+	m.PreCommitPayloads = aux.PreCommitPayloads
 	m.CommitPayloads = aux.CommitPayloads
 	m.ChangeViewPayloads = aux.ChangeViewPayloads
 	m.PreparationHashExt = aux.PreparationHashExt

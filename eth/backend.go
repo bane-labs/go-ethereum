@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/antimev"
 	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/pruner"
@@ -83,9 +84,10 @@ type Ethereum struct {
 	// DB interfaces
 	chainDb ethdb.Database // Block chain database
 
-	eventMux       *event.TypeMux
-	engine         consensus.Engine
-	accountManager *accounts.Manager
+	eventMux        *event.TypeMux
+	engine          consensus.Engine
+	accountManager  *accounts.Manager
+	antimevKeystore *antimev.AMEVKeyStore
 
 	bloomRequests     chan chan *bloombits.Retrieval // Channel receiving bloom data retrieval requests
 	bloomIndexer      *core.ChainIndexer             // Bloom indexer operating during block imports
@@ -175,6 +177,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		bloomIndexer:      core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms),
 		p2pServer:         stack.Server(),
 		shutdownTracker:   shutdowncheck.NewShutdownTracker(chainDb),
+	}
+	if len(config.AMEVKeystorePath) != 0 {
+		eth.antimevKeystore, err = antimev.LoadAMEVKeyStore(config.AMEVKeystorePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load AMEV keystore: %w", err)
+		}
 	}
 	// Override the address that mining rewards will be sent to.
 	if chainConfig.DBFT != nil {
@@ -297,6 +305,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		bft.WithEthAPI(ethAPI)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
 		bft.WithTxPool(eth.TxPool())
+		bft.WithLegacyPool(legacyPool)
 		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
 		bft.WithMux(eth.EventMux())
 	}
@@ -512,7 +521,7 @@ func (s *Ethereum) StartMining() error {
 			if bft != nil {
 				log.Info("Initializing BFT consensus",
 					"account", eb.String())
-				bft.Authorize(eb, wallet.SignData)
+				bft.Authorize(eb, wallet.SignData, s.antimevKeystore)
 			}
 		}
 		// If mining is started, we can disable the transaction rejection mechanism

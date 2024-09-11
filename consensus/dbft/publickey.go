@@ -16,18 +16,3 @@ type PublicKey struct {
 	// verification later.
 	Key any
 }
-
-// Verify implements dbftCrypto.PublicKey interface.
-func (*PublicKey) Verify(msg, sig []byte) error {
-	panic("TODO")
-}
-
-// MarshalBinary implements dbftCrypto.PublicKey interface.
-func (*PublicKey) MarshalBinary() (data []byte, err error) {
-	panic("TODO")
-}
-
-// UnmarshalBinary implements dbftCrypto.PublicKey interface.
-func (*PublicKey) UnmarshalBinary(data []byte) error {
-	panic("TODO")
-}

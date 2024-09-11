@@ -39,10 +39,12 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/antimev"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/tpke"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -192,9 +194,10 @@ type DBFT struct {
 
 	config *params.DBFTConfig // Consensus engine configuration parameters
 
-	signer common.Address // Ethereum address of the signing key
-	signFn SignerFn       // Signer function to authorize hashes with
-	lock   sync.RWMutex   // Protects the signer field
+	signer       common.Address        // Ethereum address of the signing key
+	signFn       SignerFn              // Signer function to authorize hashes with
+	amevKeystore *antimev.AMEVKeyStore // anti-MEV keystore responsible for DKG and encrypted transactions decryption
+	lock         sync.RWMutex          // Protects signer, signFn and amevKeystore fields
 
 	dbft             *dbft.DBFT[common.Hash]
 	dbftStarted      atomic.Bool
@@ -222,8 +225,10 @@ type DBFT struct {
 	sealingTransactions types.Transactions
 
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
-	chain    ChainHeaderReader
-	txpool   txPool
+	chain      ChainHeaderReader
+	txpool     txPool
+	legacypool legacyPool
+
 	quit     chan struct{}
 	finished chan struct{}
 
@@ -277,15 +282,16 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithSecondsPerBlock[common.Hash](time.Duration(conf.SecondsPerBlock)*time.Second),
 		dbft.WithGetKeyPair[common.Hash](func(keys []dbft.PublicKey) (int, dbft.PrivateKey, dbft.PublicKey) {
 			c.lock.RLock()
-			signer, signFn := c.signer, c.signFn
+			signer, signFn, ks := c.signer, c.signFn, c.amevKeystore
 			c.lock.RUnlock()
 
 			// Bail out if we're unauthorized to sign a block
 			for i, validator := range keys {
 				if validator.(*PublicKey).Account.Cmp(signer) == 0 {
 					s := &Signer{
-						Signer: signer,
-						SignFn: signFn,
+						Signer:       signer,
+						SignFn:       signFn,
+						AmevKeystore: ks,
 					}
 					return i,
 						s,
@@ -342,12 +348,11 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 
 			// Avoid copying and may safely change the block itself, as this part
-			// of code is guaranteed to be called once thanks to condition above,
-			// c.lastIndex is updated in postBlock callback every time new block
-			// with higher index is accepted.
+			// of code is guaranteed to be called once by dBFT.
 			dbftBlock.header.Extra = append(dbftBlock.header.Extra, c.getBlockWitness()...) // Extra version isn't changed, validators addresses and signatures are added.
 
-			res := dbftBlock.ToEthBlock()
+			res := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
+
 			// Firstly, notify chain about new block.
 			if err := c.blockQueue.PutBlock(res, dbftBlock.state, dbftBlock.receipts); err != nil {
 				// The block might already be added via the regular network
@@ -360,11 +365,61 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			c.postBlock(res.Header())
 		}),
 		dbft.WithNewBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
-			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
-			if prepareReq == nil {
-				panic("can't create new block from context: prepare request is nil")
+			pre := ctx.PreBlock().(*PreBlock)
+			// Recalculate Block state based on PreBlock and updated transactions list.
+			// Avoid changing the original PreHeader.
+			b := &PreBlock{
+				header:       pre.header,
+				transactions: pre.finalTransactions,
+				withdrawals:  pre.withdrawals,
 			}
-			return c.newBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
+			ethBlock := b.ToEthBlock()
+			state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
+			if err != nil {
+				log.Crit("failed to process final Block state from PreBlock",
+					"err", err,
+					"number", ethBlock.NumberU64(),
+					"seal hash", c.SealHash(ethBlock.Header()),
+					"parent hash", ethBlock.ParentHash().String(),
+					"intermediate merkle root", ethBlock.Root(),
+					"coinbase", ethBlock.Coinbase().String(),
+					"gas limit", ethBlock.GasLimit(),
+					"gas used", ethBlock.GasUsed(),
+					"difficulty", ethBlock.Difficulty().String(),
+					"mix digest", ethBlock.MixDigest().String(),
+					"nonce", ethBlock.Nonce(),
+					"time", ethBlock.Time(),
+					"uncle hash", ethBlock.UncleHash().String(),
+					"txs", len(ethBlock.Transactions()))
+			}
+			// Manually update header's fields based on fresh state.
+			h := ethBlock.Header()
+			h.GasUsed = gasUsed
+
+			// Use a copy of state to avoid changing block's state. The original state will be reused
+			// during block insertion into chain.
+			nextVals, err := c.getValidators(nil, state.Copy(), h)
+			if err != nil {
+				log.Crit("Failed to compute next block validators while constructing final Block",
+					"err", err)
+			}
+			h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
+
+			// Update state root, transactions root, receipts hash and bloom.
+			res, err := c.FinalizeAndAssemble(c.chain, h, state, pre.finalTransactions, nil, receipts, ethBlock.Withdrawals())
+			if err != nil {
+				log.Crit("Failed to finalize and assemble final Block",
+					"err", err)
+			}
+
+			return &Block{
+				header:              res.Header(),
+				withdrawals:         res.Withdrawals(),
+				transactions:        res.Transactions(),
+				localSignatureBytes: nil,
+				state:               state,
+				receipts:            receipts,
+			}
 		}),
 		dbft.WithWatchOnly[common.Hash](func() bool {
 			return false
@@ -428,11 +483,11 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			// Recalculate block state provided by miner and update sealing proposal if context-related
 			// block fields were changed.
-			dbftBlock := c.newBlockFromContext(c.sealingProposal)
+			dbftBlock := c.newPreBlockFromContext(c.sealingProposal)
 			dbftBlock.transactions = c.sealingTransactions
 			ethBlock := dbftBlock.ToEthBlock()
 
-			state, _, _, _, err := c.chain.ProcessState(ethBlock, nil)
+			state, _, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
 			if err != nil {
 				log.Crit("failed to process state from proposal",
 					"err", err,
@@ -452,6 +507,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 
 			header := ethBlock.Header()
+			header.GasUsed = gasUsed
 			header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
 
 			c.sealingProposal = header
@@ -495,6 +551,7 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 		}),
 		dbft.WithNewRecoveryMessage[common.Hash](func() dbft.RecoveryMessage[common.Hash] { return new(recoveryMessage) }),
 		dbft.WithVerifyPrepareResponse[common.Hash](func(_ dbft.ConsensusPayload[common.Hash]) error { return nil }),
+		dbft.WithVerifyPreCommit[common.Hash](func(preCommit dbft.ConsensusPayload[common.Hash]) error { return nil }),
 		dbft.WithVerifyPrepareRequest[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) error {
 			req := p.GetPrepareRequest().(*prepareRequest)
 			if req.SealingProposal == nil {
@@ -571,49 +628,35 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 
 			return nil
 		}),
-		dbft.WithVerifyBlock[common.Hash](func(b dbft.Block[common.Hash]) bool {
-			dbftBlock := b.(*Block)
+		dbft.WithVerifyPreBlock[common.Hash](func(b dbft.PreBlock[common.Hash]) bool {
+			dbftBlock := b.(*PreBlock)
 			parent := c.chain.CurrentBlock()
 			if parent.Number.Cmp(dbftBlock.header.Number) >= 0 {
-				log.Warn("proposed block has already outdated",
+				log.Warn("proposed PreBlock has already outdated",
 					"current block number", parent.Number.Uint64(),
 					"proposed block number", dbftBlock.header.Number)
 				return false
 			}
 			if c.lastTimestamp > dbftBlock.header.Time {
-				log.Warn("proposed block has small timestamp",
+				log.Warn("proposed PreBlock has small timestamp",
 					"ts", dbftBlock.header.Time,
 					"last", c.lastTimestamp)
 				return false
 			}
 			ethBlock := dbftBlock.ToEthBlock()
-			state, receipts, err := c.chain.VerifyBlock(ethBlock)
+			err := c.chain.VerifyPreBlock(ethBlock)
 			if err != nil {
-				log.Warn("proposed block verification failed",
+				log.Warn("proposed PreBlock verification failed",
 					"err", err.Error())
 				return false
 			}
 
-			// Verify NextConsensus based on the state got after in-block transactions processing. Make a
-			// state copy in order to avoid state modifications potentially made by getValidators call.
-			// The original state will be committed if block is accepted.
-			nextVals, err := c.getValidators(nil, state.Copy(), dbftBlock.header)
-			if err != nil {
-				log.Crit("Failed to compute next block validators",
-					"err", err)
-			}
-			expectedMixDigest := dbftutil.GetNextConsensusHash(nextVals)
-			if dbftBlock.header.MixDigest != expectedMixDigest {
-				log.Warn("Invalid NextConsensus in the proposed block",
-					"expected", expectedMixDigest.String(),
-					"actual", dbftBlock.header.MixDigest.String())
-				return false
-			}
-
-			dbftBlock.state = state
-			dbftBlock.receipts = receipts
-
 			return true
+		}),
+		dbft.WithVerifyBlock[common.Hash](func(b dbft.Block[common.Hash]) bool {
+			log.Crit("unexpected call to VerifyBlock")
+
+			return false
 		}),
 		dbft.WithBroadcast[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) {
 			if err := p.(*Payload).Sign(c.dbft.Priv.(*Signer)); err != nil {
@@ -626,6 +669,103 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 				log.Warn("can't broadcast consensus message", "error", err)
 			}
 		}),
+		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash](0),
+		dbft.WithNewPreCommit[common.Hash](func(data []byte) dbft.PreCommit {
+			return &preCommit{
+				dataExt: data,
+			}
+		}),
+		dbft.WithNewPreBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.PreBlock[common.Hash] {
+			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
+			if prepareReq == nil {
+				panic("can't create new PreBlock from context: prepare request is nil")
+			}
+
+			return c.newPreBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
+		}),
+		dbft.WithProcessPreBlock(func(b dbft.PreBlock[common.Hash]) error {
+			var (
+				ctx = c.dbft.Context
+				pre = ctx.PreBlock().(*PreBlock)
+			)
+			// A short path: there's no envelopes at all, use proposed transactions as-is.
+			if len(pre.envelopesData) == 0 {
+				pre.finalTransactions = pre.transactions
+				return nil
+			}
+			shares := make(map[int][]*tpke.DecryptionShare)
+			for _, preC := range ctx.PreCommitPayloads {
+				if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
+					// Indexes in shares map must start with 1, thus increment validator's index.
+					shares[int(preC.ValidatorIndex())+1] = preC.GetPreCommit().(*preCommit).Shares()
+				}
+			}
+			var (
+				encryptedKeys = make([]*tpke.CipherText, len(pre.envelopesData))
+				encryptedMsgs = make([][]byte, len(pre.envelopesData))
+			)
+			for i := range pre.envelopesData {
+				encryptedKeys[i] = pre.envelopesData[i].encryptedKey
+				encryptedMsgs[i] = pre.envelopesData[i].encryptedMsg
+			}
+			c.lock.RLock()
+			ks := c.amevKeystore
+			c.lock.RUnlock()
+
+			decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
+			if err != nil {
+				// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
+				return fmt.Errorf("failed to decrypt Encrypted transactions, not enough valid shares: %w", err)
+			}
+
+			if len(decryptedTxsBytes) != len(pre.envelopesData) {
+				// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
+				return fmt.Errorf("invalid number of Decrypted transactions: expected %d, actual %d", len(pre.envelopesData), len(decryptedTxsBytes))
+			}
+			var (
+				txx = make([]*types.Transaction, len(pre.transactions))
+				j   int
+			)
+			for i := range pre.transactions {
+				if pre.envelopesData[j].index != i || // pre.transactions[i] is not an envelope, use it as-is.
+					decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
+					txx[i] = pre.transactions[i]
+					continue
+				}
+				log.Info("Envelope data decrypted",
+					"envelope hash", pre.transactions[i].Hash(),
+					"envelope index", i,
+					"data", hex.EncodeToString(decryptedTxsBytes[j]))
+				var decryptedTx = new(types.Transaction)
+				err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
+				if err != nil {
+					log.Info("Decrypted transaction decoding failed",
+						"envelope hash", pre.transactions[i].Hash(),
+						"envelope index", i,
+						"data", hex.EncodeToString(decryptedTxsBytes[j]),
+						"error", err.Error())
+					txx[i] = pre.transactions[i]
+					j++
+					continue
+				}
+				err = c.legacypool.ValidateDecryptedTx(decryptedTx, pre.transactions[i])
+				if err != nil {
+					txx[i] = pre.transactions[i]
+					log.Info("Decrypted transaction is invalid",
+						"envelope hash", pre.transactions[i].Hash(),
+						"envelope index", i,
+						"data", hex.EncodeToString(decryptedTxsBytes[j]),
+						"error", err.Error())
+					j++
+					continue
+				}
+				txx[i] = decryptedTx
+				j++
+				continue
+			}
+			pre.finalTransactions = txx
+			return nil
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize dBFT: %w", err)
@@ -634,10 +774,10 @@ func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
 	return c, nil
 }
 
-// newBlockFromContext is a dBFT callback that builds [Block] from the provided dBFT proposal
+// newPreBlockFromContext is a dBFT callback that builds [PreBlock] from the provided dBFT proposal
 // filling all appropriate fields from dBFT context. It doesn't set transactions or any
 // other information except the header itself.
-func (c *DBFT) newBlockFromContext(sealingProposal *types.Header) *Block {
+func (c *DBFT) newPreBlockFromContext(sealingProposal *types.Header) *PreBlock {
 	ctx := c.dbft.Context
 
 	// Avoid changing PrepareRequest itself.
@@ -651,21 +791,21 @@ func (c *DBFT) newBlockFromContext(sealingProposal *types.Header) *Block {
 
 	h.Difficulty = c.getDifficulty(int(ctx.PrimaryIndex), uint64(ctx.BlockIndex))
 
-	// Do not fill block's transactions. First of all, transactions are not
+	// Do not fill PreBlock's transactions. First of all, transactions are not
 	// needed for block signing or block signature verification. Secondly, some
 	// transactions may be missing by the moment of call to NewBlockFromContext
 	// (dBFT has only the full set of their hashes). Once all transactions are
 	// fetched and the commits are collected, SetTransactions callback will be
-	// called by dBFT library to properly initialize block's transactions.
-	res := &Block{
-		header: h,
-	}
+	// called by dBFT library to properly initialize PreBlock's transactions.
+	res := &PreBlock{header: h}
 	// Withdrawals are temporary empty if Shanghai is passed.
 	if c.chain.Config().IsShanghai(h.Number, h.Time) {
 		res.withdrawals = emptyWithdrawals
 	}
+
 	return res
 }
+
 func (c *DBFT) getBlockWitness() []byte {
 	dctx := c.dbft.Context
 
@@ -764,6 +904,11 @@ events:
 // (fetching unknown transactions).
 func (c *DBFT) WithTxPool(pool txPool) {
 	c.txpool = pool
+}
+
+// WithLegacyPool initializes transaction legacy pool API for ValidateDecryptedTx
+func (c *DBFT) WithLegacyPool(pool legacyPool) {
+	c.legacypool = pool
 }
 
 // postBlock is a callback that updates latest accepted block data and resets
@@ -1131,12 +1276,13 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 
 // Authorize injects a private key into the consensus engine to mint new blocks
 // with.
-func (c *DBFT) Authorize(signer common.Address, signFn SignerFn) {
+func (c *DBFT) Authorize(signer common.Address, signFn SignerFn, amevKeystore *antimev.AMEVKeyStore) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
 	c.signer = signer
 	c.signFn = signFn
+	c.amevKeystore = amevKeystore
 }
 
 // Start initializes last block cache, fetches fresh proposal from miner, starts

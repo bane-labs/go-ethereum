@@ -2,16 +2,53 @@ package antimev
 
 import (
 	"bytes"
+	"encoding/hex"
+	"fmt"
 	"math/rand"
+	"os"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
+	"github.com/stretchr/testify/require"
 )
 
+// addrIdx is a structure combining CN node address and its index in the privnet setup.
+type addrIdx struct {
+	addr common.Address
+	i    int
+}
+
+// privnetCNs stores the set of 7-nodes privnet addresses along with their indexes.
+// It's sorted by addresses order, exactly like dBFT validators.
+var privnetCNs = []addrIdx{
+	{addr: common.HexToAddress("0x74f4effb0b538baec703346b03b6d9292f53a4cd"), i: 1},
+	{addr: common.HexToAddress("0x910ad1641b7125eff746accdca1f11148b22f472"), i: 2},
+	{addr: common.HexToAddress("0xfef5f250af14df73f983caab7b1f5002189c42e0"), i: 3},
+	{addr: common.HexToAddress("0xc51964013acbc6b271feecb0febd9e7a01202930"), i: 4},
+	{addr: common.HexToAddress("0xc5bbd9652546bc96be3dec97a38ee335f7873dfa"), i: 5},
+	{addr: common.HexToAddress("0x26f1794b81df2b832545b8b6bbca196b82e4feb1"), i: 6},
+	{addr: common.HexToAddress("0x0b51369d02e47ee3f143391b837aa08c31aaa19b"), i: 7},
+}
+
+func init() {
+	slices.SortFunc(privnetCNs, func(a, b addrIdx) int {
+		return common.Address.Cmp(a.addr, b.addr)
+	})
+}
+
 func TestTPKE(t *testing.T) {
+	const saveKeystore = false
+
+	privnetCNAddresses := make([]common.Address, len(privnetCNs))
+	for i := range privnetCNAddresses {
+		privnetCNAddresses[i] = privnetCNs[i].addr
+	}
+
 	source := rand.NewSource(time.Now().UnixNano())
 	random := rand.New(source)
 
@@ -20,7 +57,7 @@ func TestTPKE(t *testing.T) {
 	for i := 0; i < size; i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey
-		ks, err := NewKeyStore(addrs[i], key, size, threshold)
+		ks, err := NewKeyStore(privnetCNs[i].addr, key, size, threshold)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -31,7 +68,7 @@ func TestTPKE(t *testing.T) {
 	pvssbox := make([][]byte, size)
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		_, _, err := kss[i].OnValidatorList(addrs, pubs)
+		_, _, err := kss[i].OnValidatorList(privnetCNAddresses, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -60,11 +97,33 @@ func TestTPKE(t *testing.T) {
 		}
 	}
 
+	if saveKeystore {
+		for i := range kss {
+			ksBytes, err := kss[i].Bytes()
+			require.NoError(t, err)
+			ks := new(AMEVKeyStore)
+			fmt.Printf("%s (CN %d):\n\t%s\n", privnetCNs[i].addr, privnetCNs[i].i, hex.EncodeToString(ksBytes))
+			os.WriteFile(fmt.Sprintf("../../privnet/seven/node%d/amev_keystore.txt", privnetCNs[i].i), []byte(hex.EncodeToString(ksBytes)), os.ModePerm)
+
+			// Double-check to ensure keystore marshalling works correctly, and it's
+			// possible to decrypt message with deserialized keystore.
+			require.NoError(t, ks.FromBytes(ksBytes))
+			kss[i] = ks
+		}
+	}
+
 	// Encrypt
-	msg := []byte("pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza")
+	msg := []byte("some data that is more than 105 bytes in length: pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza")
 	encryptedKey, encryptedMsg, err := kss[0].Encrypt(msg)
 	if err != nil {
 		t.Fatalf(err.Error())
+	}
+
+	if saveKeystore {
+		var envelopeData = []byte{0xff, 0xff, 0xff, 0xff}
+		envelopeData = append(envelopeData, encryptedKey.ToBytes()...)
+		envelopeData = append(envelopeData, encryptedMsg...)
+		fmt.Printf("encryptedKey: %s\nencryptedMsg: %s\nEnvelope's data: '0x%s'", hex.EncodeToString(encryptedKey.ToBytes()), hex.EncodeToString(encryptedMsg), hex.EncodeToString(envelopeData))
 	}
 
 	// Verify ciphertext
@@ -74,7 +133,7 @@ func TestTPKE(t *testing.T) {
 
 	// Generate shares
 	shares := make(map[int][]*tpke.DecryptionShare)
-	for i := 0; i < size; i++ {
+	for i := 0; i < size-2; i++ {
 		share, err := kss[i].DecryptWithShare([]*tpke.CipherText{encryptedKey})
 		if err != nil {
 			t.Fatalf(err.Error())
