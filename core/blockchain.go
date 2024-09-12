@@ -2499,25 +2499,38 @@ func (bc *BlockChain) ProcessState(block *types.Block, statedb *state.StateDB) (
 	return statedb, receipts, logs, usedGas, nil
 }
 
-// VerifyPreBlock validates PreBlock body. This method does not perform in-block
-// transactions processing or resulting state/receipts/gas used validation since
-// it's aimed to work with encrypted Enveloped transactions.
-func (bc *BlockChain) VerifyPreBlock(block *types.Block) error {
+// VerifyBlock validates Block body. If checkState is disabled, then this method does
+// not perform in-block transactions processing or resulting state/receipts/gas used
+// validation since it's aimed to work with encrypted Enveloped transactions in this
+// mode.
+func (bc *BlockChain) VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, types.Receipts, error) {
 	err := bc.validator.ValidateBody(block)
 	if err != nil {
-		return fmt.Errorf("failed to validate body: %w", err)
+		return nil, nil, fmt.Errorf("failed to validate body: %w", err)
 	}
 
 	statedb, parentHeader, err := bc.getParentState(block)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	// verify baseFee
 	baseFee := eip1559.CalcBaseFeeDBFT(bc.chainConfig, parentHeader, statedb)
 	if block.BaseFee().Cmp(baseFee) != 0 {
-		return fmt.Errorf("failed to verify policy baseFee, expected: %v, current: %v", baseFee, block.BaseFee())
+		return nil, nil, fmt.Errorf("failed to verify policy baseFee, expected: %v, current: %v", baseFee, block.BaseFee())
 	}
 
-	return nil
+	if !checkState {
+		return nil, nil, nil
+	}
+
+	statedb, receipts, _, usedGas, err := bc.ProcessState(block, statedb)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to process block state: %w", err)
+	}
+
+	if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
+		return nil, nil, fmt.Errorf("failed to verify state: %w", err)
+	}
+	return statedb, receipts, nil
 }

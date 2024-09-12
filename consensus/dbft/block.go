@@ -19,6 +19,8 @@ const NsInS = 1000_000_000
 // Block is a wrapper around Eth block that implements [dbft.Block] interface and is
 // sufficient for dBFT operations.
 type Block struct {
+	// isLegacy denotes whether Block is aimed to be used with dBFT anti-MEV extension disabled.
+	isLegacy            bool
 	header              *types.Header
 	withdrawals         []*types.Withdrawal
 	transactions        []*types.Transaction
@@ -64,6 +66,14 @@ func (b *Block) Transactions() []dbft.Transaction[common.Hash] {
 // SetTransactions implements [dbft.Block] interface. It does not change the
 // underlying block.
 func (b *Block) SetTransactions(txx []dbft.Transaction[common.Hash]) {
+	if b.isLegacy {
+		txs := make([]*types.Transaction, len(txx))
+		for i, tx := range txx {
+			txs[i] = tx.(*Transaction).Tx
+		}
+		b.transactions = txs
+		return
+	}
 	// With anti-MEV dBFT extension enabled, this callback is useless. Block's
 	// transactions are filled and finalized earlier in NewBlockFromContext.
 }

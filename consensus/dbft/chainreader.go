@@ -16,7 +16,7 @@ type ChainHeaderReader interface {
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	HasBlock(hash common.Hash, number uint64) bool
 	GetBlockByNumber(uint64) *types.Block
-	VerifyPreBlock(block *types.Block) error
+	VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, types.Receipts, error)
 	ProcessState(block *types.Block, statedb *state.StateDB) (*state.StateDB, types.Receipts, []*types.Log, uint64, error)
 }
 

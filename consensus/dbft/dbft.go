@@ -130,7 +130,7 @@ var (
 
 // getSignersAndSigs extracts the set of validators addresses (len(cfg.StandByValidators) number of them)
 // and a set of validators signatures (BFT number of them) from a signed header.
-func getSignersAndSigs(cfg *params.DBFTConfig, extra []byte) ([]common.Address, [][]byte, error) {
+func getSignersAndSigs(cfg *config, extra []byte) ([]common.Address, [][]byte, error) {
 	// Retrieve the signature from the header extra-data
 	var (
 		n             = len(cfg.StandByValidators)
@@ -191,7 +191,7 @@ type DBFT struct {
 	// dBFT engine is not started.
 	syncing atomic.Bool
 
-	config *params.DBFTConfig // Consensus engine configuration parameters
+	config *config // Consensus engine configuration parameters
 
 	signer       common.Address        // Ethereum address of the signing key
 	signFn       SignerFn              // Signer function to authorize hashes with
@@ -239,26 +239,40 @@ type DBFT struct {
 	fakeDiff bool // Skip difficulty verifications
 }
 
+// config represents Engine configuration.
+type config struct {
+	*params.DBFTConfig
+	antiMEVEnablingHeight int64
+}
+
 // New creates a DBFT proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
 func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
-	config := chainCfg.DBFT
-	if config.SecondsPerBlock == 0 {
+	cfg := &config{
+		DBFTConfig:            chainCfg.DBFT,
+		antiMEVEnablingHeight: -1,
+	}
+	if cfg.SecondsPerBlock == 0 {
 		return nil, errors.New("zero-period dBFT chain is not supported")
 	}
-	if config.Coinbase == (common.Address{}) {
+	if cfg.Coinbase == (common.Address{}) {
 		return nil, errors.New("empty dBFT Coinbase is not allowed, need to specify mining rewards receiver")
 	}
 	// Set any missing consensus parameters to their defaults
-	conf := *config
+	bftCfg := *cfg.DBFTConfig
 	// Sort validators once to reuse the sorted list in getNextConsensus.
 	// Do not change configured committee.
-	conf.StandByValidators = make([]common.Address, len(conf.StandByValidators))
-	copy(conf.StandByValidators, config.StandByValidators)
-	slices.SortFunc(conf.StandByValidators, common.Address.Cmp)
+	bftCfg.StandByValidators = make([]common.Address, len(bftCfg.StandByValidators))
+	copy(bftCfg.StandByValidators, cfg.StandByValidators)
+	slices.SortFunc(bftCfg.StandByValidators, common.Address.Cmp)
+	cfg.DBFTConfig = &bftCfg
+
+	if chainCfg.NeoXAMEVBlock != nil {
+		cfg.antiMEVEnablingHeight = chainCfg.NeoXAMEVBlock.Int64()
+	}
 
 	c := &DBFT{
-		config:     &conf,
+		config:     cfg,
 		blockQueue: newBlockQueue(),
 
 		messages:        make(chan Payload, msgsChCap),
@@ -279,7 +293,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	c.dbft, err = dbft.New[common.Hash](
 		dbft.WithTimer[common.Hash](timer.New()),
 		dbft.WithLogger[common.Hash](logger),
-		dbft.WithSecondsPerBlock[common.Hash](time.Duration(conf.SecondsPerBlock)*time.Second),
+		dbft.WithSecondsPerBlock[common.Hash](time.Duration(bftCfg.SecondsPerBlock)*time.Second),
 		dbft.WithGetKeyPair[common.Hash](func(keys []dbft.PublicKey) (int, dbft.PrivateKey, dbft.PublicKey) {
 			c.lock.RLock()
 			signer, signFn, ks := c.signer, c.signFn, c.amevKeystore
@@ -365,6 +379,20 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			c.postBlock(res.Header())
 		}),
 		dbft.WithNewBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
+			if !c.chain.Config().IsNeoXAMEV(big.NewInt(int64(ctx.BlockIndex))) {
+				prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
+				if prepareReq == nil {
+					panic("can't create new block from context: prepare request is nil")
+				}
+				// Reuse PreBlock helper to avoid code duplications.
+				pre := c.newPreBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
+				res := &Block{
+					isLegacy:    true,
+					header:      pre.header,
+					withdrawals: pre.withdrawals,
+				}
+				return res
+			}
 			pre := ctx.PreBlock().(*PreBlock)
 			// Recalculate Block state based on PreBlock and updated transactions list.
 			// Avoid changing the original PreHeader.
@@ -640,7 +668,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				return false
 			}
 			ethBlock := dbftBlock.ToEthBlock()
-			err := c.chain.VerifyPreBlock(ethBlock)
+			_, _, err := c.chain.VerifyBlock(ethBlock, false)
 			if err != nil {
 				log.Warn("proposed PreBlock verification failed",
 					"err", err.Error())
@@ -650,6 +678,52 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			return true
 		}),
 		dbft.WithVerifyBlock[common.Hash](func(b dbft.Block[common.Hash]) bool {
+			if !c.chain.Config().IsNeoXAMEV(big.NewInt(int64(c.dbft.Context.BlockIndex))) {
+				dbftBlock := b.(*Block)
+				parent := c.chain.CurrentBlock()
+				if parent.Number.Cmp(dbftBlock.header.Number) >= 0 {
+					log.Warn("proposed block has already outdated",
+						"current block number", parent.Number.Uint64(),
+						"proposed block number", dbftBlock.header.Number)
+					return false
+				}
+				if c.lastTimestamp > dbftBlock.header.Time {
+					log.Warn("proposed block has small timestamp",
+						"ts", dbftBlock.header.Time,
+						"last", c.lastTimestamp)
+					return false
+				}
+
+				ethBlock := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
+				state, receipts, err := c.chain.VerifyBlock(ethBlock, true)
+				if err != nil {
+					log.Warn("proposed block verification failed",
+						"err", err.Error())
+					return false
+				}
+
+				// Verify NextConsensus based on the state got after in-block transactions processing. Make a
+				// state copy in order to avoid state modifications potentially made by getValidators call.
+				// The original state will be committed if block is accepted.
+				nextVals, err := c.getValidators(nil, state.Copy(), dbftBlock.header)
+				if err != nil {
+					log.Crit("Failed to compute next block validators",
+						"err", err)
+				}
+				expectedMixDigest := dbftutil.GetNextConsensusHash(nextVals)
+				if dbftBlock.header.MixDigest != expectedMixDigest {
+					log.Warn("Invalid NextConsensus in the proposed block",
+						"expected", expectedMixDigest.String(),
+						"actual", dbftBlock.header.MixDigest.String())
+					return false
+				}
+
+				dbftBlock.state = state
+				dbftBlock.receipts = receipts
+
+				return true
+			}
+
 			log.Crit("unexpected call to VerifyBlock")
 
 			return false
@@ -665,7 +739,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				log.Warn("can't broadcast consensus message", "error", err)
 			}
 		}),
-		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash](0),
+		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash](c.config.antiMEVEnablingHeight),
 		dbft.WithNewPreCommit[common.Hash](func(data []byte) dbft.PreCommit {
 			return &preCommit{
 				dataExt: data,
