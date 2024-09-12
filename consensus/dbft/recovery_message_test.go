@@ -48,7 +48,14 @@ func TestRecoverMessage_RLP(t *testing.T) {
 	rm := &recoveryMessage{
 		PreparationHashExt: &common.Hash{1, 2},
 		PreparationPayloads: []*preparationCompact{
-			{ValidatorIndex: 1, InvocationScript: []byte{1, 2, 3}}},
+			{ValidatorIndex: 1, InvocationScript: []byte{1, 2, 3}},
+		},
+		PreCommitPayloads: []*preCommitCompact{{
+			ViewNumber:       1,
+			ValidatorIndex:   2,
+			Data:             []byte{1, 2, 3},
+			InvocationScript: []byte{3, 4, 5},
+		}},
 		CommitPayloads:     []*commitCompact{{ViewNumber: 1, ValidatorIndex: 1, Signature: sign, InvocationScript: []byte{1, 2, 3, 4, 5}}},
 		ChangeViewPayloads: []*changeViewCompact{{ValidatorIndex: 1, OriginalViewNumber: 2, Timestamp: 3, InvocationScript: []byte{1, 2, 3, 4, 5, 6}}},
 		PrepareRequest: &message{
