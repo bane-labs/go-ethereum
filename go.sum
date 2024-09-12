@@ -489,8 +489,8 @@ github.com/naoina/toml v0.1.2-0.20170918210437-9fafd6967416/go.mod h1:NBIhNtsFMo
 github.com/nats-io/nats.go v1.8.1/go.mod h1:BrFz9vVn0fU3AcH9Vn4Kd7W0NpJ651tD5omQ3M8LwxM=
 github.com/nats-io/nkeys v0.0.2/go.mod h1:dab7URMsZm6Z/jp9Z5UGa87Uutgc2mVpXLC4B7TDb/4=
 github.com/nats-io/nuid v1.0.1/go.mod h1:19wcPz3Ph3q0Jbyiqsd0kePYG7A95tJPxeL+1OSON2c=
-github.com/nspcc-dev/dbft v0.3.1-0.20240904101105-212d1768bdcf h1:lYp3p0IL1HT20wggxfTvluRYLbb87TgqcM8voIvD0v8=
-github.com/nspcc-dev/dbft v0.3.1-0.20240904101105-212d1768bdcf/go.mod h1:BNvJkPKTE28r+qRaAk2C3VoL2J9qzox3fvEeJbh7EWE=
+github.com/nspcc-dev/dbft v0.3.1-0.20240912152105-ba329883f471 h1:EpFQ5tHFDuGPdMI0CK31MuH5YB5WDPHf7czF1pMVh64=
+github.com/nspcc-dev/dbft v0.3.1-0.20240912152105-ba329883f471/go.mod h1:BNvJkPKTE28r+qRaAk2C3VoL2J9qzox3fvEeJbh7EWE=
 github.com/nxadm/tail v1.4.4 h1:DQuhQpB1tVlglWS2hLQ5OV6B5r8aGxSrPc5Qo6uTN78=
 github.com/nxadm/tail v1.4.4/go.mod h1:kenIhsEOeOJmVchQTgglprH7qJGnHDVpk1VPCcaMI8A=
 github.com/olekukonko/tablewriter v0.0.5 h1:P2Ga83D34wi1o9J6Wh1mRuqd4mF/x/lgBS7N7AbDhec=
