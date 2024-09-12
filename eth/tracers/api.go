@@ -1035,6 +1035,10 @@ func overrideConfig(original *params.ChainConfig, override *params.ChainConfig) 
 		copy.VerkleTime = timestamp
 		canon = false
 	}
+	if timestamp := override.NeoXBurnTime; timestamp != nil {
+		copy.NeoXBurnTime = timestamp
+		canon = false
+	}
 
 	return copy, canon
 }
