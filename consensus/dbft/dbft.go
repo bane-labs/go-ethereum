@@ -262,8 +262,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	bftCfg := *cfg.DBFTConfig
 	// Sort validators once to reuse the sorted list in getNextConsensus.
 	// Do not change configured committee.
-	bftCfg.StandByValidators = make([]common.Address, len(bftCfg.StandByValidators))
-	copy(bftCfg.StandByValidators, cfg.StandByValidators)
+	bftCfg.StandByValidators = slices.Clone(cfg.StandByValidators)
 	slices.SortFunc(bftCfg.StandByValidators, common.Address.Cmp)
 	cfg.DBFTConfig = &bftCfg
 
