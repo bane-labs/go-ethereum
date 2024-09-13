@@ -175,7 +175,7 @@ func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database) (conse
 		return beacon.New(clique.New(config.Clique, db)), nil
 	}
 	if config.DBFT != nil {
-		bft, err := dbft.New(config.DBFT, db)
+		bft, err := dbft.New(config, db)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create dBFT engine: %w", err)
 		}

@@ -241,7 +241,8 @@ type DBFT struct {
 
 // New creates a DBFT proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(config *params.DBFTConfig, _ ethdb.Database) (*DBFT, error) {
+func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
+	config := chainCfg.DBFT
 	if config.SecondsPerBlock == 0 {
 		return nil, errors.New("zero-period dBFT chain is not supported")
 	}
