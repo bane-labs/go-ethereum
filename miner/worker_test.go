@@ -233,7 +233,7 @@ func TestGenerateAndImportBlockDBFT(t *testing.T) {
 		config = *params.AllCliqueProtocolChanges
 	)
 	config.DBFT = &params.DBFTConfig{SecondsPerBlock: 1}
-	engine, err := dbft.New(config.DBFT, db)
+	engine, err := dbft.New(&config, db)
 	require.NoError(t, err)
 
 	w, b := newTestWorker(t, &config, engine, db, 0)
@@ -282,7 +282,7 @@ func TestEmptyWorkClique(t *testing.T) {
 }
 func TestEmptyWorkDBFT(t *testing.T) {
 	t.Skip("@fixme")
-	bft, err := dbft.New(dbftChainConfig.DBFT, rawdb.NewMemoryDatabase())
+	bft, err := dbft.New(dbftChainConfig, rawdb.NewMemoryDatabase())
 	require.NoError(t, err)
 	testEmptyWork(t, dbftChainConfig, bft)
 }

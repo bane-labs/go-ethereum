@@ -1015,6 +1015,10 @@ func overrideConfig(original *params.ChainConfig, override *params.ChainConfig) 
 		copy.GrayGlacierBlock = block
 		canon = false
 	}
+	if block := override.NeoXAMEVBlock; block != nil {
+		copy.NeoXAMEVBlock = block
+		canon = false
+	}
 	if block := override.MergeNetsplitBlock; block != nil {
 		copy.MergeNetsplitBlock = block
 		canon = false
@@ -1033,6 +1037,10 @@ func overrideConfig(original *params.ChainConfig, override *params.ChainConfig) 
 	}
 	if timestamp := override.VerkleTime; timestamp != nil {
 		copy.VerkleTime = timestamp
+		canon = false
+	}
+	if timestamp := override.NeoXBurnTime; timestamp != nil {
+		copy.NeoXBurnTime = timestamp
 		canon = false
 	}
 
