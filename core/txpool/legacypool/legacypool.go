@@ -543,6 +543,15 @@ func (pool *LegacyPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs
 	return pool.txFeed.Subscribe(ch)
 }
 
+func (pool *LegacyPool) flushTransactionsBelowTip(tip *big.Int) {
+	// pool.priced is sorted by GasFeeCap, so we have to iterate through pool.all instead
+	drop := pool.all.RemotesBelowTip(tip)
+	for _, tx := range drop {
+		pool.removeTx(tx.Hash(), false, true)
+	}
+	pool.priced.Removed(len(drop))
+}
+
 // SubscribeReannoTransactions registers a subscription for reannounce transaction events,
 // supporting feeding only pending transactions.
 func (pool *LegacyPool) SubscribeReannoTransactions(ch chan<- core.ReannoTxsEvent) event.Subscription {
@@ -562,14 +571,16 @@ func (pool *LegacyPool) SetGasTip(tip *big.Int) {
 	pool.gasTip.Store(newTip)
 	// If the min miner fee increased, remove transactions below the new threshold
 	if newTip.Cmp(old) > 0 {
-		// pool.priced is sorted by GasFeeCap, so we have to iterate through pool.all instead
-		drop := pool.all.RemotesBelowTip(tip)
-		for _, tx := range drop {
-			pool.removeTx(tx.Hash(), false, true)
-		}
-		pool.priced.Removed(len(drop))
+		pool.flushTransactionsBelowTip(tip)
 	}
 	log.Info("Legacy pool tip threshold updated", "tip", newTip)
+}
+
+func (pool *LegacyPool) FlushAllTransactions() {
+	maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(common.Big1, 256), common.Big1)
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+	pool.flushTransactionsBelowTip(maxUint256)
 }
 
 // Nonce returns the next nonce of an account, with all transactions executable

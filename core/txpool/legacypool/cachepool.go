@@ -299,6 +299,11 @@ func (pool *CachePool) SetGasTip(tip *big.Int) {
 	log.Info("Cache pool tip threshold updated", "tip", newTip)
 }
 
+// FlushAllTransactions is a no-op for the cache pool, as it does not
+// maintain a separate pool of transactions that can be flushed.
+func (pool *CachePool) FlushAllTransactions() {
+}
+
 // Nonce returns the next nonce of an account, with all transactions executable
 // by the pool already applied on top.
 //
