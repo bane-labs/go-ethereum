@@ -56,6 +56,7 @@ var (
 	londonInstructionSet           = newLondonInstructionSet()
 	mergeInstructionSet            = newMergeInstructionSet()
 	shanghaiInstructionSet         = newShanghaiInstructionSet()
+	neoxamevInstructionSet         = newNeoXAMEVInstructionSet()
 	cancunInstructionSet           = newCancunInstructionSet()
 )
 
@@ -81,12 +82,17 @@ func validate(jt JumpTable) JumpTable {
 }
 
 func newCancunInstructionSet() JumpTable {
-	instructionSet := newShanghaiInstructionSet()
+	instructionSet := newNeoXAMEVInstructionSet()
 	enable4844(&instructionSet) // EIP-4844 (BLOBHASH opcode)
 	enable7516(&instructionSet) // EIP-7516 (BLOBBASEFEE opcode)
 	enable1153(&instructionSet) // EIP-1153 "Transient Storage"
-	enable5656(&instructionSet) // EIP-5656 (MCOPY opcode)
 	enable6780(&instructionSet) // EIP-6780 SELFDESTRUCT only in same transaction
+	return validate(instructionSet)
+}
+
+func newNeoXAMEVInstructionSet() JumpTable {
+	instructionSet := newShanghaiInstructionSet()
+	enable5656(&instructionSet) // EIP-5656 (MCOPY opcode)
 	return validate(instructionSet)
 }
 
