@@ -40,6 +40,9 @@ interface IGovernance {
     // compute and update cached consensus group
     function onPersist() external;
 
+    // onPersist implementation valid starting from NeoXAMEV fork
+    function onPersistV2() external;
+
     // activate a candidate in election
     function activateCandidate(address candidate) external;
 
