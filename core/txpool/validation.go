@@ -211,8 +211,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	if next > tx.Nonce() {
 		return fmt.Errorf("%w: next nonce %v, tx nonce %v", core.ErrNonceTooLow, next, tx.Nonce())
 	}
-	// Ensure the transaction is allowed by policy
-	// Apply policy minimum gas tip cap
+	// Ensure the transaction is allowed by policy, apply policy minimum gas tip cap.
 	// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough
 	var minGasTipCap = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
 	var baseFee = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash()).Big()

@@ -161,9 +161,7 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 	// If currentBaseFee is defined, add it to the vmContext and to the state DB.
 	if pre.Env.BaseFee != nil {
 		vmContext.BaseFee = new(big.Int).Set(pre.Env.BaseFee)
-		if chainConfig.IsNeoXBurn(vmContext.BlockNumber, vmContext.Time) {
-			statedb.SetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash(), common.BigToHash(pre.Env.BaseFee))
-		}
+		statedb.SetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash(), common.BigToHash(pre.Env.BaseFee))
 	}
 	// If random is defined, add it to the vmContext.
 	if pre.Env.Random != nil {

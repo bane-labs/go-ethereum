@@ -324,10 +324,9 @@ func (st *StateTransition) preCheck() error {
 				return fmt.Errorf("%w: address %v, maxFeePerGas: %s, baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
 			}
-			// Ensure the transaction is allowed by policy, only for neoXBurn fork
-			if st.evm.ChainConfig().IsNeoXBurn(st.evm.Context.BlockNumber, st.evm.Context.Time) {
-				// Apply policy minimum gas tip cap
-				// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough
+			// Ensure the transaction is allowed by NeoX fee policy, apply policy minimum gas tip cap.
+			// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough.
+			if st.evm.ChainConfig().DBFT != nil {
 				var minGasTipCap = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
 				if cmath.BigMin(msg.GasTipCap, new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee)).Cmp(minGasTipCap) < 0 {
 					return fmt.Errorf("%w: address %v, gasTipCap %v, gasFeeCap %v, policy minGasTipCap %v, baseFee %v ", ErrUnderpriced,

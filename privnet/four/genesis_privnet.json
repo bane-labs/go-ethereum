@@ -16,7 +16,6 @@
     "grayGlacierBlock": 0,
     "shanghaiTime": 0,
     "neoXAMEVBlock": 5,
-    "neoXBurnTime": 0,
     "dbft": {
       "period": 5,
       "standbyValidators": [
