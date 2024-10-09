@@ -199,7 +199,15 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, vmenv *vm.EVM, statedb *stat
 
 // ProcessOnPersist applies a system call to the governance contract.
 func ProcessOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
-	data, err := systemcontracts.GovernanceABI.Pack("onPersist")
+	var (
+		data []byte
+		err  error
+	)
+	if vmenv.ChainConfig().IsNeoXAMEV(vmenv.Context.BlockNumber) {
+		data, err = systemcontracts.GovernanceABI.Pack("onPersistV2")
+	} else {
+		data, err = systemcontracts.GovernanceABI.Pack("onPersist")
+	}
 	if err != nil {
 		return fmt.Errorf("filed to pack onPersist call: %w", err)
 	}

@@ -197,12 +197,12 @@ func Transition(ctx *cli.Context) error {
 }
 
 func applyNeoXBurnChecks(env *stEnv, chainConfig *params.ChainConfig) error {
-	if !chainConfig.IsNeoXBurn(big.NewInt(int64(env.Number)), env.Timestamp) {
+	if chainConfig.DBFT == nil {
 		return nil
 	}
 	// Sanity check, to not `panic` in state_transition
 	if env.BaseFee == nil {
-		return NewError(ErrorConfig, errors.New("NeoXBurn config but missing 'currentBaseFee' in env section"))
+		return NewError(ErrorConfig, errors.New("NeoX requires 'currentBaseFee' in env section"))
 	}
 	return nil
 }

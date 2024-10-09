@@ -273,6 +273,31 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         emit Persist(currentConsensus);
     }
 
+    function onPersistV2() external {
+        // NOTE: suppose onPersist always happens at the beginning of every block
+        if (msg.sender != SYS_CALL) revert Errors.SideCallNotAllowed();
+        // only settle validator reward if there is no epoch change
+        IGovReward(GOV_REWARD).withdraw();
+        if (block.number < currentEpochStartHeight + epochDuration) return;
+        // update tag values
+        currentEpochStartHeight = block.number;
+        address[] memory candidates = candidateList.values();
+        uint length = candidates.length;
+        for (uint i = 0; i < length; i++) {
+            epochStartGasPerVote[candidates[i]][
+                block.number / epochDuration
+            ] = candidateGasPerVote[candidates[i]];
+        }
+        // compute and update consensus
+        if (length < consensusSize || totalVotes < voteTargetAmount) {
+            currentConsensus = standByValidators;
+        } else {
+            currentConsensus = _computeConsensus(candidates);
+        }
+        emit Persist(currentConsensus);
+    }
+
+
     function activateCandidate(address candidate) external {
         if (msg.sender != POLICY) revert Errors.SideCallNotAllowed();
         if (exitHeightOf[candidate] > 0 && _activateCandidate(candidate))

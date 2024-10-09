@@ -46,9 +46,9 @@ func VerifyEIP1559Header(config *params.ChainConfig, parent, header *types.Heade
 	if header.BaseFee == nil {
 		return errors.New("header is missing baseFee")
 	}
-	// For NeoXBurn block BaseFee verification is performed by consensus nodes and hence
+	// In NeoX BaseFee verification is performed by consensus nodes and hence
 	// not included into the state-independent ordinary block verification rules.
-	if config.IsNeoXBurn(parent.Number, parent.Time) {
+	if config.DBFT != nil {
 		return nil
 	}
 	// Verify the baseFee is correct based on the parent header.
@@ -101,10 +101,10 @@ func CalcBaseFee(config *params.ChainConfig, parent *types.Header) *big.Int {
 	}
 }
 
-// CalcBaseFeeDBFT calculates the basefee of the header.
-// if is neoXBurn fork, get basefee from Policy contract.
+// CalcBaseFeeDBFT calculates the BaseFee of the header.
+// On NeoX BaseFee is retrieved from Policy contract based on provided storage.
 func CalcBaseFeeDBFT(config *params.ChainConfig, parent *types.Header, state *state.StateDB) *big.Int {
-	if !config.IsNeoXBurn(parent.Number, parent.Time) {
+	if config.DBFT == nil {
 		return CalcBaseFee(config, parent)
 	}
 	return state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash()).Big()

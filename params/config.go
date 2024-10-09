@@ -344,16 +344,15 @@ type ChainConfig struct {
 	LondonBlock         *big.Int `json:"londonBlock,omitempty"`         // London switch block (nil = no fork, 0 = already on london)
 	ArrowGlacierBlock   *big.Int `json:"arrowGlacierBlock,omitempty"`   // Eip-4345 (bomb delay) switch block (nil = no fork, 0 = already activated)
 	GrayGlacierBlock    *big.Int `json:"grayGlacierBlock,omitempty"`    // Eip-5133 (bomb delay) switch block (nil = no fork, 0 = already activated)
-	NeoXAMEVBlock       *big.Int `json:"neoXAMEVBlock"`                 // Switch to anti-MEV related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
 	MergeNetsplitBlock  *big.Int `json:"mergeNetsplitBlock,omitempty"`  // Virtual fork after The Merge to use as a network splitter
 
 	// Fork scheduling was switched from blocks to timestamps here
 
-	ShanghaiTime *uint64 `json:"shanghaiTime,omitempty"` // Shanghai switch time (nil = no fork, 0 = already on shanghai)
-	CancunTime   *uint64 `json:"cancunTime,omitempty"`   // Cancun switch time (nil = no fork, 0 = already on cancun)
-	PragueTime   *uint64 `json:"pragueTime,omitempty"`   // Prague switch time (nil = no fork, 0 = already on prague)
-	VerkleTime   *uint64 `json:"verkleTime,omitempty"`   // Verkle switch time (nil = no fork, 0 = already on verkle)
-	NeoXBurnTime *uint64 `json:"neoXBurnTime,omitempty"` // NeoXBurn switch time (nil = no fork, 0 = already on neoXBurn)
+	ShanghaiTime  *uint64  `json:"shanghaiTime,omitempty"`  // Shanghai switch time (nil = no fork, 0 = already on shanghai)
+	NeoXAMEVBlock *big.Int `json:"neoXAMEVBlock,omitempty"` // Block-based switch to anti-MEV related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
+	CancunTime    *uint64  `json:"cancunTime,omitempty"`    // Cancun switch time (nil = no fork, 0 = already on cancun)
+	PragueTime    *uint64  `json:"pragueTime,omitempty"`    // Prague switch time (nil = no fork, 0 = already on prague)
+	VerkleTime    *uint64  `json:"verkleTime,omitempty"`    // Verkle switch time (nil = no fork, 0 = already on verkle)
 
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
@@ -461,9 +460,6 @@ func (c *ChainConfig) Description() string {
 	if c.GrayGlacierBlock != nil {
 		banner += fmt.Sprintf(" - Gray Glacier:                #%-8v (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/gray-glacier.md)\n", c.GrayGlacierBlock)
 	}
-	if c.NeoXAMEVBlock != nil {
-		banner += fmt.Sprintf(" - NeoXAMEV:                    #%-8v\n", c.NeoXAMEVBlock)
-	}
 	banner += "\n"
 
 	// Add a special section for the merge as it's non-obvious
@@ -486,6 +482,9 @@ func (c *ChainConfig) Description() string {
 	if c.ShanghaiTime != nil {
 		banner += fmt.Sprintf(" - Shanghai:                    @%-10v (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/shanghai.md)\n", *c.ShanghaiTime)
 	}
+	if c.NeoXAMEVBlock != nil {
+		banner += fmt.Sprintf(" - NeoXAMEV:                    #%-8v\n", c.NeoXAMEVBlock)
+	}
 	if c.CancunTime != nil {
 		banner += fmt.Sprintf(" - Cancun:                      @%-10v (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/cancun.md)\n", *c.CancunTime)
 	}
@@ -494,9 +493,6 @@ func (c *ChainConfig) Description() string {
 	}
 	if c.VerkleTime != nil {
 		banner += fmt.Sprintf(" - Verkle:                      @%-10v\n", *c.VerkleTime)
-	}
-	if c.NeoXBurnTime != nil {
-		banner += fmt.Sprintf(" - NeoXBurn:                      @%-10v\n", *c.NeoXBurnTime)
 	}
 	return banner
 }
@@ -573,11 +569,6 @@ func (c *ChainConfig) IsGrayGlacier(num *big.Int) bool {
 	return isBlockForked(c.GrayGlacierBlock, num)
 }
 
-// IsNeoXAMEV returns whether num is either equal to the NeoXAMEV fork block or greater.
-func (c *ChainConfig) IsNeoXAMEV(num *big.Int) bool {
-	return isBlockForked(c.NeoXAMEVBlock, num)
-}
-
 // IsTerminalPoWBlock returns whether the given block is the last block of PoW stage.
 func (c *ChainConfig) IsTerminalPoWBlock(parentTotalDiff *big.Int, totalDiff *big.Int) bool {
 	if c.TerminalTotalDifficulty == nil {
@@ -591,9 +582,9 @@ func (c *ChainConfig) IsShanghai(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.ShanghaiTime, time)
 }
 
-// IsNeoXBurn returns whether time is either equal to the NeoXBurn fork time or greater.
-func (c *ChainConfig) IsNeoXBurn(num *big.Int, time uint64) bool {
-	return c.IsLondon(num) && isTimestampForked(c.NeoXBurnTime, time)
+// IsNeoXAMEV returns whether num is either equal to the NeoXAMEV fork block or greater.
+func (c *ChainConfig) IsNeoXAMEV(num *big.Int) bool {
+	return c.IsLondon(num) && isBlockForked(c.NeoXAMEVBlock, num)
 }
 
 // IsCancun returns whether num is either equal to the Cancun fork time or greater.
@@ -661,9 +652,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "londonBlock", block: c.LondonBlock},
 		{name: "arrowGlacierBlock", block: c.ArrowGlacierBlock, optional: true},
 		{name: "grayGlacierBlock", block: c.GrayGlacierBlock, optional: true},
-		{name: "neoXAMEVBlock", block: c.NeoXAMEVBlock, optional: true},
 		{name: "mergeNetsplitBlock", block: c.MergeNetsplitBlock, optional: true},
 		{name: "shanghaiTime", timestamp: c.ShanghaiTime},
+		{name: "neoXAMEVBlock", block: c.NeoXAMEVBlock, optional: true},
 		{name: "cancunTime", timestamp: c.CancunTime, optional: true},
 		{name: "pragueTime", timestamp: c.PragueTime, optional: true},
 		{name: "verkleTime", timestamp: c.VerkleTime, optional: true},
@@ -758,14 +749,14 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkBlockIncompatible(c.GrayGlacierBlock, newcfg.GrayGlacierBlock, headNumber) {
 		return newBlockCompatError("Gray Glacier fork block", c.GrayGlacierBlock, newcfg.GrayGlacierBlock)
 	}
-	if isForkBlockIncompatible(c.NeoXAMEVBlock, newcfg.NeoXAMEVBlock, headNumber) {
-		return newBlockCompatError("NeoXAMEV fork block", c.NeoXAMEVBlock, newcfg.NeoXAMEVBlock)
-	}
 	if isForkBlockIncompatible(c.MergeNetsplitBlock, newcfg.MergeNetsplitBlock, headNumber) {
 		return newBlockCompatError("Merge netsplit fork block", c.MergeNetsplitBlock, newcfg.MergeNetsplitBlock)
 	}
 	if isForkTimestampIncompatible(c.ShanghaiTime, newcfg.ShanghaiTime, headTimestamp) {
 		return newTimestampCompatError("Shanghai fork timestamp", c.ShanghaiTime, newcfg.ShanghaiTime)
+	}
+	if isForkBlockIncompatible(c.NeoXAMEVBlock, newcfg.NeoXAMEVBlock, headNumber) {
+		return newBlockCompatError("NeoXAMEV fork block", c.NeoXAMEVBlock, newcfg.NeoXAMEVBlock)
 	}
 	if isForkTimestampIncompatible(c.CancunTime, newcfg.CancunTime, headTimestamp) {
 		return newTimestampCompatError("Cancun fork timestamp", c.CancunTime, newcfg.CancunTime)
@@ -961,7 +952,7 @@ type Rules struct {
 	IsHomestead, IsEIP150, IsEIP155, IsEIP158               bool
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
 	IsBerlin, IsLondon                                      bool
-	IsMerge, IsShanghai, IsCancun, IsPrague                 bool
+	IsMerge, IsShanghai, IsNeoXAMEV, IsCancun, IsPrague     bool
 	IsVerkle                                                bool
 }
 
@@ -985,6 +976,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsLondon:         c.IsLondon(num),
 		IsMerge:          isMerge,
 		IsShanghai:       c.IsShanghai(num, timestamp),
+		IsNeoXAMEV:       c.IsNeoXAMEV(num),
 		IsCancun:         c.IsCancun(num, timestamp),
 		IsPrague:         c.IsPrague(num, timestamp),
 		IsVerkle:         c.IsVerkle(num, timestamp),

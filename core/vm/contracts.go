@@ -92,6 +92,32 @@ var PrecompiledContractsBerlin = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{9}): &blake2F{},
 }
 
+// PrecompiledContractsNeoXAMEV contains the set of pre-compiled Ethereum
+// contracts used starting from NeoXAMEV fork. It includes Cancun precompiles
+// concatenated with BLS precompiles with adjusted addresses, so that the resulting
+// list of precompiles addresses remains continuous.
+var PrecompiledContractsNeoXAMEV = map[common.Address]PrecompiledContract{
+	common.BytesToAddress([]byte{0x01}): &ecrecover{},
+	common.BytesToAddress([]byte{0x02}): &sha256hash{},
+	common.BytesToAddress([]byte{0x03}): &ripemd160hash{},
+	common.BytesToAddress([]byte{0x04}): &dataCopy{},
+	common.BytesToAddress([]byte{0x05}): &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{0x06}): &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{0x07}): &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{0x09}): &blake2F{},
+	common.BytesToAddress([]byte{0x0a}): &kzgPointEvaluation{}, // Include Cancun-level precompile to be compatible with Cancun BLS precompile addresses.
+	common.BytesToAddress([]byte{0x0b}): &bls12381G1Add{},
+	common.BytesToAddress([]byte{0x0c}): &bls12381G1Mul{},
+	common.BytesToAddress([]byte{0x0d}): &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{0x0e}): &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0f}): &bls12381G2Mul{},
+	common.BytesToAddress([]byte{0x10}): &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{0x11}): &bls12381Pairing{},
+	common.BytesToAddress([]byte{0x12}): &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x13}): &bls12381MapG2{},
+}
+
 // PrecompiledContractsCancun contains the default set of pre-compiled Ethereum
 // contracts used in the Cancun release.
 var PrecompiledContractsCancun = map[common.Address]PrecompiledContract{
@@ -105,6 +131,15 @@ var PrecompiledContractsCancun = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{8}):    &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{9}):    &blake2F{},
 	common.BytesToAddress([]byte{0x0a}): &kzgPointEvaluation{},
+	common.BytesToAddress([]byte{0x0b}): &bls12381G1Add{},
+	common.BytesToAddress([]byte{0x0c}): &bls12381G1Mul{},
+	common.BytesToAddress([]byte{0x0d}): &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{0x0e}): &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0f}): &bls12381G2Mul{},
+	common.BytesToAddress([]byte{0x10}): &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{0x11}): &bls12381Pairing{},
+	common.BytesToAddress([]byte{0x12}): &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x13}): &bls12381MapG2{},
 }
 
 // PrecompiledContractsBLS contains the set of pre-compiled Ethereum
@@ -122,6 +157,7 @@ var PrecompiledContractsBLS = map[common.Address]PrecompiledContract{
 }
 
 var (
+	PrecompiledAddressesNeoXAMEV  []common.Address
 	PrecompiledAddressesCancun    []common.Address
 	PrecompiledAddressesBerlin    []common.Address
 	PrecompiledAddressesIstanbul  []common.Address
@@ -142,6 +178,9 @@ func init() {
 	for k := range PrecompiledContractsBerlin {
 		PrecompiledAddressesBerlin = append(PrecompiledAddressesBerlin, k)
 	}
+	for k := range PrecompiledContractsNeoXAMEV {
+		PrecompiledAddressesNeoXAMEV = append(PrecompiledAddressesNeoXAMEV, k)
+	}
 	for k := range PrecompiledContractsCancun {
 		PrecompiledAddressesCancun = append(PrecompiledAddressesCancun, k)
 	}
@@ -152,6 +191,8 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 	switch {
 	case rules.IsCancun:
 		return PrecompiledAddressesCancun
+	case rules.IsNeoXAMEV:
+		return PrecompiledAddressesNeoXAMEV
 	case rules.IsBerlin:
 		return PrecompiledAddressesBerlin
 	case rules.IsIstanbul:
