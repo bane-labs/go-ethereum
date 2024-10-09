@@ -74,9 +74,10 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	var (
 		context             vm.BlockContext
 		signer              = types.MakeSigner(p.config, header.Number, header.Time)
-		err                 error
 		envelopeNumberLimit = statedb.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMaxEnvelopesPerBlockStateHash()).Big().Uint64()
 	)
+
+	// Apply pre-execution system calls.
 	context = NewEVMBlockContext(header, p.chain, nil)
 	vmenv := vm.NewEVM(context, vm.TxContext{}, statedb, p.config, cfg)
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
@@ -91,6 +92,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			return nil, fmt.Errorf("could not apply OnPersist [%v]: %w", block.Hash().Hex(), err)
 		}
 	}
+
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		// Check against envelope number policy
@@ -114,13 +116,15 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
 	}
+
 	// Read requests if Prague is enabled.
-	var requests types.Requests
+	var requests [][]byte
 	if p.config.IsPrague(block.Number(), block.Time()) {
-		requests, err = ParseDepositLogs(allLogs, p.config)
+		depositRequests, err := ParseDepositLogs(allLogs, p.config)
 		if err != nil {
 			return nil, err
 		}
+		requests = append(requests, depositRequests)
 	}
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
@@ -280,15 +284,15 @@ func ProcessParentBlockHash(prevHash common.Hash, vmenv *vm.EVM, statedb *state.
 
 // ParseDepositLogs extracts the EIP-6110 deposit values from logs emitted by
 // BeaconDepositContract.
-func ParseDepositLogs(logs []*types.Log, config *params.ChainConfig) (types.Requests, error) {
-	deposits := make(types.Requests, 0)
+func ParseDepositLogs(logs []*types.Log, config *params.ChainConfig) ([]byte, error) {
+	deposits := make([]byte, 1) // note: first byte is 0x00 (== deposit request type)
 	for _, log := range logs {
 		if log.Address == config.DepositContractAddress {
-			d, err := types.UnpackIntoDeposit(log.Data)
+			request, err := types.DepositLogToRequest(log.Data)
 			if err != nil {
 				return nil, fmt.Errorf("unable to parse deposit data: %v", err)
 			}
-			deposits = append(deposits, types.NewRequest(d))
+			deposits = append(deposits, request...)
 		}
 	}
 	return deposits, nil

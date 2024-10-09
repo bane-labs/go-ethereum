@@ -165,6 +165,7 @@ type newPayloadResult struct {
 	sidecars []*types.BlobTxSidecar // collected blobs of blob transactions
 	stateDB  *state.StateDB         // StateDB after executing the transactions
 	receipts []*types.Receipt       // Receipts collected during construction
+	requests [][]byte               // Consensus layer requests collected during block construction
 	witness  *stateless.Witness     // Witness is an optional stateless proof
 }
 
@@ -1122,14 +1123,21 @@ func (w *worker) generateWork(params *generateParams, witness bool) *newPayloadR
 	for _, r := range work.receipts {
 		allLogs = append(allLogs, r.Logs...)
 	}
-	// Read requests if Prague is enabled.
+
+	// Collect consensus-layer requests if Prague is enabled.
+	var requests [][]byte
 	if w.chainConfig.IsPrague(work.header.Number, work.header.Time) {
-		requests, err := core.ParseDepositLogs(allLogs, w.chainConfig)
+		depositRequests, err := core.ParseDepositLogs(allLogs, w.chainConfig)
 		if err != nil {
 			return &newPayloadResult{err: err}
 		}
-		body.Requests = requests
+		requests = append(requests, depositRequests)
 	}
+	if requests != nil {
+		reqHash := types.CalcRequestsHash(requests)
+		work.header.RequestsHash = &reqHash
+	}
+
 	block, err := w.engine.FinalizeAndAssemble(w.chain, work.header, work.state, &body, work.receipts)
 	if err != nil {
 		return &newPayloadResult{err: err}
@@ -1140,6 +1148,7 @@ func (w *worker) generateWork(params *generateParams, witness bool) *newPayloadR
 		sidecars: work.sidecars,
 		stateDB:  work.state,
 		receipts: work.receipts,
+		requests: requests,
 		witness:  work.witness,
 	}
 }
