@@ -30,6 +30,7 @@ library Errors {
     error CandidateWithdrawNotAllowed();
     error MultipleVoteNotAllowed();
     error NoVote();
+    error ElectionLocked();
 
     // KeyManagement Errors
     error NotShareMember();
