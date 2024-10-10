@@ -7,4 +7,8 @@ contract MockSysCall {
     function call_onPersist(IGovernance governanceAddr) public {
         governanceAddr.onPersist();
     }
+
+    function call_onPersistV2(IGovernance governanceAddr) public {
+        governanceAddr.onPersistV2();
+    }
 }

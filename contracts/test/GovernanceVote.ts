@@ -18,6 +18,7 @@ const MIN_VOTE_AMOUNT = ethers.parseEther("1");
 const VOTE_TARGET_AMOUNT = 3000000;
 const REGISTER_FEE = ethers.parseEther("1000");
 const EPOCH_DURATION = 60480;
+const SHARE_PERIOD = 180;
 const STANDBY_VALIDATORS = [
     "0xcbbeca26e89011e32ba25610520b20741b809007",
     "0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc",
@@ -77,6 +78,8 @@ describe("GovernanceVote", function () {
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6c", ethers.toBeHex(STANDBY_VALIDATORS[4], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6d", ethers.toBeHex(STANDBY_VALIDATORS[5], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6e", ethers.toBeHex(STANDBY_VALIDATORS[6], 32)]);
+
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x17", ethers.toBeHex(SHARE_PERIOD, 32)]);
     });
 
     describe("needVote", function () {

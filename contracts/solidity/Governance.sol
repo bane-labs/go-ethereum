@@ -3,6 +3,7 @@ pragma solidity ^0.8.25;
 
 import {Errors} from "./libraries/Errors.sol";
 import {IGovReward} from "./interfaces/IGovReward.sol";
+import {IKeyManagement} from "./interfaces/IKeyManagement.sol";
 import {IGovernance} from "./interfaces/IGovernance.sol";
 import {IPolicy} from "./interfaces/IPolicy.sol";
 import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
@@ -18,6 +19,8 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     // GovReward contract
     address public constant GOV_REWARD =
         0x1212000000000000000000000000000000000003;
+    address public constant KEY_MANAGEMENT =
+        0x1212000000000000000000000000000000000008;
     address public constant SYS_CALL =
         0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE;
     uint public constant SCALE_FACTOR = 10 ** 18;
@@ -68,6 +71,18 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     // blacklisted candidate amount
     uint public blacklistedCandidates;
 
+    // duration of each secret share period (in blocks)
+    uint public sharePeriodDuration;
+    // the pending group of block validators
+    address[] public pendingConsensus;
+    // the lock for dkg pending sharing
+    bool public electionLocked;
+
+    modifier onlyElectionNotLocked() {
+        if (electionLocked) revert Errors.ElectionLocked();
+        _;
+    }
+
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
     function _checkProxy() internal view virtual override {
@@ -113,7 +128,9 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         return candidateList.values();
     }
 
-    function registerCandidate(uint shareRate) external payable {
+    function registerCandidate(
+        uint shareRate
+    ) external payable onlyElectionNotLocked {
         if (tx.origin != msg.sender) revert Errors.OnlyEOA();
         if (msg.value != registerFee) revert Errors.InsufficientValue();
         if (shareRate > 1000) revert Errors.InvalidShareRate();
@@ -129,7 +146,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         candidateBalanceOf[msg.sender] = msg.value;
     }
 
-    function exitCandidate() external {
+    function exitCandidate() external onlyElectionNotLocked {
         if (!_deactivateCandidate(msg.sender))
             revert Errors.CandidateNotExists();
     }
@@ -153,7 +170,9 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         _safeTransferETH(msg.sender, amount);
     }
 
-    function vote(address candidateTo) external payable nonReentrant {
+    function vote(
+        address candidateTo
+    ) external payable nonReentrant onlyElectionNotLocked {
         if (msg.value < minVoteAmount) revert Errors.InsufficientValue();
         if (!candidateList.contains(candidateTo))
             revert Errors.CandidateNotExists();
@@ -184,7 +203,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         if (unclaimedReward > 0) _safeTransferETH(msg.sender, unclaimedReward);
     }
 
-    function revokeVote() external nonReentrant {
+    function revokeVote() external nonReentrant onlyElectionNotLocked {
         address candidateFrom = votedTo[msg.sender];
         uint amount = votedAmount[msg.sender];
         if (candidateFrom == address(0) || amount <= 0) revert Errors.NoVote();
@@ -209,12 +228,15 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         _safeTransferETH(msg.sender, amount + unclaimedReward);
     }
 
-    function transferVote(address candidateTo) external nonReentrant {
+    function transferVote(
+        address candidateTo
+    ) external nonReentrant onlyElectionNotLocked {
         address candidateFrom = votedTo[msg.sender];
         uint amount = votedAmount[msg.sender];
         if (candidateFrom == address(0) || amount <= 0) revert Errors.NoVote();
         if (candidateFrom == candidateTo) revert Errors.SameCandidate();
-        if (!candidateList.contains(candidateTo)) revert Errors.CandidateNotExists();
+        if (!candidateList.contains(candidateTo))
+            revert Errors.CandidateNotExists();
 
         // settle reward here
         uint unclaimedReward = _settleReward(msg.sender, candidateFrom);
@@ -278,25 +300,55 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         if (msg.sender != SYS_CALL) revert Errors.SideCallNotAllowed();
         // only settle validator reward if there is no epoch change
         IGovReward(GOV_REWARD).withdraw();
-        if (block.number < currentEpochStartHeight + epochDuration) return;
-        // update tag values
-        currentEpochStartHeight = block.number;
+        if (
+            block.number <
+            currentEpochStartHeight + epochDuration - 2 * sharePeriodDuration
+        ) return;
+
+        // settle vote epoch as pending but keep the running consensus
         address[] memory candidates = candidateList.values();
         uint length = candidates.length;
+        if (pendingConsensus.length == 0) {
+            // compute and update pending consensus
+            if (length < consensusSize || totalVotes < voteTargetAmount) {
+                pendingConsensus = standByValidators;
+            } else {
+                pendingConsensus = _computeConsensus(candidates);
+            }
+            // lock election if consensus members are going to change
+            for (uint i = 0; i < consensusSize; i++) {
+                bool notChanged;
+                for (uint j = 0; j < consensusSize; j++) {
+                    if (pendingConsensus[i] == currentConsensus[j]) {
+                        notChanged = true;
+                        break;
+                    }
+                }
+                if (!notChanged) {
+                    electionLocked = true;
+                    break;
+                }
+            }
+            emit Persist(pendingConsensus);
+        }
+        if (block.number < currentEpochStartHeight + epochDuration) return;
+
+        // set pending consensus as running, and update tag values
+        currentEpochStartHeight = block.number;
         for (uint i = 0; i < length; i++) {
             epochStartGasPerVote[candidates[i]][
                 block.number / epochDuration
             ] = candidateGasPerVote[candidates[i]];
         }
-        // compute and update consensus
-        if (length < consensusSize || totalVotes < voteTargetAmount) {
-            currentConsensus = standByValidators;
-        } else {
-            currentConsensus = _computeConsensus(candidates);
+        // check if key generation succeeds, keep the same members if not
+        if (IKeyManagement(KEY_MANAGEMENT).isCurrentRoundReady()) {
+            currentConsensus = pendingConsensus;
         }
+        // reset pending value and start a new epoch
+        delete pendingConsensus;
+        delete electionLocked;
         emit Persist(currentConsensus);
     }
-
 
     function activateCandidate(address candidate) external {
         if (msg.sender != POLICY) revert Errors.SideCallNotAllowed();
@@ -311,6 +363,10 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
 
     function getCurrentConsensus() public view returns (address[] memory) {
         return currentConsensus;
+    }
+
+    function getPendingConsensus() public view returns (address[] memory) {
+        return pendingConsensus;
     }
 
     function _activateCandidate(address candidate) internal returns (bool) {

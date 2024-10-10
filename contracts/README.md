@@ -10,20 +10,13 @@ These contracts are not deployed by transactions but allocated in the [genesis f
 |----------------------------------------------|---------------------------------------------------------------|
 | `0x1212000000000000000000000000000000000000` | GovProxyAdmin                                                 |
 | `0x1212000000000000000000000000000000000001` | Governance Proxy                                              |
-| `0x1212100000000000000000000000000000000001` | Governance Implementation                                     |
 | `0x1212000000000000000000000000000000000002` | Policy Proxy                                                  |
-| `0x1212100000000000000000000000000000000002` | Policy Implementation                                         |
 | `0x1212000000000000000000000000000000000003` | GovernanceReward Proxy                                        |
-| `0x1212100000000000000000000000000000000003` | GovernanceReward Implementation                               |
 | `0x1212000000000000000000000000000000000004` | Bridge Proxy                                                  |
-| `0x1212100000000000000000000000000000000004` | Bridge Implementation                                         |
 | `0x1212000000000000000000000000000000000005` | BridgeManagement Proxy                                        |
-| `0x1212100000000000000000000000000000000005` | BridgeManagement Implementation                               |
 | `0x1212000000000000000000000000000000000006` | Treasury                                                      |
 | `0x1212000000000000000000000000000000000007` | CommitteeMultiSig Proxy                                       |
-| `0x1212100000000000000000000000000000000007` | CommitteeMultiSig Implementation                              |
-| `0x1212000000000000000000000000000000000008` | Stub0 Proxy                                                   |
-| `0x1212100000000000000000000000000000000008` | Stub Implementation (shared between all Stub Proxy contracts) |
+| `0x1212000000000000000000000000000000000008` | KeyManagement Proxy                                           |
 | `0x1212000000000000000000000000000000000009` | Stub1 Proxy                                                   |
 | `0x121200000000000000000000000000000000000a` | Stub2 Proxy                                                   |
 | `0x121200000000000000000000000000000000000b` | Stub3 Proxy                                                   |
@@ -89,10 +82,11 @@ Neo X Governance doesn't allow voting for multiple candidates and doesn't distri
 
 If it is necessary to change the vote target (e.g. the current voted candidate exits), invoke `transferVote(address candidateTo)` of `0x1212000000000000000000000000000000000001` to revote your deposited `GAS` to another candidate, and wait for the subsequent epoch to receive reward sharing.
 
-At the end of every election epoch, the 7 candidates with the highest amount of votes will be selected by Governance and become consensus nodes of the next epoch. However, this consensus set recalculation has two prerequisites:
+At the end of every election epoch, the 7 candidates with the highest amount of votes will be selected by Governance and become consensus nodes of the next epoch. However, this consensus set recalculation has three prerequisites:
 
 1. The size of candidate list is larger than `7`;
-2. The amount of total valid votes is higher than `3,000,000 GAS` (TestNet) or `6,000,000 GAS` (MainNet).
+2. The amount of total valid votes is higher than `3,000,000 GAS` (TestNet) or `6,000,000 GAS` (MainNet);
+3. The elected 7 candidates and the current consensus perform a successful round of DKG.
 
 Otherwise, the consensus nodes of the next epoch will be the following predefined stand-by members.
 
@@ -105,6 +99,8 @@ Otherwise, the consensus nodes of the next epoch will be the following predefine
 |`0x01b517b301bb143476da35bb4a1399500d925514`|`0xe6d1a9db6a0893926bd81c0ef93aaaa543c116f0`|
 |`0x7976ad987d572377d39fb4bab86c80e08b6f8327`|`0x4fe8af0dbb633283d8e9703668142fd130f2818d`|
 |`0xd711da2d8c71a801fc351163337656f1321343a0`|`0x763452f65353fffe73d46539e51a6ddfc0e2c86a`|
+
+After enabling DKG-related features and the KeyManagement contract for further antimev usage, there will be a short locked period (currently `360` blocks) for key generations before epoch change. In this period, `vote`, `revokeVote`, `transferVote`, `registerCandidate` and `exitCandidate` are not allowed. However, if the consensus nodes of the next epoch keep the same as the current, the Governance election will not be locked.
 
 ### Reward
 
@@ -174,12 +170,40 @@ Different from [GovProxyAdmin](https://github.com/bane-labs/go-ethereum/blob/ban
 
 This contract has a single `execute(...)` method that adopts the `needVote` modifier, so it requires more than 1/2 of the current Neo X consensus nodes votes to be collected. Besides, it has to be mentioned that `execute(...)` is not `payable` and this contract has no `fallback()` or `receive()` function.
 
+## KeyManagement
+
+[KeyManagement](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/KeyManagement.sol) is a system contract assigned as the Neo X Distributed Key Generation (DKG) contract. This contract manages anti-MEV related cryptography operations needed for consensus nodes to participate in the Envelope transactions processing and block signing.
+
+There are 3 different generation periods to participant, reshare, share and recover. Before receiving any sharing messages from this contract, it is necessary to register your message encryption key through `registerMessageKey(...)`, this key should be a Secp256k1 public key which is generated by the antimev module of Neo X node.
+
+### Reshare
+
+The contract method `reshare(bytes calldata pvss, bytes[] calldata messages)` allows a secret sharing from the current consensus members to the upcoming consensus members for the next epoch.
+
+After a successful round of DKG sharing, there are several pieces of secret keys for decryption and signing, and a global public key for encryption and verification.
+
+To allow a smooth switching from an epoch to another, a secret resharing is necessary. It gives the upcoming consensus members an ability to decrypt Envelope transactions which are encrypted with the past global public key.
+
+This contract method checks the newly uploaded `bytes calldata pvss` against the `sharedPubs` in storage, to ensure that reshared secret points to same global public key.
+
+### Recover
+
+The contract method `recover(uint[] calldata idxs, bytes[] calldata messages)` allows a secret recovering from the current consensus members to the upcoming consensus members for the next epoch.
+
+It is hard to guarantee that every consensus node is alive and active in the end of a Governance epoch. If any of the consensus member doesn't perform resharing in time, a proper recovering period is required.
+
+Enough pieces of the personal secret should be delivered to one of the upcoming consensus members with the corresponding index. This process will expose the whole personal secret to the receiver, which may affect the security of DKG, so it should only be executed by Neo X node automatically.
+
+### Share
+
+The contract method `share(bytes calldata pvss, bytes[] calldata messages)` allows a secret sharing among the upcoming consensus members for the next epoch.
+
+A new round of DKG is totally independent with the past one, so the contract only validates `bytes calldata pvss` in its format and crypto commitment.
+
+Different from the DKG resharing, a brand new sharing cannot be recovered before every participant generates its local secret and shares different parts of it to each other. So this period requires a fully participation of the upcoming consensus members for the next epoch, otherwise Governance will deprecate the election result and keep the same members of consensus for the next epoch.
+
+The above processes will be automatically performed by Neo X node when antimev feature is enabled. For more details about the crypto, please refer [crypto/tpke](https://github.com/bane-labs/go-ethereum/tree/bane-main/crypto/tpke) and [core/antimev](https://github.com/bane-labs/go-ethereum/tree/bane-main/core/antimev).
+
 ## System contract stubs
 
 [Stub](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Stub.sol) is reserved system contract implementation that has pre-assigned addresses in the genesis allocations (Stup0-Stub9 Proxies). Once designated role for the stub contract is created, its code will be updated correspondingly to serve the needs of the Neo X chain.
-
-## DKG (in progress)
-
-DKG (in progress) is a system contract assigned as the Neo X Distributed Key Generation contract. This contract manages anti-MEV related cryptography operations needed for consensus nodes to participate in the Envelope transactions processing.
-
-This contract is not yet implemented, and thus, a contract stub is deployed in the network. Once the implementation is finished, this contract will be updated to provide fully-qualified DKG functionality to the consensus members.

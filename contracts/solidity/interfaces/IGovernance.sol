@@ -34,13 +34,16 @@ interface IGovernance {
     // get reward amount to be claimed when settle
     function unclaimedRewardOf(address voter) external view returns (uint);
 
+    // get pending group members
+    function getPendingConsensus() external view returns (address[] memory);
+
     // get consensus group members
     function getCurrentConsensus() external view returns (address[] memory);
 
     // compute and update cached consensus group
     function onPersist() external;
 
-    // onPersist implementation valid starting from NeoXAMEV fork
+    // compute and update cached consensus group, with dkg
     function onPersistV2() external;
 
     // activate a candidate in election
@@ -51,4 +54,13 @@ interface IGovernance {
 
     // get consensus size
     function consensusSize() external view returns (uint);
+
+    // get epoch duration
+    function epochDuration() external view returns (uint);
+
+    // get share period duration
+    function sharePeriodDuration() external view returns (uint);
+
+    // get the start height of current epoch
+    function currentEpochStartHeight() external view returns (uint);
 }

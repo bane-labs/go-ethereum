@@ -11,6 +11,7 @@ const POLICY_PROXY = "0x1212000000000000000000000000000000000002";
 const POLICY_IMP = "0x1212100000000000000000000000000000000002";
 const REWARD_PROXY = "0x1212000000000000000000000000000000000003";
 const REWARD_IMP = "0x1212100000000000000000000000000000000003";
+const KEYMANAGEMENT_PROXY = "0x1212000000000000000000000000000000000008";
 const SYS_CALL = "0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE";
 
 // CONFIG
@@ -19,6 +20,7 @@ const MIN_VOTE_AMOUNT = ethers.parseEther("1");
 const VOTE_TARGET_AMOUNT = ethers.parseEther("3000");
 const REGISTER_FEE = ethers.parseEther("1000");
 const EPOCH_DURATION = 60480;
+const SHARE_PERIOD = 180;
 const STANDBY_VALIDATORS = [
     "0xcbbeca26e89011e32ba25610520b20741b809007",
     "0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc",
@@ -49,6 +51,7 @@ describe("Governance", function () {
         const governance_deploy = await ethers.deployContract("Governance");
         const reward_deploy = await ethers.deployContract("GovReward");
         const policy_deploy = await ethers.deployContract("Policy");
+        const keymanagement_deploy = await ethers.deployContract("KeyManagement");
 
         // Copy Bytecode to native address
         const governance_code = await ethers.provider.send("eth_getCode", [governance_deploy.target]);
@@ -59,6 +62,9 @@ describe("Governance", function () {
 
         const policy_code = await ethers.provider.send("eth_getCode", [policy_deploy.target]);
         await ethers.provider.send("hardhat_setCode", [POLICY_PROXY, policy_code]);
+
+        const keymanagement_code = await ethers.provider.send("eth_getCode", [keymanagement_deploy.target]);
+        await ethers.provider.send("hardhat_setCode", [KEYMANAGEMENT_PROXY, keymanagement_code]);
 
         const governance_contract = require("../artifacts/solidity/Governance.sol/Governance.json");
         Governance = new ethers.Contract(GOV_PROXY, governance_contract.abi, user);
@@ -89,6 +95,8 @@ describe("Governance", function () {
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6c", ethers.toBeHex(STANDBY_VALIDATORS[4], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6d", ethers.toBeHex(STANDBY_VALIDATORS[5], 32)]);
         await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x31ecc21a745e3968a04e9570e4425bc18fa8019c68028196b546d1669c200c6e", ethers.toBeHex(STANDBY_VALIDATORS[6], 32)]);
+
+        await ethers.provider.send("hardhat_setStorageAt", [GOV_PROXY, "0x17", ethers.toBeHex(SHARE_PERIOD, 32)]);
 
         // Write Policy config to storage
         await ethers.provider.send("hardhat_setStorageAt", [POLICY_PROXY, "0x2", ethers.toBeHex(MIN_GAS_TIP_CAP, 32)]);
@@ -486,6 +494,25 @@ describe("Governance", function () {
             await MockSysCall.call_onPersist(Governance);
 
             expect(await Governance.getCurrentConsensus()).to.deep.equal(STANDBY_VALIDATORS);
+        });
+
+        it("Should not lock election if dkg is enabled but pending consensus is the same as current consensus", async function () {
+            await mine(EPOCH_DURATION - 2 * SHARE_PERIOD);
+            await MockSysCall.call_onPersistV2(Governance);
+
+            expect(await Governance.electionLocked()).to.equal(false);
+        });
+
+        it("Should lock election if dkg is enabled and pending consensus is different with current consensus", async function () {
+            let signers = await ethers.getSigners();
+            for (let i = 0; i < CONSENSUS_SIZE; i++) {
+                await Governance.connect(signers[i]).registerCandidate(500, { value: REGISTER_FEE });
+                await Governance.connect(signers[i]).vote(signers[i], { value: VOTE_TARGET_AMOUNT });
+            }
+            await mine(EPOCH_DURATION - 2 * SHARE_PERIOD);
+            await MockSysCall.call_onPersistV2(Governance);
+
+            expect(await Governance.electionLocked()).to.equal(true);
         });
 
         it("Should take standby validators as consensus if candidate amount not meets threshold", async function () {
