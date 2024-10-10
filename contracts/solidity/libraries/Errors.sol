@@ -3,6 +3,7 @@ pragma solidity ^0.8.25;
 
 library Errors {
     // Universal Errors
+    error OnlyEOA();
     error NotAdmin();
     error NotGovernance();
     error TransferFailed();
@@ -19,7 +20,6 @@ library Errors {
 
     // Governance Errors
     error SideCallNotAllowed();
-    error OnlyEOA();
     error InsufficientValue();
     error InvalidShareRate();
     error RegisterDisabled();
@@ -30,4 +30,15 @@ library Errors {
     error CandidateWithdrawNotAllowed();
     error MultipleVoteNotAllowed();
     error NoVote();
+
+    // KeyManagement Errors
+    error NotShareMember();
+    error PeriodNotStarted();
+    error PeriodEnded();
+    error NoNeedForRecover();
+    error InvalidBLS12381Input();
+    error InvalidPVSS();
+    error InvalidMessageAmount();
+    error IndexOutOfRange();
+    error MessageExists();
 }
