@@ -18,48 +18,14 @@ package bls12381
 
 import (
 	"errors"
-	"io"
 	"math"
 	"math/big"
-
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 // PointG1 is type for point in G1.
 // PointG1 is both used for Affine and Jacobian point representation.
 // If z is equal to one the point is considered as in affine form.
 type PointG1 [3]fe
-
-var (
-	_ rlp.Encoder = &PointG1{}
-	_ rlp.Decoder = &PointG1{}
-)
-
-// pointAuz is an auxiliary structure for PointG1 RLP marshalling.
-type pointAux struct {
-	P []byte
-}
-
-// EncodeRLP implements [rlp.Encoder].
-func (p *PointG1) EncodeRLP(w io.Writer) error {
-	return rlp.Encode(w, &pointAux{
-		P: NewG1().ToBytes(p),
-	})
-}
-
-// DecodeRLP implements [rlp.Decoder].
-func (p *PointG1) DecodeRLP(s *rlp.Stream) error {
-	aux := &pointAux{}
-	if err := s.Decode(aux); err != nil {
-		return err
-	}
-	res, err := NewG1().FromBytes(aux.P)
-	if err != nil {
-		return err
-	}
-	*p = *res
-	return nil
-}
 
 func (p *PointG1) Set(p2 *PointG1) *PointG1 {
 	p[0].set(&p2[0])

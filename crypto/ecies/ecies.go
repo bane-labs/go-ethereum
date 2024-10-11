@@ -40,9 +40,6 @@ import (
 	"hash"
 	"io"
 	"math/big"
-
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var (
@@ -59,38 +56,6 @@ type PublicKey struct {
 	Y *big.Int
 	elliptic.Curve
 	Params *ECIESParams
-}
-
-var (
-	_ rlp.Encoder = &PublicKey{}
-	_ rlp.Decoder = &PublicKey{}
-)
-
-// publicKeyAux is an auxiliary structure for PublicKey RLP encoding.
-type publicKeyAux struct {
-	Pub []byte
-}
-
-// EncodeRLP implements [rlp.Encoder].
-func (pub *PublicKey) EncodeRLP(w io.Writer) error {
-	p := pub.ExportECDSA()
-	return rlp.Encode(w, &publicKeyAux{
-		Pub: crypto.FromECDSAPub(p),
-	})
-}
-
-// DecodeRLP implements [rlp.Decoder].
-func (pub *PublicKey) DecodeRLP(s *rlp.Stream) error {
-	aux := &publicKeyAux{}
-	if err := s.Decode(aux); err != nil {
-		return err
-	}
-	p, err := crypto.UnmarshalPubkey(aux.Pub)
-	if err != nil {
-		return err
-	}
-	*pub = *ImportECDSAPublic(p)
-	return nil
 }
 
 // Export an ECIES public key as an ECDSA public key.
@@ -112,39 +77,6 @@ func ImportECDSAPublic(pub *ecdsa.PublicKey) *PublicKey {
 type PrivateKey struct {
 	PublicKey
 	D *big.Int
-}
-
-var (
-	_ rlp.Encoder = &PrivateKey{}
-	_ rlp.Decoder = &PrivateKey{}
-)
-
-// privateKeyAux is an auxiliary structure for PrivateKey RLP encoding.
-type privateKeyAux struct {
-	Priv []byte
-}
-
-// EncodeRLP implements [rlp.Encoder].
-func (priv *PrivateKey) EncodeRLP(w io.Writer) error {
-	p := priv.ExportECDSA()
-	privBytes := crypto.FromECDSA(p)
-
-	return rlp.Encode(w, &privateKeyAux{Priv: privBytes})
-}
-
-// DecodeRLP implements [rlp.Decoder].
-func (priv *PrivateKey) DecodeRLP(s *rlp.Stream) error {
-	aux := &privateKeyAux{}
-	if err := s.Decode(aux); err != nil {
-		return err
-	}
-	pk, err := crypto.ToECDSA(aux.Priv)
-	if err != nil {
-		return err
-	}
-
-	*priv = *ImportECDSA(pk)
-	return nil
 }
 
 // Export an ECIES private key as an ECDSA private key.

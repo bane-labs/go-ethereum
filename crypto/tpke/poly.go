@@ -1,50 +1,13 @@
 package tpke
 
 import (
-	"io"
 	"math/big"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type Poly struct {
 	coeff []*big.Int
-}
-
-var (
-	_ rlp.Encoder = &Poly{}
-	_ rlp.Decoder = &Poly{}
-)
-
-// polyAux is an auxiliary structure for Poly RLP encoding.
-type polyAux struct {
-	Coeff [][]byte
-}
-
-// EncodeRLP implements [rlp.Encoder].
-func (p *Poly) EncodeRLP(w io.Writer) error {
-	coeffs := make([][]byte, len(p.coeff))
-	for i := range p.coeff {
-		coeffs[i] = p.coeff[i].Bytes()
-	}
-	return rlp.Encode(w, &polyAux{
-		Coeff: coeffs,
-	})
-}
-
-// DecodeRLP implements [rlp.Decoder].
-func (p *Poly) DecodeRLP(s *rlp.Stream) error {
-	aux := new(polyAux)
-	if err := s.Decode(&aux); err != nil {
-		return err
-	}
-	coeffs := make([]*big.Int, len(aux.Coeff))
-	for i := range aux.Coeff {
-		coeffs[i] = new(big.Int).SetBytes(aux.Coeff[i])
-	}
-	p.coeff = coeffs
-	return nil
 }
 
 func randomPoly(degree int) *Poly {
@@ -103,45 +66,6 @@ func (p *Poly) commitment() *Commitment {
 
 type Commitment struct {
 	coeff []*bls12381.G1Affine
-}
-
-var (
-	_ rlp.Encoder = &Commitment{}
-	_ rlp.Decoder = &Commitment{}
-)
-
-// commitmentAux is an auxiliary structure for Commitment RLP marshalling.
-type commitmentAux struct {
-	Coeff [][bls12381.SizeOfG1AffineCompressed]byte
-}
-
-// EncodeRLP implements [rlp.Encoder].
-func (c *Commitment) EncodeRLP(w io.Writer) error {
-	coeff := make([][bls12381.SizeOfG1AffineCompressed]byte, len(c.coeff))
-	for i := range c.coeff {
-		coeff[i] = c.coeff[i].Bytes()
-	}
-	return rlp.Encode(w, &commitmentAux{
-		Coeff: coeff,
-	})
-}
-
-// DecodeRLP implements [rlp.Decoder].
-func (c *Commitment) DecodeRLP(s *rlp.Stream) error {
-	aux := new(commitmentAux)
-	if err := s.Decode(&aux); err != nil {
-		return err
-	}
-	c.coeff = make([]*bls12381.G1Affine, len(aux.Coeff))
-	for i := range aux.Coeff {
-		c.coeff[i] = new(bls12381.G1Affine)
-		_, err := c.coeff[i].SetBytes(aux.Coeff[i][:])
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func (c *Commitment) Clone() *Commitment {
