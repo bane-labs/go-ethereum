@@ -185,6 +185,8 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         emit Reshare(targetHeight, index, msg.sender);
     }
 
+    // onPersistV2 is a persisting function that is called in the beginning of every
+    // block by the system starting from NeoXAMEV fork.
     function onPersistV2() external {
         if (msg.sender != SYS_CALL) revert Errors.SideCallNotAllowed();
         // NOTE: should be called before Governance onPersist
