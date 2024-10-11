@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"math"
 	"math/big"
+	"os"
+	"path/filepath"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -94,4 +96,76 @@ func abs(a int) int {
 		return -a
 	}
 	return a
+}
+
+// writeFileAtPath within the directory given the desired path, filename, and raw data.
+func writeFileAtPath(filePath, fileName string, data []byte) error {
+	hasDir, err := hasDir(filePath)
+	if err != nil {
+		return err
+	}
+	if !hasDir {
+		if err := mkdirAll(filePath); err != nil {
+			return err
+		}
+	}
+	fullPath := filepath.Join(filePath, fileName)
+	if err := os.WriteFile(fullPath, data, 0600); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// readFileAtPath within the directory given the desired path and filename.
+func readFileAtPath(filePath, fileName string) ([]byte, error) {
+	hasDir, err := hasDir(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if !hasDir {
+		if err := mkdirAll(filePath); err != nil {
+			return nil, err
+		}
+	}
+	fullPath := filepath.Join(filePath, fileName)
+	rawData, err := os.ReadFile(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	return rawData, nil
+}
+
+// mkdirAll takes in a path, expands it if necessary, and creates the directory accordingly
+// with standardized permissions. If a directory already exists as this path, then the
+// method returns without making any changes.
+func mkdirAll(dirPath string) error {
+	fullPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		return err
+	}
+	exists, err := hasDir(fullPath)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	return os.MkdirAll(fullPath, 0700)
+}
+
+// hasDir checks if a directory indeed exists at the specified path.
+func hasDir(dirPath string) (bool, error) {
+	fullPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		return false, err
+	}
+	info, err := os.Stat(fullPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if info == nil {
+		return false, err
+	}
+	return info.IsDir(), err
 }
