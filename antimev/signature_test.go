@@ -26,7 +26,7 @@ func TestThresholdSignature(t *testing.T) {
 	random := rand.New(source)
 
 	pubs := make([]*ecies.PublicKey, size)
-	kss := make([]*AMEVKeyStore, size)
+	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey

@@ -53,7 +53,7 @@ func TestTPKE(t *testing.T) {
 	random := rand.New(source)
 
 	pubs := make([]*ecies.PublicKey, size)
-	kss := make([]*AMEVKeyStore, size)
+	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey
@@ -101,7 +101,7 @@ func TestTPKE(t *testing.T) {
 		for i := range kss {
 			ksBytes, err := kss[i].Bytes()
 			require.NoError(t, err)
-			ks := new(AMEVKeyStore)
+			ks := new(KeyStore)
 			fmt.Printf("%s (CN %d):\n\t%s\n", privnetCNs[i].addr, privnetCNs[i].i, hex.EncodeToString(ksBytes))
 			os.WriteFile(fmt.Sprintf("../../privnet/seven/node%d/amev_keystore.txt", privnetCNs[i].i), []byte(hex.EncodeToString(ksBytes)), os.ModePerm)
 
@@ -163,7 +163,7 @@ func TestBenchmark(t *testing.T) {
 	random := rand.New(source)
 
 	pubs := make([]*ecies.PublicKey, size)
-	kss := make([]*AMEVKeyStore, size)
+	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey
@@ -267,7 +267,7 @@ func parallelCTVerify(ct *tpke.CipherText, ch chan<- message) {
 	}
 }
 
-func parallelEncrypt(index int, ks *AMEVKeyStore, input []byte, ch chan<- message) {
+func parallelEncrypt(index int, ks *KeyStore, input []byte, ch chan<- message) {
 	ck, cmsg, err := ks.Encrypt(input)
 	ch <- message{
 		index: index,

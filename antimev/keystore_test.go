@@ -36,7 +36,7 @@ func TestDKG(t *testing.T) {
 	random := rand.New(source)
 	// Init keystores
 	pubs := make([]*ecies.PublicKey, size)
-	kss := make([]*AMEVKeyStore, size)
+	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey
@@ -87,7 +87,7 @@ func TestReshare(t *testing.T) {
 	random := rand.New(source)
 	// Init keystores
 	pubs := make([]*ecies.PublicKey, size)
-	kss := make([]*AMEVKeyStore, size)
+	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey
@@ -176,7 +176,7 @@ func TestGroupChange(t *testing.T) {
 	random := rand.New(source)
 	// Init keystores
 	pubs := make([]*ecies.PublicKey, len(addrs))
-	kss := make([]*AMEVKeyStore, len(addrs))
+	kss := make([]*KeyStore, len(addrs))
 	for i := 0; i < len(addrs); i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey
@@ -275,7 +275,7 @@ func TestRecover(t *testing.T) {
 	random := rand.New(source)
 	// Init keystores
 	pubs := make([]*ecies.PublicKey, len(addrs))
-	kss := make([]*AMEVKeyStore, len(addrs))
+	kss := make([]*KeyStore, len(addrs))
 	for i := 0; i < len(addrs); i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey

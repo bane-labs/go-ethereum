@@ -17,8 +17,8 @@ var (
 	ErrMessageDecryption = errors.New("message decryption failed")
 )
 
-// AMEVKeyStore is the container of all useful dkg information.
-type AMEVKeyStore struct {
+// KeyStore is the container of all useful dkg information.
+type KeyStore struct {
 	size      int // The size of each key group
 	threshold int // The threshold of each key group
 	scaler    int // The scaler to speed up computation, refer to crypto/tpke
@@ -34,12 +34,12 @@ type AMEVKeyStore struct {
 }
 
 // NewKeyStore returns a new instance of antimev key store.
-func NewKeyStore(addr common.Address, prvkey *ecies.PrivateKey, groupSize int, threshold int) (*AMEVKeyStore, error) {
+func NewKeyStore(addr common.Address, prvkey *ecies.PrivateKey, groupSize int, threshold int) (*KeyStore, error) {
 	// TODO: Recover keystore from persistence
 	if groupSize < threshold {
 		return nil, ErrInvalidThreshold
 	}
-	return &AMEVKeyStore{
+	return &KeyStore{
 		size:      groupSize,
 		threshold: threshold,
 		scaler:    getScaler(groupSize, threshold),
@@ -48,7 +48,7 @@ func NewKeyStore(addr common.Address, prvkey *ecies.PrivateKey, groupSize int, t
 	}, nil
 }
 
-// keystoreAux is an auxiliary structure for AMEVKeyStore RLP marshalling.
+// keystoreAux is an auxiliary structure for KeyStore RLP marshalling.
 type keystoreAux struct {
 	Size      byte   // The size of each key group
 	Threshold byte   // The threshold of each key group
@@ -64,15 +64,15 @@ type keystoreAux struct {
 	//	Sharing    *thresholdKeyGroup `rlp:"optional"` // The group can encrypt and decrypt new messages
 }
 
-// LoadAMEVKeyStore loads hex-encoded anti-MEV keystore from the provided filepath.
-func LoadAMEVKeyStore(file string) (*AMEVKeyStore, error) {
+// LoadKeyStore loads hex-encoded anti-MEV keystore from the provided filepath.
+func LoadKeyStore(file string) (*KeyStore, error) {
 
 }
 
 // OnValidatorList initializes sharing and resharing, should be called
 // when the key group members are determined. It returns resharing
 // messages immediately.
-func (ks *AMEVKeyStore) OnValidatorList(validators []common.Address, pubkeys []*ecies.PublicKey) ([][]byte, []byte, error) {
+func (ks *KeyStore) OnValidatorList(validators []common.Address, pubkeys []*ecies.PublicKey) ([][]byte, []byte, error) {
 	if len(validators) != ks.size || len(pubkeys) != ks.size {
 		return nil, nil, ErrInvalidLength
 	}
@@ -93,7 +93,7 @@ func (ks *AMEVKeyStore) OnValidatorList(validators []common.Address, pubkeys []*
 	return nil, nil, nil
 }
 
-func (ks *AMEVKeyStore) OnRecoverStart(indexes []int, validators []common.Address, pubkeys []*ecies.PublicKey) ([][]byte, error) {
+func (ks *KeyStore) OnRecoverStart(indexes []int, validators []common.Address, pubkeys []*ecies.PublicKey) ([][]byte, error) {
 	if ks.shared == nil {
 		return nil, nil
 	}
@@ -116,7 +116,7 @@ func (ks *AMEVKeyStore) OnRecoverStart(indexes []int, validators []common.Addres
 
 // OnRecoverFinish tries to finish ongoing recovering, should be called when
 // resharing fails. It returns resharing messages immediately if recoverd.
-func (ks *AMEVKeyStore) OnRecoverFinish() ([][]byte, []byte, error) {
+func (ks *KeyStore) OnRecoverFinish() ([][]byte, []byte, error) {
 	msgs, pvss, err := ks.recovering.dkgReshareRecovered(ks.threshold, ks.resharing)
 	if err != nil || pvss == nil {
 		return nil, nil, err
@@ -126,7 +126,7 @@ func (ks *AMEVKeyStore) OnRecoverFinish() ([][]byte, []byte, error) {
 
 // OnReshareFinish tries to finish ongoing resharing, should be called before
 // the new round sharing. It returns sharing messages immediately.
-func (ks *AMEVKeyStore) OnReshareFinish() ([][]byte, []byte, error) {
+func (ks *KeyStore) OnReshareFinish() ([][]byte, []byte, error) {
 	// Check if resharing are finished and aggregate keys
 	if ks.resharing != nil {
 		err := ks.resharing.dkgAggregate(ks.scaler)
@@ -144,7 +144,7 @@ func (ks *AMEVKeyStore) OnReshareFinish() ([][]byte, []byte, error) {
 
 // OnEpochChange tries to finish ongoing sharing, should be called before
 // the key group is needed for encryption and signing.
-func (ks *AMEVKeyStore) OnEpochChange() error {
+func (ks *KeyStore) OnEpochChange() error {
 	// Check if sharing are finished and aggregate keys
 	if ks.sharing != nil {
 		err := ks.sharing.dkgAggregate(ks.scaler)
@@ -162,7 +162,7 @@ func (ks *AMEVKeyStore) OnEpochChange() error {
 }
 
 // ReceiveSecretShare tries to verify a sharing message array and store their data.
-func (ks *AMEVKeyStore) ReceiveSecretShare(from common.Address, ess [][]byte, pvss []byte) error {
+func (ks *KeyStore) ReceiveSecretShare(from common.Address, ess [][]byte, pvss []byte) error {
 	fromIndex := ks.sharing.holderIndex(from)
 	if fromIndex > ks.size || fromIndex < 1 {
 		return ErrNotParticipant
@@ -184,7 +184,7 @@ func (ks *AMEVKeyStore) ReceiveSecretShare(from common.Address, ess [][]byte, pv
 }
 
 // ReceiveSecretReshare tries to verify a resharing message array and store their data.
-func (ks *AMEVKeyStore) ReceiveSecretReshare(from common.Address, ers [][]byte, pvss []byte) error {
+func (ks *KeyStore) ReceiveSecretReshare(from common.Address, ers [][]byte, pvss []byte) error {
 	fromIndex := ks.shared.holderIndex(from)
 	if fromIndex > ks.size || fromIndex < 1 {
 		return ErrNotParticipant
@@ -206,7 +206,7 @@ func (ks *AMEVKeyStore) ReceiveSecretReshare(from common.Address, ers [][]byte, 
 }
 
 // ReceiveRecoveredReshare tries to verify a resharing message array and store their data.
-func (ks *AMEVKeyStore) ReceiveRecoveredReshare(from common.Address, ers [][]byte, pvss []byte) error {
+func (ks *KeyStore) ReceiveRecoveredReshare(from common.Address, ers [][]byte, pvss []byte) error {
 	fromIndex := ks.recovering.holderIndex(from)
 	if fromIndex > ks.size || fromIndex < 1 {
 		return ErrNotParticipant
@@ -228,7 +228,7 @@ func (ks *AMEVKeyStore) ReceiveRecoveredReshare(from common.Address, ers [][]byt
 }
 
 // ReceiveRecoverShare tries to verify a recovering message array and store their data.
-func (ks *AMEVKeyStore) ReceiveRecoverShare(from common.Address, ers []byte) error {
+func (ks *KeyStore) ReceiveRecoverShare(from common.Address, ers []byte) error {
 	fromIndex := ks.shared.holderIndex(from)
 	if fromIndex > ks.size || fromIndex < 1 {
 		return ErrNotParticipant
@@ -245,7 +245,7 @@ func (ks *AMEVKeyStore) ReceiveRecoverShare(from common.Address, ers []byte) err
 	return nil
 }
 
-func (ks *AMEVKeyStore) decryptSecretShare(ess []byte) (*big.Int, error) {
+func (ks *KeyStore) decryptSecretShare(ess []byte) (*big.Int, error) {
 	ss, err := ks.ethPrvKey.Decrypt(ess, nil, nil)
 	if err != nil {
 		return nil, err

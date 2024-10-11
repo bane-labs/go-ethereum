@@ -13,7 +13,7 @@ var (
 )
 
 // SignShare tries to sign a message with local private key.
-func (ks *AMEVKeyStore) SignShare(msg []byte) (*tpke.SignatureShare, error) {
+func (ks *KeyStore) SignShare(msg []byte) (*tpke.SignatureShare, error) {
 	if ks.shared == nil || ks.shared.localPrvKey == nil {
 		return nil, ErrNoPrvKey
 	}
@@ -24,7 +24,7 @@ func (ks *AMEVKeyStore) SignShare(msg []byte) (*tpke.SignatureShare, error) {
 // the final signature if the verification passes. The key of inputs is
 // dkg index which starts from 1, when the array index of a member in the
 // key group starts from 0.
-func (ks *AMEVKeyStore) AggregateAndVerifySig(msg []byte, inputs map[int]*tpke.SignatureShare) (*tpke.Signature, error) {
+func (ks *KeyStore) AggregateAndVerifySig(msg []byte, inputs map[int]*tpke.SignatureShare) (*tpke.Signature, error) {
 	if ks.shared == nil {
 		return nil, ErrNoPubKey
 	}
