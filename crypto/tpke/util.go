@@ -15,6 +15,7 @@ var (
 	ErrTPKEG1Decoding           = errors.New("crypto/tpke: invalid g1 decoding")
 	ErrTPKEG2Decoding           = errors.New("crypto/tpke: invalid g2 decoding")
 	ErrTPKEFieldElementDecoding = errors.New("crypto/tpke: invalid fe decoding")
+	ErrTPKEScalarDecoding       = errors.New("crypto/tpke: invalid scalar decoding")
 )
 
 func randScalar() *big.Int {

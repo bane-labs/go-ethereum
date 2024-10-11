@@ -78,7 +78,7 @@ func (c *Commitment) Clone() *Commitment {
 	}
 }
 
-func (c *Commitment) ToBytes() []byte {
+func (c *Commitment) Encode() []byte {
 	arr := make([]byte, 0)
 	for i := range c.coeff {
 		b := encodePointG1(c.coeff[i])
@@ -87,7 +87,7 @@ func (c *Commitment) ToBytes() []byte {
 	return arr
 }
 
-func (c *Commitment) FromBytes(b []byte, t int) (*Commitment, error) {
+func (c *Commitment) Decode(b []byte, t int) (*Commitment, error) {
 	if len(b) != t*128 {
 		return nil, ErrTPKEDecoding
 	}

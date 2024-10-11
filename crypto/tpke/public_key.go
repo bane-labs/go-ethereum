@@ -23,6 +23,19 @@ func NewGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
 	}
 }
 
+func (pk *PublicKey) Encode() []byte {
+	return encodePointG1(pk.pg1)
+}
+
+func (pk *PublicKey) Decode(b []byte) (*PublicKey, error) {
+	pg1, err := decodePointG1(b)
+	if err != nil {
+		return nil, err
+	}
+	pk.pg1 = pg1
+	return pk, nil
+}
+
 // Equal compares if two public keys are the same
 func (pk *PublicKey) Equal(opk *PublicKey) bool {
 	return pk.pg1.Equal(opk.pg1)

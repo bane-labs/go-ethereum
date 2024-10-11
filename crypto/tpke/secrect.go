@@ -24,6 +24,15 @@ func RecoverSecret(is []int, fis []*big.Int) *Secret {
 	}
 }
 
+func (s *Secret) ToBigIntArray() []*big.Int {
+	return s.poly.coeff
+}
+
+func (s *Secret) FromBigIntArray(arr []*big.Int) {
+	s.poly = new(Poly)
+	s.poly.coeff = arr
+}
+
 // Renovate returns a new secret random a1..an-1 expect a0
 func (s *Secret) Renovate() *Secret {
 	poly := randomPoly(len(s.poly.coeff))

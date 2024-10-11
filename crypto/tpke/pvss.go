@@ -39,9 +39,9 @@ func GenerateSecretShares(r *big.Int, size int, secret *Secret) (*PVSS, []*big.I
 
 func (pvss *PVSS) GetCommitment() *Commitment { return pvss.commitment }
 
-func (pvss *PVSS) ToBytes() []byte {
+func (pvss *PVSS) Encode() []byte {
 	arr := make([]byte, 0)
-	arr = append(arr, pvss.commitment.ToBytes()...)
+	arr = append(arr, pvss.commitment.Encode()...)
 	arr = append(arr, encodePointG1(pvss.r1)...)
 	arr = append(arr, encodePointG2(pvss.r2)...)
 	for i := 0; i < len(pvss.bigf); i++ {
@@ -50,11 +50,11 @@ func (pvss *PVSS) ToBytes() []byte {
 	return arr
 }
 
-func (pvss *PVSS) FromBytes(b []byte, n int, t int) (*PVSS, error) {
+func (pvss *PVSS) Decode(b []byte, n int, t int) (*PVSS, error) {
 	if len(b) != (t+n+1)*128+256 {
 		return nil, ErrTPKEDecoding
 	}
-	comm, err := new(Commitment).FromBytes(b[:t*128], t)
+	comm, err := new(Commitment).Decode(b[:t*128], t)
 	if err != nil {
 		return nil, err
 	}

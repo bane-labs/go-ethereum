@@ -21,8 +21,8 @@ func TestPVSSEncoding(t *testing.T) {
 		r2:         &g2,
 		bigf:       bigf,
 	}
-	b := pvss.ToBytes()
-	result, err := new(PVSS).FromBytes(b, 3, 2)
+	b := pvss.Encode()
+	result, err := new(PVSS).Decode(b, 3, 2)
 	if err != nil {
 		t.Fatalf(err.Error())
 	}

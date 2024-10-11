@@ -4,6 +4,7 @@ import (
 	"math/big"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
 type PrivateKey struct {
@@ -27,6 +28,21 @@ func NewPrivateKey(secretShares []*big.Int) *PrivateKey {
 	return &PrivateKey{
 		fr: fr,
 	}
+}
+
+func (sk *PrivateKey) Encode() []byte {
+	fe := new(fr.Element).SetBigInt(sk.fr)
+	b := fe.Bytes()
+	return b[:]
+}
+
+func (sk *PrivateKey) Decode(b []byte) (*PrivateKey, error) {
+	if len(b) != 32 {
+		return nil, ErrTPKEScalarDecoding
+	}
+	fe := new(fr.Element).SetBytes(b)
+	sk.fr = fe.BigInt(new(big.Int))
+	return sk, nil
 }
 
 // GetPublicKey returns a tpke public key for threshold signature
