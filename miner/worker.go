@@ -1127,11 +1127,21 @@ func (w *worker) generateWork(params *generateParams, witness bool) *newPayloadR
 	// Collect consensus-layer requests if Prague is enabled.
 	var requests [][]byte
 	if w.chainConfig.IsPrague(work.header.Number, work.header.Time) {
+		// EIP-6110 deposits
 		depositRequests, err := core.ParseDepositLogs(allLogs, w.chainConfig)
 		if err != nil {
 			return &newPayloadResult{err: err}
 		}
 		requests = append(requests, depositRequests)
+		// create EVM for system calls
+		blockContext := core.NewEVMBlockContext(work.header, w.chain, &work.header.Coinbase)
+		vmenv := vm.NewEVM(blockContext, vm.TxContext{}, work.state, w.chainConfig, vm.Config{})
+		// EIP-7002 withdrawals
+		withdrawalRequests := core.ProcessWithdrawalQueue(vmenv, work.state)
+		requests = append(requests, withdrawalRequests)
+		// EIP-7251 consolidations
+		consolidationRequests := core.ProcessConsolidationQueue(vmenv, work.state)
+		requests = append(requests, consolidationRequests)
 	}
 	if requests != nil {
 		reqHash := types.CalcRequestsHash(requests)
