@@ -113,7 +113,7 @@ func (tkg *thresholdKeyGroup) dkgPrepare(threshold int) ([][]byte, *tpke.PVSS, e
 	// Generate local secret
 	tkg.localSecret = tpke.RandomSecret(threshold)
 	// Generate and encrypt messages to share the secret
-	return generateShareMessages(tkg.localSecret, selfIndex, tkg.holders)
+	return generateShareMessages(tkg.localSecret, tkg.holders)
 }
 
 // dkgAggregate aggregates received secrets and pvss to get global public key and
@@ -180,7 +180,7 @@ func (tkg *thresholdKeyGroup) dkgReshare(target *thresholdKeyGroup) ([][]byte, *
 		return nil, nil, ErrNoSecretToReshare
 	}
 	// Generate and encrypt messages to share the secret
-	return generateShareMessages(tkg.localSecret.Renovate(), selfIndex, target.holders)
+	return generateShareMessages(tkg.localSecret.Renovate(), target.holders)
 }
 
 func (tkg *thresholdKeyGroup) dkgReshareRecovered(threshold int, target *thresholdKeyGroup) ([][]byte, *tpke.PVSS, error) {
@@ -207,7 +207,7 @@ func (tkg *thresholdKeyGroup) dkgReshareRecovered(threshold int, target *thresho
 
 // generateShareMessages generates secret sharing messages.
 // Secret shares can be decrypted by specific receivers, but pvss is public.
-func generateShareMessages(secret *tpke.Secret, selfIndexIndex int, receivers []*thresholdKeyHolder) ([][]byte, *tpke.PVSS, error) {
+func generateShareMessages(secret *tpke.Secret, receivers []*thresholdKeyHolder) ([][]byte, *tpke.PVSS, error) {
 	// Random source for message encryption
 	source := rand.NewSource(time.Now().UnixNano())
 	random := rand.New(source)
