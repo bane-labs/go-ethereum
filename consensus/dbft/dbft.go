@@ -2290,8 +2290,8 @@ events:
 			c.dbft.OnReceive(&msg)
 		case tx := <-c.txs:
 			c.dbft.OnTransaction(&Transaction{Tx: tx})
-		case b := <-c.chainHeadEvents:
-			c.handleChainBlock(b.Block.Header(), true)
+		case h := <-c.chainHeadEvents:
+			c.handleChainBlock(h.Header, true)
 		case err := <-c.chainHeadSub.Err():
 			// System has stopped.
 			log.Info("Stopping dBFT event loop since block subscriptions are stopped")
@@ -2329,8 +2329,8 @@ events:
 				break syncLoop
 			}
 		}
-		if latestBlock.Block != nil {
-			c.handleChainBlock(latestBlock.Block.Header(), true)
+		if latestBlock.Header != nil {
+			c.handleChainBlock(latestBlock.Header, true)
 		}
 		newView := c.dbft.ViewNumber
 		// If ChangeView has happened, we always need to wait for the new proposal
