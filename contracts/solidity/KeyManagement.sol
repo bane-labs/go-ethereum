@@ -312,6 +312,19 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         return idxs;
     }
 
+    function isShareReady() external view returns (bool) {
+        // check period
+        (, uint targetHeight) = _checkPeriodAllowed(Period.Recover);
+
+        uint n = IGovernance(GOV).consensusSize();
+        for (uint i = 1; i <= n; i++) {
+            if (shareMsgs[targetHeight][i].length < n) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     function _checkPeriodAllowed(
         Period period
     ) internal view returns (uint, uint) {
@@ -325,5 +338,19 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         if (block.number >= targetHeight - uint(period) * periodDuration)
             revert Errors.PeriodEnded();
         return (currentEpochHeight, targetHeight);
+    }
+
+    function getShareMsgs(
+        uint height,
+        uint index
+    ) external view override returns (bytes[] memory) {
+        return shareMsgs[height][index];
+    }
+
+    function getReshareMsgs(
+        uint height,
+        uint index
+    ) external view override returns (bytes[] memory) {
+        return reshareMsgs[height][index];
     }
 }

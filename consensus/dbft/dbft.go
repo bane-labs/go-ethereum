@@ -30,6 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -43,6 +44,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
@@ -233,10 +235,18 @@ type DBFT struct {
 
 	// various native contract APIs that dBFT uses.
 	ethAPI          *ethapi.BlockChainAPI
+	txAPI           *ethapi.TransactionAPI
 	validatorsCache *lru.Cache[uint64, []common.Address]
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
+
+	// The fields for dkg
+	targetHeight  uint64
+	shareDuration uint64
+	shareReady    bool
+	consensusList []common.Address
+	needRecover   bool
 }
 
 // config represents Engine configuration.
@@ -910,6 +920,11 @@ func (c *DBFT) WithEthAPI(api *ethapi.BlockChainAPI) {
 	c.ethAPI = api
 }
 
+// WithTxAPI initializes Eth transaction API for sending transaction.
+func (c *DBFT) WithTxAPI(api *ethapi.TransactionAPI) {
+	c.txAPI = api
+}
+
 // WithBroadcast sets callback to notify the caller about new consensus message.
 func (c *DBFT) WithBroadcast(f func(m *dbftproto.Message) error) {
 	c.broadcast = f
@@ -991,6 +1006,12 @@ func (c *DBFT) postBlock(h *types.Header) {
 		c.lastBlockHash = h.Hash()
 		c.lastBlockSealHash = HonestSealHash(h)
 		c.lastBlockExtra = h.Extra
+
+		// handle DKG
+		if c.lastIndex >= uint64(c.config.antiMEVEnablingHeight) {
+			err := c.handleDKG(h)
+			log.Error("handleDKG error", "height", num, "err", err)
+		}
 	}
 }
 
@@ -2019,4 +2040,525 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 
 func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
 	return blockNum%uint64(len(c.config.StandByValidators)) == 0
+}
+
+// handleDKG handles the transaction submission for DKG process.
+// It constructs and sends transaction to KeyManagement contract using amev store.
+func (c *DBFT) handleDKG(h *types.Header) error {
+	// just return when antiMEV not enabled
+	currentHeight := h.Number.Uint64()
+
+	// If the current height exceeds the target height, then get the new target height
+	if c.targetHeight < currentHeight {
+		state, err := c.chain.StateAt(h.Root)
+		if err != nil {
+			return fmt.Errorf("failed to call StateAt: %w", err)
+		}
+
+		currentEpochStartHeight, err := c.currentEpochStartHeight(state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call currentEpochStartHeight: %w", err)
+		}
+		epochDuration, err := c.epochDuration(state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call epochDuration: %w", err)
+		}
+		sharePeriodDuration, err := c.sharePeriodDuration(state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call currentEpochStartHeight: %w", err)
+		}
+		consensusList, err := c.getCurrentConsensus(state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call getCurrentConsensus: %w", err)
+		}
+		c.targetHeight = currentEpochStartHeight + epochDuration
+		c.shareDuration = sharePeriodDuration
+		c.shareReady = false
+		c.consensusList = consensusList
+		c.needRecover = false
+	}
+
+	shareStartHeight := c.targetHeight - 2*c.shareDuration
+	recoverStartHeight := shareStartHeight + c.shareDuration
+	consensusSize := uint64(len(c.consensusList))
+
+	// send share and reshare tx when currentHeight == shareStartHeight+1
+	if currentHeight == shareStartHeight+1 {
+		state, err := c.chain.StateAt(h.Root)
+		if err != nil {
+			return fmt.Errorf("failed to call StateAt: %w", err)
+		}
+		indexOfResharing, err := c.indexOfResharing(&c.signer, state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call indexOfResharing: %w", err)
+		}
+		if indexOfResharing > 0 {
+			var pubs []*ecies.PublicKey
+			for _, addr := range c.consensusList {
+				pubKey, err := c.messagePubkeys(&addr, state, h)
+				if err != nil {
+					return fmt.Errorf("failed to call messagePubkeys: %w", err)
+				}
+				pubs = append(pubs, pubKey)
+			}
+			msgs, pvss, err := c.amevKeystore.OnValidatorList(c.consensusList, pubs)
+			if err != nil {
+				return fmt.Errorf("failed to call OnValidatorList(), err: %w", err)
+			}
+			// send reshare tx
+			txHash, err := c.reshare(pvss, msgs)
+			if err != nil {
+				return fmt.Errorf("failed to send reshare transaction, err: %w", err)
+			}
+			log.Info("reshare transaction sent", "txHash", txHash)
+		}
+
+		indexOfSharing, err := c.indexOfSharing(&c.signer, state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call indexOfSharing: %w", err)
+		}
+		if indexOfSharing > 0 {
+			msgs, pvss, err := c.amevKeystore.OnReshareFinish()
+			if err != nil {
+				return fmt.Errorf("failed to call OnReshareFinish(), err: %w", err)
+			}
+			// send share tx
+			txHash, err := c.share(pvss, msgs)
+			if err != nil {
+				return fmt.Errorf("failed to send share transaction, err: %w", err)
+			}
+			log.Info("share transaction sent", "txHash", txHash)
+		}
+	}
+
+	// check isShareReady at height recoverStartHeight+1
+	if currentHeight == recoverStartHeight+1 {
+		state, err := c.chain.StateAt(h.Root)
+		if err != nil {
+			return fmt.Errorf("failed to call StateAt: %w", err)
+		}
+		c.shareReady, err = c.isShareReady(state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call isShareReady: %w", err)
+		}
+		if !c.shareReady {
+			return fmt.Errorf("share msgs not enough")
+		}
+
+		// if shareReady, pending consensus nodes should ReceiveSecretShare
+		indexOfSharing, err := c.indexOfSharing(&c.signer, state, h)
+		if err != nil {
+			return err
+		}
+		if indexOfSharing > 0 {
+			for i := uint64(1); i <= uint64(consensusSize); i++ {
+				// call ReceiveSecretShare
+				shareMsgs, err := c.getShareMsgs(c.targetHeight, i, state, h)
+				if err != nil {
+					return fmt.Errorf("failed to call shareMsgs: %w", err)
+				}
+				spvss, err := c.spvsses(c.targetHeight, i, state, h)
+				if err != nil {
+					return fmt.Errorf("failed to call spvsses: %w", err)
+				}
+				err = c.amevKeystore.ReceiveSecretShare(c.consensusList[i-1], shareMsgs, spvss)
+				if err != nil {
+					return fmt.Errorf("failed to call ReceiveSecretShare(), err: %w", err)
+				}
+				// call ReceiveSecretReshare
+				rpvss, err := c.rpvsses(c.targetHeight, i, state, h)
+				if err != nil {
+					return fmt.Errorf("failed to call rpvsses: %w", err)
+				}
+				// only receive reshare has value
+				if len(rpvss) > 0 {
+					reshareMsgs, err := c.getReshareMsgs(c.targetHeight, i, state, h)
+					if err != nil {
+						return fmt.Errorf("failed to call reshareMsgs: %w", err)
+					}
+					err = c.amevKeystore.ReceiveSecretReshare(c.consensusList[i-1], reshareMsgs, rpvss)
+					if err != nil {
+						return fmt.Errorf("failed to call ReceiveSecretReshare(), err: %w", err)
+					}
+				}
+			}
+			return nil
+		}
+		indexesNeedRecover, err := c.indexCurrentNeedRecovering(state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call indexCurrentNeedRecovering, err: %w", err)
+		}
+		// reshare finished, no need to recover
+		if len(indexesNeedRecover) == 0 {
+			return nil
+		}
+
+		// only indexesNeedRecover <= (consensusSize - threshold) can recover
+		threshold := consensusSize - (consensusSize-1)/3
+		if len(indexesNeedRecover) > 0 && len(indexesNeedRecover) <= int(consensusSize-threshold) {
+			c.needRecover = true
+		}
+		if !c.needRecover {
+			return fmt.Errorf("reshare msgs not enough")
+		}
+		// send recover tx from current consensue
+		indexOfResharing, err := c.indexOfResharing(&c.signer, state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call indexOfResharing: %w", err)
+		}
+		if indexOfResharing > 0 {
+			pendingConsensus, err := c.getPendingConsensus(state, h)
+			if err != nil {
+				return fmt.Errorf("failed to call getPendingConsensus: %w", err)
+			}
+			var recoverAddrs []common.Address
+			var recoverPubKeys []*ecies.PublicKey
+			var indexes []int
+			for _, index := range indexesNeedRecover {
+				indexes = append(indexes, int(index))
+				recoverAddrs = append(recoverAddrs, pendingConsensus[index-1])
+				pubKey, err := c.messagePubkeys(&pendingConsensus[index-1], state, h)
+				if err != nil {
+					return fmt.Errorf("failed to call messagePubkeys: %w", err)
+				}
+				recoverPubKeys = append(recoverPubKeys, pubKey)
+			}
+
+			msgs, err := c.amevKeystore.OnRecoverStart(indexes, recoverAddrs, recoverPubKeys)
+			if err != nil {
+				return fmt.Errorf("failed to call amevKeystore OnRecoverStart: %w", err)
+			}
+
+			// send recover tx
+			txHash, err := c.recover(indexesNeedRecover, msgs)
+			if err != nil {
+				return fmt.Errorf("failed to send recover transaction: %w", err)
+			}
+			log.Info("recover transaction sent", "txHash", txHash)
+		}
+	}
+
+	// if share not ready, no need to recover
+	if !c.shareReady {
+		return nil
+	}
+
+	// send reshareRecovered at height recoverStartHeight+1+c.shareDuration/3
+	if c.needRecover && currentHeight == recoverStartHeight+1+c.shareDuration/3 {
+		state, err := c.chain.StateAt(h.Root)
+		if err != nil {
+			return fmt.Errorf("failed to call StateAt: %w", err)
+		}
+		indexesNeedRecover, err := c.indexCurrentNeedRecovering(state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call indexCurrentNeedRecovering, err: %w", err)
+		}
+		// only index in indexsNeedRecover and pending consensus node need to call reshareRecovered
+		indexOfSharing, err := c.indexOfSharing(&c.signer, state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call indexOfSharing: %w", err)
+		}
+		if indexOfSharing > 0 {
+			if slices.Contains(indexesNeedRecover, indexOfSharing) {
+				for i := uint64(1); i <= consensusSize; i++ {
+					if !slices.Contains(indexesNeedRecover, i) {
+						msg, err := c.recoverMsgs(c.targetHeight, i, indexOfSharing, state, h)
+						if err != nil {
+							return fmt.Errorf("failed to call recoverMsgs: %w", err)
+						}
+						err = c.amevKeystore.ReceiveRecoverShare(c.consensusList[i-1], msg)
+						if err != nil {
+							return fmt.Errorf("failed to call ReceiveRecoverShare: %w", err)
+						}
+					}
+				}
+				// recover the lost resharing messages
+				msgs, pvss, err := c.amevKeystore.OnRecoverFinish()
+				if err != nil {
+					return fmt.Errorf("failed to call OnRecoverFinish: %w", err)
+				}
+				// send reshareRecovered tx
+				txHash, err := c.reshareRecovered(pvss, msgs)
+				if err != nil {
+					return fmt.Errorf("failed to send reshareRecovered transaction: %w", err)
+				}
+				log.Info("reshareRecovered transaction sent", "txHash", txHash)
+			}
+
+		}
+	}
+
+	// call ReceiveRecoveredReshare at recoverStartHeight+1+ 2*c.shareDuration/3
+	if c.needRecover && currentHeight == recoverStartHeight+1+2*c.shareDuration/3 {
+		state, err := c.chain.StateAt(h.Root)
+		if err != nil {
+			return fmt.Errorf("failed to call StateAt: %w", err)
+		}
+		indexesNeedRecover, err := c.indexCurrentNeedRecovering(state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call indexCurrentNeedRecovering, err: %w", err)
+		}
+		indexOfSharing, err := c.indexOfSharing(&c.signer, state, h)
+		if err != nil {
+			return err
+		}
+		if indexOfSharing > 0 && !slices.Contains(indexesNeedRecover, indexOfSharing) {
+			pendingConsensus, err := c.getPendingConsensus(state, h)
+			if err != nil {
+				return fmt.Errorf("failed to call getPendingConsensus: %w", err)
+			}
+			for _, index := range indexesNeedRecover {
+				// call ReceiveSecretReshare
+				rpvss, err := c.rpvsses(c.targetHeight, index, state, h)
+				if err != nil {
+					return fmt.Errorf("failed to call rpvsses: %w", err)
+				}
+				reshareMsgs, err := c.getReshareMsgs(c.targetHeight, index, state, h)
+				if err != nil {
+					return fmt.Errorf("failed to call reshareMsgs: %w", err)
+				}
+				err = c.amevKeystore.ReceiveRecoveredReshare(pendingConsensus[index-1], reshareMsgs, rpvss)
+				if err != nil {
+					return fmt.Errorf("failed to call ReceiveSecretReshare(), err: %w", err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (c *DBFT) getCurrentConsensus(state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	var result []common.Address
+	err := c.readContract(&result, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI,
+		state, header, "getCurrentConsensus")
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *DBFT) getPendingConsensus(state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	var result []common.Address
+	err := c.readContract(&result, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI,
+		state, header, "getPendingConsensus")
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *DBFT) sharePeriodDuration(state *state.StateDB, header *types.Header) (uint64, error) {
+	var result big.Int
+	err := c.readContract(&result, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI,
+		state, header, "sharePeriodDuration")
+	if err != nil {
+		return 0, err
+	}
+	return result.Uint64(), nil
+}
+
+func (c *DBFT) epochDuration(state *state.StateDB, header *types.Header) (uint64, error) {
+	var result big.Int
+	err := c.readContract(&result, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI,
+		state, header, "epochDuration")
+	if err != nil {
+		return 0, err
+	}
+	return result.Uint64(), nil
+}
+
+func (c *DBFT) currentEpochStartHeight(state *state.StateDB, header *types.Header) (uint64, error) {
+	var result big.Int
+	err := c.readContract(&result, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI,
+		state, header, "currentEpochStartHeight")
+	if err != nil {
+		return 0, err
+	}
+	return result.Uint64(), nil
+}
+
+func (c *DBFT) messagePubkeys(addr *common.Address, state *state.StateDB, header *types.Header) (*ecies.PublicKey, error) {
+	var result string
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "messagePubkeys", addr)
+	if err != nil {
+		return nil, err
+	}
+	keyBytes, err := hex.DecodeString(result)
+	if err != nil {
+		return nil, err
+	}
+	key, err := crypto.UnmarshalPubkey(keyBytes)
+	if err != nil {
+		return nil, err
+	}
+	return ecies.ImportECDSAPublic(key), nil
+}
+
+func (c *DBFT) indexOfSharing(addr *common.Address, state *state.StateDB, header *types.Header) (uint64, error) {
+	var result big.Int
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "indexOfSharing", addr)
+	if err != nil {
+		return 0, err
+	}
+	return result.Uint64(), nil
+}
+
+func (c *DBFT) indexOfResharing(addr *common.Address, state *state.StateDB, header *types.Header) (uint64, error) {
+	var result big.Int
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "indexOfResharing", addr)
+	if err != nil {
+		return 0, err
+	}
+	return result.Uint64(), nil
+}
+
+func (c *DBFT) indexCurrentNeedRecovering(state *state.StateDB, header *types.Header) ([]uint64, error) {
+	var result []*big.Int
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "indexCurrentNeedRecovering")
+	if err != nil {
+		return nil, err
+	}
+
+	var indexs []uint64
+	for _, item := range result {
+		indexs = append(indexs, item.Uint64())
+	}
+	return indexs, nil
+}
+
+func (c *DBFT) isShareReady(state *state.StateDB, header *types.Header) (bool, error) {
+	var result bool
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "isShareReady")
+	if err != nil {
+		return false, err
+	}
+	return result, nil
+}
+
+func (c *DBFT) getReshareMsgs(height, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
+	var result [][]byte
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "getReshareMsgs", big.NewInt(int64(height)), big.NewInt(int64(index)))
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *DBFT) rpvsses(height, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+	var result []byte
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "rpvsses", big.NewInt(int64(height)), big.NewInt(int64(index)))
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *DBFT) getShareMsgs(height, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
+	var result [][]byte
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "getShareMsgs", big.NewInt(int64(height)), big.NewInt(int64(index)))
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *DBFT) spvsses(height, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+	var result []byte
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "spvsses", big.NewInt(int64(height)), big.NewInt(int64(index)))
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *DBFT) recoverMsgs(height, indexSend, indexReceive uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+	var result []byte
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "recoverMsgs", big.NewInt(int64(height)), big.NewInt(int64(indexSend)), big.NewInt(int64(indexReceive)))
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *DBFT) readContract(res interface{}, contract common.Address, contractAbi abi.ABI,
+	state *state.StateDB, header *types.Header,
+	method string, args ...interface{}) error {
+	data, err := contractAbi.Pack(method, args...)
+	if err != nil {
+		return fmt.Errorf("failed to pack '%s': %w", method, err)
+	}
+	msgData := hexutil.Bytes(data)
+	gas := hexutil.Uint64(50_000_000) // more than enough for validators call processing.
+	txArgs := ethapi.TransactionArgs{
+		Gas:  &gas,
+		To:   &contract,
+		Data: &msgData,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel when we are finished consuming integers.
+	defer cancel()
+	result, err := c.ethAPI.CallAtState(ctx, txArgs, state, header)
+	if err != nil {
+		return fmt.Errorf("failed to call at state '%s': %w", method, err)
+	}
+	err = systemcontracts.GovernanceABI.UnpackIntoInterface(&res, method, result)
+	if err != nil {
+		return fmt.Errorf("failed to unpack validators: %w", err)
+	}
+
+	return nil
+}
+
+func (c *DBFT) reshare(pvss []byte, messages [][]byte) (*common.Hash, error) {
+	return c.sendTxToKeyManagement("reshare", pvss, messages)
+}
+
+func (c *DBFT) share(pvss []byte, messages [][]byte) (*common.Hash, error) {
+	return c.sendTxToKeyManagement("share", pvss, messages)
+}
+
+func (c *DBFT) reshareRecovered(pvss []byte, messages [][]byte) (*common.Hash, error) {
+	return c.sendTxToKeyManagement("reshareRecovered", pvss, messages)
+}
+
+func (c *DBFT) recover(idxs []uint64, messages [][]byte) (*common.Hash, error) {
+	var idxsBigInt []*big.Int
+	for _, idx := range idxs {
+		idxsBigInt = append(idxsBigInt, big.NewInt(int64(idx)))
+	}
+	return c.sendTxToKeyManagement("recover", idxsBigInt, messages)
+}
+
+func (c *DBFT) sendTxToKeyManagement(method string, args ...interface{}) (*common.Hash, error) {
+	if c.txAPI == nil {
+		return nil, errors.New("eth transaction API is not initialized, dBFT can't function properly")
+	}
+	data, err := systemcontracts.KeyManagementABI.Pack(method, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to pack '%s': %w", method, err)
+	}
+	msgData := hexutil.Bytes(data)
+
+	txHash, err := c.txAPI.SendTransaction(context.Background(),
+		ethapi.TransactionArgs{
+			From: &c.signer,
+			To:   &systemcontracts.KeyManagementProxyHash,
+			Data: &msgData})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to send tx with consensus node, to %s data: '%s': %w", systemcontracts.KeyManagementProxyHash, hex.EncodeToString(data), err)
+	}
+	return &txHash, nil
 }
