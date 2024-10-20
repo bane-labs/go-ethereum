@@ -53,6 +53,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/internal/shutdowncheck"
+	"github.com/ethereum/go-ethereum/internal/version"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/node"
@@ -62,6 +63,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	gethversion "github.com/ethereum/go-ethereum/version"
 )
 
 // Config contains the configuration options of the ETH protocol.
@@ -187,7 +189,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	if !config.SkipBcVersionCheck {
 		if bcVersion != nil && *bcVersion > core.BlockChainVersion {
-			return nil, fmt.Errorf("database version is v%d, Geth %s only supports v%d", *bcVersion, params.VersionWithMeta, core.BlockChainVersion)
+			return nil, fmt.Errorf("database version is v%d, Geth %s only supports v%d", *bcVersion, version.WithMeta, core.BlockChainVersion)
 		} else if bcVersion == nil || *bcVersion < core.BlockChainVersion {
 			if bcVersion != nil { // only print warning on upgrade, not on init
 				log.Warn("Upgrade blockchain database version", "from", dbVer, "to", core.BlockChainVersion)
@@ -349,7 +351,7 @@ func makeExtraData(extra []byte, isBFT bool) []byte {
 			extra = []byte{}
 		} else {
 			extra, _ = rlp.EncodeToBytes([]interface{}{
-				uint(params.VersionMajor<<16 | params.VersionMinor<<8 | params.VersionPatch),
+				uint(gethversion.Major<<16 | gethversion.Minor<<8 | gethversion.Patch),
 				"geth",
 				runtime.Version(),
 				runtime.GOOS,
