@@ -18,7 +18,9 @@ var (
 
 // Encrypt uses the current finished sharing to encrypt the input byte array.
 // It returns an encrypted aes key and an encrypted byte array.
-func (ks *AMEVKeyStore) Encrypt(msg []byte) (*tpke.CipherText, []byte, error) {
+func (ks *KeyStore) Encrypt(msg []byte) (*tpke.CipherText, []byte, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
 	if ks.shared == nil {
 		return nil, nil, ErrNoPubKey
 	}
@@ -39,7 +41,9 @@ func (ks *AMEVKeyStore) Encrypt(msg []byte) (*tpke.CipherText, []byte, error) {
 
 // DecryptWithShare generates decryption shares for decrypting an array of
 // aes keys. The returned array is ordered the same as inputs.
-func (ks *AMEVKeyStore) DecryptWithShare(cts []*tpke.CipherText) ([]*tpke.DecryptionShare, error) {
+func (ks *KeyStore) DecryptWithShare(cts []*tpke.CipherText) ([]*tpke.DecryptionShare, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
 	if ks.shared == nil {
 		return nil, ErrNoPrvKey
 	}
@@ -49,7 +53,9 @@ func (ks *AMEVKeyStore) DecryptWithShare(cts []*tpke.CipherText) ([]*tpke.Decryp
 // DecryptWithShare generates decryption shares for decrypting an array of
 // aes keys, which is encrypted by old global public key. The returned
 // array is ordered the same as inputs.
-func (ks *AMEVKeyStore) DecryptWithReshare(cts []*tpke.CipherText) ([]*tpke.DecryptionShare, error) {
+func (ks *KeyStore) DecryptWithReshare(cts []*tpke.CipherText) ([]*tpke.DecryptionShare, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
 	if ks.reshared == nil {
 		return nil, ErrNoPrvKey
 	}
@@ -61,7 +67,9 @@ func (ks *AMEVKeyStore) DecryptWithReshare(cts []*tpke.CipherText) ([]*tpke.Decr
 // messages and decryption shares should have the same input order. The key of
 // inputs is dkg index which starts from 1, when the array index of a member in
 // the key group starts from 0.
-func (ks *AMEVKeyStore) AggregateAndDecryptWithShare(cts []*tpke.CipherText, msg [][]byte, inputs map[int]([]*tpke.DecryptionShare)) ([][]byte, error) {
+func (ks *KeyStore) AggregateAndDecryptWithShare(cts []*tpke.CipherText, msg [][]byte, inputs map[int]([]*tpke.DecryptionShare)) ([][]byte, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
 	if ks.shared == nil {
 		return nil, ErrNoPubKey
 	}
@@ -91,7 +99,9 @@ func (ks *AMEVKeyStore) AggregateAndDecryptWithShare(cts []*tpke.CipherText, msg
 
 // AggregateAndDecryptWithShare tries to aggregate decryption shares and finally
 // decrypt the aes keys and the raw messages, but the reshared key group is used.
-func (ks *AMEVKeyStore) AggregateAndDecryptWithReshare(cts []*tpke.CipherText, msg [][]byte, inputs map[int]([]*tpke.DecryptionShare)) ([][]byte, error) {
+func (ks *KeyStore) AggregateAndDecryptWithReshare(cts []*tpke.CipherText, msg [][]byte, inputs map[int]([]*tpke.DecryptionShare)) ([][]byte, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
 	if ks.reshared == nil {
 		return nil, ErrNoPubKey
 	}

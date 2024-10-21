@@ -29,6 +29,7 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -42,9 +43,11 @@ import (
 
 // Node is a container on which services can be registered.
 type Node struct {
-	eventmux      *event.TypeMux
-	config        *Config
-	accman        *accounts.Manager
+	eventmux        *event.TypeMux
+	config          *Config
+	accman          *accounts.Manager
+	antimevKeyStore *antimev.KeyStore
+
 	log           log.Logger
 	keyDir        string        // key store directory
 	keyDirTemp    bool          // If true, key directory will be removed by Stop
@@ -129,6 +132,13 @@ func New(conf *Config) (*Node, error) {
 	// Creates an empty AccountManager with no backends. Callers (e.g. cmd/geth)
 	// are required to add the backends later on.
 	node.accman = accounts.NewManager(&accounts.Config{InsecureUnlockAllowed: conf.InsecureUnlockAllowed})
+
+	// Create an empty antimev keystore with only file path.
+	antimevKeyDir, err := conf.GetAntiMEVKeyStorePath()
+	if err != nil {
+		return nil, err
+	}
+	node.antimevKeyStore = antimev.NewKeyStore(antimevKeyDir)
 
 	// Initialize the p2p server. This creates the node key and discovery databases.
 	node.server.Config.PrivateKey = node.config.NodeKey()
@@ -670,6 +680,10 @@ func (n *Node) KeyStoreDir() string {
 // AccountManager retrieves the account manager used by the protocol stack.
 func (n *Node) AccountManager() *accounts.Manager {
 	return n.accman
+}
+
+func (n *Node) AntiMEVKeyStore() *antimev.KeyStore {
+	return n.antimevKeyStore
 }
 
 // IPCEndpoint retrieves the current IPC endpoint used by the protocol stack.

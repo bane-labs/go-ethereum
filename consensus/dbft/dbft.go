@@ -30,6 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/lru"
@@ -38,7 +39,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/antimev"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -193,10 +193,10 @@ type DBFT struct {
 
 	config *config // Consensus engine configuration parameters
 
-	signer       common.Address        // Ethereum address of the signing key
-	signFn       SignerFn              // Signer function to authorize hashes with
-	amevKeystore *antimev.AMEVKeyStore // anti-MEV keystore responsible for DKG and encrypted transactions decryption
-	lock         sync.RWMutex          // Protects signer, signFn and amevKeystore fields
+	signer       common.Address    // Ethereum address of the signing key
+	signFn       SignerFn          // Signer function to authorize hashes with
+	amevKeystore *antimev.KeyStore // anti-MEV keystore responsible for DKG and encrypted transactions decryption
+	lock         sync.RWMutex      // Protects signer, signFn and amevKeystore fields
 
 	dbft             *dbft.DBFT[common.Hash]
 	dbftStarted      atomic.Bool
@@ -1345,7 +1345,7 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 
 // Authorize injects a private key into the consensus engine to mint new blocks
 // with.
-func (c *DBFT) Authorize(signer common.Address, signFn SignerFn, amevKeystore *antimev.AMEVKeyStore) {
+func (c *DBFT) Authorize(signer common.Address, signFn SignerFn, amevKeystore *antimev.KeyStore) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 

@@ -2,8 +2,8 @@ package dbft
 
 import (
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/antimev"
 	"github.com/nspcc-dev/dbft"
 )
 
@@ -17,7 +17,7 @@ type SignerFn func(signer accounts.Account, mimeType string, message []byte) ([]
 type Signer struct {
 	Signer       common.Address
 	SignFn       SignerFn
-	AmevKeystore *antimev.AMEVKeyStore
+	AmevKeystore *antimev.KeyStore
 }
 
 // Sign implements dbftCrypto.PrivateKey interface and signs the given message.

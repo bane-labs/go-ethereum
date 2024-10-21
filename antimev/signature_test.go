@@ -1,10 +1,14 @@
 package antimev
 
 import (
+	"fmt"
 	"math/rand"
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
@@ -24,13 +28,19 @@ func TestSingleSignature(t *testing.T) {
 func TestThresholdSignature(t *testing.T) {
 	source := rand.NewSource(time.Now().UnixNano())
 	random := rand.New(source)
+	dir := t.TempDir()
 
+	cns := accounts[:size]
+	slices.SortFunc(cns, func(a, b account) int {
+		return common.Address.Cmp(a.addr, b.addr)
+	})
 	pubs := make([]*ecies.PublicKey, size)
-	kss := make([]*AMEVKeyStore, size)
+	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey
-		ks, err := NewKeyStore(addrs[i], key, size, threshold)
+		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
+		err := ks.Init(accounts[i].addr, key, size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -39,9 +49,13 @@ func TestThresholdSignature(t *testing.T) {
 
 	msgbox := make([][][]byte, size)
 	pvssbox := make([][]byte, size)
+	valList := make([]common.Address, size)
+	for i := range cns {
+		valList[i] = cns[i].addr
+	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		_, _, err := kss[i].OnValidatorList(addrs, pubs)
+		_, _, err := kss[i].OnValidatorList(valList, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}

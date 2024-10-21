@@ -27,7 +27,7 @@ const (
 	BlobPoolCategory   = "TRANSACTION POOL (BLOB)"
 	PerfCategory       = "PERFORMANCE TUNING"
 	AccountCategory    = "ACCOUNT"
-	AMEVCategory       = "ANTI-MEV"
+	AntiMEVCategory    = "ANTI-MEV"
 	APICategory        = "API AND CONSOLE"
 	NetworkingCategory = "NETWORKING"
 	MinerCategory      = "MINER"

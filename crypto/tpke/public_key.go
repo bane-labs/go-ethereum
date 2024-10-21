@@ -1,44 +1,13 @@
 package tpke
 
 import (
-	"io"
 	"math/big"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type PublicKey struct {
 	pg1 *bls12381.G1Affine // A public value for tpke encryption
-}
-
-var (
-	_ rlp.Encoder = &PublicKey{}
-	_ rlp.Decoder = &PublicKey{}
-)
-
-// publicKeyAux is an auxiliary structure for PublicKey RLP encoding.
-type publicKeyAux struct {
-	Pg1 [bls12381.SizeOfG1AffineCompressed]byte
-}
-
-// EncodeRLP implements [rlp.Encoder].
-func (pub *PublicKey) EncodeRLP(w io.Writer) error {
-	return rlp.Encode(w, &publicKeyAux{
-		Pg1: pub.pg1.Bytes(),
-	})
-}
-
-// DecodeRLP implements [rlp.Decoder].
-func (pub *PublicKey) DecodeRLP(s *rlp.Stream) error {
-	aux := new(publicKeyAux)
-	if err := s.Decode(aux); err != nil {
-		return err
-	}
-	var err error
-	pub.pg1 = new(bls12381.G1Affine)
-	_, err = pub.pg1.SetBytes(aux.Pg1[:])
-	return err
 }
 
 // NewGlobalPublicKey aggregates and returns a PublicKey
@@ -52,6 +21,19 @@ func NewGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
 	return &PublicKey{
 		pg1: pg1,
 	}
+}
+
+func (pk *PublicKey) Encode() []byte {
+	return encodePointG1(pk.pg1)
+}
+
+func (pk *PublicKey) Decode(b []byte) (*PublicKey, error) {
+	pg1, err := decodePointG1(b)
+	if err != nil {
+		return nil, err
+	}
+	pk.pg1 = pg1
+	return pk, nil
 }
 
 // Equal compares if two public keys are the same

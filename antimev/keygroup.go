@@ -1,16 +1,16 @@
 package antimev
 
 import (
+	"encoding/hex"
 	"errors"
-	"io"
 	"math/big"
 	"math/rand"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var (
@@ -40,92 +40,6 @@ type thresholdKeyGroup struct {
 type thresholdKeyHolder struct {
 	address   common.Address   // The account address
 	ethPubKey *ecies.PublicKey // The account public key
-}
-
-var (
-	_ rlp.Encoder = &thresholdKeyGroup{}
-	_ rlp.Decoder = &thresholdKeyGroup{}
-)
-
-// thresholdKeyGroupAux is an auxiliary structure for thresholdKeyGroup RLP marshalling.
-type thresholdKeyGroupAux struct {
-	Holders []*thresholdKeyHolder // Members of this dkg group
-	Pvsses  []*tpke.PVSS          // Public verifiable sharing commitments
-
-	SelfAddr        common.Address // Self address
-	LocalSecret     *tpke.Secret   // The local random secret
-	ReceivedSecrets [][]byte       // Received secret sharings
-
-	GlobalPubKey *tpke.PublicKey  // The aggregated global public key
-	LocalPrvKey  *tpke.PrivateKey // The aggregated local secret key
-}
-
-// EncodeRLP implements [rlp.Encoder].
-func (tkg *thresholdKeyGroup) EncodeRLP(w io.Writer) error {
-	secrets := make([][]byte, len(tkg.receivedSecrets))
-	for i, s := range tkg.receivedSecrets {
-		secrets[i] = s.Bytes()
-	}
-	return rlp.Encode(w, thresholdKeyGroupAux{
-		Holders:         tkg.holders,
-		Pvsses:          tkg.pvsses,
-		SelfAddr:        tkg.selfAddr,
-		LocalSecret:     tkg.localSecret,
-		ReceivedSecrets: secrets,
-		GlobalPubKey:    tkg.globalPubKey,
-		LocalPrvKey:     tkg.localPrvKey,
-	})
-}
-
-// DecodeRLP implements [rlp.Decoder].
-func (tkg *thresholdKeyGroup) DecodeRLP(s *rlp.Stream) error {
-	aux := &thresholdKeyGroupAux{}
-	if err := s.Decode(aux); err != nil {
-		return err
-	}
-	var secrets []*big.Int
-	for _, s := range aux.ReceivedSecrets {
-		secret := new(big.Int).SetBytes(s)
-		secrets = append(secrets, secret)
-	}
-	tkg.holders = aux.Holders
-	tkg.pvsses = aux.Pvsses
-	tkg.selfAddr = aux.SelfAddr
-	tkg.localSecret = aux.LocalSecret
-	tkg.receivedSecrets = secrets
-	tkg.globalPubKey = aux.GlobalPubKey
-	tkg.localPrvKey = aux.LocalPrvKey
-	return nil
-}
-
-var (
-	_ rlp.Encoder = &thresholdKeyHolder{}
-	_ rlp.Decoder = &thresholdKeyHolder{}
-)
-
-// thresholdKeyHolderAux is an auxiliary structure for RLP thresholdKeyHolder marshalling.
-type thresholdKeyHolderAux struct {
-	Address   common.Address   // The account address
-	EthPubKey *ecies.PublicKey // The account public key
-}
-
-// EncodeRLP implements [rlp.Encoder].
-func (h *thresholdKeyHolder) EncodeRLP(w io.Writer) error {
-	return rlp.Encode(w, &thresholdKeyHolderAux{
-		Address:   h.address,
-		EthPubKey: h.ethPubKey,
-	})
-}
-
-// DecodeRLP implements [rlp.Decoder].
-func (h *thresholdKeyHolder) DecodeRLP(s *rlp.Stream) error {
-	aux := &thresholdKeyHolderAux{}
-	if err := s.Decode(aux); err != nil {
-		return err
-	}
-	h.address = aux.Address
-	h.ethPubKey = aux.EthPubKey
-	return nil
 }
 
 // newThresholdKeyGroup returns a new key group with the input address list.
@@ -201,7 +115,7 @@ func (tkg *thresholdKeyGroup) dkgPrepare(threshold int) ([][]byte, *tpke.PVSS, e
 	// Generate local secret
 	tkg.localSecret = tpke.RandomSecret(threshold)
 	// Generate and encrypt messages to share the secret
-	return generateShareMessages(tkg.localSecret, selfIndex, tkg.holders)
+	return generateShareMessages(tkg.localSecret, tkg.holders)
 }
 
 // dkgAggregate aggregates received secrets and pvss to get global public key and
@@ -268,7 +182,7 @@ func (tkg *thresholdKeyGroup) dkgReshare(target *thresholdKeyGroup) ([][]byte, *
 		return nil, nil, ErrNoSecretToReshare
 	}
 	// Generate and encrypt messages to share the secret
-	return generateShareMessages(tkg.localSecret.Renovate(), selfIndex, target.holders)
+	return generateShareMessages(tkg.localSecret.Renovate(), target.holders)
 }
 
 func (tkg *thresholdKeyGroup) dkgReshareRecovered(threshold int, target *thresholdKeyGroup) ([][]byte, *tpke.PVSS, error) {
@@ -295,7 +209,7 @@ func (tkg *thresholdKeyGroup) dkgReshareRecovered(threshold int, target *thresho
 
 // generateShareMessages generates secret sharing messages.
 // Secret shares can be decrypted by specific receivers, but pvss is public.
-func generateShareMessages(secret *tpke.Secret, selfIndexIndex int, receivers []*thresholdKeyHolder) ([][]byte, *tpke.PVSS, error) {
+func generateShareMessages(secret *tpke.Secret, receivers []*thresholdKeyHolder) ([][]byte, *tpke.PVSS, error) {
 	// Random source for message encryption
 	source := rand.NewSource(time.Now().UnixNano())
 	random := rand.New(source)
@@ -399,4 +313,137 @@ func (tkg *thresholdKeyGroup) holderIndex(addr common.Address) int {
 		}
 	}
 	return 0
+}
+
+// thresholdKeyHolderAux is an auxiliary structure for thresholdKeyHolder JSON marshalling.
+type thresholdKeyHolderAux struct {
+	Address   common.Address `json:"address"`     // The account address
+	EthPubKey string         `json:"eth_pub_key"` // The account public key
+}
+
+// toAux transforms thresholdKeyHolder to JSON serializable structure.
+func (tkh *thresholdKeyHolder) toAux() *thresholdKeyHolderAux {
+	return &thresholdKeyHolderAux{
+		Address:   tkh.address,
+		EthPubKey: hex.EncodeToString(crypto.FromECDSAPub(tkh.ethPubKey.ExportECDSA())),
+	}
+}
+
+// fromAux transforms deserialized JSON data to thresholdKeyHolder.
+func (tkh *thresholdKeyHolder) fromAux(aux *thresholdKeyHolderAux) error {
+	tkh.address = aux.Address
+	keyBytes, err := hex.DecodeString(aux.EthPubKey)
+	if err != nil {
+		return err
+	}
+	pubKey, err := crypto.UnmarshalPubkey(keyBytes)
+	if err != nil {
+		return err
+	}
+	tkh.ethPubKey = ecies.ImportECDSAPublic(pubKey)
+	return nil
+}
+
+// thresholdKeyGroupAux is an auxiliary structure for thresholdKeyGroup JSON marshalling.
+type thresholdKeyGroupAux struct {
+	Holders []*thresholdKeyHolderAux `json:"holders"` // Members of this dkg group
+	Pvsses  []string                 `json:"pvsses"`  // Public verifiable sharing commitments
+
+	SelfAddr        common.Address `json:"self_addr"`        // Self address
+	LocalSecret     []*big.Int     `json:"local_secret"`     // The local random secret
+	ReceivedSecrets []*big.Int     `json:"received_secrets"` // Received secret sharings
+
+	GlobalPubKey string `json:"global_pubkey"` // The aggregated global public key
+	LocalPrvKey  string `json:"local_prvkey"`  // The aggregated local secret key
+}
+
+// toAux transforms thresholdKeyGroup to JSON serializable structure.
+// Absent fields remain nil, but their positions are allocated.
+func (tkg *thresholdKeyGroup) toAux() *thresholdKeyGroupAux {
+	aux := &thresholdKeyGroupAux{
+		SelfAddr:        tkg.selfAddr,
+		ReceivedSecrets: tkg.receivedSecrets,
+	}
+	aux.Holders = make([]*thresholdKeyHolderAux, len(tkg.holders))
+	for i, v := range tkg.holders {
+		// Possible be nil when recovering
+		if v != nil {
+			aux.Holders[i] = v.toAux()
+		}
+	}
+	// Possible be nil when dkg is undergoing
+	aux.Pvsses = make([]string, len(tkg.pvsses))
+	for i, v := range tkg.pvsses {
+		if v != nil {
+			aux.Pvsses[i] = hex.EncodeToString(v.Encode())
+		}
+	}
+	if tkg.localSecret != nil {
+		aux.LocalSecret = tkg.localSecret.ToBigIntArray()
+	}
+	if tkg.globalPubKey != nil {
+		aux.GlobalPubKey = hex.EncodeToString(tkg.globalPubKey.Encode())
+	}
+	if tkg.localPrvKey != nil {
+		aux.LocalPrvKey = hex.EncodeToString(tkg.localPrvKey.Encode())
+	}
+	return aux
+}
+
+// fromAux transforms deserialized JSON data to thresholdKeyGroup.
+func (tkg *thresholdKeyGroup) fromAux(aux *thresholdKeyGroupAux, n int, t int) error {
+	// Left as nil if not presented
+	tkg.selfAddr = aux.SelfAddr
+	tkg.receivedSecrets = aux.ReceivedSecrets
+	tkg.holders = make([]*thresholdKeyHolder, len(aux.Holders))
+	for i, v := range aux.Holders {
+		if v != nil {
+			tkg.holders[i] = new(thresholdKeyHolder)
+			err := tkg.holders[i].fromAux(v)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	tkg.pvsses = make([]*tpke.PVSS, len(aux.Pvsses))
+	for i, v := range aux.Pvsses {
+		if len(v) > 0 {
+			b, err := hex.DecodeString(v)
+			if err != nil {
+				return err
+			}
+			pvss, err := new(tpke.PVSS).Decode(b, n, t)
+			if err != nil {
+				return err
+			}
+			tkg.pvsses[i] = pvss
+		}
+	}
+	if aux.LocalSecret != nil {
+		tkg.localSecret = new(tpke.Secret)
+		tkg.localSecret.FromBigIntArray(aux.LocalSecret)
+	}
+	if len(aux.GlobalPubKey) > 0 {
+		pubBytes, err := hex.DecodeString(aux.GlobalPubKey)
+		if err != nil {
+			return err
+		}
+		pubkey, err := new(tpke.PublicKey).Decode(pubBytes)
+		if err != nil {
+			return err
+		}
+		tkg.globalPubKey = pubkey
+	}
+	if len(aux.LocalPrvKey) > 0 {
+		prvBytes, err := hex.DecodeString(aux.LocalPrvKey)
+		if err != nil {
+			return err
+		}
+		prvkey, err := new(tpke.PrivateKey).Decode(prvBytes)
+		if err != nil {
+			return err
+		}
+		tkg.localPrvKey = prvkey
+	}
+	return nil
 }

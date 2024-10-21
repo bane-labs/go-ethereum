@@ -1,11 +1,9 @@
 package tpke
 
 import (
-	"io"
 	"math/big"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 type PVSS struct {
@@ -13,61 +11,6 @@ type PVSS struct {
 	r1         *bls12381.G1Affine   // The commitment of of random r
 	r2         *bls12381.G2Affine   // The verifiable commitment of of r1
 	bigf       []*bls12381.G1Affine // The commitment of secret sharing
-}
-
-var (
-	_ rlp.Encoder = &PVSS{}
-	_ rlp.Decoder = &PVSS{}
-)
-
-// pvssAux is an auxiliary structure for PVSS RLP encoding.
-type pvssAux struct {
-	Commitment *Commitment                               // The commitment of local secret polynomial.
-	R1         [bls12381.SizeOfG1AffineCompressed]byte   // The commitment of random r.
-	R2         [bls12381.SizeOfG2AffineCompressed]byte   // The verifiable commitment of r1.
-	Bigf       [][bls12381.SizeOfG1AffineCompressed]byte // The commitment of secret sharing.
-}
-
-// EncodeRLP implements [rlp.Encoder].
-func (p *PVSS) EncodeRLP(w io.Writer) error {
-	f := make([][bls12381.SizeOfG1AffineCompressed]byte, len(p.bigf))
-	for i, b := range p.bigf {
-		f[i] = b.Bytes()
-	}
-	return rlp.Encode(w, &pvssAux{
-		Commitment: p.commitment,
-		R1:         p.r1.Bytes(),
-		R2:         p.r2.Bytes(),
-		Bigf:       f,
-	})
-}
-
-// DecodeRLP implements [rlp.Decoder].
-func (p *PVSS) DecodeRLP(s *rlp.Stream) error {
-	aux := &pvssAux{}
-	if err := s.Decode(aux); err != nil {
-		return err
-	}
-	p.commitment = aux.Commitment
-	p.r1 = new(bls12381.G1Affine)
-	_, err := p.r1.SetBytes(aux.R1[:])
-	if err != nil {
-		return err
-	}
-	p.r2 = new(bls12381.G2Affine)
-	_, err = p.r2.SetBytes(aux.R2[:])
-	if err != nil {
-		return err
-	}
-	p.bigf = make([]*bls12381.G1Affine, len(aux.Bigf))
-	for i := range aux.Bigf {
-		p.bigf[i] = new(bls12381.G1Affine)
-		_, err := p.bigf[i].SetBytes(aux.Bigf[i][:])
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // GenerateSecretShares takes a random r to generate PVSS
@@ -96,9 +39,9 @@ func GenerateSecretShares(r *big.Int, size int, secret *Secret) (*PVSS, []*big.I
 
 func (pvss *PVSS) GetCommitment() *Commitment { return pvss.commitment }
 
-func (pvss *PVSS) ToBytes() []byte {
+func (pvss *PVSS) Encode() []byte {
 	arr := make([]byte, 0)
-	arr = append(arr, pvss.commitment.ToBytes()...)
+	arr = append(arr, pvss.commitment.Encode()...)
 	arr = append(arr, encodePointG1(pvss.r1)...)
 	arr = append(arr, encodePointG2(pvss.r2)...)
 	for i := 0; i < len(pvss.bigf); i++ {
@@ -107,11 +50,11 @@ func (pvss *PVSS) ToBytes() []byte {
 	return arr
 }
 
-func (pvss *PVSS) FromBytes(b []byte, n int, t int) (*PVSS, error) {
+func (pvss *PVSS) Decode(b []byte, n int, t int) (*PVSS, error) {
 	if len(b) != (t+n+1)*128+256 {
 		return nil, ErrTPKEDecoding
 	}
-	comm, err := new(Commitment).FromBytes(b[:t*128], t)
+	comm, err := new(Commitment).Decode(b[:t*128], t)
 	if err != nil {
 		return nil, err
 	}

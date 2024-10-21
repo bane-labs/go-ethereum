@@ -29,6 +29,8 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
+	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/console/prompt"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/downloader"
@@ -125,7 +127,8 @@ var (
 		utils.MinerExtraDataFlag,
 		utils.MinerRecommitIntervalFlag,
 		utils.MinerNewPayloadTimeout,
-		utils.AMEVKeystoreFlag,
+		utils.AntiMEVKeyStoreFlag,
+		utils.AntiMEVPasswordFlag,
 		utils.NATFlag,
 		utils.NoDiscoverFlag,
 		utils.DiscoveryV4Flag,
@@ -220,6 +223,8 @@ func init() {
 		// See accountcmd.go:
 		accountCommand,
 		walletCommand,
+		// See antimevcmd.go:
+		antimevCommand,
 		// See consolecmd.go:
 		consoleCommand,
 		attachCommand,
@@ -431,6 +436,22 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 		if ctx.String(utils.SyncModeFlag.Name) == "light" {
 			utils.Fatalf("Light clients do not support mining")
 		}
+		// Mining in dBFT requires an unlocked keystore file
+		var (
+			bft *dbft.DBFT
+		)
+		switch t := backend.Engine().(type) {
+		case *dbft.DBFT:
+			bft = t
+		case *beacon.Beacon:
+			switch inner := t.InnerEngine().(type) {
+			case *dbft.DBFT:
+				bft = inner
+			}
+		}
+		if bft != nil {
+			unlockAntiMEVKeyStore(ctx, stack)
+		}
 		ethBackend, ok := backend.(*eth.EthAPIBackend)
 		if !ok {
 			utils.Fatalf("Ethereum service not running")
@@ -472,4 +493,9 @@ func unlockAccounts(ctx *cli.Context, stack *node.Node) {
 	for i, account := range unlocks {
 		unlockAccount(ks, account, i, passwords)
 	}
+}
+
+// unlockAntiMEVKeyStore unlocks antimev keystore.
+func unlockAntiMEVKeyStore(ctx *cli.Context, stack *node.Node) {
+	unlockKeyStore(stack.AntiMEVKeyStore(), utils.MakeAntiMEVPasswordList(ctx))
 }

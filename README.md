@@ -86,7 +86,13 @@ To run a full node on the Neo X Testnet network follow the steps below.
    ```shell
    ./geth --datadir ./nodes/node1 account new
    ```
-5. Run the node either as a consensus member or as a seed node.
+5. Create an antimev keystore for participanting AMEV-dBFT or use an existing one.
+   The following command may be used to create a new keystore for your miner account
+   (you'll be prompted for a password):
+   ```shell
+   ./geth --datadir ./nodes/node1 antimev init <address>
+   ```
+6. Run the node either as a consensus member or as a seed node.
    1. **Running a seed node.** Seed node is a network member that does not take part
       in a consensus process. This node may be used to interact with the Neo X
       network: create accounts; transfer funds; deploy and interact with contracts;
@@ -173,6 +179,7 @@ To run a full node on the Neo X Testnet network follow the steps below.
       --mine --miner.etherbase=$miner \
       --unlock $miner \
       --password $node/password.txt \
+      --antimev.password $node/password.txt \
       --authrpc.port $rpcport \
       --identity=$node \
       --maxpeers=50 \
@@ -198,7 +205,7 @@ To run a full node on the Neo X Testnet network follow the steps below.
       Once all necessary flags are applied to the `./geth` command, you may run the
       seed node by running this script.
 
-6. You may also start the built-in interactive
+7. You may also start the built-in interactive
    [JavaScript console](https://geth.ethereum.org/docs/interacting-with-geth/javascript-console),
    (via the trailing `console` subcommand) through which you can interact using
    [`web3` methods](https://github.com/ChainSafe/web3.js/blob/0.20.7/DOCUMENTATION.md) 

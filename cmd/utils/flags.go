@@ -503,11 +503,15 @@ var (
 	}
 
 	// Anti-MEV settings.
-	AMEVKeystoreFlag = &cli.StringFlag{
-		Name:     "amev.keystore",
+	AntiMEVKeyStoreFlag = &cli.PathFlag{
+		Name:     "antimev.keystore",
 		Usage:    "Path to anti-MEV keystore",
-		Value:    "",
-		Category: flags.AMEVCategory,
+		Category: flags.AntiMEVCategory,
+	}
+	AntiMEVPasswordFlag = &cli.PathFlag{
+		Name:     "antimev.password",
+		Usage:    "Password file to unlock anti-MEV keystore",
+		Category: flags.AntiMEVCategory,
 	}
 
 	// EVM settings
@@ -1305,13 +1309,24 @@ func setEtherbase(ctx *cli.Context, cfg *ethconfig.Config) {
 
 // MakePasswordList reads password lines from the file specified by the global --password flag.
 func MakePasswordList(ctx *cli.Context) []string {
-	path := ctx.Path(PasswordFileFlag.Name)
+	return makePasswordList(ctx, PasswordFileFlag.Name)
+}
+
+// MakeAntiMEVPasswordList reads password lines from the file specified by the global
+// --antimev.password flag.
+func MakeAntiMEVPasswordList(ctx *cli.Context) []string {
+	return makePasswordList(ctx, AntiMEVPasswordFlag.Name)
+}
+
+// makePasswordList executes the reading passwords operation
+func makePasswordList(ctx *cli.Context, passwordFlag string) []string {
+	path := ctx.Path(passwordFlag)
 	if path == "" {
 		return nil
 	}
 	text, err := os.ReadFile(path)
 	if err != nil {
-		Fatalf("Failed to read password file: %v", err)
+		Fatalf("Failed to read %s file: %v", passwordFlag, err)
 	}
 	lines := strings.Split(string(text), "\n")
 	// Sanitise DOS line endings.
@@ -1389,6 +1404,9 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 
 	if ctx.IsSet(KeyStoreDirFlag.Name) {
 		cfg.KeyStoreDir = ctx.String(KeyStoreDirFlag.Name)
+	}
+	if ctx.IsSet(AntiMEVKeyStoreFlag.Name) {
+		cfg.AntiMEVKeyStorePath = ctx.String(AntiMEVKeyStoreFlag.Name)
 	}
 	if ctx.IsSet(DeveloperFlag.Name) {
 		cfg.UseLightweightKDF = true
@@ -1870,9 +1888,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(CacheNoPrefetchFlag.Name) {
 		cfg.NoPrefetch = ctx.Bool(CacheNoPrefetchFlag.Name)
-	}
-	if ctx.IsSet(AMEVKeystoreFlag.Name) {
-		cfg.AMEVKeystorePath = ctx.String(AMEVKeystoreFlag.Name)
 	}
 }
 
