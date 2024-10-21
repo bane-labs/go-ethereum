@@ -78,7 +78,7 @@ define run_bootnode
 endef
 
 define run_miner_node
-	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)" --amev.keystore=$(1)/$(7)/amev_keystore.txt)
+	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)" --antimev.password=$(1)/$(7)/password.txt)
 endef
 
 define run_node
@@ -157,7 +157,7 @@ privnet_stop: privnet_bootnode_stop privnet_nodes_stop
 privnet_clean: privnet_stop
 	@echo "Cleaning the nodes database files from $(MAIN_DIR)"
 	@find $(MAIN_DIR)/* -type d -name 'geth' -print -exec rm -rf {} +
-	@find $(MAIN_DIR)/* -type s,f -not \( -path '*/keystore/*' -or -name '*.json' -or -name '*.txt' -or -name '*.key' -or -name '*.md' \) -print -exec rm -f {} +
+	@find $(MAIN_DIR)/* -type s,f -not \( -path '*/keystore/*' -or -path '*/antimev-keystore' -or -name '*.json' -or -name '*.txt' -or -name '*.key' -or -name '*.md' \) -print -exec rm -f {} +
 
 $(SINGLE_DIR)/$(NODE1)/geth:
 	@echo "Initializing $(NODE1) from genesis"
