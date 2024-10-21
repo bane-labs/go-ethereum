@@ -25,6 +25,7 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -33,7 +34,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/antimev"
 	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/pruner"
@@ -87,7 +87,7 @@ type Ethereum struct {
 	eventMux        *event.TypeMux
 	engine          consensus.Engine
 	accountManager  *accounts.Manager
-	antimevKeystore *antimev.AMEVKeyStore
+	antimevKeystore *antimev.KeyStore
 
 	bloomRequests     chan chan *bloombits.Retrieval // Channel receiving bloom data retrieval requests
 	bloomIndexer      *core.ChainIndexer             // Bloom indexer operating during block imports
@@ -178,12 +178,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		p2pServer:         stack.Server(),
 		shutdownTracker:   shutdowncheck.NewShutdownTracker(chainDb),
 	}
-	if len(config.AMEVKeystorePath) != 0 {
-		eth.antimevKeystore, err = antimev.LoadAMEVKeyStore(config.AMEVKeystorePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load AMEV keystore: %w", err)
-		}
-	}
+	eth.antimevKeystore = stack.AntiMEVKeyStore()
 	// Override the address that mining rewards will be sent to.
 	if chainConfig.DBFT != nil {
 		eth.etherbase = chainConfig.DBFT.Coinbase
@@ -519,6 +514,11 @@ func (s *Ethereum) StartMining() error {
 				cli.Authorize(eb, wallet.SignData)
 			}
 			if bft != nil {
+				dkgIdentity := s.antimevKeystore.Address()
+				if eb != dkgIdentity {
+					log.Error("Antimev keystore mismatch", "consensus address", eb, "keystore", dkgIdentity)
+					return fmt.Errorf("keystore address mismatch: %v", dkgIdentity)
+				}
 				log.Info("Initializing BFT consensus",
 					"account", eb.String())
 				bft.Authorize(eb, wallet.SignData, s.antimevKeystore)

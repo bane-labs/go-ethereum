@@ -161,9 +161,6 @@ type Config struct {
 
 	// OverrideVerkle (TODO: remove after the fork)
 	OverrideVerkle *uint64 `toml:",omitempty"`
-
-	// AMEVKeystorePath is a path to hex-encoded serialized AMEVKeystore file.
-	AMEVKeystorePath string
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain config.

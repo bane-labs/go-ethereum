@@ -33,12 +33,13 @@ import (
 )
 
 const (
-	datadirPrivateKey      = "nodekey"            // Path within the datadir to the node's private key
-	datadirJWTKey          = "jwtsecret"          // Path within the datadir to the node's jwt secret
-	datadirDefaultKeyStore = "keystore"           // Path within the datadir to the keystore
-	datadirStaticNodes     = "static-nodes.json"  // Path within the datadir to the static node list
-	datadirTrustedNodes    = "trusted-nodes.json" // Path within the datadir to the trusted node list
-	datadirNodeDatabase    = "nodes"              // Path within the datadir to store the node infos
+	datadirPrivateKey             = "nodekey"            // Path within the datadir to the node's private key
+	datadirJWTKey                 = "jwtsecret"          // Path within the datadir to the node's jwt secret
+	datadirDefaultKeyStore        = "keystore"           // Path within the datadir to the keystore
+	datadirDefaultAntiMEVKeyStore = "antimev-keystore"   // Path within the datadir to the antimev keystore
+	datadirStaticNodes            = "static-nodes.json"  // Path within the datadir to the static node list
+	datadirTrustedNodes           = "trusted-nodes.json" // Path within the datadir to the trusted node list
+	datadirNodeDatabase           = "nodes"              // Path within the datadir to store the node infos
 )
 
 // Config represents a small collection of configuration values to fine tune the
@@ -75,6 +76,14 @@ type Config struct {
 	// DataDir. If DataDir is unspecified and KeyStoreDir is empty, an ephemeral directory
 	// is created by New and destroyed when the node is stopped.
 	KeyStoreDir string `toml:",omitempty"`
+
+	// AntiMEVKeyStorePath is the file path that contains antimev data. The directory can
+	// be specified as a relative path, in which case it is resolved relative to the
+	// current directory.
+	//
+	// If AntiMEVKeyStorePath is empty, the default location is DataDir with default file
+	// name.
+	AntiMEVKeyStorePath string `toml:",omitempty"`
 
 	// ExternalSigner specifies an external URI for a clef-type signer.
 	ExternalSigner string `toml:",omitempty"`
@@ -477,4 +486,25 @@ func (c *Config) GetKeyStoreDir() (string, bool, error) {
 	}
 
 	return keydir, isEphemeral, nil
+}
+
+// GetAntiMEVKeyStorePath determines the file path for antimev data persistence
+func (c *Config) GetAntiMEVKeyStorePath() (string, error) {
+	var (
+		keydir string
+		err    error
+	)
+	switch {
+	case filepath.IsAbs(c.AntiMEVKeyStorePath):
+		keydir = c.AntiMEVKeyStorePath
+	case c.DataDir != "":
+		if c.AntiMEVKeyStorePath == "" {
+			keydir = filepath.Join(c.DataDir, datadirDefaultAntiMEVKeyStore)
+		} else {
+			keydir, err = filepath.Abs(c.AntiMEVKeyStorePath)
+		}
+	case c.AntiMEVKeyStorePath != "":
+		keydir, err = filepath.Abs(c.AntiMEVKeyStorePath)
+	}
+	return keydir, err
 }
