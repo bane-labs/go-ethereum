@@ -24,7 +24,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
@@ -238,7 +237,11 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 		var envelopeFee = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetEnvelopeFeeStateHash()).Big()
 		minGasTipCap.Add(minGasTipCap, envelopeFee)
 	}
-	if math.BigMin(tx.GasTipCap(), new(big.Int).Sub(tx.GasFeeCap(), baseFee)).Cmp(minGasTipCap) < 0 {
+	effectiveTip := new(big.Int).Sub(tx.GasFeeCap(), baseFee)
+	if effectiveTip.Cmp(tx.GasTipCap()) > 0 {
+		effectiveTip = tx.GasTipCap()
+	}
+	if effectiveTip.Cmp(minGasTipCap) < 0 {
 		return fmt.Errorf("%w: policy minGasTipCap (including Envelope fee for Envelopes) needed %v, baseFee needed %v, gasTipCap %v, gasFeeCap %v ",
 			ErrUnderpriced, minGasTipCap, baseFee, tx.GasTipCap(), tx.GasFeeCap())
 	}
