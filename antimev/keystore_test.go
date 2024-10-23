@@ -60,7 +60,7 @@ type MockContractStorage struct {
 	recoverMsgs   [][][]byte
 }
 
-func TestDKG(t *testing.T) {
+func TestShare(t *testing.T) {
 	source := rand.NewSource(time.Now().UnixNano())
 	random := rand.New(source)
 	dir := t.TempDir()
@@ -91,12 +91,8 @@ func TestDKG(t *testing.T) {
 		valList[i] = cns[i].addr
 	}
 	for i := 0; i < size; i++ {
-		_, _, err := kss[i].OnValidatorList(valList, pubs)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
 		// No reshare to handle
-		msgs, pvss, err := kss[i].OnReshareFinish()
+		msgs, pvss, _, _, err := kss[i].OnValidatorList(valList, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -112,9 +108,14 @@ func TestDKG(t *testing.T) {
 			}
 		}
 	}
-	// Only check sharing
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange()
+		// Only check sharing
+		err := kss[i].aggregateShare()
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		// Try finish DKG without resharing
+		err = kss[i].OnEpochChange()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -154,12 +155,8 @@ func TestReshare(t *testing.T) {
 		valList[i] = cns[i].addr
 	}
 	for i := 0; i < size; i++ {
-		_, _, err := kss[i].OnValidatorList(valList, pubs)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
-		// No reshare to handle
-		msgs, pvss, err := kss[i].OnReshareFinish()
+		// No resharing to handle
+		msgs, pvss, _, _, err := kss[i].OnValidatorList(valList, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -184,12 +181,14 @@ func TestReshare(t *testing.T) {
 	}
 	// Execute resharing this time
 	for i := 0; i < size; i++ {
-		msgs, pvss, err := kss[i].OnValidatorList(valList, pubs)
+		sMsgs, sPvss, rMsgs, rPvss, err := kss[i].OnValidatorList(valList, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		contract.reshareMsgs[i] = msgs
-		contract.resharePVSSes[i] = pvss
+		contract.shareMsgs[i] = sMsgs
+		contract.sharePVSSes[i] = sPvss
+		contract.reshareMsgs[i] = rMsgs
+		contract.resharePVSSes[i] = rPvss
 	}
 	// Send resharing messages
 	for i := 0; i < size; i++ {
@@ -198,11 +197,15 @@ func TestReshare(t *testing.T) {
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
+			err = kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			if err != nil {
+				t.Fatalf(err.Error())
+			}
 		}
 	}
-	// Only check resharing
+	// Check sharing and resharing
 	for i := 0; i < size; i++ {
-		_, _, err := kss[i].OnReshareFinish()
+		err := kss[i].OnEpochChange()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -239,28 +242,28 @@ func TestGroupChange(t *testing.T) {
 	}
 	// Ignore resharing and execute sharing
 	contract := &MockContractStorage{
-		reshareMsgs:   make([][][]byte, 0),
-		resharePVSSes: make([][]byte, 0),
-		shareMsgs:     make([][][]byte, 0),
-		sharePVSSes:   make([][]byte, 0),
+		reshareMsgs:   make([][][]byte, size),
+		resharePVSSes: make([][]byte, size),
+		shareMsgs:     make([][][]byte, size),
+		sharePVSSes:   make([][]byte, size),
 	}
 	for i := 0; i < len(addrs); i++ {
-		_, _, err := kss[i].OnValidatorList(addrs[:size], pubs[:size])
+		// No resharing to handle
+		msgs, pvss, _, _, err := kss[i].OnValidatorList(addrs[:size], pubs[:size])
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// No reshare to handle
-		msgs, pvss, err := kss[i].OnReshareFinish()
-		if err != nil {
-			t.Fatalf(err.Error())
+		// Sharing members
+		if i < size {
+			contract.shareMsgs[i] = msgs
+			contract.sharePVSSes[i] = pvss
 		}
-		if len(msgs) > 0 {
-			contract.sharePVSSes = append(contract.sharePVSSes, pvss)
-			contract.shareMsgs = append(contract.shareMsgs, msgs)
+		// Not a member
+		if i == size {
+			if len(msgs) > 0 || len(pvss) > 0 {
+				t.Fatalf("Only member should share secrets")
+			}
 		}
-	}
-	if len(contract.sharePVSSes) != size || len(contract.shareMsgs) != size {
-		t.Fatalf("invalid message amount")
 	}
 	// Send secret sharing messages, broadcast to all nodes
 	for i := 0; i < len(addrs); i++ {
@@ -280,17 +283,21 @@ func TestGroupChange(t *testing.T) {
 	}
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
-		msgs, pvss, err := kss[i].OnValidatorList(addrs[1:], pubs[1:])
+		_, _, rMsgs, rPvss, err := kss[i].OnValidatorList(addrs[1:], pubs[1:])
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		if len(msgs) > 0 {
-			contract.resharePVSSes = append(contract.resharePVSSes, pvss)
-			contract.reshareMsgs = append(contract.reshareMsgs, msgs)
+		// Resharing members
+		if i < size {
+			contract.reshareMsgs[i] = rMsgs
+			contract.resharePVSSes[i] = rPvss
 		}
-	}
-	if len(contract.reshareMsgs) != size {
-		t.Fatalf("invalid message amount")
+		// Not a member
+		if i == size {
+			if len(rMsgs) > 0 || len(rPvss) > 0 {
+				t.Fatalf("Only member should reshare secrets")
+			}
+		}
 	}
 	// Send resharing messages, broadcast to all nodes
 	for i := 0; i < len(addrs); i++ {
@@ -303,7 +310,7 @@ func TestGroupChange(t *testing.T) {
 	}
 	// Only check resharing
 	for i := 0; i < len(addrs); i++ {
-		_, _, err := kss[i].OnReshareFinish()
+		err := kss[i].aggregateReshare()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -340,29 +347,29 @@ func TestRecover(t *testing.T) {
 	}
 	// Ignore resharing and execute sharing
 	contract := &MockContractStorage{
-		reshareMsgs:   make([][][]byte, 0),
-		resharePVSSes: make([][]byte, 0),
-		shareMsgs:     make([][][]byte, 0),
-		sharePVSSes:   make([][]byte, 0),
-		recoverMsgs:   make([][][]byte, 0),
+		reshareMsgs:   make([][][]byte, size),
+		resharePVSSes: make([][]byte, size),
+		shareMsgs:     make([][][]byte, size),
+		sharePVSSes:   make([][]byte, size),
+		recoverMsgs:   make([][][]byte, size),
 	}
 	for i := 0; i < len(addrs); i++ {
-		_, _, err := kss[i].OnValidatorList(addrs[:size], pubs[:size])
+		// No resharing to handle
+		msgs, pvss, _, _, err := kss[i].OnValidatorList(addrs[:size], pubs[:size])
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// No reshare to handle
-		msgs, pvss, err := kss[i].OnReshareFinish()
-		if err != nil {
-			t.Fatalf(err.Error())
+		// Sharing members
+		if i < size {
+			contract.shareMsgs[i] = msgs
+			contract.sharePVSSes[i] = pvss
 		}
-		if len(msgs) > 0 {
-			contract.sharePVSSes = append(contract.sharePVSSes, pvss)
-			contract.shareMsgs = append(contract.shareMsgs, msgs)
+		// Not a member
+		if i == size {
+			if len(msgs) > 0 || len(pvss) > 0 {
+				t.Fatalf("Only member should share secrets")
+			}
 		}
-	}
-	if len(contract.shareMsgs) != size {
-		t.Fatalf("invalid message amount")
 	}
 	// Send secret sharing messages, broadcast to all nodes
 	for i := 0; i < len(addrs); i++ {
@@ -382,19 +389,23 @@ func TestRecover(t *testing.T) {
 	}
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
-		msgs, pvss, err := kss[i].OnValidatorList(addrs[1:], pubs[1:])
+		_, _, rMsgs, rPvss, err := kss[i].OnValidatorList(addrs[1:], pubs[1:])
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		if len(msgs) > 0 {
-			contract.reshareMsgs = append(contract.reshareMsgs, msgs)
-			contract.resharePVSSes = append(contract.resharePVSSes, pvss)
+		// Resharing members
+		if i < size {
+			contract.reshareMsgs[i] = rMsgs
+			contract.resharePVSSes[i] = rPvss
+		}
+		// Not a member
+		if i == size {
+			if len(rMsgs) > 0 || len(rPvss) > 0 {
+				t.Fatalf("Only member should reshare secrets")
+			}
 		}
 	}
-	if len(contract.reshareMsgs) != size {
-		t.Fatalf("invalid message amount")
-	}
-	// Send resharing messages, expect validator 7
+	// Send resharing messages, expect which from validator 7
 	for i := 0; i < len(addrs); i++ {
 		for j := 0; j < size-1; j++ {
 			err := kss[i].ReceiveSecretReshare(kss[j].address, contract.reshareMsgs[j], contract.resharePVSSes[j])
@@ -408,17 +419,14 @@ func TestRecover(t *testing.T) {
 	rAddrs := []common.Address{addrs[7]}
 	rPubs := []*ecies.PublicKey{pubs[7]}
 	for i := 0; i < len(addrs); i++ {
-		msgs, err := kss[i].OnRecoverStart(rIdxs, rAddrs, rPubs)
+		msgs, err := kss[i].StartRecover(rIdxs, rAddrs, rPubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 		// Length of msgs is 1
 		if msgs != nil {
-			contract.recoverMsgs = append(contract.recoverMsgs, msgs)
+			contract.recoverMsgs[i] = msgs
 		}
-	}
-	if len(contract.recoverMsgs) != size {
-		t.Fatalf("invalid message amount")
 	}
 	// Send recover messages, broadcast to all nodes
 	for i := 0; i < size-1; i++ {
@@ -428,11 +436,11 @@ func TestRecover(t *testing.T) {
 		}
 	}
 	// Recover the lost resharing messages
-	msgs, pvss, err := kss[7].OnRecoverFinish()
+	msgs, pvss, err := kss[7].TryRecoverReshare()
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	for i := 0; i < size; i++ {
+	for i := 0; i < len(addrs); i++ {
 		err := kss[i].ReceiveRecoveredReshare(kss[7].address, msgs, pvss)
 		if err != nil {
 			t.Fatalf(err.Error())
@@ -440,7 +448,7 @@ func TestRecover(t *testing.T) {
 	}
 	// Only check resharing
 	for i := 0; i < size; i++ {
-		_, _, err := kss[i].OnReshareFinish()
+		err := kss[i].aggregateReshare()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
