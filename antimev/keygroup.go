@@ -185,10 +185,12 @@ func (tkg *thresholdKeyGroup) dkgReshare(target *thresholdKeyGroup) ([][]byte, *
 	return generateShareMessages(tkg.localSecret.Renovate(), target.holders)
 }
 
+// dkgReshareRecovered tries to recover a dkg secret, and returns an error if
+// the attempt fails when shares are not enough.
 func (tkg *thresholdKeyGroup) dkgReshareRecovered(threshold int, target *thresholdKeyGroup) ([][]byte, *tpke.PVSS, error) {
-	// Do nothing if not a receiver
-	if tkg.holderIndex(tkg.selfAddr) < 1 {
-		return nil, nil, nil
+	// Return an error if not able to recover
+	if tkg.holderIndex(tkg.selfAddr) < 1 || len(tkg.receivedSecrets) < threshold {
+		return nil, nil, ErrInvalidRecover
 	}
 	// Collect all shares
 	is := make([]int, 0)
@@ -198,9 +200,6 @@ func (tkg *thresholdKeyGroup) dkgReshareRecovered(threshold int, target *thresho
 			is = append(is, i+1)
 			fis = append(fis, ss)
 		}
-	}
-	if len(tkg.receivedSecrets) < threshold {
-		return nil, nil, ErrInvalidRecover
 	}
 	// Recover the secret
 	tkg.localSecret = tpke.RecoverSecret(is[:threshold], fis[:threshold])

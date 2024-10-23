@@ -29,7 +29,7 @@ func TestThresholdSignature(t *testing.T) {
 	source := rand.NewSource(time.Now().UnixNano())
 	random := rand.New(source)
 	dir := t.TempDir()
-
+	// Init keystores
 	cns := accounts[:size]
 	slices.SortFunc(cns, func(a, b account) int {
 		return common.Address.Cmp(a.addr, b.addr)
@@ -46,37 +46,33 @@ func TestThresholdSignature(t *testing.T) {
 		}
 		kss[i] = ks
 	}
-
-	msgbox := make([][][]byte, size)
-	pvssbox := make([][]byte, size)
+	// Ignore resharing and execute sharing
+	contract := &MockContractStorage{
+		shareMsgs:   make([][][]byte, size),
+		sharePVSSes: make([][]byte, size),
+	}
 	valList := make([]common.Address, size)
 	for i := range cns {
 		valList[i] = cns[i].addr
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		_, _, err := kss[i].OnValidatorList(valList, pubs)
+		msgs, pvss, _, _, err := kss[i].OnValidatorList(valList, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// Handle share
-		msgs, pvss, err := kss[i].OnReshareFinish()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
-		msgbox[i] = msgs
-		pvssbox[i] = pvss
+		contract.shareMsgs[i] = msgs
+		contract.sharePVSSes[i] = pvss
 	}
-
+	// Send secret sharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, msgbox[j], pvssbox[j])
+			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 		}
 	}
-
 	for i := 0; i < size; i++ {
 		err := kss[i].OnEpochChange()
 		if err != nil {
