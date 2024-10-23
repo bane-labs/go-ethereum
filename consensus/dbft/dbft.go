@@ -2012,7 +2012,7 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 }
 
 // Finalize implements consensus.Engine. For now, it only manages block withdrawals.
-func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body) {
+func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
 	// Withdrawals processing.
 	for _, w := range body.Withdrawals {
 		// Convert amount from gwei to wei.
