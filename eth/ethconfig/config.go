@@ -18,7 +18,6 @@
 package ethconfig
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -188,6 +187,9 @@ type Config struct {
 // Clique is allowed for now to live standalone, but ethash is forbidden and can
 // only exist on already merged networks.
 func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, statisticsCfg dbft.StatisticsConfig) (consensus.Engine, error) {
+	if config.TerminalTotalDifficulty == nil {
+		return nil, fmt.Errorf("only PoS networks are supported, please transition old ones with Geth v1.13.x")
+	}
 	// If proof-of-authority is requested, set it up
 	if config.Clique != nil {
 		return beacon.New(clique.New(config.Clique, db)), nil
@@ -198,12 +200,6 @@ func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, statis
 			return nil, fmt.Errorf("failed to create dBFT engine: %w", err)
 		}
 		return beacon.New(bft), nil
-	}
-	// If defaulting to proof-of-work, enforce an already merged network since
-	// we cannot run PoW algorithms anymore, so we cannot even follow a chain
-	// not coordinated by a beacon node.
-	if !config.TerminalTotalDifficultyPassed {
-		return nil, errors.New("ethash is only supported as a historical component of already merged networks")
 	}
 	return beacon.New(ethash.NewFaker()), nil
 }
