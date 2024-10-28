@@ -31,11 +31,11 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
     mapping(uint => mapping(uint => bytes)) public spvsses;
     // bigA0 for verification and key generation
     mapping(uint => mapping(uint => bytes)) public sharedPubs;
-    // global public keys
-    // NOTE: this not the direct key for keystore encryption, should use pk = globalPub * scaler,
+    // aggregated commitments from pvss
+    // NOTE: this not the direct key for keystore encryption, should use pk = aggregatedCommitment * scaler,
     // the scaler is used for speed up decryption, and not cool to be computed in contract.
     // ref https://github.com/bane-labs/go-ethereum/blob/a07310bd9a3a117ae0876ad69bbe8b6ed624aaa5/core/antimev/util.go#L27
-    mapping(uint => bytes) public globalPubs;
+    mapping(uint => bytes) public aggregatedCommitments;
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
@@ -194,11 +194,14 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         uint epochDuration = IGovernance(GOV).epochDuration();
         uint targetHeight = currentEpochHeight + epochDuration;
         // return if the new round key exists
-        if (globalPubs[targetHeight].length > 0) return;
+        if (aggregatedCommitments[targetHeight].length > 0) return;
 
         // check reshare and share, compute global key
         uint n = IGovernance(GOV).consensusSize();
-        if (reshareMsgs[targetHeight][1].length < n) return;
+        if (
+            reshareMsgs[targetHeight][1].length < n &&
+            aggregatedCommitments[currentEpochHeight].length > 0
+        ) return;
         if (shareMsgs[targetHeight][1].length < n) return;
         bytes memory output = sharedPubs[targetHeight][1];
         for (uint i = 2; i <= n; i++) {
@@ -208,13 +211,13 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         }
 
         // record global key
-        // NOTE: this not the direct key for keystore encryption, should use pk = globalPub * scaler
-        globalPubs[targetHeight] = output;
+        // NOTE: this not the direct key for keystore encryption, should use pk = aggregatedCommitment * scaler
+        aggregatedCommitments[targetHeight] = output;
     }
 
     function isCurrentRoundReady() external view returns (bool) {
         uint currentEpochHeight = IGovernance(GOV).currentEpochStartHeight();
-        return globalPubs[currentEpochHeight].length > 0;
+        return aggregatedCommitments[currentEpochHeight].length > 0;
     }
 
     function _verifyPVSS(uint n, uint t, bytes calldata pvss) internal view {
