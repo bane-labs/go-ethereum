@@ -514,7 +514,7 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 
 	if aux.Recovering != nil {
 		ks.recovering = new(thresholdKeyGroup)
-		err = ks.recovering.fromAux(aux.Recovering, ks.size, ks.threshold)
+		err = ks.recovering.fromAux(aux.Recovering)
 		if err != nil {
 			return err
 		}
@@ -523,7 +523,7 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 	if aux.Resharing != nil {
 		ks.resharing = new(thresholdKeyGroup)
-		err = ks.resharing.fromAux(aux.Resharing, ks.size, ks.threshold)
+		err = ks.resharing.fromAux(aux.Resharing)
 		if err != nil {
 			return err
 		}
@@ -532,7 +532,7 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 	if aux.Reshared != nil {
 		ks.reshared = new(thresholdKeyGroup)
-		err = ks.reshared.fromAux(aux.Reshared, ks.size, ks.threshold)
+		err = ks.reshared.fromAux(aux.Reshared)
 		if err != nil {
 			return err
 		}
@@ -541,7 +541,7 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 	if aux.Sharing != nil {
 		ks.sharing = new(thresholdKeyGroup)
-		err = ks.sharing.fromAux(aux.Sharing, ks.size, ks.threshold)
+		err = ks.sharing.fromAux(aux.Sharing)
 		if err != nil {
 			return err
 		}
@@ -550,7 +550,7 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 	if aux.Shared != nil {
 		ks.shared = new(thresholdKeyGroup)
-		err = ks.shared.fromAux(aux.Shared, ks.size, ks.threshold)
+		err = ks.shared.fromAux(aux.Shared)
 		if err != nil {
 			return err
 		}
