@@ -103,6 +103,11 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         }
     }
 
+    // Only for Governance upgrading for the new KeyManagement contract
+    function setInitialSharePeriodDuration(uint _sharePeriodDuration) external onlyAdmin() {
+        sharePeriodDuration = _sharePeriodDuration;
+    }
+
     receive() external payable nonReentrant {
         if (msg.sender != GOV_REWARD) revert Errors.SideCallNotAllowed();
         address[] memory validators = currentConsensus;
