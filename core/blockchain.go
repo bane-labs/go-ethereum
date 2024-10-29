@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/big"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
