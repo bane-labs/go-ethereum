@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"math/rand"
 	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
@@ -48,7 +50,11 @@ func TestTPKE(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		msgs, pvss, _, _, err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnValidatorList(valList, pubs)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		msgs, pvss, err := kss[i].DKGShare()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -64,8 +70,21 @@ func TestTPKE(t *testing.T) {
 			}
 		}
 	}
+	// Aggregate pvss manually
+	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange()
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
+	for i := 0; i < size; i++ {
+		err := kss[i].OnEpochChange(encodePointG1(cmt))
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -147,7 +166,11 @@ func TestBenchmark(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		msgs, pvss, _, _, err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnValidatorList(valList, pubs)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		msgs, pvss, err := kss[i].DKGShare()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -163,8 +186,21 @@ func TestBenchmark(t *testing.T) {
 			}
 		}
 	}
+	// Aggregate pvss manually
+	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange()
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
+	for i := 0; i < size; i++ {
+		err := kss[i].OnEpochChange(encodePointG1(cmt))
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
