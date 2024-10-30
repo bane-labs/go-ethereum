@@ -12,9 +12,3 @@ type txPool interface {
 	// tx hash.
 	Get(hash common.Hash) *types.Transaction
 }
-
-// legacyPool defines the methods needed from a legacy pool
-type legacyPool interface {
-	// ValidateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
-	ValidateDecryptedTx(decryptedTx *types.Transaction, envelope *types.Transaction) error
-}
