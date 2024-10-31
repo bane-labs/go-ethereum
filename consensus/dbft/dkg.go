@@ -57,6 +57,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			return fmt.Errorf("failed to call getCurrentConsensus: %w", err)
 		}
 		c.targetHeight = currentEpochStartHeight + epochDuration
+		c.preEpochStartHeight = currentEpochStartHeight - epochDuration
 		c.shareDuration = sharePeriodDuration
 		c.shareReady = false
 		c.consensusList = consensusList
@@ -111,33 +112,46 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			}
 			pubs = append(pubs, pubKey)
 		}
-		sMsgs, sPvss, rMsgs, rPvss, err := c.amevKeystore.OnValidatorList(pendingConsensusList, pubs)
+		err = c.amevKeystore.OnValidatorList(pendingConsensusList, pubs)
 		if err != nil {
 			return fmt.Errorf("failed to call amevKeystore.OnValidatorList, err: %w", err)
 		}
 
+		var shareErr, reshareErr error
 		if isCurrentConsensus {
+			rMsgs, rPvss, err := c.amevKeystore.DKGReshare()
+			if err != nil {
+				return fmt.Errorf("failed to call amevKeystore.DKGReshare, err: %w", err)
+			}
 			// send reshare tx
 			txHash, err := c.reshare(rPvss, rMsgs)
 			if err != nil {
 				c.txRetryList = append(c.txRetryList, &TxSendRetry{SendHeight: currentHeight, Method: "reshare", Params: []interface{}{rPvss, rMsgs}})
-				// if reshare tx send failed, add share tx too if the node is in pending Consensus list
-				if isPendingConsensus {
-					c.txRetryList = append(c.txRetryList, &TxSendRetry{SendHeight: currentHeight, Method: "share", Params: []interface{}{sPvss, sMsgs}})
-				}
-				return fmt.Errorf("failed to send reshare transaction, err: %w", err)
+				reshareErr = fmt.Errorf("failed to send reshare transaction, err: %w", err)
+			} else {
+				log.Info("reshare transaction sent", "txHash", txHash)
 			}
-			log.Info("reshare transaction sent", "txHash", txHash)
 		}
 
 		if isPendingConsensus {
+			sMsgs, sPvss, err := c.amevKeystore.DKGShare()
+			if err != nil {
+				return fmt.Errorf("failed to call amevKeystore.DKGShare, err: %w", err)
+			}
 			// send share tx
 			txHash, err := c.share(sPvss, sMsgs)
 			if err != nil {
 				c.txRetryList = append(c.txRetryList, &TxSendRetry{SendHeight: currentHeight, Method: "share", Params: []interface{}{sPvss, sMsgs}})
-				return fmt.Errorf("failed to send share transaction, err: %w", err)
+				shareErr = fmt.Errorf("failed to send share transaction, err: %w", err)
+			} else {
+				log.Info("share transaction sent", "txHash", txHash)
 			}
-			log.Info("share transaction sent", "txHash", txHash)
+		}
+		if reshareErr != nil {
+			return reshareErr
+		}
+		if shareErr != nil {
+			return shareErr
 		}
 	}
 
@@ -183,34 +197,36 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		}
 
 		// if shareReady, pending consensus nodes should ReceiveSecretShare
-		for i := uint64(1); i <= uint64(consensusSize); i++ {
-			// call ReceiveSecretShare
-			shareMsgs, err := c.getShareMsgs(c.targetHeight, i, state, h)
-			if err != nil {
-				return fmt.Errorf("failed to call shareMsgs: %w", err)
-			}
-			spvss, err := c.spvsses(c.targetHeight, i, state, h)
-			if err != nil {
-				return fmt.Errorf("failed to call spvsses: %w", err)
-			}
-			err = c.amevKeystore.ReceiveSecretShare(pendingConsensusList[i-1], shareMsgs, spvss)
-			if err != nil {
-				return fmt.Errorf("failed to call amevKeystore.ReceiveSecretShare(), err: %w", err)
-			}
-			// call ReceiveSecretReshare
-			rpvss, err := c.rpvsses(c.targetHeight, i, state, h)
-			if err != nil {
-				return fmt.Errorf("failed to call rpvsses: %w", err)
-			}
-			// only receive reshare has value
-			if len(rpvss) > 0 {
-				reshareMsgs, err := c.getReshareMsgs(c.targetHeight, i, state, h)
+		if slices.Contains(pendingConsensusList, amevAddress) {
+			for i := uint64(1); i <= uint64(consensusSize); i++ {
+				// call ReceiveSecretShare
+				shareMsgs, err := c.getShareMsgs(c.targetHeight, i, state, h)
 				if err != nil {
-					return fmt.Errorf("failed to call reshareMsgs: %w", err)
+					return fmt.Errorf("failed to call shareMsgs: %w", err)
 				}
-				err = c.amevKeystore.ReceiveSecretReshare(c.consensusList[i-1], reshareMsgs, rpvss)
+				spvss, err := c.spvsses(c.targetHeight, i, state, h)
 				if err != nil {
-					return fmt.Errorf("failed to call amevKeystore.ReceiveSecretReshare, err: %w", err)
+					return fmt.Errorf("failed to call spvsses: %w", err)
+				}
+				err = c.amevKeystore.ReceiveSecretShare(pendingConsensusList[i-1], shareMsgs, spvss)
+				if err != nil {
+					return fmt.Errorf("failed to call amevKeystore.ReceiveSecretShare(), err: %w", err)
+				}
+				// call ReceiveSecretReshare
+				rpvss, err := c.rpvsses(c.targetHeight, i, state, h)
+				if err != nil {
+					return fmt.Errorf("failed to call rpvsses: %w", err)
+				}
+				// only receive reshare has value
+				if len(rpvss) > 0 {
+					reshareMsgs, err := c.getReshareMsgs(c.targetHeight, i, state, h)
+					if err != nil {
+						return fmt.Errorf("failed to call reshareMsgs: %w", err)
+					}
+					err = c.amevKeystore.ReceiveSecretReshare(c.consensusList[i-1], reshareMsgs, rpvss)
+					if err != nil {
+						return fmt.Errorf("failed to call amevKeystore.ReceiveSecretReshare, err: %w", err)
+					}
 				}
 			}
 		}
@@ -221,10 +237,6 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		}
 		// reshare finished, no need to recover
 		if len(indexesNeedRecover) == 0 {
-			err = c.amevKeystore.OnEpochChange()
-			if err != nil {
-				return fmt.Errorf("failed to call amevKeystore.OnEpochChange, err: %w", err)
-			}
 			return nil
 		}
 
@@ -236,24 +248,29 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		if !c.needRecover {
 			return fmt.Errorf("reshare msgs not enough")
 		}
+
+		// OnRecoverPeriodStart
+		var recoverAddrs []common.Address
+		var recoverPubKeys []*ecies.PublicKey
+		var indexes []int
+		for _, index := range indexesNeedRecover {
+			indexes = append(indexes, int(index))
+			recoverAddrs = append(recoverAddrs, pendingConsensusList[index-1])
+			pubKey, err := c.messagePubkeys(&pendingConsensusList[index-1], state, h)
+			if err != nil {
+				return fmt.Errorf("failed to call messagePubkeys: %w", err)
+			}
+			recoverPubKeys = append(recoverPubKeys, pubKey)
+		}
+		err = c.amevKeystore.OnRecoverPeriodStart(indexes, recoverAddrs, recoverPubKeys)
+		if err != nil {
+			return fmt.Errorf("failed to call amevKeystore OnRecoverPeriodStart: %w", err)
+		}
 		// send recover tx from current consensus node
 		if slices.Contains(c.consensusList, amevAddress) {
-			var recoverAddrs []common.Address
-			var recoverPubKeys []*ecies.PublicKey
-			var indexes []int
-			for _, index := range indexesNeedRecover {
-				indexes = append(indexes, int(index))
-				recoverAddrs = append(recoverAddrs, pendingConsensusList[index-1])
-				pubKey, err := c.messagePubkeys(&pendingConsensusList[index-1], state, h)
-				if err != nil {
-					return fmt.Errorf("failed to call messagePubkeys: %w", err)
-				}
-				recoverPubKeys = append(recoverPubKeys, pubKey)
-			}
-
-			msgs, err := c.amevKeystore.StartRecover(indexes, recoverAddrs, recoverPubKeys)
+			msgs, err := c.amevKeystore.DKGRecover(indexes, recoverPubKeys)
 			if err != nil {
-				return fmt.Errorf("failed to call amevKeystore StartRecover: %w", err)
+				return fmt.Errorf("failed to call amevKeystore DKGRecover: %w", err)
 			}
 
 			// send recover tx
@@ -294,7 +311,11 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 						if err != nil {
 							return fmt.Errorf("failed to call recoverMsgs: %w", err)
 						}
-						err = c.amevKeystore.ReceiveRecoverShare(c.consensusList[i-1], msg)
+						pvss, err := c.spvsses(c.preEpochStartHeight, i, state, h)
+						if err != nil {
+							return fmt.Errorf("failed to call spvsses: %w", err)
+						}
+						err = c.amevKeystore.ReceiveRecoverShare(c.consensusList[i-1], msg, pvss)
 						if err != nil {
 							return fmt.Errorf("failed to call ReceiveRecoverShare: %w", err)
 						}
@@ -317,8 +338,8 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		}
 	}
 
-	// call ReceiveRecoveredReshare at recoverStartHeight+1+ 2*c.shareDuration/3
-	if c.needRecover && currentHeight == recoverStartHeight+1+2*c.shareDuration/3 {
+	// call ReceiveRecoveredReshare at targetHeight, only at this block height we can get aggregatedCommitments
+	if c.needRecover && currentHeight == c.targetHeight {
 		state, err := c.chain.StateAt(h.Root)
 		if err != nil {
 			return fmt.Errorf("failed to call StateAt: %w", err)
@@ -343,12 +364,16 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			}
 			err = c.amevKeystore.ReceiveRecoveredReshare(pendingConsensus[index-1], reshareMsgs, rpvss)
 			if err != nil {
-				return fmt.Errorf("failed to call ReceiveSecretReshare(), err: %w", err)
+				return fmt.Errorf("failed to call amevKeystore.ReceiveSecretReshare, err: %w", err)
 			}
 		}
-		err = c.amevKeystore.OnEpochChange()
+		aggregatedCommitments, err := c.aggregatedCommitments(c.targetHeight, state, h)
 		if err != nil {
-			return fmt.Errorf("failed to call OnEpochChange(), err: %w", err)
+			return fmt.Errorf("failed to call aggregatedCommitments, err: %w", err)
+		}
+		err = c.amevKeystore.OnEpochChange(aggregatedCommitments)
+		if err != nil {
+			return fmt.Errorf("failed to call amevKeystore.OnEpochChange, err: %w", err)
 		}
 	}
 
@@ -516,6 +541,16 @@ func (c *DBFT) recoverMsgs(height, indexSend, indexReceive uint64, state *state.
 	var result []byte
 	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
 		state, header, "recoverMsgs", big.NewInt(int64(height)), big.NewInt(int64(indexSend)), big.NewInt(int64(indexReceive)))
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *DBFT) aggregatedCommitments(height uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+	var result []byte
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "aggregatedCommitments", big.NewInt(int64(height)))
 	if err != nil {
 		return nil, err
 	}
