@@ -14,6 +14,8 @@ var (
 
 // SignShare tries to sign a message with local private key.
 func (ks *KeyStore) SignShare(msg []byte) (*tpke.SignatureShare, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
 	if ks.shared == nil || ks.shared.localPrvKey == nil {
 		return nil, ErrNoPrvKey
 	}
@@ -25,6 +27,8 @@ func (ks *KeyStore) SignShare(msg []byte) (*tpke.SignatureShare, error) {
 // dkg index which starts from 1, when the array index of a member in the
 // key group starts from 0.
 func (ks *KeyStore) AggregateAndVerifySig(msg []byte, inputs map[int]*tpke.SignatureShare) (*tpke.Signature, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
 	if ks.shared == nil {
 		return nil, ErrNoPubKey
 	}

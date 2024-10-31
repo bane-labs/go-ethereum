@@ -15,7 +15,7 @@ import (
 
 var (
 	ErrMessageEncryption    = errors.New("message encryption failed")
-	ErrDKGPVSS              = errors.New("invalid dkg pvss")
+	ErrDKGIndex             = errors.New("invalid dkg index")
 	ErrDKGSecret            = errors.New("invalid dkg secret")
 	ErrNoSecretToReshare    = errors.New("no secret to reshare")
 	ErrInvalidReshare       = errors.New("invalid reshare")
@@ -24,13 +24,12 @@ var (
 )
 
 // thresholdKeyGroup records the process and result of a round of dkg.
+// PVSS is verified in DKG contract and used as input parameters here.
 type thresholdKeyGroup struct {
 	holders []*thresholdKeyHolder // Members of this dkg group
-	pvsses  []*tpke.PVSS          // Public verifiable sharing commitments
 
-	selfAddr        common.Address // Self address
-	localSecret     *tpke.Secret   // The local random secret
-	receivedSecrets []*big.Int     // Received secret sharings
+	localSecret     *tpke.Secret // The local random secret
+	receivedSecrets []*big.Int   // Received secret sharings
 
 	globalPubKey *tpke.PublicKey  // The aggregated global public key
 	localPrvKey  *tpke.PrivateKey // The aggregated local secret key
@@ -43,7 +42,7 @@ type thresholdKeyHolder struct {
 }
 
 // newThresholdKeyGroup returns a new key group with the input address list.
-func newThresholdKeyGroup(selfAddr common.Address, validators []common.Address, pubkeys []*ecies.PublicKey) *thresholdKeyGroup {
+func newThresholdKeyGroup(validators []common.Address, pubkeys []*ecies.PublicKey) *thresholdKeyGroup {
 	size := len(validators)
 	holders := make([]*thresholdKeyHolder, size)
 	for i, validator := range validators {
@@ -54,8 +53,6 @@ func newThresholdKeyGroup(selfAddr common.Address, validators []common.Address, 
 	}
 	return &thresholdKeyGroup{
 		holders:         holders,
-		selfAddr:        selfAddr,
-		pvsses:          make([]*tpke.PVSS, size),
 		receivedSecrets: make([]*big.Int, size),
 	}
 }
@@ -70,11 +67,9 @@ func (tkg *thresholdKeyGroup) newTemplateForRecover(indexes []int, validators []
 			ethPubKey: pubkeys[i],
 		}
 	}
-	// Refer pvss and global key for verification
+	// Refer received secrets for recovery
 	return &thresholdKeyGroup{
 		holders:         holders,
-		selfAddr:        tkg.selfAddr,
-		pvsses:          tkg.pvsses,
 		receivedSecrets: make([]*big.Int, size),
 		globalPubKey:    tkg.globalPubKey,
 	}
@@ -91,67 +86,46 @@ func (tkg *thresholdKeyGroup) newTemplateForReshare(validators []common.Address,
 			ethPubKey: pubkeys[i],
 		}
 	}
-	// Copy pvss and refer global key for verification
-	pvsses := make([]*tpke.PVSS, size)
-	copy(pvsses, tkg.pvsses)
+	// Refer received secrets for reshare
 	return &thresholdKeyGroup{
 		holders:         holders,
-		selfAddr:        tkg.selfAddr,
-		pvsses:          pvsses,
 		receivedSecrets: make([]*big.Int, size),
 		globalPubKey:    tkg.globalPubKey,
 	}
 }
 
-// dkgPrepare generates local secrets and returns sharing messages.
-// selfIndex is the dkg member index which starts from 1.
-// ethPrvKey is the sender's eth secret key for signing.
-func (tkg *thresholdKeyGroup) dkgPrepare(threshold int) ([][]byte, *tpke.PVSS, error) {
-	// Generate nothing if not a member
-	selfIndex := tkg.holderIndex(tkg.selfAddr)
-	if selfIndex < 1 {
-		return nil, nil, nil
-	}
+// prepare generates local secrets and returns sharing messages.
+func (tkg *thresholdKeyGroup) prepare(threshold int) ([][]byte, *tpke.PVSS, error) {
 	// Generate local secret
 	tkg.localSecret = tpke.RandomSecret(threshold)
 	// Generate and encrypt messages to share the secret
 	return generateShareMessages(tkg.localSecret, tkg.holders)
 }
 
-// dkgAggregate aggregates received secrets and pvss to get global public key and
-// a local piece of secret key for message decryption and signing.
-func (tkg *thresholdKeyGroup) dkgAggregate(scaler int) error {
-	// Compute public key S=sum(A0)
-	scs := make([]*tpke.Commitment, len(tkg.holders))
-	for i, pvss := range tkg.pvsses {
-		if pvss == nil {
-			return ErrSecretShareNotEnough
+// aggregate aggregates received secrets and commitments to get global
+// public key and a local piece of secret key for message decryption and signing.
+func (tkg *thresholdKeyGroup) aggregate(scaler int, aggregatedCmt []byte, selfIndex int) error {
+	if selfIndex > 0 {
+		for _, secret := range tkg.receivedSecrets {
+			if secret == nil {
+				return ErrSecretShareNotEnough
+			}
 		}
-		scs[i] = pvss.GetCommitment()
-	}
-	globalPubKey := tpke.NewGlobalPublicKey(scs, scaler)
-	// Verify the key if this is resharing
-	if tkg.globalPubKey == nil {
-		tkg.globalPubKey = globalPubKey
-	} else {
-		if !tkg.globalPubKey.Equal(globalPubKey) {
-			return ErrInvalidReshare
-		}
-	}
-	// Compute local secret key
-	if tkg.holderIndex(tkg.selfAddr) > 0 {
 		tkg.localPrvKey = tpke.NewPrivateKey(tkg.receivedSecrets)
+	}
+	// Get the pubkey from contract aggregated commitments
+	if tkg.globalPubKey == nil {
+		globalPubKey, err := tpke.NewGlobalPublicKey(aggregatedCmt, scaler)
+		if err != nil {
+			return err
+		}
+		tkg.globalPubKey = globalPubKey
 	}
 	return nil
 }
 
-// dkgRecover returns received shared secrets with different message encryption.
-func (tkg *thresholdKeyGroup) dkgRecover(secretIndexs []int, receiverEthPubKeys []*ecies.PublicKey) ([][]byte, error) {
-	// Share nothing if not a member
-	selfIndex := tkg.holderIndex(tkg.selfAddr)
-	if selfIndex < 1 {
-		return nil, nil
-	}
+// recover returns received shared secrets with different message encryption.
+func (tkg *thresholdKeyGroup) recover(secretIndexs []int, receiverEthPubKeys []*ecies.PublicKey) ([][]byte, error) {
 	// Random source for message encryption
 	source := rand.NewSource(time.Now().UnixNano())
 	random := rand.New(source)
@@ -169,14 +143,9 @@ func (tkg *thresholdKeyGroup) dkgRecover(secretIndexs []int, receiverEthPubKeys 
 	return srms, nil
 }
 
-// dkgReshare does almost the same as dkgPrepare, but local secret is reused to
+// reshare does almost the same as dkgPrepare, but local secret is reused to
 // produce the same global public key.
-func (tkg *thresholdKeyGroup) dkgReshare(target *thresholdKeyGroup) ([][]byte, *tpke.PVSS, error) {
-	// Share nothing if not a member
-	selfIndex := tkg.holderIndex(tkg.selfAddr)
-	if selfIndex < 1 {
-		return nil, nil, nil
-	}
+func (tkg *thresholdKeyGroup) reshare(target *thresholdKeyGroup) ([][]byte, *tpke.PVSS, error) {
 	// Check if has a local secret
 	if tkg.localSecret == nil {
 		return nil, nil, ErrNoSecretToReshare
@@ -185,13 +154,9 @@ func (tkg *thresholdKeyGroup) dkgReshare(target *thresholdKeyGroup) ([][]byte, *
 	return generateShareMessages(tkg.localSecret.Renovate(), target.holders)
 }
 
-// dkgReshareRecovered tries to recover a dkg secret, and returns an error if
+// reshareRecovered tries to recover a dkg secret, and returns an error if
 // the attempt fails when shares are not enough.
-func (tkg *thresholdKeyGroup) dkgReshareRecovered(threshold int, target *thresholdKeyGroup) ([][]byte, *tpke.PVSS, error) {
-	// Return an error if not able to recover
-	if tkg.holderIndex(tkg.selfAddr) < 1 || len(tkg.receivedSecrets) < threshold {
-		return nil, nil, ErrInvalidRecover
-	}
+func (tkg *thresholdKeyGroup) reshareRecovered(threshold int, target *thresholdKeyGroup) ([][]byte, *tpke.PVSS, error) {
 	// Collect all shares
 	is := make([]int, 0)
 	fis := make([]*big.Int, 0)
@@ -201,9 +166,12 @@ func (tkg *thresholdKeyGroup) dkgReshareRecovered(threshold int, target *thresho
 			fis = append(fis, ss)
 		}
 	}
+	if len(tkg.receivedSecrets) < threshold {
+		return nil, nil, ErrInvalidRecover
+	}
 	// Recover the secret
 	tkg.localSecret = tpke.RecoverSecret(is[:threshold], fis[:threshold])
-	return tkg.dkgReshare(target)
+	return tkg.reshare(target)
 }
 
 // generateShareMessages generates secret sharing messages.
@@ -232,70 +200,44 @@ func generateShareMessages(secret *tpke.Secret, receivers []*thresholdKeyHolder)
 // receiveShareMessage verifies received sharing messages. It verifies shared
 // secret if is a member, otherwise only the pvss. Received data will be stored
 // in thresholdKeyGroup for further aggregation.
-func (tkg *thresholdKeyGroup) receiveShareMessage(fromIndex int, ss *big.Int, pvss *tpke.PVSS) error {
+func (tkg *thresholdKeyGroup) receiveShareMessage(fromIndex int, ss *big.Int, pvss *tpke.PVSS, selfIndex int) error {
 	// Transform dkg index to array index
 	arrIndex := fromIndex - 1
-	// Verify the commitment
-	if !pvss.VerifyCommitment() {
-		return ErrDKGPVSS
+	// Verify with pvss
+	if !pvss.VerifySecret(selfIndex-1, ss) {
+		return ErrDKGSecret
 	}
-	// If is a member of receiver
-	if ss != nil {
-		// Verify with pvss
-		if !pvss.VerifySecret(tkg.holderIndex(tkg.selfAddr)-1, ss) {
-			return ErrDKGSecret
-		}
-		// Store ss for local secret key generation
-		tkg.receivedSecrets[arrIndex] = ss
-	}
-	// Store pvss for global public key generation
-	tkg.pvsses[arrIndex] = pvss
+	// Store ss for local secret key generation
+	tkg.receivedSecrets[arrIndex] = ss
 	return nil
 }
 
 // receiveReshareMessage verifies received resharing messages. It verifies shared
 // secret if is a member, otherwise only the pvss. Received data will be stored
 // in thresholdKeyGroup for further aggregation.
-func (tkg *thresholdKeyGroup) receiveReshareMessage(fromIndex int, rs *big.Int, pvss *tpke.PVSS) error {
+func (tkg *thresholdKeyGroup) receiveReshareMessage(fromIndex int, rs *big.Int, pvss *tpke.PVSS, selfIndex int) error {
 	// Transform dkg index to array index
 	arrIndex := fromIndex - 1
-	// Verify the commitment
-	if !pvss.VerifyCommitment() {
-		return ErrDKGPVSS
+	// Verify with pvss
+	if !pvss.VerifySecret(selfIndex-1, rs) {
+		return ErrDKGSecret
 	}
-	// Check delta if resharing
-	if tkg.pvsses[arrIndex] != nil && !pvss.VerifyRenovate(tkg.pvsses[arrIndex]) {
-		return ErrDKGPVSS
-	}
-	// If is a member of receiver
-	if rs != nil {
-		// Verify with pvss
-		if !pvss.VerifySecret(tkg.holderIndex(tkg.selfAddr)-1, rs) {
-			return ErrDKGSecret
-		}
-		// Store ss for local secret key generation
-		tkg.receivedSecrets[arrIndex] = rs
-	}
-	// Store pvss for global public key generation
-	tkg.pvsses[arrIndex] = pvss
+	// Store ss for local secret key generation
+	tkg.receivedSecrets[arrIndex] = rs
 	return nil
 }
 
 // receiveRecoverMessage verifies received recovering messages. It verifies shared
 // secret if is a member, with the existing pvss. Received data will be stored
 // in thresholdKeyGroup for further aggregation.
-func (tkg *thresholdKeyGroup) receiveRecoverMessage(fromIndex int, rs *big.Int) error {
-	// Do nothing if not a member
-	selfIndex := tkg.holderIndex(tkg.selfAddr)
-	if selfIndex < 1 {
-		return nil
-	}
+func (tkg *thresholdKeyGroup) receiveRecoverMessage(fromIndex int, rs *big.Int, pvss *tpke.PVSS, selfIndex int) error {
 	// Transform dkg index to array index
 	arrIndex := fromIndex - 1
 	// Verify with pvss
-	if !tkg.pvsses[selfIndex-1].VerifySecret(arrIndex, rs) {
+	if !pvss.VerifySecret(arrIndex, rs) {
 		return ErrDKGSecret
 	}
+	// Store rs for local secret key recovery
 	tkg.receivedSecrets[arrIndex] = rs
 
 	return nil
@@ -360,7 +302,6 @@ type thresholdKeyGroupAux struct {
 // Absent fields remain nil, but their positions are allocated.
 func (tkg *thresholdKeyGroup) toAux() *thresholdKeyGroupAux {
 	aux := &thresholdKeyGroupAux{
-		SelfAddr:        tkg.selfAddr,
 		ReceivedSecrets: tkg.receivedSecrets,
 	}
 	aux.Holders = make([]*thresholdKeyHolderAux, len(tkg.holders))
@@ -371,12 +312,6 @@ func (tkg *thresholdKeyGroup) toAux() *thresholdKeyGroupAux {
 		}
 	}
 	// Possible be nil when dkg is undergoing
-	aux.Pvsses = make([]string, len(tkg.pvsses))
-	for i, v := range tkg.pvsses {
-		if v != nil {
-			aux.Pvsses[i] = hex.EncodeToString(v.Encode())
-		}
-	}
 	if tkg.localSecret != nil {
 		aux.LocalSecret = tkg.localSecret.ToBigIntArray()
 	}
@@ -390,9 +325,8 @@ func (tkg *thresholdKeyGroup) toAux() *thresholdKeyGroupAux {
 }
 
 // fromAux transforms deserialized JSON data to thresholdKeyGroup.
-func (tkg *thresholdKeyGroup) fromAux(aux *thresholdKeyGroupAux, n int, t int) error {
+func (tkg *thresholdKeyGroup) fromAux(aux *thresholdKeyGroupAux) error {
 	// Left as nil if not presented
-	tkg.selfAddr = aux.SelfAddr
 	tkg.receivedSecrets = aux.ReceivedSecrets
 	tkg.holders = make([]*thresholdKeyHolder, len(aux.Holders))
 	for i, v := range aux.Holders {
@@ -402,20 +336,6 @@ func (tkg *thresholdKeyGroup) fromAux(aux *thresholdKeyGroupAux, n int, t int) e
 			if err != nil {
 				return err
 			}
-		}
-	}
-	tkg.pvsses = make([]*tpke.PVSS, len(aux.Pvsses))
-	for i, v := range aux.Pvsses {
-		if len(v) > 0 {
-			b, err := hex.DecodeString(v)
-			if err != nil {
-				return err
-			}
-			pvss, err := new(tpke.PVSS).Decode(b, n, t)
-			if err != nil {
-				return err
-			}
-			tkg.pvsses[i] = pvss
 		}
 	}
 	if aux.LocalSecret != nil {

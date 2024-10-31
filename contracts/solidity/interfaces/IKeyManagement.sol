@@ -101,6 +101,6 @@ interface IKeyManagement {
         uint index
     ) external view returns (bytes memory);
 
-    // get global public key by height
-    function globalPubs(uint height) external view returns (bytes memory);
+    // get aggregated commitment by height
+    function aggregatedCommitments(uint height) external view returns (bytes memory);
 }

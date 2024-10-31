@@ -10,8 +10,20 @@ type PublicKey struct {
 	pg1 *bls12381.G1Affine // A public value for tpke encryption
 }
 
-// NewGlobalPublicKey aggregates and returns a PublicKey
-func NewGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
+// NewGlobalPublicKey generates and returns a PublicKey from aggregated commitment data
+func NewGlobalPublicKey(aggregatedCmt []byte, scaler int) (*PublicKey, error) {
+	pg1, err := decodePointG1(aggregatedCmt)
+	if err != nil {
+		return nil, err
+	}
+	pg1.ScalarMultiplication(pg1, big.NewInt(int64(scaler)))
+	return &PublicKey{
+		pg1: pg1,
+	}, nil
+}
+
+// AggregateGlobalPublicKey aggregates and returns a PublicKey
+func AggregateGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
 	pg1 := new(bls12381.G1Affine).Set(cs[0].coeff[0])
 	// Add up A0
 	for i := 1; i < len(cs); i++ {
