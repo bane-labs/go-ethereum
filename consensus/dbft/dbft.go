@@ -796,9 +796,13 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				j   int
 			)
 			for i := range pre.transactions {
-				if pre.envelopesData[j].index != i || // pre.transactions[i] is not an envelope, use it as-is.
-					decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
+				if j >= len(pre.envelopesData) || pre.envelopesData[j].index != i { // pre.transactions[i] is not an envelope, use it as-is.
 					txx[i] = pre.transactions[i]
+					continue
+				}
+				if decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
+					txx[i] = pre.transactions[i]
+					j++
 					continue
 				}
 				log.Info("Envelope data decrypted",
