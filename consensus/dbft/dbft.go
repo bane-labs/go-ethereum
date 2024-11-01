@@ -669,12 +669,19 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				}
 			}
 
-			_, _, err := c.chain.VerifyBlock(ethBlock, true)
+			state, receipts, gasUsed, err := c.chain.VerifyBlock(ethBlock, true)
 			if err != nil {
 				log.Warn("proposed PreBlock verification failed",
 					"err", err.Error())
 				return false
 			}
+
+			// Cache processing result for further usage in case if there's no envelopes
+			// in the block.
+			pre := b.(*PreBlock)
+			pre.finalState = state
+			pre.finalReceipts = receipts
+			pre.finalGASUsed = gasUsed
 
 			return true
 		}),
@@ -696,7 +703,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				}
 
 				ethBlock := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
-				state, receipts, err := c.chain.VerifyBlock(ethBlock, true)
+				state, receipts, _, err := c.chain.VerifyBlock(ethBlock, true)
 				if err != nil {
 					log.Warn("proposed block verification failed",
 						"err", err.Error())
@@ -880,6 +887,12 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				pre.finalTransactions = txx
 			}
 
+			// Use cached processing results if no new transactions were included into
+			// the block compared to the original proposal.
+			if !hasDecryptedTxs {
+				return nil
+			}
+
 			// Process state with constructed list of transactions to fill state-dependent
 			// block fields.
 			finalBlock := &PreBlock{
@@ -888,67 +901,31 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				withdrawals:  pre.withdrawals,
 			}
 			ethBlock := finalBlock.ToEthBlock()
-			pre.finalState, pre.finalReceipts, _, pre.finalGASUsed, err = c.chain.ProcessState(ethBlock, nil)
-			if err == nil {
+			state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
+			if err != nil {
+				// Something went wrong, fallback to the original set of transactions and cached
+				// processing results.
+				log.Error("failed to process PreBlock, falling back to the original proposal",
+					"err", err,
+					"number", ethBlock.NumberU64(),
+					"seal hash", c.SealHash(ethBlock.Header()),
+					"parent hash", ethBlock.ParentHash().String(),
+					"intermediate merkle root", ethBlock.Root(),
+					"coinbase", ethBlock.Coinbase().String(),
+					"gas limit", ethBlock.GasLimit(),
+					"gas used", ethBlock.GasUsed(),
+					"difficulty", ethBlock.Difficulty().String(),
+					"mix digest", ethBlock.MixDigest().String(),
+					"nonce", ethBlock.Nonce(),
+					"time", ethBlock.Time(),
+					"uncle hash", ethBlock.UncleHash().String(),
+					"txs", len(ethBlock.Transactions()))
+				pre.finalTransactions = pre.transactions
 				return nil
 			}
 
-			// Something went wrong, fallback to the original set of transactions if possible.
-			log.Error("failed to process PreBlock",
-				"err", err,
-				"number", ethBlock.NumberU64(),
-				"seal hash", c.SealHash(ethBlock.Header()),
-				"parent hash", ethBlock.ParentHash().String(),
-				"intermediate merkle root", ethBlock.Root(),
-				"coinbase", ethBlock.Coinbase().String(),
-				"gas limit", ethBlock.GasLimit(),
-				"gas used", ethBlock.GasUsed(),
-				"difficulty", ethBlock.Difficulty().String(),
-				"mix digest", ethBlock.MixDigest().String(),
-				"nonce", ethBlock.Nonce(),
-				"time", ethBlock.Time(),
-				"uncle hash", ethBlock.UncleHash().String(),
-				"txs", len(ethBlock.Transactions()),
-				"fallback to original proposal", hasDecryptedTxs)
-			if !hasDecryptedTxs {
-				// If we're here, there's no valid Envelopes in the block and at the
-				// same time the original set of transactions failed to be processed.
-				// It means there's a bug in the PreBlock verification since it must
-				// be guaranteed that initial set of transactions is valid and
-				// always can be processed. We're toast.
-				log.Crit("invalid PreBlock")
-
-				return errors.New("failed to process PreBlock")
-			}
-
-			pre.finalTransactions = pre.transactions
-			finalBlock.transactions = pre.transactions
-			ethBlock = finalBlock.ToEthBlock()
-			pre.finalState, pre.finalReceipts, _, pre.finalGASUsed, err = c.chain.ProcessState(ethBlock, nil)
-			if err == nil {
-				return nil
-			}
-
-			// If we're here then there's a bug in the PreBlock verification since
-			// it must be guaranteed that initial set of transactions is valid and may
-			// be processed. We're toast.
-			log.Crit("failed to process PreBlock with original proposal",
-				"err", err,
-				"number", ethBlock.NumberU64(),
-				"seal hash", c.SealHash(ethBlock.Header()),
-				"parent hash", ethBlock.ParentHash().String(),
-				"intermediate merkle root", ethBlock.Root(),
-				"coinbase", ethBlock.Coinbase().String(),
-				"gas limit", ethBlock.GasLimit(),
-				"gas used", ethBlock.GasUsed(),
-				"difficulty", ethBlock.Difficulty().String(),
-				"mix digest", ethBlock.MixDigest().String(),
-				"nonce", ethBlock.Nonce(),
-				"time", ethBlock.Time(),
-				"uncle hash", ethBlock.UncleHash().String(),
-				"txs", len(ethBlock.Transactions()))
-
-			return fmt.Errorf("both initial and decrypted set of transactions failed to be processed: %w", err)
+			pre.finalState, pre.finalReceipts, pre.finalGASUsed = state, receipts, gasUsed
+			return nil
 		}),
 	)
 	if err != nil {
