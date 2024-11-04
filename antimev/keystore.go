@@ -23,6 +23,7 @@ var (
 	ErrInvalidDKGPVSS    = errors.New("invalid dkg pvss")
 	ErrNotParticipant    = errors.New("not the role to send or receive")
 	ErrKeyGroupNotExists = errors.New("required keygroup not found")
+	ErrNoNeedToRecover   = errors.New("no need to recover")
 	ErrUnrecoverable     = errors.New("unrecoverable sharing")
 	ErrMessageDecryption = errors.New("message decryption failed")
 )
@@ -119,6 +120,13 @@ func (ks *KeyStore) IsSharing() bool {
 	return ks.sharing != nil
 }
 
+// IsRecovering returns if there is an ongoing recovering
+func (ks *KeyStore) IsRecovering() bool {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	return ks.recovering != nil
+}
+
 // HasReshared returns if there is a completed resharing
 func (ks *KeyStore) HasReshared() bool {
 	ks.mu.RLock()
@@ -147,6 +155,8 @@ func (ks *KeyStore) OnValidatorList(validators []common.Address, pubkeys []*ecie
 	}
 	// Set groups for dkg sharing
 	ks.sharing = newThresholdKeyGroup(validators, pubkeys)
+	// Remove recovering just in case
+	ks.recovering = nil
 	return ks.saveStoreAndReInitialize()
 }
 
@@ -160,6 +170,14 @@ func (ks *KeyStore) OnRecoverPeriodStart(indexes []int, validators []common.Addr
 	}
 	if len(validators) != len(indexes) || len(pubkeys) != len(indexes) {
 		return ErrInvalidLength
+	}
+	// Return error if amount is 0
+	if len(indexes) < 1 {
+		return ErrNoNeedToRecover
+	}
+	// Return error if amount is more than recoverable
+	if len(indexes) > ks.size-ks.threshold {
+		return ErrUnrecoverable
 	}
 	// Only place new ones in recovering group
 	ks.recovering = ks.shared.newTemplateForRecover(indexes, validators, pubkeys)
@@ -207,22 +225,14 @@ func (ks *KeyStore) DKGShare() ([][]byte, []byte, error) {
 
 // DKGRecover generates and returns recovering messages and pvss.
 // It will returns nil if no need to recover, or an error if not recoverable.
-func (ks *KeyStore) DKGRecover(indexes []int, pubkeys []*ecies.PublicKey) ([][]byte, error) {
+func (ks *KeyStore) DKGRecover() ([][]byte, error) {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
-	if ks.shared == nil {
+	if ks.shared == nil || ks.recovering == nil {
 		return nil, ErrKeyGroupNotExists
 	}
-	// Return error if amount is more than recoverable
-	if len(indexes) > ks.size-ks.threshold {
-		return nil, ErrUnrecoverable
-	}
-	// Do nothing if no need to recover
-	if len(indexes) < 1 {
-		return nil, nil
-	}
 	// Generate secret recovering messages
-	return ks.shared.recover(indexes, pubkeys)
+	return ks.shared.recover(ks.recovering.holderIndexesAndKeys())
 }
 
 // TryRecoverReshare tries to recover a resharing message, should be called when

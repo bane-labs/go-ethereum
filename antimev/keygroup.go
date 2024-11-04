@@ -256,6 +256,20 @@ func (tkg *thresholdKeyGroup) holderIndex(addr common.Address) int {
 	return 0
 }
 
+// holderIndexesAndKeys returns a non-empty list of indexes and related pubkeys.
+func (tkg *thresholdKeyGroup) holderIndexesAndKeys() ([]int, []*ecies.PublicKey) {
+	idxs := make([]int, 0, len(tkg.holders))
+	keys := make([]*ecies.PublicKey, 0, len(tkg.holders))
+	for i, holder := range tkg.holders {
+		if holder == nil {
+			continue
+		}
+		idxs = append(idxs, i+1)
+		keys = append(keys, holder.ethPubKey)
+	}
+	return idxs, keys
+}
+
 // thresholdKeyHolderAux is an auxiliary structure for thresholdKeyHolder JSON marshalling.
 type thresholdKeyHolderAux struct {
 	Address   common.Address `json:"address"`     // The account address

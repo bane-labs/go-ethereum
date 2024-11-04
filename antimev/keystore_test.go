@@ -526,7 +526,7 @@ func TestRecover(t *testing.T) {
 			t.Fatalf(err.Error())
 		}
 		if i < 7 {
-			msgs, err := kss[i].DKGRecover(rIdxs, rPubs)
+			msgs, err := kss[i].DKGRecover()
 			if err != nil {
 				t.Fatalf(err.Error())
 			}

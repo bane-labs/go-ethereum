@@ -240,13 +240,11 @@ type DBFT struct {
 	fakeDiff bool // Skip difficulty verifications
 
 	// The fields for dkg
-	targetHeight        uint64
-	preEpochStartHeight uint64
-	shareDuration       uint64
-	shareReady          bool
-	consensusList       []common.Address
-	needRecover         bool
-	txRetryList         []*TxSendRetry
+	targetHeight     uint64
+	epochStartHeight uint64
+	shareDuration    uint64
+	consensusList    []common.Address
+	txRetryList      []*TxSendRetry
 }
 
 // config represents Engine configuration.
