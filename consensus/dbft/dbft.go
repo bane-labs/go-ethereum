@@ -225,6 +225,14 @@ type DBFT struct {
 	sealingProposal     *types.Header
 	sealingTransactions types.Transactions
 
+	// sealingState, sealingBlock and sealingReceipts are Primary-only set of fields got
+	// after sealingProposal construction and processing. These fields are not protected
+	// by mutex since every access point is controlled by eventLoop. These fields must
+	// not be accessed if the node is a backup.
+	sealingState    *state.StateDB
+	sealingBlock    *types.Block
+	sealingReceipts types.Receipts
+
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
 	chain  ChainHeaderReader
 	txpool txPool
@@ -400,6 +408,19 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 			pre := ctx.PreBlock().(*PreBlock)
 
+			// Short path if we're primary and there's no Envelopes in the block:
+			// reuse state got after PrepareRequest construction.
+			if ctx.PrimaryIndex == uint(ctx.MyIndex) && pre.finalState == nil {
+				return &Block{
+					header:              c.sealingBlock.Header(),
+					withdrawals:         c.sealingBlock.Withdrawals(),
+					transactions:        c.sealingBlock.Transactions(),
+					localSignatureBytes: nil,
+					state:               c.sealingState,
+					receipts:            c.sealingReceipts,
+				}
+			}
+
 			// Manually update header's fields based on fresh state. Avoid changing
 			// the original PreBlock.
 			finalBlock := &PreBlock{
@@ -498,7 +519,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			dbftBlock.transactions = c.sealingTransactions
 			ethBlock := dbftBlock.ToEthBlock()
 
-			state, _, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
+			state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
 			if err != nil {
 				log.Crit("failed to process state from proposal",
 					"err", err,
@@ -519,17 +540,26 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 
 			header := ethBlock.Header()
 			header.GasUsed = gasUsed
-			header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
-
-			c.sealingProposal = header
 
 			// Fill NextConsensus based on the currently accepting block state and update MixDigest.
-			nextVals, err := c.getValidators(nil, state, c.sealingProposal)
+			nextVals, err := c.getValidators(nil, state.Copy(), header)
 			if err != nil {
 				log.Crit("Failed to compute next block validators",
 					"err", err)
 			}
-			c.sealingProposal.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
+			header.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
+
+			// Update state root, transactions root, receipts hash and bloom.
+			res, err := c.FinalizeAndAssemble(c.chain, header, state, dbftBlock.transactions, nil, receipts, ethBlock.Withdrawals())
+			if err != nil {
+				log.Crit("Failed to finalize and assemble proposed block",
+					"err", err)
+			}
+
+			c.sealingProposal = res.Header()
+			c.sealingState = state
+			c.sealingBlock = res
+			c.sealingReceipts = receipts
 
 			req.SealingProposal = c.sealingProposal
 			req.ParentSealHash = c.lastBlockSealHash
