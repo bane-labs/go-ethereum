@@ -243,6 +243,7 @@ type DBFT struct {
 	targetHeight     uint64
 	epochStartHeight uint64
 	shareDuration    uint64
+	round            uint64
 	consensusList    []common.Address
 	txRetryList      []*TxSendRetry
 }

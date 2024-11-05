@@ -56,12 +56,16 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		if err != nil {
 			return fmt.Errorf("failed to call getCurrentConsensus: %w", err)
 		}
+		c.round, err = c.roundNumber(state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call roundNumber: %w", err)
+		}
 		c.epochStartHeight = currentEpochStartHeight
 		c.targetHeight = currentEpochStartHeight + epochDuration
 		c.shareDuration = sharePeriodDuration
 		c.consensusList = consensusList
 
-		log.Info("dkg info", "currentEpochStartHeight", currentEpochStartHeight, "epochDuration", epochDuration,
+		log.Info("dkg info", "roundNumber", c.round, "currentEpochStartHeight", currentEpochStartHeight, "epochDuration", epochDuration,
 			"sharePeriodDuration", sharePeriodDuration, "consensusList", consensusList)
 	}
 
@@ -127,7 +131,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 				c.txRetryList = append(c.txRetryList, &TxSendRetry{SendHeight: currentHeight, Method: "reshare", Params: []interface{}{rPvss, rMsgs}})
 				reshareErr = fmt.Errorf("failed to send reshare transaction, err: %w", err)
 			} else {
-				log.Info("reshare transaction sent", "txHash", txHash)
+				log.Info("DKG reshare transaction sent", "txHash", txHash)
 			}
 		}
 
@@ -142,7 +146,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 				c.txRetryList = append(c.txRetryList, &TxSendRetry{SendHeight: currentHeight, Method: "share", Params: []interface{}{sPvss, sMsgs}})
 				shareErr = fmt.Errorf("failed to send share transaction, err: %w", err)
 			} else {
-				log.Info("share transaction sent", "txHash", txHash)
+				log.Info("DKG share transaction sent", "txHash", txHash)
 			}
 		}
 		if reshareErr != nil {
@@ -198,11 +202,11 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		if slices.Contains(pendingConsensusList, amevAddress) {
 			for i := uint64(1); i <= uint64(consensusSize); i++ {
 				// Call ReceiveSecretShare
-				shareMsgs, err := c.getShareMsgs(c.targetHeight, i, state, h)
+				shareMsgs, err := c.getShareMsgs(c.round, i, state, h)
 				if err != nil {
 					return fmt.Errorf("failed to call shareMsgs: %w", err)
 				}
-				spvss, err := c.spvsses(c.targetHeight, i, state, h)
+				spvss, err := c.spvsses(c.round, i, state, h)
 				if err != nil {
 					return fmt.Errorf("failed to call spvsses: %w", err)
 				}
@@ -211,13 +215,13 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 					return fmt.Errorf("failed to call amevKeystore.ReceiveSecretShare(), err: %w", err)
 				}
 				// Call ReceiveSecretReshare
-				rpvss, err := c.rpvsses(c.targetHeight, i, state, h)
+				rpvss, err := c.rpvsses(c.round, i, state, h)
 				if err != nil {
 					return fmt.Errorf("failed to call rpvsses: %w", err)
 				}
 				// Only receive reshare has value
 				if len(rpvss) > 0 {
-					reshareMsgs, err := c.getReshareMsgs(c.targetHeight, i, state, h)
+					reshareMsgs, err := c.getReshareMsgs(c.round, i, state, h)
 					if err != nil {
 						return fmt.Errorf("failed to call reshareMsgs: %w", err)
 					}
@@ -236,6 +240,12 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		if len(indexesNeedRecover) == 0 {
 			// Reshare finished, no need to recover
 			return nil
+		}
+
+		// only indexesNeedRecover <= (consensusSize - threshold) can recover
+		threshold := consensusSize - (consensusSize-1)/3
+		if len(indexesNeedRecover) > int(consensusSize-threshold) {
+			return fmt.Errorf("reshare msgs not enough, cannot do recover")
 		}
 
 		// OnRecoverPeriodStart
@@ -268,12 +278,12 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 				c.txRetryList = append(c.txRetryList, &TxSendRetry{SendHeight: currentHeight, Method: "recover", Params: []interface{}{indexesNeedRecover, msgs}})
 				return fmt.Errorf("failed to send recover transaction: %w", err)
 			}
-			log.Info("recover transaction sent", "txHash", txHash)
+			log.Info("DKG recover transaction sent", "txHash", txHash)
 		}
 	}
 
-	// Send reshareRecovered at height recoverStartHeight+1+c.shareDuration/3
-	if c.amevKeystore.IsRecovering() && currentHeight == recoverStartHeight+1+c.shareDuration/3 {
+	// Send reshareRecovered at height recoverStartHeight+1+c.shareDuration/2
+	if c.amevKeystore.IsRecovering() && currentHeight == recoverStartHeight+1+c.shareDuration/2 {
 		state, err := c.chain.StateAt(h.Root)
 		if err != nil {
 			return fmt.Errorf("failed to call StateAt: %w", err)
@@ -291,7 +301,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			if slices.Contains(indexesNeedRecover, indexOfSharing) {
 				for i := uint64(1); i <= consensusSize; i++ {
 					if !slices.Contains(indexesNeedRecover, i) {
-						msg, err := c.recoverMsgs(c.targetHeight, i, indexOfSharing, state, h)
+						msg, err := c.recoverMsgs(c.round, i, indexOfSharing, state, h)
 						if err != nil {
 							return fmt.Errorf("failed to call recoverMsgs: %w", err)
 						}
@@ -339,11 +349,11 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			}
 			for _, index := range indexesNeedRecover {
 				// Call ReceiveSecretReshare
-				rpvss, err := c.rpvsses(c.targetHeight, index, state, h)
+				rpvss, err := c.rpvsses(c.round, index, state, h)
 				if err != nil {
 					return fmt.Errorf("failed to call rpvsses: %w", err)
 				}
-				reshareMsgs, err := c.getReshareMsgs(c.targetHeight, index, state, h)
+				reshareMsgs, err := c.getReshareMsgs(c.round, index, state, h)
 				if err != nil {
 					return fmt.Errorf("failed to call reshareMsgs: %w", err)
 				}
@@ -353,14 +363,18 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 				}
 			}
 		}
-		aggregatedCommitments, err := c.aggregatedCommitments(c.targetHeight, state, h)
-		if err != nil {
-			return fmt.Errorf("failed to call aggregatedCommitments, err: %w", err)
+		aggregatedCommitments := make([]byte, 0)
+		if isRoundNumberIncreased, _ := c.isRoundNumberIncreased(c.targetHeight, c.epochStartHeight, state, h); isRoundNumberIncreased {
+			aggregatedCommitments, err = c.aggregatedCommitments(c.round, state, h)
+			if err != nil {
+				return fmt.Errorf("failed to call aggregatedCommitments, err: %w", err)
+			}
 		}
 		err = c.amevKeystore.OnEpochChange(aggregatedCommitments)
 		if err != nil {
 			return fmt.Errorf("failed to call amevKeystore.OnEpochChange, err: %w", err)
 		}
+		log.Info("DKG reach targetHeight", "currentHeight", currentHeight, "aggregatedCommitments", hex.EncodeToString(aggregatedCommitments))
 	}
 
 	return nil
@@ -483,62 +497,82 @@ func (c *DBFT) isShareReady(state *state.StateDB, header *types.Header) (bool, e
 	return result, nil
 }
 
-func (c *DBFT) getReshareMsgs(height, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
+func (c *DBFT) getReshareMsgs(round, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
 	var result [][]byte
 	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
-		state, header, "getReshareMsgs", big.NewInt(int64(height)), big.NewInt(int64(index)))
+		state, header, "getReshareMsgs", big.NewInt(int64(round)), big.NewInt(int64(index)))
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-func (c *DBFT) rpvsses(height, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+func (c *DBFT) rpvsses(round, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
 	var result []byte
 	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
-		state, header, "rpvsses", big.NewInt(int64(height)), big.NewInt(int64(index)))
+		state, header, "rpvsses", big.NewInt(int64(round)), big.NewInt(int64(index)))
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-func (c *DBFT) getShareMsgs(height, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
+func (c *DBFT) getShareMsgs(round, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
 	var result [][]byte
 	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
-		state, header, "getShareMsgs", big.NewInt(int64(height)), big.NewInt(int64(index)))
+		state, header, "getShareMsgs", big.NewInt(int64(round)), big.NewInt(int64(index)))
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-func (c *DBFT) spvsses(height, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+func (c *DBFT) spvsses(round, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
 	var result []byte
 	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
-		state, header, "spvsses", big.NewInt(int64(height)), big.NewInt(int64(index)))
+		state, header, "spvsses", big.NewInt(int64(round)), big.NewInt(int64(index)))
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-func (c *DBFT) recoverMsgs(height, indexSend, indexReceive uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+func (c *DBFT) recoverMsgs(round, indexSend, indexReceive uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
 	var result []byte
 	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
-		state, header, "recoverMsgs", big.NewInt(int64(height)), big.NewInt(int64(indexSend)), big.NewInt(int64(indexReceive)))
+		state, header, "recoverMsgs", big.NewInt(int64(round)), big.NewInt(int64(indexSend)), big.NewInt(int64(indexReceive)))
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-func (c *DBFT) aggregatedCommitments(height uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+func (c *DBFT) aggregatedCommitments(round uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
 	var result []byte
 	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
-		state, header, "aggregatedCommitments", big.NewInt(int64(height)))
+		state, header, "aggregatedCommitments", big.NewInt(int64(round)))
 	if err != nil {
 		return nil, err
+	}
+	return result, nil
+}
+
+func (c *DBFT) roundNumber(state *state.StateDB, header *types.Header) (uint64, error) {
+	var result *big.Int
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "roundNumber")
+	if err != nil {
+		return 0, err
+	}
+	return result.Uint64(), nil
+}
+
+func (c *DBFT) isRoundNumberIncreased(epochHeight, lastEpochHeight uint64, state *state.StateDB, header *types.Header) (bool, error) {
+	var result bool
+	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+		state, header, "isRoundNumberIncreased", big.NewInt(int64(epochHeight)), big.NewInt(int64(lastEpochHeight)))
+	if err != nil {
+		return false, err
 	}
 	return result, nil
 }
