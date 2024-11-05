@@ -19,17 +19,21 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         Share
     }
 
+    // dkg round index, starts from 0
+    uint public roundNumber;
+    // height=>round
+    mapping(uint => uint) public roundNumberOfEpochs;
     // public key for sharing message encryption
     mapping(address => string) public messagePubkeys;
-    // height=>index=>shares
+    // round=>index=>shares
     mapping(uint => mapping(uint => bytes[])) public reshareMsgs;
     mapping(uint => mapping(uint => bytes[])) public shareMsgs;
-    // height=>index=>index
+    // round=>index=>index
     mapping(uint => mapping(uint => mapping(uint => bytes))) public recoverMsgs;
-    // height=>index=>index
+    // round=>index=>pvss
     mapping(uint => mapping(uint => bytes)) public rpvsses;
     mapping(uint => mapping(uint => bytes)) public spvsses;
-    // bigA0 for verification and key generation
+    // round for verification and key generation
     mapping(uint => mapping(uint => bytes)) public sharedPubs;
     // aggregated commitments from pvss
     // NOTE: this not the direct key for keystore encryption, should use pk = aggregatedCommitment * scaler,
@@ -69,9 +73,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
 
     function reshare(bytes calldata pvss, bytes[] calldata messages) external {
         // check period
-        (uint currentEpochHeight, uint targetHeight) = _checkPeriodAllowed(
-            Period.Share
-        );
+        _checkPeriodAllowed(Period.Share);
 
         // check index
         uint index = indexOfResharing(msg.sender);
@@ -84,25 +86,27 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         if (messages.length != n) revert Errors.InvalidMessageAmount();
 
         // verify shared pub
+        uint round = roundNumber;
+        if (round < 1) revert Errors.InvalidRoundNumber();
         if (
-            keccak256(sharedPubs[currentEpochHeight][index]) !=
+            keccak256(sharedPubs[round-1][index]) !=
             keccak256(pvss[:BLS12381.G1_SIZE])
         ) revert Errors.InvalidPVSS();
 
         // verify pvss
         _verifyPVSS(n, t, pvss);
-        rpvsses[targetHeight][index] = pvss;
+        rpvsses[round][index] = pvss;
 
         // record messages
-        reshareMsgs[targetHeight][index] = messages;
+        reshareMsgs[round][index] = messages;
 
         // emit a event
-        emit Reshare(targetHeight, index, msg.sender);
+        emit Reshare(round, index, msg.sender);
     }
 
     function share(bytes calldata pvss, bytes[] calldata messages) external {
         // check period
-        (, uint targetHeight) = _checkPeriodAllowed(Period.Share);
+        _checkPeriodAllowed(Period.Share);
 
         // check index
         uint index = indexOfSharing(msg.sender);
@@ -115,20 +119,21 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         if (messages.length != n) revert Errors.InvalidMessageAmount();
 
         // verify pvss
+        uint round = roundNumber;
         _verifyPVSS(n, t, pvss);
-        spvsses[targetHeight][index] = pvss;
+        spvsses[round][index] = pvss;
 
         // record messages
-        sharedPubs[targetHeight][index] = pvss[:BLS12381.G1_SIZE];
-        shareMsgs[targetHeight][index] = messages;
+        sharedPubs[round][index] = pvss[:BLS12381.G1_SIZE];
+        shareMsgs[round][index] = messages;
 
         // emit a event
-        emit Share(targetHeight, index, msg.sender);
+        emit Share(round, index, msg.sender);
     }
 
     function recover(uint[] calldata idxs, bytes[] calldata messages) external {
         // check period
-        (, uint targetHeight) = _checkPeriodAllowed(Period.Recover);
+        _checkPeriodAllowed(Period.Recover);
 
         // check index
         uint index = indexOfResharing(msg.sender);
@@ -136,15 +141,17 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
 
         // check absent secret index & record messages
         uint n = IGovernance(GOV).consensusSize();
+        uint round = roundNumber;
+        if (round < 1) revert Errors.InvalidRoundNumber();
         for (uint i = 0; i < idxs.length; i++) {
             if (idxs[i] > n || idxs[i] == 0) revert Errors.IndexOutOfRange();
-            if (reshareMsgs[targetHeight][idxs[i]].length > 0)
+            if (reshareMsgs[round][idxs[i]].length > 0)
                 revert Errors.NoNeedForRecover();
-            recoverMsgs[targetHeight][index][idxs[i]] = messages[i];
+            recoverMsgs[round][index][idxs[i]] = messages[i];
         }
 
         // emit a event
-        emit Recover(targetHeight, index, msg.sender);
+        emit Recover(round, index, msg.sender);
     }
 
     function reshareRecovered(
@@ -152,9 +159,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         bytes[] calldata messages
     ) external {
         // check period
-        (uint currentEpochHeight, uint targetHeight) = _checkPeriodAllowed(
-            Period.Recover
-        );
+        _checkPeriodAllowed(Period.Recover);
 
         // check index
         uint index = indexOfSharing(msg.sender);
@@ -167,22 +172,24 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         if (messages.length != n) revert Errors.InvalidMessageAmount();
 
         // verify shared pub
+        uint round = roundNumber;
+        if (round < 1) revert Errors.InvalidRoundNumber();
         if (
-            keccak256(sharedPubs[currentEpochHeight][index]) !=
+            keccak256(sharedPubs[round-1][index]) !=
             keccak256(pvss[:BLS12381.G1_SIZE])
         ) revert Errors.InvalidPVSS();
 
         // verify pvss
         _verifyPVSS(n, t, pvss);
-        rpvsses[targetHeight][index] = pvss;
+        rpvsses[round][index] = pvss;
 
         // record messages
-        if (reshareMsgs[targetHeight][index].length > 0)
+        if (reshareMsgs[round][index].length > 0)
             revert Errors.MessageExists();
-        reshareMsgs[targetHeight][index] = messages;
+        reshareMsgs[round][index] = messages;
 
         // emit a event
-        emit Reshare(targetHeight, index, msg.sender);
+        emit Reshare(round, index, msg.sender);
     }
 
     // onPersistV2 is a persisting function that is called in the beginning of every
@@ -190,34 +197,40 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
     function onPersistV2() external {
         if (msg.sender != SYS_CALL) revert Errors.SideCallNotAllowed();
         // NOTE: should be called before Governance onPersist
-        uint currentEpochHeight = IGovernance(GOV).currentEpochStartHeight();
-        uint epochDuration = IGovernance(GOV).epochDuration();
-        uint targetHeight = currentEpochHeight + epochDuration;
-        // return if the new round key exists
-        if (aggregatedCommitments[targetHeight].length > 0) return;
+        if (block.number >= IGovernance(GOV).nextEpochStartHeight()) {
+            if (aggregatedCommitments[roundNumber].length > 0) {
+                _recordAndSetToNewRound();
+            } else {
+                _dropAndSetToLatestRound();
+            }
+        }
+        // return if the round key exists
+        uint round = roundNumber;
+        if (aggregatedCommitments[round].length > 0) return;
 
         // check reshare and share, compute global key
         uint n = IGovernance(GOV).consensusSize();
-        if (
-            reshareMsgs[targetHeight][1].length < n &&
-            aggregatedCommitments[currentEpochHeight].length > 0
-        ) return;
-        if (shareMsgs[targetHeight][1].length < n) return;
-        bytes memory output = sharedPubs[targetHeight][1];
+        if (reshareMsgs[round][1].length < n && round > 0) return;
+        if (shareMsgs[round][1].length < n) return;
+        bytes memory output = sharedPubs[round][1];
         for (uint i = 2; i <= n; i++) {
-            if (reshareMsgs[targetHeight][i].length < n) return;
-            if (shareMsgs[targetHeight][i].length < n) return;
-            output = BLS12381.g1Add(output, sharedPubs[targetHeight][i]);
+            if (reshareMsgs[round][i].length < n && round > 0) return;
+            if (shareMsgs[round][i].length < n) return;
+            output = BLS12381.g1Add(output, sharedPubs[round][i]);
         }
 
         // record global key
         // NOTE: this not the direct key for keystore encryption, should use pk = aggregatedCommitment * scaler
-        aggregatedCommitments[targetHeight] = output;
+        aggregatedCommitments[round] = output;
     }
 
-    function isCurrentRoundReady() external view returns (bool) {
-        uint currentEpochHeight = IGovernance(GOV).currentEpochStartHeight();
-        return aggregatedCommitments[currentEpochHeight].length > 0;
+    function isRoundNumberIncreased(
+        uint epochHeight,
+        uint lastEpochHeight
+    ) external view returns (bool) {
+        return
+            roundNumberOfEpochs[epochHeight] !=
+            roundNumberOfEpochs[lastEpochHeight];
     }
 
     function _verifyPVSS(uint n, uint t, bytes calldata pvss) internal view {
@@ -300,12 +313,13 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         returns (uint[] memory)
     {
         // check period
-        (, uint targetHeight) = _checkPeriodAllowed(Period.Recover);
+        _checkPeriodAllowed(Period.Recover);
 
         uint[] memory idxs;
         uint n = IGovernance(GOV).consensusSize();
+        uint nextRound = roundNumber + 1;
         for (uint i = 0; i < n; i++) {
-            if (reshareMsgs[targetHeight][i + 1].length == 0) {
+            if (reshareMsgs[nextRound][i + 1].length == 0) {
                 assembly {
                     mstore(idxs, add(mload(idxs), 1))
                     mstore(add(idxs, mul(mload(idxs), 32)), add(i, 1))
@@ -316,31 +330,51 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
     }
 
     function isShareReady() external view returns (bool) {
-        // check period
-        (, uint targetHeight) = _checkPeriodAllowed(Period.Recover);
-
         uint n = IGovernance(GOV).consensusSize();
+        uint round = roundNumber;
         for (uint i = 1; i <= n; i++) {
-            if (shareMsgs[targetHeight][i].length < n) {
+            if (shareMsgs[round][i].length < n) {
                 return false;
             }
         }
         return true;
     }
 
-    function _checkPeriodAllowed(
-        Period period
-    ) internal view returns (uint, uint) {
+    function _checkPeriodAllowed(Period period) internal view {
         // check period
-        uint currentEpochHeight = IGovernance(GOV).currentEpochStartHeight();
-        uint epochDuration = IGovernance(GOV).epochDuration();
+        uint targetHeight = IGovernance(GOV).nextEpochStartHeight();
         uint periodDuration = IGovernance(GOV).sharePeriodDuration();
-        uint targetHeight = currentEpochHeight + epochDuration;
         if (block.number < targetHeight - (uint(period) + 1) * periodDuration)
             revert Errors.PeriodNotStarted();
         if (block.number >= targetHeight - uint(period) * periodDuration)
             revert Errors.PeriodEnded();
-        return (currentEpochHeight, targetHeight);
+    }
+
+    function _recordAndSetToNewRound() internal {
+        uint targetHeight = IGovernance(GOV).nextEpochStartHeight();
+        uint round = roundNumber;
+        // map next epoch height to new round
+        roundNumberOfEpochs[targetHeight] = round;
+        // increase round number
+        roundNumber = round + 1;
+    }
+
+    function _dropAndSetToLatestRound() internal {
+        uint n = IGovernance(GOV).consensusSize();
+        uint targetHeight = IGovernance(GOV).nextEpochStartHeight();
+        uint round = roundNumber;
+        // delete all uploaded data for specific round
+        for (uint i = 1; i <= n; i++) {
+            delete rpvsses[round][i];
+            delete reshareMsgs[round][i];
+            delete spvsses[round][i];
+            delete shareMsgs[round][i];
+            for (uint j = 1; j <= n; j++) {
+                delete recoverMsgs[round][i][j];
+            }
+        }
+        // map next epoch height to latest round
+        roundNumberOfEpochs[targetHeight] = round;
     }
 
     function getShareMsgs(

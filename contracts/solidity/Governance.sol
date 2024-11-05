@@ -279,7 +279,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         if (msg.sender != SYS_CALL) revert Errors.SideCallNotAllowed();
         // only settle validator reward if there is no epoch change
         IGovReward(GOV_REWARD).withdraw();
-        if (block.number < currentEpochStartHeight + epochDuration) return;
+        if (block.number < nextEpochStartHeight()) return;
 
         // update tag values
         currentEpochStartHeight = block.number;
@@ -307,7 +307,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         IGovReward(GOV_REWARD).withdraw();
         if (
             block.number <
-            currentEpochStartHeight + epochDuration - 2 * sharePeriodDuration
+            nextEpochStartHeight() - 2 * sharePeriodDuration
         ) return;
 
         // settle vote epoch as pending but keep the running consensus
@@ -336,7 +336,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
             }
             emit Persist(pendingConsensus);
         }
-        if (block.number < currentEpochStartHeight + epochDuration) return;
+        if (block.number < nextEpochStartHeight()) return;
 
         // set pending consensus as running, and update tag values
         currentEpochStartHeight = block.number;
@@ -346,7 +346,12 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
             ] = candidateGasPerVote[candidates[i]];
         }
         // check if key generation succeeds, keep the same members if not
-        if (IKeyManagement(KEY_MANAGEMENT).isCurrentRoundReady()) {
+        if (
+            IKeyManagement(KEY_MANAGEMENT).isRoundNumberIncreased(
+                currentEpochStartHeight,
+                currentEpochStartHeight - epochDuration
+            )
+        ) {
             currentConsensus = pendingConsensus;
         }
         // reset pending value and start a new epoch
@@ -372,6 +377,10 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
 
     function getPendingConsensus() public view returns (address[] memory) {
         return pendingConsensus;
+    }
+
+    function nextEpochStartHeight() public view returns (uint) {
+        return currentEpochStartHeight + epochDuration;
     }
 
     function _activateCandidate(address candidate) internal returns (bool) {
