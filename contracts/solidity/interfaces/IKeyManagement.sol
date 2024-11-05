@@ -46,8 +46,14 @@ interface IKeyManagement {
     // compute and update cached global keys
     function onPersistV2() external;
 
-    // check if a round of dkg sharing and resharing are ready
-    function isCurrentRoundReady() external view returns (bool);
+    // check if a successful round of dkg sharing and resharing happens between two heights
+    function isRoundNumberIncreased(
+        uint epochHeight,
+        uint lastEpochHeight
+    ) external view returns (bool);
+
+    // get the round number of current ongoing dkg
+    function roundNumber() external view returns (uint);
 
     // get the member index of sharing, start from 1, or 0 if not a member.
     function indexOfSharing(address addr) external view returns (uint);

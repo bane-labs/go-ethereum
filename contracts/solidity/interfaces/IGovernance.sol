@@ -55,12 +55,9 @@ interface IGovernance {
     // get consensus size
     function consensusSize() external view returns (uint);
 
-    // get epoch duration
-    function epochDuration() external view returns (uint);
-
     // get share period duration
     function sharePeriodDuration() external view returns (uint);
 
-    // get the start height of current epoch
-    function currentEpochStartHeight() external view returns (uint);
+    // get the start height of next epoch
+    function nextEpochStartHeight() external view returns (uint);
 }
