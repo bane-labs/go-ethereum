@@ -65,7 +65,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		c.shareDuration = sharePeriodDuration
 		c.consensusList = consensusList
 
-		log.Info("dkg info", "roundNumber", c.round, "currentEpochStartHeight", currentEpochStartHeight, "epochDuration", epochDuration,
+		log.Info("DKG info", "roundNumber", c.round, "currentEpochStartHeight", currentEpochStartHeight, "epochDuration", epochDuration,
 			"sharePeriodDuration", sharePeriodDuration, "consensusList", consensusList)
 	}
 
@@ -120,7 +120,8 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		}
 
 		var shareErr, reshareErr error
-		if isCurrentConsensus {
+		// No need reshare for round 0
+		if isCurrentConsensus && c.round > 0 {
 			rMsgs, rPvss, err := c.amevKeystore.DKGReshare()
 			if err != nil {
 				return fmt.Errorf("failed to call amevKeystore.DKGReshare, err: %w", err)
@@ -214,6 +215,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 				if err != nil {
 					return fmt.Errorf("failed to call amevKeystore.ReceiveSecretShare(), err: %w", err)
 				}
+				log.Info("DKG ReceiveSecretShare", "index", i, "from", pendingConsensusList[i-1], "spvss", hex.EncodeToString(spvss))
 				// Call ReceiveSecretReshare
 				rpvss, err := c.rpvsses(c.round, i, state, h)
 				if err != nil {
@@ -363,18 +365,21 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 				}
 			}
 		}
-		aggregatedCommitments := make([]byte, 0)
-		if isRoundNumberIncreased, _ := c.isRoundNumberIncreased(c.targetHeight, c.epochStartHeight, state, h); isRoundNumberIncreased {
-			aggregatedCommitments, err = c.aggregatedCommitments(c.round, state, h)
-			if err != nil {
-				return fmt.Errorf("failed to call aggregatedCommitments, err: %w", err)
+		aggregatedCommitments, err := c.aggregatedCommitments(c.round, state, h)
+		if err != nil {
+			return fmt.Errorf("failed to call aggregatedCommitments, err: %w", err)
+		}
+		if len(aggregatedCommitments) > 0 && c.round > 0 {
+			isRoundNumberIncreased, _ := c.isRoundNumberIncreased(c.targetHeight, c.epochStartHeight, state, h)
+			if !isRoundNumberIncreased {
+				aggregatedCommitments = make([]byte, 0)
 			}
 		}
 		err = c.amevKeystore.OnEpochChange(aggregatedCommitments)
 		if err != nil {
 			return fmt.Errorf("failed to call amevKeystore.OnEpochChange, err: %w", err)
 		}
-		log.Info("DKG reach targetHeight", "currentHeight", currentHeight, "aggregatedCommitments", hex.EncodeToString(aggregatedCommitments))
+		log.Info("DKG reached targetHeight", "c.round", c.round, "currentHeight", currentHeight, "aggregatedCommitments", hex.EncodeToString(aggregatedCommitments))
 	}
 
 	return nil
