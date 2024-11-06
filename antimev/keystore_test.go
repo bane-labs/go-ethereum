@@ -13,8 +13,12 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 )
 
-var size = 7
-var threshold = 5
+// 7-CN privnet related constants.
+const (
+	size      = 7
+	threshold = 5
+	magic     = 2312251829
+)
 
 // account is a structure combining CN node address and its password in the privnet setup.
 type account struct {
