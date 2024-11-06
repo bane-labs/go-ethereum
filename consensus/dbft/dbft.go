@@ -841,6 +841,10 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 					if j >= len(pre.envelopesData) || pre.envelopesData[j].index != i { // pre.transactions[i] is not an envelope, use it as-is.
 						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
 						if errs[0] != nil {
+							log.Info("Envelope verification failed, fallback to original set of transactions",
+								"envelope hash", pre.transactions[i].Hash(),
+								"envelope index", i,
+								"error", errs[0].Error())
 							txx = pre.transactions
 							hasDecryptedTxs = false
 							break
@@ -849,8 +853,15 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 						continue
 					}
 					if decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
+						log.Info("Envelope data decryption failed, fallback to envelope",
+							"envelope hash", pre.transactions[i].Hash(),
+							"envelope index", i)
 						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
 						if errs[0] != nil {
+							log.Info("Envelope verification failed, fallback to original set of transactions",
+								"envelope hash", pre.transactions[i].Hash(),
+								"envelope index", i,
+								"error", errs[0].Error())
 							txx = pre.transactions
 							hasDecryptedTxs = false
 							break
@@ -873,6 +884,10 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 							"error", err.Error())
 						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
 						if errs[0] != nil {
+							log.Info("Envelope verification failed, fallback to original set of transactions",
+								"envelope hash", pre.transactions[i].Hash(),
+								"envelope index", i,
+								"error", errs[0].Error())
 							txx = pre.transactions
 							hasDecryptedTxs = false
 							break
@@ -883,13 +898,17 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 					}
 					err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i])
 					if err != nil {
-						log.Info("Decrypted transaction is invalid",
+						log.Info("Decrypted transaction is invalid, fallback to envelope",
 							"envelope hash", pre.transactions[i].Hash(),
 							"envelope index", i,
 							"data", hex.EncodeToString(decryptedTxsBytes[j]),
 							"error", err.Error())
 						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
 						if errs[0] != nil {
+							log.Info("Envelope verification failed, fallback to original set of transactions",
+								"envelope hash", pre.transactions[i].Hash(),
+								"envelope index", i,
+								"error", errs[0].Error())
 							txx = pre.transactions
 							hasDecryptedTxs = false
 							break
@@ -900,8 +919,17 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 					}
 					errs := localPool.Add([]*types.Transaction{decryptedTx}, false, false)
 					if errs[0] != nil {
+						log.Info("Decrypted transaction verification failed, fallback to envelope",
+							"envelope hash", pre.transactions[i].Hash(),
+							"envelope index", i,
+							"data", hex.EncodeToString(decryptedTxsBytes[j]),
+							"error", errs[0].Error())
 						errs = localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
 						if errs[0] != nil {
+							log.Info("Envelope verification failed, fallback to original set of transactions",
+								"envelope hash", pre.transactions[i].Hash(),
+								"envelope index", i,
+								"error", errs[0].Error())
 							txx = pre.transactions
 							hasDecryptedTxs = false
 							break
@@ -1001,11 +1029,11 @@ func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transa
 	}
 	envelopeFrom, err := types.Sender(c.signerConfig, envelope)
 	if err != nil {
-		return txpool.ErrInvalidSender
+		return fmt.Errorf("%w: failed to retrieve envelope sender: %w", txpool.ErrInvalidSender, err)
 	}
 	decryptedFrom, err := types.Sender(c.signerConfig, decryptedTx)
 	if err != nil {
-		return txpool.ErrInvalidSender
+		return fmt.Errorf("%w: failed to retrieve decrypted transaction sender: %w", txpool.ErrInvalidSender, err)
 	}
 	if envelopeFrom != decryptedFrom {
 		return fmt.Errorf("decryptedTx from mismatch: decryptedFrom %v, envelopeFrom %v", decryptedFrom, envelopeFrom)
