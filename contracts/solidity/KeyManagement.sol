@@ -315,15 +315,16 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         // check period
         _checkPeriodAllowed(Period.Recover);
 
-        uint[] memory idxs;
         uint n = IGovernance(GOV).consensusSize();
         uint nextRound = roundNumber + 1;
-        for (uint i = 0; i < n; i++) {
-            if (reshareMsgs[nextRound][i + 1].length == 0) {
+        uint[] memory idxs;
+        for (uint i = 1; i <= n; i++) {
+            if (reshareMsgs[nextRound][i].length == 0) {
                 assembly {
                     mstore(idxs, add(mload(idxs), 1))
-                    mstore(add(idxs, mul(mload(idxs), 32)), add(i, 1))
+                    mstore(0x40, add(mload(0x40), 0x20))
                 }
+                idxs[idxs.length - 1] = i;
             }
         }
         return idxs;
