@@ -92,11 +92,11 @@ var PrecompiledContractsBerlin = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{9}): &blake2F{},
 }
 
-// PrecompiledContractsNeoXAMEV contains the set of pre-compiled Ethereum
-// contracts used starting from NeoXAMEV fork. It includes Cancun precompiles
+// PrecompiledContractsNeoXDKG contains the set of pre-compiled Ethereum
+// contracts used starting from NeoXDKG fork. It includes Cancun precompiles
 // concatenated with BLS precompiles with adjusted addresses, so that the resulting
 // list of precompiles addresses remains continuous.
-var PrecompiledContractsNeoXAMEV = map[common.Address]PrecompiledContract{
+var PrecompiledContractsNeoXDKG = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x01}): &ecrecover{},
 	common.BytesToAddress([]byte{0x02}): &sha256hash{},
 	common.BytesToAddress([]byte{0x03}): &ripemd160hash{},
@@ -157,7 +157,7 @@ var PrecompiledContractsBLS = map[common.Address]PrecompiledContract{
 }
 
 var (
-	PrecompiledAddressesNeoXAMEV  []common.Address
+	PrecompiledAddressesNeoXDKG   []common.Address
 	PrecompiledAddressesCancun    []common.Address
 	PrecompiledAddressesBerlin    []common.Address
 	PrecompiledAddressesIstanbul  []common.Address
@@ -178,8 +178,8 @@ func init() {
 	for k := range PrecompiledContractsBerlin {
 		PrecompiledAddressesBerlin = append(PrecompiledAddressesBerlin, k)
 	}
-	for k := range PrecompiledContractsNeoXAMEV {
-		PrecompiledAddressesNeoXAMEV = append(PrecompiledAddressesNeoXAMEV, k)
+	for k := range PrecompiledContractsNeoXDKG {
+		PrecompiledAddressesNeoXDKG = append(PrecompiledAddressesNeoXDKG, k)
 	}
 	for k := range PrecompiledContractsCancun {
 		PrecompiledAddressesCancun = append(PrecompiledAddressesCancun, k)
@@ -191,8 +191,8 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 	switch {
 	case rules.IsCancun:
 		return PrecompiledAddressesCancun
-	case rules.IsNeoXAMEV:
-		return PrecompiledAddressesNeoXAMEV
+	case rules.IsNeoXDKG:
+		return PrecompiledAddressesNeoXDKG
 	case rules.IsBerlin:
 		return PrecompiledAddressesBerlin
 	case rules.IsIstanbul:
