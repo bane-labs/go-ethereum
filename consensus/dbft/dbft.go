@@ -251,6 +251,7 @@ type DBFT struct {
 // config represents Engine configuration.
 type config struct {
 	*params.DBFTConfig
+	dkgEnablingHeight     int64
 	antiMEVEnablingHeight int64
 }
 
@@ -259,6 +260,7 @@ type config struct {
 func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	cfg := &config{
 		DBFTConfig:            chainCfg.DBFT,
+		dkgEnablingHeight:     -1,
 		antiMEVEnablingHeight: -1,
 	}
 	if cfg.SecondsPerBlock == 0 {
@@ -275,6 +277,9 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	slices.SortFunc(bftCfg.StandByValidators, common.Address.Cmp)
 	cfg.DBFTConfig = &bftCfg
 
+	if chainCfg.NeoXDKGBlock != nil {
+		cfg.dkgEnablingHeight = chainCfg.NeoXDKGBlock.Int64()
+	}
 	if chainCfg.NeoXAMEVBlock != nil {
 		cfg.antiMEVEnablingHeight = chainCfg.NeoXAMEVBlock.Int64()
 	}
@@ -1007,7 +1012,7 @@ func (c *DBFT) postBlock(h *types.Header) {
 		c.lastBlockExtra = h.Extra
 
 		// handle DKG
-		if c.lastIndex >= uint64(c.config.antiMEVEnablingHeight) {
+		if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
 			err := c.handleDKG(h)
 			if err != nil {
 				log.Error("handleDKG error", "height", num, "err", err)
