@@ -245,7 +245,7 @@ type DBFT struct {
 	shareDuration    uint64
 	round            uint64
 	consensusList    []common.Address
-	txRetryList      []*TxSendRetry
+	txWatchList      []*TxWatchRetry
 }
 
 // config represents Engine configuration.

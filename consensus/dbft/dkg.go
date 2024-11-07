@@ -20,12 +20,13 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-type TxSendRetry struct {
-	SendHeight   uint64
-	Method       string
-	Params       []interface{}
-	RetryTimes   int
-	RetrySuccess bool
+type TxWatchRetry struct {
+	SendHeight       uint64
+	EndHeight        uint64
+	TxHash           *common.Hash
+	Method           string
+	Params           []interface{}
+	ConfirmedSuccess bool
 }
 
 // handleDKG handles the transaction submission for DKG process.
@@ -91,6 +92,54 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		}
 	}
 
+	// Retry transaction sending if watch list is not empty
+	var retryList []*TxWatchRetry
+	if currentHeight > shareStartHeight+1 && currentHeight < c.targetHeight {
+		if len(c.txWatchList) > 0 {
+			for _, item := range c.txWatchList {
+				if currentHeight < item.EndHeight && !item.ConfirmedSuccess {
+					needRetry := false
+					// send failed, just resend and set txHash
+					if item.TxHash == nil {
+						needRetry = true
+					}
+
+					// send successfully, wait 3 blocks to check tx status
+					if item.TxHash != nil && currentHeight-item.SendHeight == 3 {
+						receipt, err := c.txAPI.GetTransactionReceipt(context.Background(), *item.TxHash)
+						if err != nil {
+							needRetry = true
+							log.Error("DKG get transaction receipt failed", "err", err, "txHash", item.TxHash)
+						}
+						if receipt["status"] != uint(1) {
+							needRetry = true
+							log.Error("DKG get transaction receipt status error", "txHash", item.TxHash, "status", receipt["status"])
+						}
+					}
+
+					var err error
+					if needRetry {
+						item.TxHash, err = c.sendTxToKeyManagement(item.Method, item.Params...)
+						if err != nil {
+							retryList = append(retryList, item)
+							log.Error("retry sending transaction failed", "currentHeight", currentHeight, "method", item.Method, "err", err)
+							continue
+						} else {
+							item.SendHeight = currentHeight
+							retryList = append(retryList, item)
+							log.Info("DKG retry transaction sent", "method", item.Method, "txHash", item.TxHash)
+						}
+					} else {
+						item.ConfirmedSuccess = true
+						log.Info("DKG get transaction receipt successfully", "method", item.Method, "txHash", item.TxHash)
+					}
+				}
+			}
+			// Only keep retry failed and not reach max retry times
+			c.txWatchList = retryList
+		}
+	}
+
 	// Send share and reshare tx when currentHeight == shareStartHeight+1
 	if currentHeight == shareStartHeight+1 {
 		state, err := c.chain.StateAt(h.Root)
@@ -128,10 +177,13 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			}
 			// Send reshare tx
 			txHash, err := c.reshare(rPvss, rMsgs)
+			txWatch := &TxWatchRetry{SendHeight: currentHeight, EndHeight: recoverStartHeight, Method: "reshare", Params: []interface{}{rPvss, rMsgs}}
 			if err != nil {
-				c.txRetryList = append(c.txRetryList, &TxSendRetry{SendHeight: currentHeight, Method: "reshare", Params: []interface{}{rPvss, rMsgs}})
+				c.txWatchList = append(c.txWatchList, txWatch)
 				reshareErr = fmt.Errorf("failed to send reshare transaction, err: %w", err)
 			} else {
+				txWatch.TxHash = txHash
+				c.txWatchList = append(c.txWatchList, txWatch)
 				log.Info("DKG reshare transaction sent", "txHash", txHash)
 			}
 		}
@@ -143,10 +195,13 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			}
 			// Send share tx
 			txHash, err := c.share(sPvss, sMsgs)
+			txWatch := &TxWatchRetry{SendHeight: currentHeight, EndHeight: recoverStartHeight, Method: "share", Params: []interface{}{sPvss, sMsgs}}
 			if err != nil {
-				c.txRetryList = append(c.txRetryList, &TxSendRetry{SendHeight: currentHeight, Method: "share", Params: []interface{}{sPvss, sMsgs}})
+				c.txWatchList = append(c.txWatchList, txWatch)
 				shareErr = fmt.Errorf("failed to send share transaction, err: %w", err)
 			} else {
+				txWatch.TxHash = txHash
+				c.txWatchList = append(c.txWatchList, txWatch)
 				log.Info("DKG share transaction sent", "txHash", txHash)
 			}
 		}
@@ -155,28 +210,6 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		}
 		if shareErr != nil {
 			return shareErr
-		}
-	}
-
-	// Retry transaction sending if retry list is not empty
-	var retryList []*TxSendRetry
-	if currentHeight > shareStartHeight+1 && currentHeight < c.targetHeight {
-		if len(c.txRetryList) > 0 {
-			for _, item := range c.txRetryList {
-				if item.RetryTimes < 3 && !item.RetrySuccess {
-					txHash, err := c.sendTxToKeyManagement(item.Method, item.Params...)
-					if err != nil {
-						item.RetryTimes++
-						retryList = append(retryList, item)
-						log.Error("retry sending transaction failed", "currentHeight", currentHeight, "method", item.Method, "err", err)
-						continue
-					}
-					item.RetrySuccess = true
-					log.Info("retry sending transaction successfully", "method", item.Method, "txHash", txHash)
-				}
-			}
-			// Only keep retry failed and not reach max retry times
-			c.txRetryList = retryList
 		}
 	}
 
@@ -276,10 +309,13 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 
 			// Send recover tx
 			txHash, err := c.recover(indexesNeedRecover, msgs)
+			txWatch := &TxWatchRetry{SendHeight: currentHeight, EndHeight: recoverStartHeight + 1 + c.shareDuration/2, Method: "recover", Params: []interface{}{indexesNeedRecover, msgs}}
 			if err != nil {
-				c.txRetryList = append(c.txRetryList, &TxSendRetry{SendHeight: currentHeight, Method: "recover", Params: []interface{}{indexesNeedRecover, msgs}})
+				c.txWatchList = append(c.txWatchList, txWatch)
 				return fmt.Errorf("failed to send recover transaction: %w", err)
 			}
+			txWatch.TxHash = txHash
+			c.txWatchList = append(c.txWatchList, txWatch)
 			log.Info("DKG recover transaction sent", "txHash", txHash)
 		}
 	}
@@ -324,13 +360,15 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 				}
 				// Send reshareRecovered tx
 				txHash, err := c.reshareRecovered(pvss, msgs)
+				txWatch := &TxWatchRetry{SendHeight: currentHeight, EndHeight: c.targetHeight, Method: "reshareRecovered", Params: []interface{}{pvss, msgs}}
 				if err != nil {
-					c.txRetryList = append(c.txRetryList, &TxSendRetry{SendHeight: currentHeight, Method: "reshareRecovered", Params: []interface{}{pvss, msgs}})
+					c.txWatchList = append(c.txWatchList, txWatch)
 					return fmt.Errorf("failed to send reshareRecovered transaction: %w", err)
 				}
+				txWatch.TxHash = txHash
+				c.txWatchList = append(c.txWatchList, txWatch)
 				log.Info("reshareRecovered transaction sent", "txHash", txHash)
 			}
-
 		}
 	}
 
