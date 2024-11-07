@@ -832,43 +832,47 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				}
 
 				var (
-					j         int
-					txx       = make([]*types.Transaction, len(pre.transactions))
-					parent    = c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
-					localPool = c.newLocalPool(parent)
+					j                  int
+					txx                = make([]*types.Transaction, len(pre.transactions))
+					parent             = c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
+					localPool          = c.newLocalPool(parent)
+					fallbackToEnvelope = func(i int, incrementJ bool, reason string) bool {
+						if len(reason) != 0 {
+							log.Info("Falling back to envelope",
+								"envelope hash", pre.transactions[i].Hash(),
+								"envelope index", i,
+								"reason", reason)
+						}
+						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
+						if errs[0] != nil {
+							log.Info("Falling back to original set of transactions",
+								"envelope hash", pre.transactions[i].Hash(),
+								"envelope index", i,
+								"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
+							txx = pre.transactions
+							hasDecryptedTxs = false
+							return false
+						}
+						txx[i] = pre.transactions[i]
+						if incrementJ {
+							j++
+						}
+						return true
+					}
 				)
 				for i := range pre.transactions {
-					if j >= len(pre.envelopesData) || pre.envelopesData[j].index != i { // pre.transactions[i] is not an envelope, use it as-is.
-						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
-						if errs[0] != nil {
-							log.Info("Envelope verification failed, fallback to original set of transactions",
-								"envelope hash", pre.transactions[i].Hash(),
-								"envelope index", i,
-								"error", errs[0].Error())
-							txx = pre.transactions
-							hasDecryptedTxs = false
+					var isEnvelope = j < len(pre.envelopesData) && pre.envelopesData[j].index == i
+					if !isEnvelope || // pre.transactions[i] is not an envelope, use it as-is.
+						decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
+						var reason string
+						if isEnvelope {
+							reason = "envelope data decryption failed"
+						}
+						if fallbackToEnvelope(i, isEnvelope, reason) {
+							continue
+						} else {
 							break
 						}
-						txx[i] = pre.transactions[i]
-						continue
-					}
-					if decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
-						log.Info("Envelope data decryption failed, fallback to envelope",
-							"envelope hash", pre.transactions[i].Hash(),
-							"envelope index", i)
-						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
-						if errs[0] != nil {
-							log.Info("Envelope verification failed, fallback to original set of transactions",
-								"envelope hash", pre.transactions[i].Hash(),
-								"envelope index", i,
-								"error", errs[0].Error())
-							txx = pre.transactions
-							hasDecryptedTxs = false
-							break
-						}
-						txx[i] = pre.transactions[i]
-						j++
-						continue
 					}
 					log.Info("Envelope data decrypted",
 						"envelope hash", pre.transactions[i].Hash(),
@@ -877,66 +881,27 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 					var decryptedTx = new(types.Transaction)
 					err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
 					if err != nil {
-						log.Info("Decrypted transaction decoding failed, fallback to envelope",
-							"envelope hash", pre.transactions[i].Hash(),
-							"envelope index", i,
-							"decrypted data", hex.EncodeToString(decryptedTxsBytes[j]),
-							"error", err.Error())
-						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
-						if errs[0] != nil {
-							log.Info("Envelope verification failed, fallback to original set of transactions",
-								"envelope hash", pre.transactions[i].Hash(),
-								"envelope index", i,
-								"error", errs[0].Error())
-							txx = pre.transactions
-							hasDecryptedTxs = false
+						if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction decoding failed: %s", err)) {
+							continue
+						} else {
 							break
 						}
-						txx[i] = pre.transactions[i]
-						j++
-						continue
 					}
 					err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i])
 					if err != nil {
-						log.Info("Decrypted transaction is invalid, fallback to envelope",
-							"envelope hash", pre.transactions[i].Hash(),
-							"envelope index", i,
-							"data", hex.EncodeToString(decryptedTxsBytes[j]),
-							"error", err.Error())
-						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
-						if errs[0] != nil {
-							log.Info("Envelope verification failed, fallback to original set of transactions",
-								"envelope hash", pre.transactions[i].Hash(),
-								"envelope index", i,
-								"error", errs[0].Error())
-							txx = pre.transactions
-							hasDecryptedTxs = false
+						if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction verification failed: %s", err)) {
+							continue
+						} else {
 							break
 						}
-						txx[i] = pre.transactions[i]
-						j++
-						continue
 					}
 					errs := localPool.Add([]*types.Transaction{decryptedTx}, false, false)
 					if errs[0] != nil {
-						log.Info("Decrypted transaction verification failed, fallback to envelope",
-							"envelope hash", pre.transactions[i].Hash(),
-							"envelope index", i,
-							"data", hex.EncodeToString(decryptedTxsBytes[j]),
-							"error", errs[0].Error())
-						errs = localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
-						if errs[0] != nil {
-							log.Info("Envelope verification failed, fallback to original set of transactions",
-								"envelope hash", pre.transactions[i].Hash(),
-								"envelope index", i,
-								"error", errs[0].Error())
-							txx = pre.transactions
-							hasDecryptedTxs = false
+						if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction has pool conflicts: %s", errs[0].Error())) {
+							continue
+						} else {
 							break
 						}
-						txx[i] = pre.transactions[i]
-						j++
-						continue
 					}
 					txx[i] = decryptedTx
 					j++
