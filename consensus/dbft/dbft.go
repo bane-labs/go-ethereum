@@ -41,6 +41,8 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
+	"github.com/ethereum/go-ethereum/core/txpool"
+	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
@@ -223,10 +225,21 @@ type DBFT struct {
 	sealingProposal     *types.Header
 	sealingTransactions types.Transactions
 
+	// sealingState, sealingBlock and sealingReceipts are Primary-only set of fields got
+	// after sealingProposal construction and processing. These fields are not protected
+	// by mutex since every access point is controlled by eventLoop. These fields must
+	// not be accessed if the node is a backup.
+	sealingState    *state.StateDB
+	sealingBlock    *types.Block
+	sealingReceipts types.Receipts
+
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
-	chain      ChainHeaderReader
-	txpool     txPool
-	legacypool legacyPool
+	chain  ChainHeaderReader
+	txpool txPool
+
+	// signerConfig is a types.Signer used to retrieve transactions signer
+	// irrespectively of the chain's height.
+	signerConfig types.Signer
 
 	quit     chan struct{}
 	finished chan struct{}
@@ -277,6 +290,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		messages:        make(chan Payload, msgsChCap),
 		txs:             make(chan *types.Transaction, txSubCap),
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
+		signerConfig:    types.LatestSigner(chainCfg),
 
 		quit:     make(chan struct{}),
 		finished: make(chan struct{}),
@@ -393,39 +407,34 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				return res
 			}
 			pre := ctx.PreBlock().(*PreBlock)
-			// Recalculate Block state based on PreBlock and updated transactions list.
-			// Avoid changing the original PreHeader.
-			b := &PreBlock{
+
+			// Short path if we're primary and there's no Envelopes in the block:
+			// reuse state got after PrepareRequest construction.
+			if ctx.PrimaryIndex == uint(ctx.MyIndex) && pre.finalState == nil {
+				return &Block{
+					header:              c.sealingBlock.Header(),
+					withdrawals:         c.sealingBlock.Withdrawals(),
+					transactions:        c.sealingBlock.Transactions(),
+					localSignatureBytes: nil,
+					state:               c.sealingState,
+					receipts:            c.sealingReceipts,
+				}
+			}
+
+			// Manually update header's fields based on fresh state. Avoid changing
+			// the original PreBlock.
+			finalBlock := &PreBlock{
 				header:       pre.header,
 				transactions: pre.finalTransactions,
 				withdrawals:  pre.withdrawals,
 			}
-			ethBlock := b.ToEthBlock()
-			state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
-			if err != nil {
-				log.Crit("failed to process final Block state from PreBlock",
-					"err", err,
-					"number", ethBlock.NumberU64(),
-					"seal hash", c.SealHash(ethBlock.Header()),
-					"parent hash", ethBlock.ParentHash().String(),
-					"intermediate merkle root", ethBlock.Root(),
-					"coinbase", ethBlock.Coinbase().String(),
-					"gas limit", ethBlock.GasLimit(),
-					"gas used", ethBlock.GasUsed(),
-					"difficulty", ethBlock.Difficulty().String(),
-					"mix digest", ethBlock.MixDigest().String(),
-					"nonce", ethBlock.Nonce(),
-					"time", ethBlock.Time(),
-					"uncle hash", ethBlock.UncleHash().String(),
-					"txs", len(ethBlock.Transactions()))
-			}
-			// Manually update header's fields based on fresh state.
+			ethBlock := finalBlock.ToEthBlock()
 			h := ethBlock.Header()
-			h.GasUsed = gasUsed
+			h.GasUsed = pre.finalGASUsed
 
 			// Use a copy of state to avoid changing block's state. The original state will be reused
 			// during block insertion into chain.
-			nextVals, err := c.getValidators(nil, state.Copy(), h)
+			nextVals, err := c.getValidators(nil, pre.finalState.Copy(), h)
 			if err != nil {
 				log.Crit("Failed to compute next block validators while constructing final Block",
 					"err", err)
@@ -433,7 +442,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
 
 			// Update state root, transactions root, receipts hash and bloom.
-			res, err := c.FinalizeAndAssemble(c.chain, h, state, pre.finalTransactions, nil, receipts, ethBlock.Withdrawals())
+			res, err := c.FinalizeAndAssemble(c.chain, h, pre.finalState, pre.finalTransactions, nil, pre.finalReceipts, ethBlock.Withdrawals())
 			if err != nil {
 				log.Crit("Failed to finalize and assemble final Block",
 					"err", err)
@@ -444,8 +453,8 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				withdrawals:         res.Withdrawals(),
 				transactions:        res.Transactions(),
 				localSignatureBytes: nil,
-				state:               state,
-				receipts:            receipts,
+				state:               pre.finalState,
+				receipts:            pre.finalReceipts,
 			}
 		}),
 		dbft.WithWatchOnly[common.Hash](func() bool {
@@ -510,7 +519,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			dbftBlock.transactions = c.sealingTransactions
 			ethBlock := dbftBlock.ToEthBlock()
 
-			state, _, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
+			state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
 			if err != nil {
 				log.Crit("failed to process state from proposal",
 					"err", err,
@@ -531,17 +540,26 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 
 			header := ethBlock.Header()
 			header.GasUsed = gasUsed
-			header.Root = state.IntermediateRoot(c.chain.Config().IsEIP158(header.Number))
-
-			c.sealingProposal = header
 
 			// Fill NextConsensus based on the currently accepting block state and update MixDigest.
-			nextVals, err := c.getValidators(nil, state, c.sealingProposal)
+			nextVals, err := c.getValidators(nil, state.Copy(), header)
 			if err != nil {
 				log.Crit("Failed to compute next block validators",
 					"err", err)
 			}
-			c.sealingProposal.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
+			header.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
+
+			// Update state root, transactions root, receipts hash and bloom.
+			res, err := c.FinalizeAndAssemble(c.chain, header, state, dbftBlock.transactions, nil, receipts, ethBlock.Withdrawals())
+			if err != nil {
+				log.Crit("Failed to finalize and assemble proposed block",
+					"err", err)
+			}
+
+			c.sealingProposal = res.Header()
+			c.sealingState = state
+			c.sealingBlock = res
+			c.sealingReceipts = receipts
 
 			req.SealingProposal = c.sealingProposal
 			req.ParentSealHash = c.lastBlockSealHash
@@ -667,12 +685,33 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				return false
 			}
 			ethBlock := dbftBlock.ToEthBlock()
-			_, _, err := c.chain.VerifyBlock(ethBlock, false)
+
+			localPool := c.newLocalPool(parent)
+			errs := localPool.Add(dbftBlock.transactions, false, false)
+			for i, err := range errs {
+				if err != nil {
+					log.Warn("proposed PreBlock has invalid transaction",
+						"index", i,
+						"hash", dbftBlock.transactions[i].Hash(),
+						"error", err,
+					)
+					return false
+				}
+			}
+
+			state, receipts, gasUsed, err := c.chain.VerifyBlock(ethBlock, true)
 			if err != nil {
 				log.Warn("proposed PreBlock verification failed",
 					"err", err.Error())
 				return false
 			}
+
+			// Cache processing result for further usage in case if there's no envelopes
+			// in the block.
+			pre := b.(*PreBlock)
+			pre.finalState = state
+			pre.finalReceipts = receipts
+			pre.finalGASUsed = gasUsed
 
 			return true
 		}),
@@ -694,7 +733,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				}
 
 				ethBlock := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
-				state, receipts, err := c.chain.VerifyBlock(ethBlock, true)
+				state, receipts, _, err := c.chain.VerifyBlock(ethBlock, true)
 				if err != nil {
 					log.Warn("proposed block verification failed",
 						"err", err.Error())
@@ -754,85 +793,161 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		}),
 		dbft.WithProcessPreBlock(func(b dbft.PreBlock[common.Hash]) error {
 			var (
-				ctx = c.dbft.Context
-				pre = ctx.PreBlock().(*PreBlock)
+				ctx             = c.dbft.Context
+				pre             = b.(*PreBlock)
+				hasDecryptedTxs bool
 			)
 			// A short path: there's no envelopes at all, use proposed transactions as-is.
 			if len(pre.envelopesData) == 0 {
 				pre.finalTransactions = pre.transactions
+			} else {
+				shares := make(map[int][]*tpke.DecryptionShare)
+				for _, preC := range ctx.PreCommitPayloads {
+					if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
+						// Indexes in shares map must start with 1, thus increment validator's index.
+						shares[int(preC.ValidatorIndex())+1] = preC.GetPreCommit().(*preCommit).Shares()
+					}
+				}
+				var (
+					encryptedKeys = make([]*tpke.CipherText, len(pre.envelopesData))
+					encryptedMsgs = make([][]byte, len(pre.envelopesData))
+				)
+				for i := range pre.envelopesData {
+					encryptedKeys[i] = pre.envelopesData[i].encryptedKey
+					encryptedMsgs[i] = pre.envelopesData[i].encryptedMsg
+				}
+				c.lock.RLock()
+				ks := c.amevKeystore
+				c.lock.RUnlock()
+
+				decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
+				if err != nil {
+					// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
+					return fmt.Errorf("failed to decrypt Encrypted transactions, not enough valid shares: %w", err)
+				}
+
+				if len(decryptedTxsBytes) != len(pre.envelopesData) {
+					// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
+					return fmt.Errorf("invalid number of Decrypted transactions: expected %d, actual %d", len(pre.envelopesData), len(decryptedTxsBytes))
+				}
+
+				var (
+					j                  int
+					txx                = make([]*types.Transaction, len(pre.transactions))
+					parent             = c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
+					localPool          = c.newLocalPool(parent)
+					fallbackToEnvelope = func(i int, incrementJ bool, reason string) bool {
+						if len(reason) != 0 {
+							log.Info("Falling back to envelope",
+								"envelope hash", pre.transactions[i].Hash(),
+								"envelope index", i,
+								"reason", reason)
+						}
+						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
+						if errs[0] != nil {
+							log.Info("Falling back to original set of transactions",
+								"envelope hash", pre.transactions[i].Hash(),
+								"envelope index", i,
+								"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
+							txx = pre.transactions
+							hasDecryptedTxs = false
+							return false
+						}
+						txx[i] = pre.transactions[i]
+						if incrementJ {
+							j++
+						}
+						return true
+					}
+				)
+				for i := range pre.transactions {
+					var isEnvelope = j < len(pre.envelopesData) && pre.envelopesData[j].index == i
+					if !isEnvelope || // pre.transactions[i] is not an envelope, use it as-is.
+						decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
+						var reason string
+						if isEnvelope {
+							reason = "envelope data decryption failed"
+						}
+						if fallbackToEnvelope(i, isEnvelope, reason) {
+							continue
+						} else {
+							break
+						}
+					}
+					log.Info("Envelope data decrypted",
+						"envelope hash", pre.transactions[i].Hash(),
+						"envelope index", i,
+						"data", hex.EncodeToString(decryptedTxsBytes[j]))
+					var decryptedTx = new(types.Transaction)
+					err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
+					if err != nil {
+						if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction decoding failed: %s", err)) {
+							continue
+						} else {
+							break
+						}
+					}
+					err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i])
+					if err != nil {
+						if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction verification failed: %s", err)) {
+							continue
+						} else {
+							break
+						}
+					}
+					errs := localPool.Add([]*types.Transaction{decryptedTx}, false, false)
+					if errs[0] != nil {
+						if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction has pool conflicts: %s", errs[0].Error())) {
+							continue
+						} else {
+							break
+						}
+					}
+					txx[i] = decryptedTx
+					j++
+					hasDecryptedTxs = true
+				}
+				pre.finalTransactions = txx
+			}
+
+			// Use cached processing results if no new transactions were included into
+			// the block compared to the original proposal.
+			if !hasDecryptedTxs {
 				return nil
 			}
-			shares := make(map[int][]*tpke.DecryptionShare)
-			for _, preC := range ctx.PreCommitPayloads {
-				if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
-					// Indexes in shares map must start with 1, thus increment validator's index.
-					shares[int(preC.ValidatorIndex())+1] = preC.GetPreCommit().(*preCommit).Shares()
-				}
-			}
-			var (
-				encryptedKeys = make([]*tpke.CipherText, len(pre.envelopesData))
-				encryptedMsgs = make([][]byte, len(pre.envelopesData))
-			)
-			for i := range pre.envelopesData {
-				encryptedKeys[i] = pre.envelopesData[i].encryptedKey
-				encryptedMsgs[i] = pre.envelopesData[i].encryptedMsg
-			}
-			c.lock.RLock()
-			ks := c.amevKeystore
-			c.lock.RUnlock()
 
-			decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
+			// Process state with constructed list of transactions to fill state-dependent
+			// block fields.
+			finalBlock := &PreBlock{
+				header:       pre.header,
+				transactions: pre.finalTransactions,
+				withdrawals:  pre.withdrawals,
+			}
+			ethBlock := finalBlock.ToEthBlock()
+			state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
 			if err != nil {
-				// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
-				return fmt.Errorf("failed to decrypt Encrypted transactions, not enough valid shares: %w", err)
+				// Something went wrong, fallback to the original set of transactions and cached
+				// processing results.
+				log.Error("failed to process PreBlock, falling back to the original proposal",
+					"err", err,
+					"number", ethBlock.NumberU64(),
+					"seal hash", c.SealHash(ethBlock.Header()),
+					"parent hash", ethBlock.ParentHash().String(),
+					"intermediate merkle root", ethBlock.Root(),
+					"coinbase", ethBlock.Coinbase().String(),
+					"gas limit", ethBlock.GasLimit(),
+					"gas used", ethBlock.GasUsed(),
+					"difficulty", ethBlock.Difficulty().String(),
+					"mix digest", ethBlock.MixDigest().String(),
+					"nonce", ethBlock.Nonce(),
+					"time", ethBlock.Time(),
+					"uncle hash", ethBlock.UncleHash().String(),
+					"txs", len(ethBlock.Transactions()))
+				pre.finalTransactions = pre.transactions
+				return nil
 			}
 
-			if len(decryptedTxsBytes) != len(pre.envelopesData) {
-				// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
-				return fmt.Errorf("invalid number of Decrypted transactions: expected %d, actual %d", len(pre.envelopesData), len(decryptedTxsBytes))
-			}
-			var (
-				txx = make([]*types.Transaction, len(pre.transactions))
-				j   int
-			)
-			for i := range pre.transactions {
-				if pre.envelopesData[j].index != i || // pre.transactions[i] is not an envelope, use it as-is.
-					decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
-					txx[i] = pre.transactions[i]
-					continue
-				}
-				log.Info("Envelope data decrypted",
-					"envelope hash", pre.transactions[i].Hash(),
-					"envelope index", i,
-					"data", hex.EncodeToString(decryptedTxsBytes[j]))
-				var decryptedTx = new(types.Transaction)
-				err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
-				if err != nil {
-					log.Info("Decrypted transaction decoding failed",
-						"envelope hash", pre.transactions[i].Hash(),
-						"envelope index", i,
-						"data", hex.EncodeToString(decryptedTxsBytes[j]),
-						"error", err.Error())
-					txx[i] = pre.transactions[i]
-					j++
-					continue
-				}
-				err = c.legacypool.ValidateDecryptedTx(decryptedTx, pre.transactions[i])
-				if err != nil {
-					txx[i] = pre.transactions[i]
-					log.Info("Decrypted transaction is invalid",
-						"envelope hash", pre.transactions[i].Hash(),
-						"envelope index", i,
-						"data", hex.EncodeToString(decryptedTxsBytes[j]),
-						"error", err.Error())
-					j++
-					continue
-				}
-				txx[i] = decryptedTx
-				j++
-				continue
-			}
-			pre.finalTransactions = txx
+			pre.finalState, pre.finalReceipts, pre.finalGASUsed = state, receipts, gasUsed
 			return nil
 		}),
 	)
@@ -841,6 +956,54 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	}
 
 	return c, nil
+}
+
+// newLocalPool returns an initialized instance of LegacyPool with default config
+// except that locals are prohibited and journal is not stored.
+func (c *DBFT) newLocalPool(parent *types.Header) *legacypool.LegacyPool {
+	p := legacypool.New(legacypool.Config{
+		Locals:                  nil,
+		NoLocals:                true,
+		Journal:                 "",
+		Rejournal:               legacypool.DefaultConfig.Rejournal,
+		PriceLimit:              legacypool.DefaultConfig.PriceLimit,
+		PriceBump:               legacypool.DefaultConfig.PriceBump,
+		AccountSlots:            legacypool.DefaultConfig.AccountSlots,
+		GlobalSlots:             legacypool.DefaultConfig.GlobalSlots,
+		AccountQueue:            legacypool.DefaultConfig.AccountQueue,
+		GlobalQueue:             legacypool.DefaultConfig.GlobalQueue,
+		Lifetime:                legacypool.DefaultConfig.Lifetime,
+		ReannounceTimeThreshold: legacypool.DefaultConfig.ReannounceTimeThreshold,
+		ReannounceRemotes:       false,
+	}, c.chain)
+	p.Init(legacypool.DefaultConfig.PriceLimit, parent, func(addr common.Address, reserve bool) error { return nil })
+
+	return p
+}
+
+// ValidateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
+func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transaction, envelope *types.Transaction) error {
+	// Make sure the transaction is signed properly and has the same sender and nonce with envelope
+	if decryptedTx.Nonce() != envelope.Nonce() {
+		return fmt.Errorf("decryptedTx nonce mismatch: decryptedNonce %v, envelopeNonce %v", decryptedTx.Nonce(), envelope.Nonce())
+	}
+	// Ensure the gasprice is high enough to replace the envelope transaction
+	baseFee := head.BaseFee
+	if decryptedTx.EffectiveGasTipCmp(envelope, baseFee) < 0 {
+		return fmt.Errorf("decryptedTx underpriced: EffectiveGasTip needed %v, EffectiveGasTip permitted %v", envelope.EffectiveGasTipValue(baseFee), decryptedTx.EffectiveGasTipValue(baseFee))
+	}
+	envelopeFrom, err := types.Sender(c.signerConfig, envelope)
+	if err != nil {
+		return fmt.Errorf("%w: failed to retrieve envelope sender: %w", txpool.ErrInvalidSender, err)
+	}
+	decryptedFrom, err := types.Sender(c.signerConfig, decryptedTx)
+	if err != nil {
+		return fmt.Errorf("%w: failed to retrieve decrypted transaction sender: %w", txpool.ErrInvalidSender, err)
+	}
+	if envelopeFrom != decryptedFrom {
+		return fmt.Errorf("decryptedTx from mismatch: decryptedFrom %v, envelopeFrom %v", decryptedFrom, envelopeFrom)
+	}
+	return nil
 }
 
 // newPreBlockFromContext is a dBFT callback that builds [PreBlock] from the provided dBFT proposal
@@ -973,11 +1136,6 @@ events:
 // (fetching unknown transactions).
 func (c *DBFT) WithTxPool(pool txPool) {
 	c.txpool = pool
-}
-
-// WithLegacyPool initializes transaction legacy pool API for ValidateDecryptedTx
-func (c *DBFT) WithLegacyPool(pool legacyPool) {
-	c.legacypool = pool
 }
 
 // postBlock is a callback that updates latest accepted block data and resets

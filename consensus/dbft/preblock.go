@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
 	"github.com/nspcc-dev/dbft"
@@ -23,10 +24,16 @@ type PreBlock struct {
 	// envelopesData is the ordered list of decoded content of Envelopes
 	// transactions of the proposed PreBlock.
 	envelopesData []envelopeData
+
 	// finalTransactions is the cached final list of transactions formed after TPKE
 	// decryption of Envelopes content. This list includes both simple standard and
 	// decrypted transactions.
 	finalTransactions []*types.Transaction
+	// final* fields below represent information got after finalTransactions
+	// processing.
+	finalState    *state.StateDB
+	finalGASUsed  uint64
+	finalReceipts []*types.Receipt
 }
 
 // Data implements [dbft.PreBlock] interface.

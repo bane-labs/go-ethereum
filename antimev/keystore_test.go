@@ -13,8 +13,12 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 )
 
-var size = 7
-var threshold = 5
+// 7-CN privnet related constants.
+const (
+	size      = 7
+	threshold = 5
+	magic     = 2312251829
+)
 
 // account is a structure combining CN node address and its password in the privnet setup.
 type account struct {
@@ -22,34 +26,45 @@ type account struct {
 	pwd  string
 }
 
-// Here use the same address list as the seven-node privnet.
-// Ref https://github.com/bane-labs/go-ethereum/tree/bane-main/privnet/seven.
-var accounts = []account{
-	{
-		common.HexToAddress("0x74f4effb0b538baec703346b03b6d9292f53a4cd"),
-		"fBfgE23FfqSVZRCGzFZbFvqabF3Ewvcg",
-	}, {
-		common.HexToAddress("0x910ad1641b7125eff746accdca1f11148b22f472"),
-		"2fGwcFf14fVVZTRDqcFqCtSA4FDTXqXz",
-	}, {
-		common.HexToAddress("0xfef5f250af14df73f983caab7b1f5002189c42e0"),
-		"RWDCWc3DqvRaf3vbqtzdRqQXfVqFcDw5",
-	}, {
-		common.HexToAddress("0xc51964013acbc6b271feecb0febd9e7a01202930"),
-		"2xDvRCASaqCQs5e4cD2fAcScCaBxX3Zv",
-	}, {
-		common.HexToAddress("0xc5bbd9652546bc96be3dec97a38ee335f7873dfa"),
-		"r3Sc25F54rzDdgC5VtBCzWcZwsAvEa5g",
-	}, {
-		common.HexToAddress("0x26f1794b81df2b832545b8b6bbca196b82e4feb1"),
-		"4vaT1GgAVbDGZeVarCC2AVR55rxarcsa",
-	}, {
-		common.HexToAddress("0x0b51369d02e47ee3f143391b837aa08c31aaa19b"),
-		"VxwXgET3VF1d453rvCazQVDAwBraCqsq",
-	}, {
-		common.HexToAddress("0x1f013ef87a88b3a77a405efba90c20ab0c2cb91a"),
-		"gvZCas2wF3gScsGV3we1acAaG2dEqq5d",
-	},
+var (
+	// accounts is a list of the seven-node privnet CN addresses/passwords sorted by
+	// the order of CN nodes from CN1 to CN7. Do not modify this list in tests; make
+	// a copy if modification is needed since some tests rely on the order of accounts.
+	// Ref. https://github.com/bane-labs/go-ethereum/tree/bane-main/privnet/seven.
+	accounts = []account{
+		{
+			common.HexToAddress("0x74f4effb0b538baec703346b03b6d9292f53a4cd"),
+			"fBfgE23FfqSVZRCGzFZbFvqabF3Ewvcg",
+		}, {
+			common.HexToAddress("0x910ad1641b7125eff746accdca1f11148b22f472"),
+			"2fGwcFf14fVVZTRDqcFqCtSA4FDTXqXz",
+		}, {
+			common.HexToAddress("0xfef5f250af14df73f983caab7b1f5002189c42e0"),
+			"RWDCWc3DqvRaf3vbqtzdRqQXfVqFcDw5",
+		}, {
+			common.HexToAddress("0xc51964013acbc6b271feecb0febd9e7a01202930"),
+			"2xDvRCASaqCQs5e4cD2fAcScCaBxX3Zv",
+		}, {
+			common.HexToAddress("0xc5bbd9652546bc96be3dec97a38ee335f7873dfa"),
+			"r3Sc25F54rzDdgC5VtBCzWcZwsAvEa5g",
+		}, {
+			common.HexToAddress("0x26f1794b81df2b832545b8b6bbca196b82e4feb1"),
+			"4vaT1GgAVbDGZeVarCC2AVR55rxarcsa",
+		}, {
+			common.HexToAddress("0x0b51369d02e47ee3f143391b837aa08c31aaa19b"),
+			"VxwXgET3VF1d453rvCazQVDAwBraCqsq",
+		},
+	}
+	// accountsSorted is a list of seven-node privnet CN addresses/passwords sorted by
+	// addresses. Do not modify this list in tests, make a copy if needed.
+	accountsSorted []account
+)
+
+func init() {
+	accountsSorted = slices.Clone(accounts)
+	slices.SortFunc(accountsSorted, func(a, b account) int {
+		return common.Address.Cmp(a.addr, b.addr)
+	})
 }
 
 type MockContractStorage struct {
@@ -65,17 +80,14 @@ func TestDKG(t *testing.T) {
 	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	cns := accounts[:size]
-	slices.SortFunc(cns, func(a, b account) int {
-		return common.Address.Cmp(a.addr, b.addr)
-	})
+	cns := slices.Clone(accountsSorted)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(accounts[i].addr, key, size, threshold, accounts[i].pwd)
+		err := ks.Init(cns[i].addr, key, size, threshold, cns[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -126,17 +138,14 @@ func TestReshare(t *testing.T) {
 	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	cns := accounts[:size]
-	slices.SortFunc(cns, func(a, b account) int {
-		return common.Address.Cmp(a.addr, b.addr)
-	})
+	cns := slices.Clone(accountsSorted)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(accounts[i].addr, key, size, threshold, accounts[i].pwd)
+		err := ks.Init(cns[i].addr, key, size, threshold, cns[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}

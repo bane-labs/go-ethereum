@@ -30,17 +30,14 @@ func TestThresholdSignature(t *testing.T) {
 	random := rand.New(source)
 	dir := t.TempDir()
 
-	cns := accounts[:size]
-	slices.SortFunc(cns, func(a, b account) int {
-		return common.Address.Cmp(a.addr, b.addr)
-	})
+	cns := slices.Clone(accountsSorted)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
 		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
 		pubs[i] = &key.PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(accounts[i].addr, key, size, threshold, accounts[i].pwd)
+		err := ks.Init(cns[i].addr, key, size, threshold, cns[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
