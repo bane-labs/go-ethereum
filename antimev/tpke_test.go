@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"math/rand"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 
@@ -19,21 +18,17 @@ import (
 )
 
 func TestTPKE(t *testing.T) {
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	cns := accounts[:size]
-	slices.SortFunc(cns, func(a, b account) int {
-		return common.Address.Cmp(a.addr, b.addr)
-	})
+	addrs := make([]common.Address, size)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+		addrs[i] = accounts[i].addr
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(accounts[i].addr, key, size, threshold, accounts[i].pwd)
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -44,13 +39,9 @@ func TestTPKE(t *testing.T) {
 		shareMsgs:   make([][][]byte, size),
 		sharePVSSes: make([][]byte, size),
 	}
-	valList := make([]common.Address, size)
-	for i := range cns {
-		valList[i] = cns[i].addr
-	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnValidatorList(addrs, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -135,21 +126,17 @@ func TestBenchmark(t *testing.T) {
 	size := 7
 	threshold := 5
 
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	cns := accounts[:size]
-	slices.SortFunc(cns, func(a, b account) int {
-		return common.Address.Cmp(a.addr, b.addr)
-	})
+	addrs := make([]common.Address, size)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+		addrs[i] = accounts[i].addr
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(accounts[i].addr, key, size, threshold, accounts[i].pwd)
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -160,13 +147,9 @@ func TestBenchmark(t *testing.T) {
 		shareMsgs:   make([][][]byte, size),
 		sharePVSSes: make([][]byte, size),
 	}
-	valList := make([]common.Address, size)
-	for i := range cns {
-		valList[i] = cns[i].addr
-	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnValidatorList(addrs, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}

@@ -4,11 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"math/rand"
 	"path/filepath"
-	"slices"
 	"testing"
-	"time"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
@@ -23,8 +20,9 @@ var threshold = 5
 
 // account is a structure combining CN node address and its password in the privnet setup.
 type account struct {
-	addr common.Address
-	pwd  string
+	addr       common.Address
+	pwd        string
+	msgPrivKey string
 }
 
 // Here use the same address list as the seven-node privnet.
@@ -33,27 +31,35 @@ var accounts = []account{
 	{
 		common.HexToAddress("0x74f4effb0b538baec703346b03b6d9292f53a4cd"),
 		"fBfgE23FfqSVZRCGzFZbFvqabF3Ewvcg",
+		"0d0244862b62f2f4d6c2202b296e8cc84acd2921407c4a4e2b8ad341ddf12a8b",
 	}, {
 		common.HexToAddress("0x910ad1641b7125eff746accdca1f11148b22f472"),
 		"2fGwcFf14fVVZTRDqcFqCtSA4FDTXqXz",
+		"da124526518be708571dfc2af60bc16cce56ba679b867069eace340a5caf8ddd",
 	}, {
 		common.HexToAddress("0xfef5f250af14df73f983caab7b1f5002189c42e0"),
 		"RWDCWc3DqvRaf3vbqtzdRqQXfVqFcDw5",
+		"3689920e1b1eb9709539aa7d1504b8593e7d6e0ccc9b6947bdc8d824b3eeeba3",
 	}, {
 		common.HexToAddress("0xc51964013acbc6b271feecb0febd9e7a01202930"),
 		"2xDvRCASaqCQs5e4cD2fAcScCaBxX3Zv",
+		"4cec022d6349c8236db7dac14c854d8c60ed6574ae2705e6b22830afeb480dc5",
 	}, {
 		common.HexToAddress("0xc5bbd9652546bc96be3dec97a38ee335f7873dfa"),
 		"r3Sc25F54rzDdgC5VtBCzWcZwsAvEa5g",
+		"934ec9b8674064112fc39d5123c7f16907e901c07c1f7216ede96f0369bfcb4a",
 	}, {
 		common.HexToAddress("0x26f1794b81df2b832545b8b6bbca196b82e4feb1"),
 		"4vaT1GgAVbDGZeVarCC2AVR55rxarcsa",
+		"f853f01aba25bc1374d79e37cc41e3e914102695bed90ee50eea3c0ed557e52d",
 	}, {
 		common.HexToAddress("0x0b51369d02e47ee3f143391b837aa08c31aaa19b"),
 		"VxwXgET3VF1d453rvCazQVDAwBraCqsq",
+		"63e8d515b467d512dfaf3b25634a6d68cd666955dbd7f260cb3a817f67ae51ac",
 	}, {
 		common.HexToAddress("0x1f013ef87a88b3a77a405efba90c20ab0c2cb91a"),
 		"gvZCas2wF3gScsGV3we1acAaG2dEqq5d",
+		"71abf6553a0edf00d2beba93d7c711a88067a84b7d387ccb349e185f4d9ce9c4",
 	},
 }
 
@@ -66,21 +72,17 @@ type MockContractStorage struct {
 }
 
 func TestShare(t *testing.T) {
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	cns := accounts[:size]
-	slices.SortFunc(cns, func(a, b account) int {
-		return common.Address.Cmp(a.addr, b.addr)
-	})
+	addrs := make([]common.Address, size)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+		addrs[i] = accounts[i].addr
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(accounts[i].addr, key, size, threshold, accounts[i].pwd)
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -91,13 +93,9 @@ func TestShare(t *testing.T) {
 		shareMsgs:   make([][][]byte, size),
 		sharePVSSes: make([][]byte, size),
 	}
-	valList := make([]common.Address, size)
-	for i := range cns {
-		valList[i] = cns[i].addr
-	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnValidatorList(addrs, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -140,21 +138,17 @@ func TestShare(t *testing.T) {
 }
 
 func TestReshare(t *testing.T) {
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	cns := accounts[:size]
-	slices.SortFunc(cns, func(a, b account) int {
-		return common.Address.Cmp(a.addr, b.addr)
-	})
+	addrs := make([]common.Address, size)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+		addrs[i] = accounts[i].addr
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(accounts[i].addr, key, size, threshold, accounts[i].pwd)
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -167,13 +161,9 @@ func TestReshare(t *testing.T) {
 		shareMsgs:     make([][][]byte, size),
 		sharePVSSes:   make([][]byte, size),
 	}
-	valList := make([]common.Address, size)
-	for i := range cns {
-		valList[i] = cns[i].addr
-	}
 	for i := 0; i < size; i++ {
 		// No resharing to handle
-		err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnValidatorList(addrs, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -215,7 +205,7 @@ func TestReshare(t *testing.T) {
 	}
 	// Execute resharing this time
 	for i := 0; i < size; i++ {
-		err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnValidatorList(addrs, pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -268,31 +258,20 @@ func TestReshare(t *testing.T) {
 }
 
 func TestGroupChange(t *testing.T) {
-	// Add another address for group change
-	addrs := []common.Address{
-		common.HexToAddress("0xcbbeca26e89011e32ba25610520b20741b809007"),
-		common.HexToAddress("0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc"),
-		common.HexToAddress("0xd10f47396dc6c76ad53546158751582d3e2683ef"),
-		common.HexToAddress("0xa51fe05b0183d01607bf48c1718d1168a1c11171"),
-		common.HexToAddress("0x01b517b301bb143476da35bb4a1399500d925514"),
-		common.HexToAddress("0x7976ad987d572377d39fb4bab86c80e08b6f8327"),
-		common.HexToAddress("0xd711da2d8c71a801fc351163337656f1321343a0"),
-		common.HexToAddress("0xd94b88c9d92845256019ee3bd9b07a57ca067970"),
-	}
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	pubs := make([]*ecies.PublicKey, len(addrs))
-	kss := make([]*KeyStore, len(addrs))
-	for i := 0; i < len(addrs); i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+	pubs := make([]*ecies.PublicKey, len(accounts))
+	addrs := make([]common.Address, len(accounts))
+	kss := make([]*KeyStore, len(accounts))
+	for i := 0; i < len(accounts); i++ {
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(addrs[i], key, size, threshold, "pwd")
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
+		addrs[i] = accounts[i].addr
 		kss[i] = ks
 	}
 	// Ignore resharing and execute sharing
@@ -302,7 +281,7 @@ func TestGroupChange(t *testing.T) {
 		shareMsgs:     make([][][]byte, size),
 		sharePVSSes:   make([][]byte, size),
 	}
-	for i := 0; i < len(addrs); i++ {
+	for i := 0; i < len(accounts); i++ {
 		// No resharing to handle
 		err := kss[i].OnValidatorList(addrs[:size], pubs[:size])
 		if err != nil {
@@ -410,31 +389,20 @@ func TestGroupChange(t *testing.T) {
 }
 
 func TestRecover(t *testing.T) {
-	// Add another address for group change
-	addrs := []common.Address{
-		common.HexToAddress("0xcbbeca26e89011e32ba25610520b20741b809007"),
-		common.HexToAddress("0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc"),
-		common.HexToAddress("0xd10f47396dc6c76ad53546158751582d3e2683ef"),
-		common.HexToAddress("0xa51fe05b0183d01607bf48c1718d1168a1c11171"),
-		common.HexToAddress("0x01b517b301bb143476da35bb4a1399500d925514"),
-		common.HexToAddress("0x7976ad987d572377d39fb4bab86c80e08b6f8327"),
-		common.HexToAddress("0xd711da2d8c71a801fc351163337656f1321343a0"),
-		common.HexToAddress("0xd94b88c9d92845256019ee3bd9b07a57ca067970"),
-	}
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	pubs := make([]*ecies.PublicKey, len(addrs))
-	kss := make([]*KeyStore, len(addrs))
-	for i := 0; i < len(addrs); i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+	pubs := make([]*ecies.PublicKey, len(accounts))
+	addrs := make([]common.Address, len(accounts))
+	kss := make([]*KeyStore, len(accounts))
+	for i := 0; i < len(accounts); i++ {
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(addrs[i], key, size, threshold, "pwd")
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
+		addrs[i] = accounts[i].addr
 		kss[i] = ks
 	}
 	// Ignore resharing and execute sharing

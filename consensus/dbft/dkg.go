@@ -75,23 +75,6 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 	consensusSize := uint64(len(c.consensusList))
 	amevAddress := c.amevKeystore.Address()
 
-	// Send registerMessageKey at shareStartHeight-2, only for testing now
-	if currentHeight == shareStartHeight-2 {
-		state, err := c.chain.StateAt(h.Root)
-		if err != nil {
-			return fmt.Errorf("failed to call StateAt: %w", err)
-		}
-		_, err = c.messagePubkeys(&amevAddress, state, h)
-		if err != nil {
-			// Send registerMessageKey tx
-			txHash, err := c.registerMessageKey(amevAddress, c.amevKeystore.MessagePubKey())
-			if err != nil {
-				return fmt.Errorf("failed to send registerMessageKey transaction, err: %w", err)
-			}
-			log.Info("DKG registerMessageKey transaction sent", "txHash", txHash)
-		}
-	}
-
 	// Retry transaction sending if watch list is not empty
 	var retryList []*TxWatchRetry
 	if currentHeight > shareStartHeight+1 && currentHeight < c.targetHeight {
