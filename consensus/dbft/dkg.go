@@ -88,7 +88,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			if err != nil {
 				return fmt.Errorf("failed to send registerMessageKey transaction, err: %w", err)
 			}
-			log.Info("registerMessageKey transaction sent", "txHash", txHash)
+			log.Info("DKG registerMessageKey transaction sent", "txHash", txHash)
 		}
 	}
 
@@ -248,7 +248,6 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 				if err != nil {
 					return fmt.Errorf("failed to call amevKeystore.ReceiveSecretShare(), err: %w", err)
 				}
-				log.Info("DKG ReceiveSecretShare", "index", i, "from", pendingConsensusList[i-1], "spvss", hex.EncodeToString(spvss))
 				// Call ReceiveSecretReshare
 				rpvss, err := c.rpvsses(c.round, i, state, h)
 				if err != nil {
@@ -367,7 +366,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 				}
 				txWatch.TxHash = txHash
 				c.txWatchList = append(c.txWatchList, txWatch)
-				log.Info("reshareRecovered transaction sent", "txHash", txHash)
+				log.Info("DKG reshareRecovered transaction sent", "txHash", txHash)
 			}
 		}
 	}

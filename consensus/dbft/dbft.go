@@ -779,8 +779,12 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			shares := make(map[int][]*tpke.DecryptionShare)
 			for _, preC := range ctx.PreCommitPayloads {
 				if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
-					// Indexes in shares map must start with 1, thus increment validator's index.
-					shares[int(preC.ValidatorIndex())+1] = preC.GetPreCommit().(*preCommit).Shares()
+					dkgIndex, err := c.getDKGIndex(int(preC.ValidatorIndex()), pre.header.Number.Uint64())
+					if err != nil {
+						return fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", int(preC.ValidatorIndex()), pre.header.Number.Uint64())
+					}
+					// Indexes in shares map must use dkg index.
+					shares[dkgIndex] = preC.GetPreCommit().(*preCommit).Shares()
 				}
 			}
 			var (
@@ -1988,6 +1992,26 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 // sorted in another way). This method uses cached values in case of validators
 // requested by block height.
 func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	res, err := c.getOriginalValidators(blockNum, state, header)
+	if err != nil {
+		return nil, err
+	}
+
+	slices.SortFunc(res, common.Address.Cmp)
+	return res, err
+}
+
+func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
+	return blockNum%uint64(len(c.config.StandByValidators)) == 0
+}
+
+// getOriginalValidators returns validators chosen in the result of the latest
+// finalized voting epoch. It calls Governance contract under the hood. The call
+// is based on the provided state or (if not provided) on the state of the block
+// with the specified height. Validators returned from this method are not
+// sorted with original order from Governance contract. This method uses cached values in case of validators
+// requested by block height.
+func (c *DBFT) getOriginalValidators(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
 	if c.ethAPI == nil {
 		return nil, errors.New("eth blockchain API is not initialized, dBFT can't function properly")
 	}
@@ -2034,7 +2058,6 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 	if err != nil {
 		return nil, fmt.Errorf("failed to unpack validators: %w", err)
 	}
-	slices.SortFunc(res, common.Address.Cmp)
 
 	// Update cache in case if existing state was used for validators retrieval.
 	if state == nil && blockNum != nil {
@@ -2044,6 +2067,24 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 	return res, err
 }
 
-func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
-	return blockNum%uint64(len(c.config.StandByValidators)) == 0
+// getDKGIndex returns validator dkg index (original validator index +1) by validatorIndex (ordered validator index).
+func (c *DBFT) getDKGIndex(validatorIndex int, blockNum uint64) (int, error) {
+	originValidators, err := c.getOriginalValidators(&blockNum, nil, nil)
+	if err != nil {
+		return -1, err
+	}
+	if validatorIndex < 0 || validatorIndex >= len(originValidators) {
+		return -1, fmt.Errorf("invalid validator index: validators count is %d, requested %d", len(originValidators), validatorIndex)
+	}
+	orderedValidators := make([]common.Address, len(originValidators))
+	copy(orderedValidators, originValidators)
+	slices.SortFunc(orderedValidators, common.Address.Cmp)
+	addr := orderedValidators[validatorIndex]
+	for i := range originValidators {
+		if orderedValidators[i] == addr {
+			return i + 1, nil
+		}
+	}
+	// impossible case
+	return -1, nil
 }
