@@ -15,8 +15,12 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/tpke"
 )
 
-var size = 7
-var threshold = 5
+// 7-CN privnet related constants.
+const (
+	size      = 7
+	threshold = 5
+	magic     = 2312251829
+)
 
 // account is a structure combining CN node address and its password in the privnet setup.
 type account struct {
@@ -25,8 +29,10 @@ type account struct {
 	msgPrivKey string
 }
 
-// Here use the same address list as the seven-node privnet.
-// Ref https://github.com/bane-labs/go-ethereum/tree/bane-main/privnet/seven.
+// accounts is a list of the seven-node privnet CN addresses/passwords sorted by
+// the order of CN nodes from CN1 to CN7. Do not modify this list in tests; make
+// a copy if modification is needed since some tests rely on the order of accounts.
+// Ref. https://github.com/bane-labs/go-ethereum/tree/bane-main/privnet/seven.
 var accounts = []account{
 	{
 		common.HexToAddress("0x74f4effb0b538baec703346b03b6d9292f53a4cd"),

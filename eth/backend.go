@@ -302,7 +302,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		bft.WithTxAPI(txAPI)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
 		bft.WithTxPool(eth.TxPool())
-		bft.WithLegacyPool(legacyPool)
 		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
 		bft.WithMux(eth.EventMux())
 	}
