@@ -48,7 +48,7 @@ type (
 	commitCompact struct {
 		ViewNumber       byte
 		ValidatorIndex   uint8
-		Signature        [extraSeal]byte
+		Signature        []byte
 		InvocationScript []byte
 	}
 

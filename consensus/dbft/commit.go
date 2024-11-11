@@ -6,7 +6,7 @@ import (
 
 // commit represents dBFT Commit message.
 type commit struct {
-	SignatureExt [extraSeal]byte
+	SignatureExt []byte
 }
 
 var _ dbft.Commit = (*commit)(nil)

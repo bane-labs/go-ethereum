@@ -8,12 +8,13 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRecoverMessage_RLP(t *testing.T) {
-	var sign [extraSeal]byte
+	sign := make([]byte, crypto.SignatureLength)
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	r.Read(sign[:])
 

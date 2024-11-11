@@ -1,10 +1,14 @@
 package tpke
 
 import (
+	"fmt"
 	"math/big"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 )
+
+// PublicKeyLen is the length of PublicKey in serialized representation.
+const PublicKeyLen = 128
 
 type PublicKey struct {
 	pg1 *bls12381.G1Affine // A public value for tpke encryption
@@ -21,6 +25,11 @@ func NewGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
 	return &PublicKey{
 		pg1: pg1,
 	}
+}
+
+// Bytes serializes PublicKey into byte slice.
+func (pk *PublicKey) Bytes() []byte {
+	return pk.Encode()
 }
 
 func (pk *PublicKey) Encode() []byte {
@@ -68,14 +77,22 @@ func (pk *PublicKey) VerifySigShare(msg []byte, sig *SignatureShare) bool {
 
 // VerifySig verifies a signature with corresponding message
 func (pk *PublicKey) VerifySig(msg []byte, sig *Signature) bool {
-	_, _, g1, _ := bls12381.Generators()
 	g2Hash, _ := bls12381.HashToG2(msg, Domain)
 
+	return pk.Verify(&g2Hash, sig) == nil
+}
+
+// Verify verifies provided signature against the corresponding message hash.
+func (pk *PublicKey) Verify(hash *bls12381.G2Affine, sig *Signature) error {
+	_, _, g1, _ := bls12381.Generators()
+
 	// e(pk,g2Hash)=e(g1,-sig)
-	r, err := bls12381.PairingCheck([]bls12381.G1Affine{*pk.pg1, g1}, []bls12381.G2Affine{g2Hash, *sig.pg2})
-	if err != nil || !r {
-		return false
-	} else {
-		return true
+	ok, err := bls12381.PairingCheck([]bls12381.G1Affine{*pk.pg1, g1}, []bls12381.G2Affine{*hash, *sig.pg2})
+	if err != nil {
+		return fmt.Errorf("invalid signature: %w", err)
 	}
+	if !ok {
+		return fmt.Errorf("invalid signature")
+	}
+	return nil
 }

@@ -5,22 +5,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestCommit_Setters(t *testing.T) {
-	var sign [extraSeal]byte
+	sign := make([]byte, crypto.SignatureLength)
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	r.Read(sign[:])
 
-	var c commit
-	copy(c.SignatureExt[:], sign[:])
+	var c = new(commit)
+	c.SignatureExt = slices.Clone(sign)
 	require.Equal(t, sign[:], c.Signature())
 }
 
 func TestCommit_RLP(t *testing.T) {
-	var sign [extraSeal]byte
+	sign := make([]byte, crypto.SignatureLength)
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	r.Read(sign[:])
 
