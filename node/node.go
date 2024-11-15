@@ -133,7 +133,7 @@ func New(conf *Config) (*Node, error) {
 	node.keyDirTemp = isEphem
 	// Creates an empty AccountManager with no backends. Callers (e.g. cmd/geth)
 	// are required to add the backends later on.
-	node.accman = accounts.NewManager(&accounts.Config{InsecureUnlockAllowed: conf.InsecureUnlockAllowed})
+	node.accman = accounts.NewManager(nil)
 
 	// Create an empty antimev keystore with only file path.
 	antimevKeyDir, err := conf.GetAntiMEVKeyStorePath()
