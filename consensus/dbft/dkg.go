@@ -35,12 +35,11 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 	currentHeight := h.Number.Uint64()
 
 	// If the current height exceeds the target height, then get the new target height
-	if c.targetHeight < currentHeight {
+	if currentHeight > c.targetHeight {
 		state, err := c.chain.StateAt(h.Root)
 		if err != nil {
 			return fmt.Errorf("failed to call StateAt: %w", err)
 		}
-
 		currentEpochStartHeight, err := c.currentEpochStartHeight(state, h)
 		if err != nil {
 			return fmt.Errorf("failed to call currentEpochStartHeight: %w", err)
@@ -77,17 +76,17 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 
 	// Retry transaction sending if watch list is not empty
 	var retryList []*TxWatchRetry
-	if currentHeight > shareStartHeight+1 && currentHeight < c.targetHeight {
+	if currentHeight > shareStartHeight && currentHeight < c.targetHeight {
 		if len(c.txWatchList) > 0 {
 			for _, item := range c.txWatchList {
 				if currentHeight < item.EndHeight && !item.ConfirmedSuccess {
 					needRetry := false
-					// send failed, just resend and set txHash
+					// Send failed, just resend and set txHash
 					if item.TxHash == nil {
 						needRetry = true
 					}
 
-					// send successfully, wait 3 blocks to check tx status
+					// Send successfully, wait 3 blocks to check tx status
 					if item.TxHash != nil && currentHeight-item.SendHeight == 3 {
 						receipt, err := c.txAPI.GetTransactionReceipt(context.Background(), *item.TxHash)
 						if err != nil {
@@ -123,8 +122,9 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		}
 	}
 
-	// Send share and reshare tx when currentHeight == shareStartHeight+1
-	if currentHeight == shareStartHeight+1 {
+	// DKG checkpoint handling
+	if currentHeight == shareStartHeight {
+		// Send share and reshare tx when currentHeight == shareStartHeight
 		state, err := c.chain.StateAt(h.Root)
 		if err != nil {
 			return fmt.Errorf("failed to call StateAt: %w", err)
@@ -194,10 +194,8 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		if shareErr != nil {
 			return shareErr
 		}
-	}
-
-	// Check isShareReady at height recoverStartHeight+1
-	if currentHeight == recoverStartHeight+1 {
+	} else if currentHeight == recoverStartHeight {
+		// Check isShareReady at height recoverStartHeight
 		state, err := c.chain.StateAt(h.Root)
 		if err != nil {
 			return fmt.Errorf("failed to call StateAt: %w", err)
@@ -259,7 +257,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			return nil
 		}
 
-		// only indexesNeedRecover <= (consensusSize - threshold) can recover
+		// Only indexesNeedRecover <= (consensusSize - threshold) can recover
 		threshold := consensusSize - (consensusSize-1)/3
 		if len(indexesNeedRecover) > int(consensusSize-threshold) {
 			return fmt.Errorf("reshare msgs not enough, cannot do recover")
@@ -291,7 +289,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 
 			// Send recover tx
 			txHash, err := c.recover(indexesNeedRecover, msgs)
-			txWatch := &TxWatchRetry{SendHeight: currentHeight, EndHeight: recoverStartHeight + 1 + c.shareDuration/2, Method: "recover", Params: []interface{}{indexesNeedRecover, msgs}}
+			txWatch := &TxWatchRetry{SendHeight: currentHeight, EndHeight: recoverStartHeight + c.shareDuration/2, Method: "recover", Params: []interface{}{indexesNeedRecover, msgs}}
 			if err != nil {
 				c.txWatchList = append(c.txWatchList, txWatch)
 				return fmt.Errorf("failed to send recover transaction: %w", err)
@@ -300,10 +298,8 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			c.txWatchList = append(c.txWatchList, txWatch)
 			log.Info("DKG recover transaction sent", "txHash", txHash)
 		}
-	}
-
-	// Send reshareRecovered at height recoverStartHeight+1+c.shareDuration/2
-	if c.amevKeystore.IsRecovering() && currentHeight == recoverStartHeight+1+c.shareDuration/2 {
+	} else if c.amevKeystore.IsRecovering() && currentHeight == recoverStartHeight+c.shareDuration/2 {
+		// Send reshareRecovered at height recoverStartHeigh+c.shareDuration/2
 		state, err := c.chain.StateAt(h.Root)
 		if err != nil {
 			return fmt.Errorf("failed to call StateAt: %w", err)
@@ -352,10 +348,8 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 				log.Info("DKG reshareRecovered transaction sent", "txHash", txHash)
 			}
 		}
-	}
-
-	// Call ReceiveRecoveredReshare at targetHeight, only at this block height we can get aggregatedCommitments
-	if currentHeight == c.targetHeight {
+	} else if currentHeight == c.targetHeight {
+		// Call ReceiveRecoveredReshare at targetHeight, only at this block height we can get aggregatedCommitments
 		state, err := c.chain.StateAt(h.Root)
 		if err != nil {
 			return fmt.Errorf("failed to call StateAt: %w", err)
