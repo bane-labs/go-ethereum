@@ -496,25 +496,6 @@ describe("Governance", function () {
             expect(await Governance.getCurrentConsensus()).to.deep.equal(STANDBY_VALIDATORS);
         });
 
-        it("Should not lock election if dkg is enabled but pending consensus is the same as current consensus", async function () {
-            await mine(EPOCH_DURATION - 2 * SHARE_PERIOD);
-            await MockSysCall.call_onPersistV2(Governance);
-
-            expect(await Governance.electionLocked()).to.equal(false);
-        });
-
-        it("Should lock election if dkg is enabled and pending consensus is different with current consensus", async function () {
-            let signers = await ethers.getSigners();
-            for (let i = 0; i < CONSENSUS_SIZE; i++) {
-                await Governance.connect(signers[i]).registerCandidate(500, { value: REGISTER_FEE });
-                await Governance.connect(signers[i]).vote(signers[i], { value: VOTE_TARGET_AMOUNT });
-            }
-            await mine(EPOCH_DURATION - 2 * SHARE_PERIOD);
-            await MockSysCall.call_onPersistV2(Governance);
-
-            expect(await Governance.electionLocked()).to.equal(true);
-        });
-
         it("Should take standby validators as consensus if candidate amount not meets threshold", async function () {
             // Register only 1 candidate but vote
             await Governance.connect(candidate1).registerCandidate(500, { value: REGISTER_FEE });
@@ -588,9 +569,6 @@ describe("Governance", function () {
             expect(await Governance.receivedVotes(candidate1.address)).to.eq(MIN_VOTE_AMOUNT);
             expect(await Governance.votedTo(candidate1.address)).to.eq(candidate1.address);
             expect(await Governance.votedAmount(candidate1.address)).to.eq(MIN_VOTE_AMOUNT);
-            expect(await Governance.voteHeight(candidate1.address)).to.eq(
-                await ethers.provider.getBlockNumber()
-            );
         });
 
         it("Should emit an event when a voter votes", async function () {
@@ -607,7 +585,7 @@ describe("Governance", function () {
     describe("revokeVote", function () {
         it("Should revert if the sender has not voted", async function () {
             await expect(
-                Governance.connect(candidate1).revokeVote()
+                Governance.connect(candidate1).revokeVote(0)
             ).to.be.revertedWithCustomError(Governance, ERRORS.NO_VOTE);
         });
 
@@ -620,7 +598,7 @@ describe("Governance", function () {
 
             const balanceBefore = await ethers.provider.getBalance(candidate1.address);
             await expect(
-                Governance.connect(candidate1).revokeVote()
+                Governance.connect(candidate1).revokeVote(MIN_VOTE_AMOUNT)
             ).not.to.be.reverted;
             const balanceAfter = await ethers.provider.getBalance(candidate1.address);
             expect(balanceAfter).to.gt(balanceBefore);
@@ -633,13 +611,12 @@ describe("Governance", function () {
                 Governance.connect(candidate1).vote(candidate1, { value: MIN_VOTE_AMOUNT })
             ).not.to.be.reverted;
             await expect(
-                Governance.connect(candidate1).revokeVote()
+                Governance.connect(candidate1).revokeVote(MIN_VOTE_AMOUNT)
             ).not.to.be.reverted;
 
             expect(await Governance.receivedVotes(candidate1.address)).to.eq(0);
             expect(await Governance.votedTo(candidate1.address)).to.eq(ethers.ZeroAddress);
             expect(await Governance.votedAmount(candidate1.address)).to.eq(0);
-            expect(await Governance.voteHeight(candidate1.address)).to.eq(0);
         });
 
         it("Should emit an event when a voter revokes", async function () {
@@ -648,7 +625,7 @@ describe("Governance", function () {
                 Governance.connect(candidate1).vote(candidate1, { value: MIN_VOTE_AMOUNT })
             ).not.to.be.reverted;
             await expect(
-                Governance.connect(candidate1).revokeVote()
+                Governance.connect(candidate1).revokeVote(MIN_VOTE_AMOUNT)
             ).emit(Governance, "Revoke");
         });
     });
@@ -697,7 +674,6 @@ describe("Governance", function () {
             expect(await Governance.receivedVotes(candidate2.address)).to.eq(MIN_VOTE_AMOUNT);
             expect(await Governance.votedTo(candidate1.address)).to.eq(candidate2.address);
             expect(await Governance.votedAmount(candidate1.address)).to.eq(MIN_VOTE_AMOUNT);
-            expect(await Governance.voteHeight(candidate1.address)).to.eq(await ethers.provider.getBlockNumber());
         });
 
         it("Should update total votes if transfer from a deactivated candidate", async function () {

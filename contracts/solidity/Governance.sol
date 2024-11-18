@@ -64,7 +64,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     mapping(address => uint) public candidateGasPerVote;
     // voter=>number
     mapping(address => uint) public voterGasPerVote;
-    // voter=>height
+    // voter=>height, deprecated
     mapping(address => uint) public voteHeight;
     // candidate=>height=>number
     mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
@@ -75,13 +75,6 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     uint public sharePeriodDuration;
     // the pending group of block validators
     address[] public pendingConsensus;
-    // the lock for dkg pending sharing
-    bool public electionLocked;
-
-    modifier onlyElectionNotLocked() {
-        if (electionLocked) revert Errors.ElectionLocked();
-        _;
-    }
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
@@ -104,7 +97,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     }
 
     // Only for Governance upgrading for the new KeyManagement contract
-    function setInitialSharePeriodDuration(uint _sharePeriodDuration) external onlyAdmin() {
+    function setInitialSharePeriodDuration(uint _sharePeriodDuration) external onlyAdmin {
         sharePeriodDuration = _sharePeriodDuration;
     }
 
@@ -133,9 +126,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         return candidateList.values();
     }
 
-    function registerCandidate(
-        uint shareRate
-    ) external payable onlyElectionNotLocked {
+    function registerCandidate(uint shareRate) external payable {
         if (tx.origin != msg.sender) revert Errors.OnlyEOA();
         if (msg.value != registerFee) revert Errors.InsufficientValue();
         if (shareRate > 1000) revert Errors.InvalidShareRate();
@@ -151,7 +142,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         candidateBalanceOf[msg.sender] = msg.value;
     }
 
-    function exitCandidate() external onlyElectionNotLocked {
+    function exitCandidate() external {
         if (!_deactivateCandidate(msg.sender))
             revert Errors.CandidateNotExists();
     }
@@ -175,9 +166,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         _safeTransferETH(msg.sender, amount);
     }
 
-    function vote(
-        address candidateTo
-    ) external payable nonReentrant onlyElectionNotLocked {
+    function vote(address candidateTo) external payable nonReentrant {
         if (msg.value < minVoteAmount) revert Errors.InsufficientValue();
         if (!candidateList.contains(candidateTo))
             revert Errors.CandidateNotExists();
@@ -199,19 +188,17 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         votedAmount[msg.sender] += msg.value;
         receivedVotes[candidateTo] += msg.value;
         totalVotes += msg.value;
-        // NOTE: the left reward in the first epoch of first vote will be unclaimable.
-        if (votedCandidate == address(0)) {
-            voteHeight[msg.sender] = block.number;
-        }
 
         emit Vote(msg.sender, candidateTo, msg.value);
         if (unclaimedReward > 0) _safeTransferETH(msg.sender, unclaimedReward);
     }
 
-    function revokeVote() external nonReentrant onlyElectionNotLocked {
+    function revokeVote(uint amount) external nonReentrant {
         address candidateFrom = votedTo[msg.sender];
-        uint amount = votedAmount[msg.sender];
-        if (candidateFrom == address(0) || amount <= 0) revert Errors.NoVote();
+        uint leftAmount = votedAmount[msg.sender];
+        if (candidateFrom == address(0) || leftAmount <= 0)
+            revert Errors.NoVote();
+        if (amount > leftAmount) revert Errors.InsufficientValue();
 
         // settle reward here
         uint unclaimedReward = _settleReward(msg.sender, candidateFrom);
@@ -222,20 +209,21 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         if (candidateList.contains(candidateFrom)) {
             totalVotes -= amount;
         }
-        delete votedTo[msg.sender];
-        delete votedAmount[msg.sender];
-
-        // delete tag value
-        delete voterGasPerVote[msg.sender];
-        delete voteHeight[msg.sender];
+        if (amount == leftAmount) {
+            // delete tag value
+            delete votedTo[msg.sender];
+            delete votedAmount[msg.sender];
+            delete voterGasPerVote[msg.sender];
+            delete voteHeight[msg.sender];
+        } else {
+            votedAmount[msg.sender] -= amount;
+        }
 
         emit Revoke(msg.sender, candidateFrom, amount);
         _safeTransferETH(msg.sender, amount + unclaimedReward);
     }
 
-    function transferVote(
-        address candidateTo
-    ) external nonReentrant onlyElectionNotLocked {
+    function transferVote(address candidateTo) external nonReentrant {
         address candidateFrom = votedTo[msg.sender];
         uint amount = votedAmount[msg.sender];
         if (candidateFrom == address(0) || amount <= 0) revert Errors.NoVote();
@@ -254,7 +242,6 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         }
         votedTo[msg.sender] = candidateTo;
         voterGasPerVote[msg.sender] = candidateGasPerVote[candidateTo];
-        voteHeight[msg.sender] = block.number;
 
         emit Revoke(msg.sender, candidateFrom, amount);
         emit Vote(msg.sender, candidateTo, amount);
@@ -320,20 +307,6 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
             } else {
                 pendingConsensus = _computeConsensus(candidates);
             }
-            // lock election if consensus members are going to change
-            for (uint i = 0; i < consensusSize; i++) {
-                bool notChanged;
-                for (uint j = 0; j < consensusSize; j++) {
-                    if (pendingConsensus[i] == currentConsensus[j]) {
-                        notChanged = true;
-                        break;
-                    }
-                }
-                if (!notChanged) {
-                    electionLocked = true;
-                    break;
-                }
-            }
             emit Persist(pendingConsensus);
         }
         if (block.number < currentEpochStartHeight + epochDuration) return;
@@ -351,7 +324,6 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         }
         // reset pending value and start a new epoch
         delete pendingConsensus;
-        delete electionLocked;
         emit Persist(currentConsensus);
     }
 
@@ -400,19 +372,8 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         address candidate
     ) internal view returns (uint) {
         // NOTE: suppose onPersist always happens at the beginning of every block, then latestGasPerVote is always the latest
-        uint height = voteHeight[voter];
-        if (currentEpochStartHeight <= height) return 0;
         uint lastGasPerVote = voterGasPerVote[voter];
         uint latestGasPerVote = candidateGasPerVote[candidate];
-
-        // NOTE: suppose epoch change always happens at the beginning of a block, then vote in that block should wait another epoch to farm reward
-        uint voteEpochEndGasPerVote = epochStartGasPerVote[candidate][
-            height / epochDuration + 1
-        ];
-        if (voteEpochEndGasPerVote > lastGasPerVote) {
-            lastGasPerVote = voteEpochEndGasPerVote;
-        }
-
         return
             (votedAmount[voter] * (latestGasPerVote - lastGasPerVote)) /
             SCALE_FACTOR;
