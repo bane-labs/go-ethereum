@@ -152,6 +152,8 @@ func antimevStatus(ctx *cli.Context) error {
 	fmt.Printf("- Sharing: {%t}\n", ks.IsSharing())
 	fmt.Printf("- Reshared: {%t}\n", ks.HasReshared())
 	fmt.Printf("- Shared: {%t}\n", ks.HasShared())
+	fmt.Printf("- Current global key: {%s}\n", ks.CurrentGlobalPubKey())
+	fmt.Printf("- Last global key: {%s}\n", ks.LastGlobalPubKey())
 	return nil
 }
 

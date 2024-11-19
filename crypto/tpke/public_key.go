@@ -35,6 +35,21 @@ func AggregateGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
 	}
 }
 
+func (pk *PublicKey) Bytes() []byte {
+	res := pk.pg1.Bytes()
+	return res[:]
+}
+
+func (pk *PublicKey) SetBytes(b []byte) (*PublicKey, error) {
+	pg1 := new(bls12381.G1Affine)
+	_, err := pg1.SetBytes(b)
+	if err != nil {
+		return nil, err
+	}
+	pk.pg1 = pg1
+	return pk, nil
+}
+
 func (pk *PublicKey) Encode() []byte {
 	return encodePointG1(pk.pg1)
 }

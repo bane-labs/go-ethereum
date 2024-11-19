@@ -106,6 +106,28 @@ func (ks *KeyStore) MessagePubKey() string {
 	return hex.EncodeToString(crypto.FromECDSAPub(&ks.ethPrvKey.ExportECDSA().PublicKey))
 }
 
+// CurrentGlobalPubKey returns a hex string of current global key
+func (ks *KeyStore) CurrentGlobalPubKey() string {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	if ks.shared != nil {
+		return hex.EncodeToString(ks.shared.globalPubKey.Bytes())
+	} else {
+		return hex.EncodeToString(nil)
+	}
+}
+
+// LastGlobalPubKey returns a hex string of last global key
+func (ks *KeyStore) LastGlobalPubKey() string {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	if ks.reshared != nil {
+		return hex.EncodeToString(ks.reshared.globalPubKey.Bytes())
+	} else {
+		return hex.EncodeToString(nil)
+	}
+}
+
 // IsResharing returns if there is an ongoing resharing
 func (ks *KeyStore) IsResharing() bool {
 	ks.mu.RLock()
