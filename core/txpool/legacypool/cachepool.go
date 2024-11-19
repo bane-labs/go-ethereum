@@ -892,3 +892,9 @@ func (pool *CachePool) demoteUnexecutables() {
 		}
 	}
 }
+
+// Clear implements txpool.SubPool
+//
+// For the cache pool, this method will do nothing for now.
+func (pool *CachePool) Clear() {
+}
