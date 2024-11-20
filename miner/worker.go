@@ -92,6 +92,7 @@ type environment struct {
 	ecount   int            // envelope tx count in cycle
 	gasPool  *core.GasPool  // available gas used to pack transactions
 	coinbase common.Address
+	evm      *vm.EVM
 
 	header   *types.Header
 	txs      []*types.Transaction
@@ -713,6 +714,7 @@ func (w *worker) makeEnv(parent *types.Header, header *types.Header, coinbase co
 		coinbase: coinbase,
 		header:   header,
 		witness:  state.Witness(),
+		evm:      vm.NewEVM(core.NewEVMBlockContext(header, w.chain, &coinbase), state, w.chainConfig, vm.Config{}),
 	}
 	// Keep track of transactions which return errors so they can be removed
 	env.tcount = 0
@@ -778,7 +780,7 @@ func (w *worker) applyTransaction(env *environment, tx *types.Transaction) (*typ
 		snap = env.state.Snapshot()
 		gp   = env.gasPool.Gas()
 	)
-	receipt, err := core.ApplyTransaction(w.chainConfig, w.chain, &env.coinbase, env.gasPool, env.state, env.header, tx, &env.header.GasUsed, vm.Config{})
+	receipt, err := core.ApplyTransaction(w.chainConfig, env.evm, env.gasPool, env.state, env.header, tx, &env.header.GasUsed)
 	if err != nil {
 		env.state.RevertToSnapshot(snap)
 		env.gasPool.SetGas(gp)
@@ -969,6 +971,19 @@ func (w *worker) prepareWork(genParams *generateParams, witness bool) (*environm
 	if genParams.random != (common.Hash{}) {
 		header.MixDigest = genParams.random
 	}
+	// Set baseFee and GasLimit if we are on an EIP-1559 chain
+	if w.chainConfig.IsLondon(header.Number) {
+		state, err := w.chain.StateAt(parent.Root)
+		if err != nil {
+			log.Error("Failed to get state", "err", err)
+			return nil, err
+		}
+		header.BaseFee = eip1559.CalcBaseFeeDBFT(w.chainConfig, parent, state)
+		if !w.chainConfig.IsLondon(parent.Number) {
+			parentGasLimit := parent.GasLimit * w.chainConfig.ElasticityMultiplier()
+			header.GasLimit = core.CalcGasLimit(parentGasLimit, w.config.GasCeil)
+		}
+	}
 	// Run the consensus preparation with the default or customized consensus engine.
 	// Note that the `header.Time` may be changed.
 	if err := w.engine.Prepare(w.chain, header); err != nil {
@@ -988,11 +1003,6 @@ func (w *worker) prepareWork(genParams *generateParams, witness bool) (*environm
 		header.ExcessBlobGas = &excessBlobGas
 		header.ParentBeaconRoot = genParams.beaconRoot
 	}
-	// Run the consensus preparation with the default or customized consensus engine.
-	if err := w.engine.Prepare(w.chain, header); err != nil {
-		log.Error("Failed to prepare header for sealing", "err", err)
-		return nil, err
-	}
 	// Could potentially happen if starting to mine in an odd state.
 	// Note genParams.coinbase can be different with header.Coinbase
 	// since clique algorithm can modify the coinbase field in header.
@@ -1001,34 +1011,14 @@ func (w *worker) prepareWork(genParams *generateParams, witness bool) (*environm
 		log.Error("Failed to create sealing context", "err", err)
 		return nil, err
 	}
-	// Set baseFee and GasLimit if we are on an EIP-1559 chain
-	if w.chainConfig.IsLondon(header.Number) {
-		header.BaseFee = eip1559.CalcBaseFeeDBFT(w.chainConfig, parent, env.state)
-		if !w.chainConfig.IsLondon(parent.Number) {
-			parentGasLimit := parent.GasLimit * w.chainConfig.ElasticityMultiplier()
-			header.GasLimit = core.CalcGasLimit(parentGasLimit, w.config.GasCeil)
-		}
-	}
-	var (
-		context vm.BlockContext
-		vmenv   *vm.EVM
-	)
 	if header.ParentBeaconRoot != nil {
-		context = core.NewEVMBlockContext(header, w.chain, nil)
-		vmenv = vm.NewEVM(context, vm.TxContext{}, env.state, w.chainConfig, vm.Config{})
-		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, vmenv, env.state)
+		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, env.evm, env.state)
 	}
 	if w.chainConfig.IsPrague(header.Number, header.Time) {
-		context := core.NewEVMBlockContext(header, w.chain, nil)
-		vmenv := vm.NewEVM(context, vm.TxContext{}, env.state, w.chainConfig, vm.Config{})
-		core.ProcessParentBlockHash(header.ParentHash, vmenv, env.state)
+		core.ProcessParentBlockHash(header.ParentHash, env.evm, env.state)
 	}
 	if w.chain.Config().DBFT != nil {
-		if vmenv == nil {
-			context = core.NewEVMBlockContext(header, w.chain, nil)
-			vmenv = vm.NewEVM(context, vm.TxContext{}, env.state, w.chainConfig, vm.Config{})
-		}
-		core.ProcessOnPersist(vmenv, env.state)
+		core.ProcessOnPersist(env.evm, env.state)
 	}
 	return env, nil
 }
@@ -1129,7 +1119,7 @@ func (w *worker) generateWork(params *generateParams, witness bool) *newPayloadR
 		requests = append(requests, depositRequests)
 		// create EVM for system calls
 		blockContext := core.NewEVMBlockContext(work.header, w.chain, &work.header.Coinbase)
-		vmenv := vm.NewEVM(blockContext, vm.TxContext{}, work.state, w.chainConfig, vm.Config{})
+		vmenv := vm.NewEVM(blockContext, work.state, w.chainConfig, vm.Config{})
 		// EIP-7002 withdrawals
 		withdrawalRequests := core.ProcessWithdrawalQueue(vmenv, work.state)
 		requests = append(requests, withdrawalRequests)
