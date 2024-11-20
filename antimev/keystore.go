@@ -71,6 +71,18 @@ func (ks *KeyStore) Init(addr common.Address, prvkey *ecies.PrivateKey, groupSiz
 	return ks.saveStoreAndReInitialize()
 }
 
+// Reset cleans all dkg progress data and returns to initial state
+func (ks *KeyStore) Reset() error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	ks.recovering = nil
+	ks.resharing = nil
+	ks.reshared = nil
+	ks.sharing = nil
+	ks.shared = nil
+	return ks.saveStoreAndReInitialize()
+}
+
 // Load loads hex-encoded anti-MEV keystore from the provided filepath.
 func (ks *KeyStore) Load(password string) error {
 	ks.mu.Lock()

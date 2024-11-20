@@ -107,6 +107,30 @@ Since only one password can be given, only format update can be performed,
 changing your password is only possible interactively.
 `,
 			},
+			{
+				Name:   "reset",
+				Usage:  "Reset an existing antimev keystore",
+				Action: antimevReset,
+				Flags: []cli.Flag{
+					utils.AntiMEVKeyStoreFlag,
+					utils.AntiMEVPasswordFlag,
+				},
+				Description: `
+    geth antimev reset
+
+Reset the existing antimev keystore.
+
+The keystore is reset to the initial state, all DKG data are deleted to recover
+from a stuck epoch change.
+
+For non-interactive use, password can be specified with --antimev.password flag:
+
+    geth antimev reset [options]
+
+Note, this is meant to be used for emergency only, it is a bad idea to reset your
+keystore when everything runs correctly.
+`,
+			},
 		},
 	}
 )
@@ -204,6 +228,16 @@ func antimevUpdate(ctx *cli.Context) error {
 	newPassword := utils.GetPassPhraseWithList("Please give a new password. Do not forget this password.", true, 0, nil)
 	if err := ks.Update(newPassword); err != nil {
 		utils.Fatalf("Could not update the keystore: %v", err)
+	}
+	return nil
+}
+
+// antimevReset cleans all DKG data but keep the message keypair and other parameters.
+func antimevReset(ctx *cli.Context) error {
+	ks := makeAntimevKeystore(ctx)
+	unlockKeyStore(ks, utils.MakeAntiMEVPasswordList(ctx))
+	if err := ks.Reset(); err != nil {
+		utils.Fatalf("Could not reset the keystore: %v", err)
 	}
 	return nil
 }
