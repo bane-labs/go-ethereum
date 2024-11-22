@@ -231,7 +231,7 @@ func TestReshare(t *testing.T) {
 	// Send resharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretReshare(kss[j].address, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			err := kss[i].ReceiveSecretReshare(j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -361,7 +361,7 @@ func TestGroupChange(t *testing.T) {
 	for i := 1; i < len(addrs); i++ {
 		for j := 0; j < size; j++ {
 			// Messages from node 0~6 to node 1~7
-			err := kss[i].ReceiveSecretReshare(kss[j].address, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			err := kss[i].ReceiveSecretReshare(j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -484,7 +484,7 @@ func TestRecover(t *testing.T) {
 	// Send resharing messages, expect which from validator 7
 	for i := 1; i < len(addrs); i++ {
 		for j := 0; j < size-1; j++ {
-			err := kss[i].ReceiveSecretReshare(kss[j].address, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			err := kss[i].ReceiveSecretReshare(j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -520,7 +520,7 @@ func TestRecover(t *testing.T) {
 		t.Fatalf(err.Error())
 	}
 	for i := 1; i < len(addrs); i++ {
-		err := kss[i].ReceiveRecoveredReshare(kss[7].address, msgs, pvss)
+		err := kss[i].ReceiveSecretReshare(7, msgs, pvss)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}

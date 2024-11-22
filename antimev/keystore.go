@@ -380,7 +380,7 @@ func (ks *KeyStore) ReceiveSecretShare(from common.Address, ess [][]byte, pvss [
 }
 
 // ReceiveSecretReshare tries to verify a resharing message array and store their data.
-func (ks *KeyStore) ReceiveSecretReshare(from common.Address, ers [][]byte, pvss []byte) error {
+func (ks *KeyStore) ReceiveSecretReshare(fromIndex int, ers [][]byte, pvss []byte) error {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 	// Check if out of the period
@@ -392,11 +392,6 @@ func (ks *KeyStore) ReceiveSecretReshare(from common.Address, ers [][]byte, pvss
 	if selfIndex < 1 {
 		return ErrNotParticipant
 	}
-	// Check sender's identity
-	fromIndex := ks.shared.holderIndex(from)
-	if fromIndex > ks.size || fromIndex < 1 {
-		return ErrInvalidSender
-	}
 	// Check if the secret share has a valid length
 	if len(ers) < ks.size {
 		return ErrDKGSecret
@@ -407,45 +402,6 @@ func (ks *KeyStore) ReceiveSecretReshare(from common.Address, ers [][]byte, pvss
 		return ErrInvalidDKGPVSS
 	}
 	// Decrypt and accept the resharing message
-	ss, err := ks.decryptSecretShare(ers[selfIndex-1])
-	if err != nil {
-		return ErrDecryptionFailed
-	}
-	err = ks.resharing.receiveReshareMessage(fromIndex, ss, p, selfIndex)
-	if err != nil {
-		return err
-	}
-	return ks.saveStoreAndReInitialize()
-}
-
-// ReceiveRecoveredReshare tries to verify a resharing message array and store their data.
-func (ks *KeyStore) ReceiveRecoveredReshare(from common.Address, ers [][]byte, pvss []byte) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	// Check if out of the period
-	if ks.recovering == nil || ks.resharing == nil {
-		return ErrKeyGroupNotExists
-	}
-	// If is a member of receiver
-	selfIndex := ks.resharing.holderIndex(ks.address)
-	if selfIndex < 1 {
-		return ErrNotParticipant
-	}
-	// Check sender's identity
-	fromIndex := ks.recovering.holderIndex(from)
-	if fromIndex > ks.size || fromIndex < 1 {
-		return ErrInvalidSender
-	}
-	// Check if the secret share has a valid length
-	if len(ers) < ks.size {
-		return ErrDKGSecret
-	}
-	// Decode PVSS
-	p, err := new(tpke.PVSS).Decode(pvss, ks.size, ks.threshold)
-	if err != nil {
-		return ErrInvalidDKGPVSS
-	}
-	// Decrypt and accept the recoverd resharing message
 	ss, err := ks.decryptSecretShare(ers[selfIndex-1])
 	if err != nil {
 		return ErrDecryptionFailed
