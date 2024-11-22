@@ -780,7 +780,7 @@ func (w *worker) applyTransaction(env *environment, tx *types.Transaction) (*typ
 		snap = env.state.Snapshot()
 		gp   = env.gasPool.Gas()
 	)
-	receipt, err := core.ApplyTransaction(w.chainConfig, env.evm, env.gasPool, env.state, env.header, tx, &env.header.GasUsed)
+	receipt, err := core.ApplyTransaction(env.evm, env.gasPool, env.state, env.header, tx, &env.header.GasUsed)
 	if err != nil {
 		env.state.RevertToSnapshot(snap)
 		env.gasPool.SetGas(gp)
@@ -1012,13 +1012,13 @@ func (w *worker) prepareWork(genParams *generateParams, witness bool) (*environm
 		return nil, err
 	}
 	if header.ParentBeaconRoot != nil {
-		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, env.evm, env.state)
+		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, env.evm)
 	}
 	if w.chainConfig.IsPrague(header.Number, header.Time) {
-		core.ProcessParentBlockHash(header.ParentHash, env.evm, env.state)
+		core.ProcessParentBlockHash(header.ParentHash, env.evm)
 	}
 	if w.chain.Config().DBFT != nil {
-		core.ProcessOnPersist(env.evm, env.state)
+		core.ProcessOnPersist(env.evm)
 	}
 	return env, nil
 }
@@ -1121,10 +1121,10 @@ func (w *worker) generateWork(params *generateParams, witness bool) *newPayloadR
 		blockContext := core.NewEVMBlockContext(work.header, w.chain, &work.header.Coinbase)
 		vmenv := vm.NewEVM(blockContext, work.state, w.chainConfig, vm.Config{})
 		// EIP-7002 withdrawals
-		withdrawalRequests := core.ProcessWithdrawalQueue(vmenv, work.state)
+		withdrawalRequests := core.ProcessWithdrawalQueue(vmenv)
 		requests = append(requests, withdrawalRequests)
 		// EIP-7251 consolidations
-		consolidationRequests := core.ProcessConsolidationQueue(vmenv, work.state)
+		consolidationRequests := core.ProcessConsolidationQueue(vmenv)
 		requests = append(requests, consolidationRequests)
 	}
 	if requests != nil {
