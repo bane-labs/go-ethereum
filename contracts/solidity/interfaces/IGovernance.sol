@@ -23,7 +23,7 @@ interface IGovernance {
     function vote(address to) external payable;
 
     // revoke votes and claim rewards
-    function revokeVote() external;
+    function revokeVote(uint amount) external;
 
     // revoke votes, claim rewards and vote to another candidate
     function transferVote(address candidateTo) external;
