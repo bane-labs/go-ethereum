@@ -124,7 +124,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		// Call ReceiveRecoveredReshare at targetHeight, only at this block height we can get aggregatedCommitments
 		if len(c.snapshot.IndexNeedRecover) > 0 {
 			if err := c.syncRecoveredReshares(c.snapshot, state, h); err != nil {
-				return fmt.Errorf("failed to sync recovering DKG, err: %w", err)
+				return fmt.Errorf("failed to sync recovered secrets, err: %w", err)
 			}
 		}
 		aggregatedCommitments, err := c.aggregatedCommitments(c.snapshot.Round, state, h)
@@ -447,16 +447,16 @@ func (c *DBFT) syncResharedSecrets(snap *Snapshot, state *state.StateDB, header 
 
 // syncRecoveredSecrets downloads DKG recoverings and related PVSS, and sends to keystore
 func (c *DBFT) syncRecoveredSecrets(snap *Snapshot, selfIndex uint64, state *state.StateDB, header *types.Header) error {
+	pvss, err := c.spvsses(snap.Round-1, selfIndex, state, header)
+	if err != nil {
+		return err
+	}
 	for i := uint64(1); i <= uint64(len(snap.CurrentCNs)); i++ {
-		if !slices.Contains(snap.IndexNeedRecover, i) {
-			msg, err := c.recoverMsgs(snap.Round, i, selfIndex, state, header)
-			if err != nil {
-				return err
-			}
-			pvss, err := c.spvsses(snap.Round-1, i, state, header)
-			if err != nil {
-				return err
-			}
+		msg, err := c.recoverMsgs(snap.Round, i, selfIndex-1, state, header)
+		if err != nil {
+			return err
+		}
+		if len(msg) > 0 {
 			err = c.amevKeystore.ReceiveRecoverShare(snap.CurrentCNs[i-1], msg, pvss)
 			if err != nil {
 				return err
@@ -723,10 +723,10 @@ func (c *DBFT) spvsses(round, index uint64, state *state.StateDB, header *types.
 	return result, nil
 }
 
-func (c *DBFT) recoverMsgs(round, indexSend, indexReceive uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+func (c *DBFT) recoverMsgs(round, senderIndex, arrIndex uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
 	var result []byte
 	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
-		state, header, "recoverMsgs", big.NewInt(int64(round)), big.NewInt(int64(indexSend)), big.NewInt(int64(indexReceive)))
+		state, header, "recoverMsgs", big.NewInt(int64(round)), big.NewInt(int64(senderIndex)), big.NewInt(int64(arrIndex)))
 	if err != nil {
 		return nil, err
 	}

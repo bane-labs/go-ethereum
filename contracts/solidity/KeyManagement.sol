@@ -25,10 +25,10 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
     mapping(uint => uint) public roundNumberOfEpochs;
     // public key for sharing message encryption
     mapping(address => string) public messagePubkeys;
-    // round=>index=>shares
+    // round=>index=>shares, the index of msg is the array index, starts from 0
     mapping(uint => mapping(uint => bytes[])) public reshareMsgs;
     mapping(uint => mapping(uint => bytes[])) public shareMsgs;
-    // round=>index=>index
+    // round=>index=>index, the index of msg is the array index, starts from 0
     mapping(uint => mapping(uint => mapping(uint => bytes))) public recoverMsgs;
     // round=>index=>pvss
     mapping(uint => mapping(uint => bytes)) public rpvsses;
@@ -147,7 +147,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
             if (idxs[i] > n || idxs[i] == 0) revert Errors.IndexOutOfRange();
             if (reshareMsgs[round][idxs[i]].length > 0)
                 revert Errors.NoNeedForRecover();
-            recoverMsgs[round][index][idxs[i]] = messages[i];
+            recoverMsgs[round][index][idxs[i]-1] = messages[i];
         }
 
         // emit a event
