@@ -19,7 +19,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         Share
     }
 
-    // dkg round index, starts from 0
+    // succeeded dkg round index, starts from 1, 0 means empty
     uint public roundNumber;
     // height=>round
     mapping(uint => uint) public roundNumberOfEpochs;
@@ -86,10 +86,10 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         if (messages.length != n) revert Errors.InvalidMessageAmount();
 
         // verify shared pub
-        uint round = roundNumber;
-        if (round < 1) revert Errors.InvalidRoundNumber();
+        uint round = roundNumber + 1;
+        if (round < 2) revert Errors.InvalidRoundNumber();
         if (
-            keccak256(sharedPubs[round-1][index]) !=
+            keccak256(sharedPubs[round - 1][index]) !=
             keccak256(pvss[:BLS12381.G1_SIZE])
         ) revert Errors.InvalidPVSS();
 
@@ -119,7 +119,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         if (messages.length != n) revert Errors.InvalidMessageAmount();
 
         // verify pvss
-        uint round = roundNumber;
+        uint round = roundNumber + 1;
         _verifyPVSS(n, t, pvss);
         spvsses[round][index] = pvss;
 
@@ -141,8 +141,8 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
 
         // check absent secret index & record messages
         uint n = IGovernance(GOV).consensusSize();
-        uint round = roundNumber;
-        if (round < 1) revert Errors.InvalidRoundNumber();
+        uint round = roundNumber + 1;
+        if (round < 2) revert Errors.InvalidRoundNumber();
         for (uint i = 0; i < idxs.length; i++) {
             if (idxs[i] > n || idxs[i] == 0) revert Errors.IndexOutOfRange();
             if (reshareMsgs[round][idxs[i]].length > 0)
@@ -172,10 +172,10 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         if (messages.length != n) revert Errors.InvalidMessageAmount();
 
         // verify shared pub
-        uint round = roundNumber;
-        if (round < 1) revert Errors.InvalidRoundNumber();
+        uint round = roundNumber + 1;
+        if (round < 2) revert Errors.InvalidRoundNumber();
         if (
-            keccak256(sharedPubs[round-1][index]) !=
+            keccak256(sharedPubs[round - 1][index]) !=
             keccak256(pvss[:BLS12381.G1_SIZE])
         ) revert Errors.InvalidPVSS();
 
@@ -184,8 +184,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         rpvsses[round][index] = pvss;
 
         // record messages
-        if (reshareMsgs[round][index].length > 0)
-            revert Errors.MessageExists();
+        if (reshareMsgs[round][index].length > 0) revert Errors.MessageExists();
         reshareMsgs[round][index] = messages;
 
         // emit a event
@@ -197,24 +196,25 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
     function onPersistV2() external {
         if (msg.sender != SYS_CALL) revert Errors.SideCallNotAllowed();
         // NOTE: should be called before Governance onPersist
-        if (block.number >= IGovernance(GOV).nextEpochStartHeight()) {
-            if (aggregatedCommitments[roundNumber].length > 0) {
-                _recordAndSetToNewRound();
+        uint targetHeight = IGovernance(GOV).nextEpochStartHeight();
+        if (block.number >= targetHeight) {
+            if (aggregatedCommitments[roundNumber + 1].length > 0) {
+                _recordAndSetToNewRound(targetHeight);
             } else {
-                _dropAndSetToLatestRound();
+                _dropAndSetToLatestRound(targetHeight);
             }
         }
         // return if the round key exists
-        uint round = roundNumber;
+        uint round = roundNumber + 1;
         if (aggregatedCommitments[round].length > 0) return;
 
         // check reshare and share, compute global key
         uint n = IGovernance(GOV).consensusSize();
-        if (reshareMsgs[round][1].length < n && round > 0) return;
+        if (reshareMsgs[round][1].length < n && round > 1) return;
         if (shareMsgs[round][1].length < n) return;
         bytes memory output = sharedPubs[round][1];
         for (uint i = 2; i <= n; i++) {
-            if (reshareMsgs[round][i].length < n && round > 0) return;
+            if (reshareMsgs[round][i].length < n && round > 1) return;
             if (shareMsgs[round][i].length < n) return;
             output = BLS12381.g1Add(output, sharedPubs[round][i]);
         }
@@ -229,7 +229,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         uint lastEpochHeight
     ) external view returns (bool) {
         return
-            roundNumberOfEpochs[epochHeight] !=
+            roundNumberOfEpochs[epochHeight] >
             roundNumberOfEpochs[lastEpochHeight];
     }
 
@@ -316,10 +316,10 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         _checkPeriodAllowed(Period.Recover);
 
         uint n = IGovernance(GOV).consensusSize();
-        uint round = roundNumber;
+        uint round = roundNumber + 1;
         uint[] memory idxs;
         // return empty if is the first round
-        if (round < 1) return idxs;
+        if (round < 2) return idxs;
         // otherwise build a dynamic array
         for (uint i = 1; i <= n; i++) {
             if (reshareMsgs[round][i].length == 0) {
@@ -335,7 +335,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
 
     function isShareReady() external view returns (bool) {
         uint n = IGovernance(GOV).consensusSize();
-        uint round = roundNumber;
+        uint round = roundNumber + 1;
         for (uint i = 1; i <= n; i++) {
             if (shareMsgs[round][i].length < n) {
                 return false;
@@ -354,19 +354,17 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
             revert Errors.PeriodEnded();
     }
 
-    function _recordAndSetToNewRound() internal {
-        uint targetHeight = IGovernance(GOV).nextEpochStartHeight();
-        uint round = roundNumber;
+    function _recordAndSetToNewRound(uint targetHeight) internal {
+        uint round = roundNumber + 1;
         // map next epoch height to new round
         roundNumberOfEpochs[targetHeight] = round;
         // increase round number
-        roundNumber = round + 1;
+        roundNumber = round;
     }
 
-    function _dropAndSetToLatestRound() internal {
+    function _dropAndSetToLatestRound(uint targetHeight) internal {
         uint n = IGovernance(GOV).consensusSize();
-        uint targetHeight = IGovernance(GOV).nextEpochStartHeight();
-        uint round = roundNumber;
+        uint round = roundNumber + 1;
         // delete all uploaded data for specific round
         for (uint i = 1; i <= n; i++) {
             delete rpvsses[round][i];
@@ -378,7 +376,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
             }
         }
         // map next epoch height to latest round
-        roundNumberOfEpochs[targetHeight] = round;
+        roundNumberOfEpochs[targetHeight] = roundNumber;
     }
 
     function getShareMsgs(

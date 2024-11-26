@@ -24,6 +24,7 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+// TxWatchRetry is a task to send DKG transaction
 type TxWatchRetry struct {
 	SendHeight       uint64
 	EndHeight        uint64
@@ -33,9 +34,10 @@ type TxWatchRetry struct {
 	ConfirmedSuccess bool
 }
 
+// Snapshot is a database record to save progress of each DKG
 type Snapshot struct {
 	EpochStartHeight   uint64           `json:"epochStartHeight"`
-	Round              uint64           `json:"round"`
+	Round              uint64           `json:"round"` // Starts from 1
 	CurrentCNs         []common.Address `json:"currentCNs"`
 	PendingCNs         []common.Address `json:"pendingCNs"`
 	IndexNeedRecover   []uint64         `json:"indexNeedRecover"`
@@ -53,10 +55,11 @@ func (c *DBFT) newSnapshot(h *types.Header, state *state.StateDB, height uint64)
 	if err != nil {
 		return nil, err
 	}
-	snap.Round, err = c.roundNumber(state, h)
+	round, err := c.roundNumber(state, h)
 	if err != nil {
 		return nil, err
 	}
+	snap.Round = round + 1
 	snap.PendingCNs = make([]common.Address, 0)
 	snap.IndexNeedRecover = make([]uint64, 0)
 	snap.ShareOped = false
@@ -128,7 +131,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		if err != nil {
 			return fmt.Errorf("failed to call aggregatedCommitments, err: %w", err)
 		}
-		if len(aggregatedCommitments) > 0 && c.snapshot.Round > 0 {
+		if len(aggregatedCommitments) > 0 && c.snapshot.Round > 1 {
 			isRoundNumberIncreased, _ := c.isRoundNumberIncreased(c.snapshot.EpochStartHeight+epochDuration, c.snapshot.EpochStartHeight, state, h)
 			if !isRoundNumberIncreased {
 				aggregatedCommitments = make([]byte, 0)
@@ -182,7 +185,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 	// If keystore is empty, then sync shared DKG up-tp-date, otherwise regard it as the latest
 	if !c.amevKeystore.HasShared() && !c.amevKeystore.IsSharing() {
 		// Sync only if has at least 1 round successful DKG
-		if c.snapshot.Round > 0 {
+		if c.snapshot.Round > 1 {
 			// Use current consensus to setup
 			if err := c.prepareDKG(c.snapshot.CurrentCNs, state, h); err != nil {
 				return fmt.Errorf("failed to sync shared DKG, err: %w", err)
@@ -221,7 +224,7 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 		}
 		if currentHeight < recoverStartHeight {
 			// If is a member of current consensus
-			if slices.Contains(c.snapshot.CurrentCNs, amevAddress) && c.snapshot.Round > 0 {
+			if slices.Contains(c.snapshot.CurrentCNs, amevAddress) && c.snapshot.Round > 1 {
 				if err = c.taskReshare(currentHeight, recoverStartHeight); err != nil {
 					return fmt.Errorf("failed to task DKG reshare, err: %w", err)
 				}
