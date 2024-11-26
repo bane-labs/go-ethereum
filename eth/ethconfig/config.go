@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -195,7 +196,8 @@ func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, statis
 		return bft, nil
 	}
 	if config.TerminalTotalDifficulty == nil {
-		return nil, fmt.Errorf("only PoS networks are supported, please transition old ones with Geth v1.13.x")
+		log.Error("Geth only supports PoS networks. Please transition legacy networks using Geth v1.13.x.")
+		return nil, fmt.Errorf("'terminalTotalDifficulty' is not set in genesis block")
 	}
 	// If proof-of-authority is requested, set it up
 	if config.Clique != nil {
