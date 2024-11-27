@@ -644,7 +644,8 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		}),
 		dbft.WithNewCommit[common.Hash](func(sig []byte) dbft.Commit {
 			res := new(commit)
-			res.SignatureExt = slices.Clone(sig)
+			res.signature = slices.Clone(sig)
+			res.version = c.getBlockExtraVersion(big.NewInt(int64(c.dbft.Context.BlockIndex)))
 			return res
 		}),
 		dbft.WithNewPrepareResponse[common.Hash](func(prepH common.Hash) dbft.PrepareResponse[common.Hash] {
@@ -664,9 +665,42 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				TimestampExt: ts,
 			}
 		}),
-		dbft.WithNewRecoveryMessage[common.Hash](func() dbft.RecoveryMessage[common.Hash] { return new(recoveryMessage) }),
+		dbft.WithNewRecoveryMessage[common.Hash](func() dbft.RecoveryMessage[common.Hash] {
+			r := &recoveryMessage{
+				version: c.getBlockExtraVersion(big.NewInt(int64(c.dbft.Context.BlockIndex))),
+			}
+			return r
+		}),
 		dbft.WithVerifyPrepareResponse[common.Hash](func(_ dbft.ConsensusPayload[common.Hash]) error { return nil }),
 		dbft.WithVerifyPreCommit[common.Hash](func(preCommit dbft.ConsensusPayload[common.Hash]) error { return nil }),
+		dbft.WithVerifyCommit[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) error {
+			cc := p.GetCommit().(*commit)
+
+			if expected := c.getBlockExtraVersion(big.NewInt(int64(p.Height()))); cc.version != expected {
+				return fmt.Errorf("%w: expected %d, got %d", errUnexpectedExtraVersion, expected, cc.version)
+			}
+
+			var expectedLen int
+			switch cc.version {
+			case dbftutil.ExtraV0:
+				expectedLen = crypto.SignatureLength
+			case dbftutil.ExtraV1:
+				expectedLen = tpke.SignatureShareLen
+			default:
+				return fmt.Errorf("%w: %d", errUnexpectedExtraVersion, cc.version)
+			}
+			if len(cc.signature) != expectedLen {
+				return fmt.Errorf("invalid signature length: expected %d, got %d", expectedLen, len(cc.signature))
+			}
+
+			// Update share cache for TPKE commits.
+			_, err := cc.share()
+			if err != nil {
+				return fmt.Errorf("invalid commit: %w", err)
+			}
+
+			return nil
+		}),
 		dbft.WithVerifyPrepareRequest[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) error {
 			req := p.GetPrepareRequest().(*prepareRequest)
 			if req.SealingProposal == nil {
@@ -1135,17 +1169,16 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 		vals[i] = dctx.Validators[i].(*PublicKey).Account
 	}
 
-	sigs := make(map[common.Address][]byte)
-	for i := range vals {
-		if p := dctx.CommitPayloads[i]; p != nil && p.ViewNumber() == dctx.ViewNumber {
-			sigs[vals[i]] = p.GetCommit().Signature()
-		}
-	}
-	m := c.dbft.Context.M()
-
 	switch dbftutil.ExtraVersion(block.header.Extra[0]) {
 	case dbftutil.ExtraV0:
 		res := dbftutil.FlattenAddresses(vals)
+		sigs := make(map[common.Address][]byte)
+		for i := range vals {
+			if p := dctx.CommitPayloads[i]; p != nil && p.ViewNumber() == dctx.ViewNumber {
+				sigs[vals[i]] = p.GetCommit().Signature()
+			}
+		}
+		m := c.dbft.Context.M()
 		// Signatures sorting order is the same as corresponding *sorted* validators order.
 		for i, j := 0, 0; i < len(vals) && j < m; i++ {
 			if sig, ok := sigs[vals[i]]; ok {
@@ -1162,10 +1195,16 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 		shares := make(map[int]*tpke.SignatureShare)
 		// Take all available shares since some of them may be invalid.
 		for i := 0; i < len(vals); i++ {
-			if sig, ok := sigs[vals[i]]; ok {
-				share := new(tpke.SignatureShare)
-				_, _ = share.FromBytes(sig) // no error expected since commits are verified.
-				shares[i+1] = share
+			if p := dctx.CommitPayloads[i]; p != nil && p.ViewNumber() == dctx.ViewNumber {
+				var err error
+				shares[i+1], err = p.GetCommit().(*commit).share()
+				if err != nil {
+					// It's a program error since all commits are expected to be verified by this
+					// moment and hence, contain proper share.
+					log.Crit("failed to get commit share",
+						"from", i,
+						"error", err)
+				}
 			}
 		}
 		msg := dbftRLP(block.header)
@@ -1982,7 +2021,7 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 		return nil
 	}
 
-	p := payloadFromMessage(cp)
+	p := payloadFromMessage(cp, c.getBlockExtraVersion)
 	// decode payload data into message
 	if err := p.decodeData(); err != nil {
 		log.Info("can't decode payload data", "hash", cp.Hash(), "error", err)
@@ -1996,6 +2035,13 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 
 	c.messages <- *p
 	return nil
+}
+
+func (c *DBFT) getBlockExtraVersion(height *big.Int) dbftutil.ExtraVersion {
+	if c.chain.Config().IsNeoXAMEV(height) {
+		return dbftutil.ExtraV1
+	}
+	return dbftutil.ExtraV0
 }
 
 // OnTransaction is a dBFT callback that reacts on new incoming transaction arrived
@@ -2018,10 +2064,12 @@ func (c *DBFT) OnTransaction(txs []*types.Transaction) {
 	}
 }
 
-func payloadFromMessage(ep *dbftproto.Message) *Payload {
+func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion) *Payload {
 	return &Payload{
 		Message: *ep,
-		message: message{},
+		message: message{
+			getBlockExtraVersion: getBlockExtraVersion,
+		},
 	}
 }
 

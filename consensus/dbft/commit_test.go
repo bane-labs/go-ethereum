@@ -17,7 +17,7 @@ func TestCommit_Setters(t *testing.T) {
 	r.Read(sign[:])
 
 	var c = new(commit)
-	c.SignatureExt = slices.Clone(sign)
+	c.signature = slices.Clone(sign)
 	require.Equal(t, sign[:], c.Signature())
 }
 
@@ -26,7 +26,7 @@ func TestCommit_RLP(t *testing.T) {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	r.Read(sign[:])
 
-	c := &commit{SignatureExt: sign}
+	c := &commit{signature: sign}
 	bytes, err := rlp.EncodeToBytes(c)
 	require.NoError(t, err)
 

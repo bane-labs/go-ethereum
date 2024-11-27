@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/nspcc-dev/dbft"
@@ -15,11 +17,12 @@ type (
 	messageType byte
 
 	message struct {
-		Type           messageType
-		BlockIndex     uint64
-		ValidatorIndex byte
-		ViewNumber     byte
-		msgPayload     interface{}
+		Type                 messageType
+		BlockIndex           uint64
+		ValidatorIndex       byte
+		ViewNumber           byte
+		msgPayload           interface{}
+		getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion
 	}
 
 	// messageAux is an auxiliary structure for message RLP encoding.
@@ -197,11 +200,15 @@ func (m *message) DecodeRLP(s *rlp.Stream) error {
 	case preCommitType:
 		m.msgPayload = new(preCommit)
 	case commitType:
-		m.msgPayload = &commit{}
+		m.msgPayload = &commit{
+			version: m.getBlockExtraVersion(big.NewInt(int64(m.BlockIndex))),
+		}
 	case recoveryRequestType:
 		m.msgPayload = new(recoveryRequest)
 	case recoveryMessageType:
-		m.msgPayload = new(recoveryMessage)
+		m.msgPayload = &recoveryMessage{
+			version: m.getBlockExtraVersion(big.NewInt(int64(m.BlockIndex))),
+		}
 	default:
 		err := fmt.Errorf("invalid type: 0x%02x", byte(m.Type))
 		return err
