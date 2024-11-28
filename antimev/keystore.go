@@ -233,6 +233,7 @@ func (ks *KeyStore) DKGReshare() ([][]byte, []byte, error) {
 		if err != nil {
 			return nil, nil, err
 		}
+		// No data changed so no need to persist
 		return rMsgs, rPvss.Encode(), nil
 	}
 	return nil, nil, nil
@@ -251,6 +252,11 @@ func (ks *KeyStore) DKGShare() ([][]byte, []byte, error) {
 	// Generate secret sharing messages and pvss
 	sMsgs, sPvss, err := ks.sharing.prepare(ks.threshold)
 	if err != nil || sPvss == nil {
+		return nil, nil, err
+	}
+	// Store only if some secret is generated
+	err = ks.saveStoreAndReInitialize()
+	if err != nil {
 		return nil, nil, err
 	}
 	return sMsgs, sPvss.Encode(), nil
