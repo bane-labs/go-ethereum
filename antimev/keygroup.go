@@ -330,10 +330,10 @@ func (tkg *thresholdKeyGroup) toAux() *thresholdKeyGroupAux {
 		aux.LocalSecret = tkg.localSecret.ToBigIntArray()
 	}
 	if tkg.globalPubKey != nil {
-		aux.GlobalPubKey = hex.EncodeToString(tkg.globalPubKey.Encode())
+		aux.GlobalPubKey = hex.EncodeToString(tkg.globalPubKey.Bytes())
 	}
 	if tkg.localPrvKey != nil {
-		aux.LocalPrvKey = hex.EncodeToString(tkg.localPrvKey.Encode())
+		aux.LocalPrvKey = hex.EncodeToString(tkg.localPrvKey.Bytes())
 	}
 	return aux
 }
@@ -361,7 +361,7 @@ func (tkg *thresholdKeyGroup) fromAux(aux *thresholdKeyGroupAux) error {
 		if err != nil {
 			return err
 		}
-		pubkey, err := new(tpke.PublicKey).Decode(pubBytes)
+		pubkey, err := new(tpke.PublicKey).FromBytes(pubBytes)
 		if err != nil {
 			return err
 		}
@@ -372,7 +372,7 @@ func (tkg *thresholdKeyGroup) fromAux(aux *thresholdKeyGroupAux) error {
 		if err != nil {
 			return err
 		}
-		prvkey, err := new(tpke.PrivateKey).Decode(prvBytes)
+		prvkey, err := new(tpke.PrivateKey).FromBytes(prvBytes)
 		if err != nil {
 			return err
 		}

@@ -40,7 +40,7 @@ func (pk *PublicKey) Bytes() []byte {
 	return res[:]
 }
 
-func (pk *PublicKey) SetBytes(b []byte) (*PublicKey, error) {
+func (pk *PublicKey) FromBytes(b []byte) (*PublicKey, error) {
 	pg1 := new(bls12381.G1Affine)
 	_, err := pg1.SetBytes(b)
 	if err != nil {

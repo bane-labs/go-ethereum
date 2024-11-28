@@ -30,13 +30,13 @@ func NewPrivateKey(secretShares []*big.Int) *PrivateKey {
 	}
 }
 
-func (sk *PrivateKey) Encode() []byte {
+func (sk *PrivateKey) Bytes() []byte {
 	fe := new(fr.Element).SetBigInt(sk.fr)
 	b := fe.Bytes()
 	return b[:]
 }
 
-func (sk *PrivateKey) Decode(b []byte) (*PrivateKey, error) {
+func (sk *PrivateKey) FromBytes(b []byte) (*PrivateKey, error) {
 	if len(b) != 32 {
 		return nil, ErrTPKEScalarDecoding
 	}

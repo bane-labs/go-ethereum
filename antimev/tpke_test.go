@@ -134,7 +134,7 @@ func TestGenerateEncryptedTx(t *testing.T) {
 	}
 	ks := new(KeyStore)
 	ks.shared = new(thresholdKeyGroup)
-	pk, err := new(tpke.PublicKey).SetBytes(b)
+	pk, err := new(tpke.PublicKey).FromBytes(b)
 	if err != nil {
 		t.Fatalf("invalid key bytes")
 	}
