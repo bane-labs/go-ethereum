@@ -246,7 +246,9 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			return fmt.Errorf("failed to call isShareReady: %w", err)
 		}
 		if !ready {
-			return fmt.Errorf("DKG failed, share msgs not enough")
+			c.snapshot.RecoverOped = true
+			log.Warn("DKG sharing is not ready, skip recover")
+			return nil
 		}
 		// If share is ready, pending consensus nodes should ReceiveSecretShare
 		if slices.Contains(c.snapshot.PendingCNs, amevAddress) {
@@ -265,7 +267,9 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			// Only indexesNeedRecover <= (consensusSize - threshold) can recover
 			threshold := consensusSize - (consensusSize-1)/3
 			if len(c.snapshot.IndexNeedRecover) > int(consensusSize-threshold) {
-				return fmt.Errorf("reshare msgs not enough, cannot do recover")
+				c.snapshot.RecoverOped = true
+				log.Warn("DKG resharing doesn't meet recoverable threshold, skip recover")
+				return nil
 			}
 			if err := c.prepareRecover(c.snapshot.PendingCNs, c.snapshot.IndexNeedRecover, state, h); err != nil {
 				return fmt.Errorf("failed to start DKG recover, err: %w", err)
@@ -474,13 +478,15 @@ func (c *DBFT) syncRecoveredReshares(snap *Snapshot, state *state.StateDB, heade
 		if err != nil {
 			return err
 		}
-		reshareMsgs, err := c.getReshareMsgs(snap.Round, index, state, header)
-		if err != nil {
-			return err
-		}
-		err = c.amevKeystore.ReceiveSecretReshare(int(index), reshareMsgs, rpvss)
-		if err != nil {
-			return err
+		if len(rpvss) > 0 {
+			reshareMsgs, err := c.getReshareMsgs(snap.Round, index, state, header)
+			if err != nil {
+				return err
+			}
+			err = c.amevKeystore.ReceiveSecretReshare(int(index), reshareMsgs, rpvss)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
