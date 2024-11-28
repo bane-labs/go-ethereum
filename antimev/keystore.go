@@ -118,26 +118,25 @@ func (ks *KeyStore) MessagePubKey() string {
 	return hex.EncodeToString(crypto.FromECDSAPub(&ks.ethPrvKey.ExportECDSA().PublicKey))
 }
 
-// CurrentGlobalPubKey returns a hex string of current global key
-func (ks *KeyStore) CurrentGlobalPubKey() string {
+// CurrentGlobalPubKey returns global public key that may be used to verify threshold
+// signature against. Do not modify the return value.
+func (ks *KeyStore) CurrentGlobalPubKey() (*tpke.PublicKey, error) {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
-	if ks.shared != nil {
-		return hex.EncodeToString(ks.shared.globalPubKey.Bytes())
-	} else {
-		return hex.EncodeToString(nil)
+	if ks.shared == nil {
+		return nil, ErrNoPubKey
 	}
+	return ks.shared.globalPubKey, nil
 }
 
-// LastGlobalPubKey returns a hex string of last global key
-func (ks *KeyStore) LastGlobalPubKey() string {
+// LastGlobalPubKey returns last round global public key.
+func (ks *KeyStore) LastGlobalPubKey() (*tpke.PublicKey, error) {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
-	if ks.reshared != nil {
-		return hex.EncodeToString(ks.reshared.globalPubKey.Bytes())
-	} else {
-		return hex.EncodeToString(nil)
+	if ks.reshared == nil {
+		return nil, ErrNoPubKey
 	}
+	return ks.reshared.globalPubKey, nil
 }
 
 // IsResharing returns if there is an ongoing resharing

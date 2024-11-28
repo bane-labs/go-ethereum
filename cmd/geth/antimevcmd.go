@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -170,14 +171,23 @@ func unlockKeyStore(ks *antimev.KeyStore, passwords []string) error {
 func antimevStatus(ctx *cli.Context) error {
 	ks := makeAntimevKeystore(ctx)
 	unlockKeyStore(ks, utils.MakeAntiMEVPasswordList(ctx))
+	var cpkStr, lpkStr string
+	cpk, err := ks.CurrentGlobalPubKey()
+	if err == nil {
+		cpkStr = hex.EncodeToString(cpk.Bytes())
+	}
+	lpk, err := ks.LastGlobalPubKey()
+	if err == nil {
+		lpkStr = hex.EncodeToString(lpk.Bytes())
+	}
 	fmt.Printf("Antimev keystore status:\n")
 	fmt.Printf("- Message public key: {%s}\n", ks.MessagePubKey())
 	fmt.Printf("- Resharing: {%t}\n", ks.IsResharing())
 	fmt.Printf("- Sharing: {%t}\n", ks.IsSharing())
 	fmt.Printf("- Reshared: {%t}\n", ks.HasReshared())
 	fmt.Printf("- Shared: {%t}\n", ks.HasShared())
-	fmt.Printf("- Current global key: {%s}\n", ks.CurrentGlobalPubKey())
-	fmt.Printf("- Last global key: {%s}\n", ks.LastGlobalPubKey())
+	fmt.Printf("- Current global key: {%s}\n", cpkStr)
+	fmt.Printf("- Last global key: {%s}\n", lpkStr)
 	return nil
 }
 
