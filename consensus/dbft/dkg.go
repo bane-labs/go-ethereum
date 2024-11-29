@@ -223,16 +223,17 @@ func (c *DBFT) handleDKG(h *types.Header) error {
 			return fmt.Errorf("failed to start new DKG, err: %w", err)
 		}
 		if currentHeight < recoverStartHeight {
-			// If is a member of current consensus
-			if slices.Contains(c.snapshot.CurrentCNs, amevAddress) && c.snapshot.Round > 1 {
-				if err = c.taskReshare(currentHeight, recoverStartHeight); err != nil {
-					return fmt.Errorf("failed to task DKG reshare, err: %w", err)
-				}
-			}
 			// If is a member of pending consensus
 			if slices.Contains(c.snapshot.PendingCNs, amevAddress) {
 				if err = c.taskShare(currentHeight, recoverStartHeight); err != nil {
 					return fmt.Errorf("failed to task DKG share, err: %w", err)
+				}
+			}
+			// If is a member of current consensus, try reshare but give up if error
+			if slices.Contains(c.snapshot.CurrentCNs, amevAddress) && c.snapshot.Round > 1 {
+				if err = c.taskReshare(currentHeight, recoverStartHeight); err != nil {
+					c.snapshot.ShareOped = true
+					return fmt.Errorf("failed to task DKG reshare, err: %w", err)
 				}
 			}
 		}
