@@ -487,24 +487,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			ethBlock := finalBlock.ToEthBlock()
 			h := ethBlock.Header()
 			h.GasUsed = pre.finalGASUsed
-
-			// Use a copy of state to avoid changing block's state. The original state will be reused
-			// during block insertion into chain.
-			if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(h.Number, bigOne)) {
-				pub, err := c.getGlobalPublicKey(pre.finalState.Copy())
-				if err != nil {
-					log.Crit("failed to retrieve global public key to construct next consensus",
-						"err", err)
-				}
-				h.MixDigest = dbftutil.GetNextConsensusHash([]dbftutil.Encodable{pub})
-			} else {
-				nextVals, err := c.getValidators(nil, pre.finalState.Copy(), h)
-				if err != nil {
-					log.Crit("Failed to compute next block validators",
-						"err", err)
-				}
-				h.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
-			}
+			h.MixDigest = c.getNextConsensus(h, pre.finalState)
 
 			// Update state root, transactions root, receipts hash and bloom.
 			res, err := c.FinalizeAndAssemble(c.chain, h, pre.finalState, pre.finalTransactions, nil, pre.finalReceipts, ethBlock.Withdrawals())
@@ -605,23 +588,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 
 			header := ethBlock.Header()
 			header.GasUsed = gasUsed
-
-			// Fill NextConsensus based on the currently accepting block state and update MixDigest.
-			if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne)) {
-				pub, err := c.getGlobalPublicKey(state.Copy())
-				if err != nil {
-					log.Crit("Failed to compute next block validators",
-						"err", err)
-				}
-				header.MixDigest = dbftutil.GetNextConsensusHash([]dbftutil.Encodable{pub})
-			} else {
-				nextVals, err := c.getValidators(nil, state.Copy(), header)
-				if err != nil {
-					log.Crit("Failed to compute next block validators",
-						"err", err)
-				}
-				header.MixDigest = dbftutil.GetNextConsensusHash(nextVals)
-			}
+			header.MixDigest = c.getNextConsensus(header, state)
 
 			// Update state root, transactions root, receipts hash and bloom.
 			res, err := c.FinalizeAndAssemble(c.chain, header, state, dbftBlock.transactions, nil, receipts, ethBlock.Withdrawals())
@@ -851,25 +818,8 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 					return false
 				}
 
-				// Verify NextConsensus based on the state got after in-block transactions processing. Make a
-				// state copy in order to avoid state modifications potentially made by getValidators call.
-				// The original state will be committed if block is accepted.
-				var expectedMixDigest common.Hash
-				if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(dbftBlock.header.Number, bigOne)) {
-					pub, err := c.getGlobalPublicKey(state.Copy())
-					if err != nil {
-						log.Crit("failed to retrieve global public key to construct next consensus",
-							"err", err)
-					}
-					expectedMixDigest = dbftutil.GetNextConsensusHash([]dbftutil.Encodable{pub})
-				} else {
-					nextVals, err := c.getValidators(nil, state.Copy(), dbftBlock.header)
-					if err != nil {
-						log.Crit("Failed to compute next block validators",
-							"err", err)
-					}
-					expectedMixDigest = dbftutil.GetNextConsensusHash(nextVals)
-				}
+				// Verify NextConsensus based on the state got after in-block transactions processing.
+				expectedMixDigest := c.getNextConsensus(dbftBlock.header, state)
 				if dbftBlock.header.MixDigest != expectedMixDigest {
 					log.Warn("Invalid NextConsensus in the proposed block",
 						"expected", expectedMixDigest.String(),
@@ -2405,6 +2355,36 @@ func (c *DBFT) getGlobalPublicKey(state *state.StateDB) (*tpke.PublicKey, error)
 		return nil, fmt.Errorf("failed to get public key from keystore: %w", err)
 	}
 	return pub, nil
+}
+
+// getNextConsensus calculates NextConsensus hash based on the provided block height
+// and DB state of this block wrt NeoXAMEV fork. It does not modify the provided
+// state, so the provided state may safely be reused for further block processing.
+func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) common.Hash {
+	var (
+		scp  = s.Copy()
+		pubs []dbftutil.Encodable
+	)
+	if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(h.Number, bigOne)) {
+		pub, err := c.getGlobalPublicKey(scp)
+		if err != nil {
+			log.Crit("failed to retrieve global public key to construct next consensus",
+				"err", err)
+		}
+		pubs = []dbftutil.Encodable{pub}
+	} else {
+		nextVals, err := c.getValidators(nil, scp, h)
+		if err != nil {
+			log.Crit("Failed to compute next block validators",
+				"err", err)
+		}
+		pubs = make([]dbftutil.Encodable, len(nextVals))
+		for i := range nextVals {
+			pubs[i] = nextVals[i]
+		}
+	}
+
+	return dbftutil.GetNextConsensusHash(pubs)
 }
 
 func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
