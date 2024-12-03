@@ -1366,15 +1366,15 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if len(header.Extra) < dbftutil.ExtraVersionLen {
 		return errMissingVanity
 	}
-	isAMEV := chain.Config().IsNeoXAMEV(header.Number)
+	var (
+		isAMEV        = chain.Config().IsNeoXAMEV(header.Number)
+		expectedExtra = byte(dbftutil.ExtraV0)
+	)
 	if isAMEV {
-		if header.Extra[0] != byte(dbftutil.ExtraV1) {
-			return fmt.Errorf("%w: expected %d, got %d", errUnexpectedExtraVersion, dbftutil.ExtraV1, header.Extra[0])
-		}
-	} else {
-		if header.Extra[0] != byte(dbftutil.ExtraV0) {
-			return fmt.Errorf("%w: expected %d, got %d", errUnexpectedExtraVersion, dbftutil.ExtraV0, header.Extra[0])
-		}
+		expectedExtra = byte(dbftutil.ExtraV1)
+	}
+	if header.Extra[0] != expectedExtra {
+		return fmt.Errorf("%w: expected %d, got %d", errUnexpectedExtraVersion, expectedExtra, header.Extra[0])
 	}
 	if isSealed {
 		var expected int
