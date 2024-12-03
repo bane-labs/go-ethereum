@@ -41,7 +41,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth"
-	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/internal/testrand"
 	"github.com/ethereum/go-ethereum/internal/version"
@@ -444,7 +443,7 @@ func startEthService(t *testing.T, genesis *core.Genesis, blocks []*types.Block)
 
 	ethcfg := &ethconfig.Config{
 		Genesis:        genesis,
-		SyncMode:       downloader.FullSync,
+		SyncMode:       ethconfig.FullSync,
 		TrieTimeout:    time.Minute,
 		TrieDirtyCache: 256,
 		TrieCleanCache: 256,

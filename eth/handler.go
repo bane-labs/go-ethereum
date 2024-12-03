@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/fetcher"
 	beaconproto "github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
@@ -132,7 +133,7 @@ type handlerConfig struct {
 	Chain          *core.BlockChain       // Blockchain to serve data from
 	TxPool         txPool                 // Transaction pool to propagate from
 	Network        uint64                 // Network identifier to advertise
-	Sync           downloader.SyncMode    // Whether to snap or full sync
+	Sync           ethconfig.SyncMode     // Whether to snap or full sync
 	BloomCache     uint64                 // Megabytes to alloc for snap sync bloom
 	EventMux       *event.TypeMux         // Legacy event mux, deprecate for `feed`
 	RequiredBlocks map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
@@ -204,7 +205,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		handlerDoneCh:  make(chan struct{}),
 		handlerStartCh: make(chan struct{}),
 	}
-	if config.Sync == downloader.FullSync {
+	if config.Sync == ethconfig.FullSync {
 		// The database seems empty as the current block is the genesis. Yet the snap
 		// block is ahead, so snap sync was enabled for this node at a certain point.
 		// The scenarios where this can happen is

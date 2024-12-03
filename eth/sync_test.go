@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
@@ -105,7 +105,7 @@ func testSnapSyncDisabling(t *testing.T, beaconVer uint, ethVer uint, snapVer ui
 
 	// Check that snap sync was disabled
 	beacon, peer := empty.handler.peers.peerWithHighestTD()
-	op := peerToSyncOp(downloader.SnapSync, beacon, peer)
+	op := peerToSyncOp(ethconfig.SnapSync, beacon, peer)
 	if err := empty.handler.doSync(op); err != nil {
 		t.Fatal("sync failed:", err)
 	}

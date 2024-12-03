@@ -31,7 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -224,7 +224,7 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 		Chain:      chain,
 		TxPool:     txpool,
 		Network:    1,
-		Sync:       downloader.SnapSync,
+		Sync:       ethconfig.SnapSync,
 		BloomCache: 1,
 		FileSystem: filesystem,
 	})
