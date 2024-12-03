@@ -189,7 +189,7 @@ func getSignersAndSigsV1(cfg *config, extra []byte) (*tpke.PublicKey, *tpke.Sign
 	}
 	pubOffset := dbftutil.ExtraVersionLen
 	// Recover global public key and threshold signature.
-	_, err := pub.Decode(extra[pubOffset : pubOffset+pubLen])
+	err := pub.FromBytes(extra[pubOffset : pubOffset+pubLen])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to decode public key: %w", err)
 	}

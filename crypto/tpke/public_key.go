@@ -7,8 +7,8 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 )
 
-// PublicKeyLen is the length of PublicKey in serialized representation.
-const PublicKeyLen = 128
+// PublicKeyLen is the length of PublicKey in serialized compressed representation.
+const PublicKeyLen = bls12381.SizeOfG1AffineCompressed
 
 type PublicKey struct {
 	pg1 *bls12381.G1Affine // A public value for tpke encryption
@@ -27,9 +27,22 @@ func NewGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
 	}
 }
 
-// Bytes serializes PublicKey into byte slice.
+// Bytes serializes PublicKey into byte slice using compressed [bls12381.G1Affine]
+// representation.
 func (pk *PublicKey) Bytes() []byte {
-	return pk.Encode()
+	res := pk.pg1.Bytes()
+	return res[:]
+}
+
+// FromBytes deserializes PublicKey from the given byte slice. It expects compressed
+// PublicKey representation as an input (see [PublicKey.Bytes] documentation).
+func (pk *PublicKey) FromBytes(bytes []byte) error {
+	if len(bytes) != PublicKeyLen {
+		return fmt.Errorf("invalid public key length: expected %d, got %d", PublicKeyLen, len(bytes))
+	}
+	pk.pg1 = new(bls12381.G1Affine)
+	_, err := pk.pg1.SetBytes(bytes)
+	return err
 }
 
 func (pk *PublicKey) Encode() []byte {
