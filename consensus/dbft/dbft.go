@@ -179,7 +179,6 @@ func getSignersAndSigsV1(cfg *config, extra []byte) (*tpke.PublicKey, *tpke.Sign
 	}
 
 	var (
-		pub    = new(tpke.PublicKey)
 		sig    = new(tpke.Signature)
 		sigLen = tpke.SignatureLen
 		pubLen = tpke.PublicKeyLen
@@ -189,7 +188,7 @@ func getSignersAndSigsV1(cfg *config, extra []byte) (*tpke.PublicKey, *tpke.Sign
 	}
 	pubOffset := dbftutil.ExtraVersionLen
 	// Recover global public key and threshold signature.
-	_, err := pub.Decode(extra[pubOffset : pubOffset+pubLen])
+	pub, err := tpke.NewPublicKeyFromBytes(extra[pubOffset : pubOffset+pubLen])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to decode public key: %w", err)
 	}

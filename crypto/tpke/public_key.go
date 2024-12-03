@@ -5,13 +5,23 @@ import (
 	"math/big"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	lru "github.com/hashicorp/golang-lru/v2"
 )
 
-// PublicKeyLen is the length of PublicKey in serialized representation.
-const PublicKeyLen = 128
+// PublicKeyLen is the length of PublicKey in serialized compressed representation.
+const PublicKeyLen = bls12381.SizeOfG1AffineCompressed
 
 type PublicKey struct {
 	pg1 *bls12381.G1Affine // A public value for tpke encryption
+}
+
+// keycache is a simple lru cache for bls12381 keys that avoids Y calculation
+// overhead for known keys serialized in compressed form.
+var keycache *lru.Cache[string, *PublicKey]
+
+func init() {
+	// Key cache size is enough for 7-CN networks.
+	keycache, _ = lru.New[string, *PublicKey](32)
 }
 
 // NewGlobalPublicKey aggregates and returns a PublicKey
@@ -27,9 +37,34 @@ func NewGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
 	}
 }
 
-// Bytes serializes PublicKey into byte slice.
+// NewPublicKeyFromBytes deserializes PublicKey from the given byte slice. It expects
+// compressed PublicKey representation as an input (see [PublicKey.Bytes]
+// documentation). It uses cache under the hood, hence returned value must not be
+// changed.
+func NewPublicKeyFromBytes(b []byte) (*PublicKey, error) {
+	pk, ok := keycache.Get(string(b))
+	if ok {
+		return pk, nil
+	}
+
+	if len(b) != PublicKeyLen {
+		return nil, fmt.Errorf("invalid public key length: expected %d, got %d", PublicKeyLen, len(b))
+	}
+	pk = new(PublicKey)
+	pk.pg1 = new(bls12381.G1Affine)
+	_, err := pk.pg1.SetBytes(b)
+	if err != nil {
+		return nil, err
+	}
+	keycache.Add(string(b), pk)
+	return pk, nil
+}
+
+// Bytes serializes PublicKey into byte slice using compressed [bls12381.G1Affine]
+// representation.
 func (pk *PublicKey) Bytes() []byte {
-	return pk.Encode()
+	res := pk.pg1.Bytes()
+	return res[:]
 }
 
 func (pk *PublicKey) Encode() []byte {
