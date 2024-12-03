@@ -1,9 +1,12 @@
 package dbft
 
 import (
+	"fmt"
+
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/nspcc-dev/dbft"
 )
 
@@ -21,8 +24,24 @@ type Signer struct {
 }
 
 // Sign implements dbftCrypto.PrivateKey interface and signs the given message.
-// In case of block, msg is expected to be dbftRLP(header) that must be
-// guaranteed by Block.Sign method.
+// Sign expects consensus message bytes as an input; for block signing use
+// [Signer.signBlock].
 func (s *Signer) Sign(msg []byte) ([]byte, error) {
 	return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, msg)
+}
+
+// signBlock signs block RLP bytes using the given signing scheme.
+func (s *Signer) signBlock(scheme dbftutil.ExtraVersion, blockRLP []byte) ([]byte, error) {
+	switch scheme {
+	case dbftutil.ExtraV0:
+		return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, blockRLP)
+	case dbftutil.ExtraV1:
+		share, err := s.AmevKeystore.SignShare(blockRLP)
+		if err != nil {
+			return nil, fmt.Errorf("failed to sign share: %w", err)
+		}
+		return share.ToBytes(), nil
+	default:
+		return nil, fmt.Errorf("unsupported signature scheme: %d", scheme)
+	}
 }

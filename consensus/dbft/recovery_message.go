@@ -3,8 +3,10 @@ package dbft
 import (
 	"errors"
 	"io"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/nspcc-dev/dbft"
@@ -13,6 +15,12 @@ import (
 type (
 	// recoveryMessage represents dBFT Recovery message.
 	recoveryMessage struct {
+		// version holds a version of block Extra data at the recoveryMessage's
+		// height. This field is filled manually either in
+		// [dbft.WithNewRecoveryMessage] callback or based on the consensus [message]
+		// height during [message] RLP decoding.
+		version dbftutil.ExtraVersion
+
 		PreparationPayloads []*preparationCompact
 		PreCommitPayloads   []*preCommitCompact
 		CommitPayloads      []*commitCompact
@@ -48,7 +56,7 @@ type (
 	commitCompact struct {
 		ViewNumber       byte
 		ValidatorIndex   uint8
-		Signature        [extraSeal]byte
+		Signature        []byte
 		InvocationScript []byte
 	}
 
@@ -105,7 +113,7 @@ func (m *recoveryMessage) AddPayload(p dbft.ConsensusPayload[common.Hash]) {
 		m.CommitPayloads = append(m.CommitPayloads, &commitCompact{
 			ValidatorIndex:   validator,
 			ViewNumber:       p.ViewNumber(),
-			Signature:        p.GetCommit().(*commit).SignatureExt,
+			Signature:        p.GetCommit().(*commit).signature,
 			InvocationScript: p.(*Payload).Witness,
 		})
 	}
@@ -200,11 +208,11 @@ func (m *recoveryMessage) GetCommits(p dbft.ConsensusPayload[common.Hash], valid
 	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.CommitPayloads))
 
 	for i, c := range m.CommitPayloads {
-		cc := fromPayload(commitType, p.(*Payload), &commit{SignatureExt: c.Signature})
+		cc := fromPayload(commitType, p.(*Payload), &commit{version: m.version, signature: c.Signature})
 		cc.SetValidatorIndex(uint16(c.ValidatorIndex))
 		cc.Sender = validators[c.ValidatorIndex].(*PublicKey).Account
 		cc.Witness = c.InvocationScript
-
+		cc.getBlockExtraVersion = func(_ *big.Int) dbftutil.ExtraVersion { return m.version }
 		ps[i] = cc
 	}
 

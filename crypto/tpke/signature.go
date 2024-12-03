@@ -6,6 +6,14 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 )
 
+const (
+	// SignatureLen is the size of Signature in the serialized representation.
+	SignatureLen = bls12381.SizeOfG2AffineCompressed
+	// SignatureShareLen is the size of SignatureShare in the serialized
+	// representation.
+	SignatureShareLen = bls12381.SizeOfG2AffineCompressed
+)
+
 var Domain = []byte("BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_")
 
 type Signature struct {

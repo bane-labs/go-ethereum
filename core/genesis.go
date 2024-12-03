@@ -436,7 +436,7 @@ func (g *Genesis) ToBlock() *types.Block {
 		)
 		if len(g.ExtraData) == 0 {
 			extra := make([]byte, dbftutil.ExtraVersionLen+n*common.AddressLength+m*crypto.SignatureLength)
-			extra[0] = dbftutil.ExtraV0
+			extra[0] = byte(dbftutil.ExtraV0)
 			for i, v := range sb[:n] {
 				offset := dbftutil.ExtraVersionLen + i*common.AddressLength
 				copy(extra[offset:offset+common.AddressLength], v.Bytes())
@@ -497,7 +497,7 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *triedb.Database) (*types.Blo
 			extra = block.Extra()
 		)
 		switch extra[0] {
-		case dbftutil.ExtraV0:
+		case byte(dbftutil.ExtraV0):
 			if len(extra) < dbftutil.ExtraVersionLen+n*common.AddressLength+m*crypto.SignatureLength {
 				return nil, errors.New("can't start dBFT chain without validators addresses/signatures set in the genesis")
 			}
@@ -511,6 +511,9 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *triedb.Database) (*types.Blo
 				return nil, fmt.Errorf("inconsistent MixHash (NextConsensus) genesis block setting: expected %s, got %s", expected, block.MixDigest())
 			}
 		default:
+			// We explicitly don't support TPKE-based genesis block Extra (dbftutil.ExtraV1) because there's no way to
+			// verify public key based on validators multisignature public keys. All NeoX public networks use V0-based
+			// signing scheme for genesis block.
 			return nil, fmt.Errorf("can't validate Extra genesis field: unexpected Extra version: %d", extra[0])
 		}
 	}
