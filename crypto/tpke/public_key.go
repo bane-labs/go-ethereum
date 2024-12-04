@@ -66,6 +66,24 @@ func NewPublicKeyFromBytes(b []byte) (*PublicKey, error) {
 	return pk, nil
 }
 
+// NewPublicKeyFromPaddedBytes deserializes PublicKey from the given byte slice.
+// It expects uncompressed padded PublicKey representation as an input with length of
+// [PublicKeyLenPadded] (see [PublicKey.Bytes] documentation).
+func NewPublicKeyFromPaddedBytes(b []byte) (*PublicKey, error) {
+	if len(b) != PublicKeyLenPadded {
+		return nil, fmt.Errorf("invalid public key length: expected %d, got %d", PublicKeyLenPadded, len(b))
+	}
+	var (
+		pk  = new(PublicKey)
+		err error
+	)
+	pk.pg1, err = decodePointG1(b)
+	if err != nil {
+		return nil, err
+	}
+	return pk, nil
+}
+
 // Bytes serializes PublicKey into byte slice using compressed [bls12381.G1Affine]
 // representation. The resulting byte slice has the length of
 // [PublicKeyLen].
@@ -78,17 +96,6 @@ func (pk *PublicKey) Bytes() []byte {
 // resulting byte slice has the length of [PublicKeyLenPadded].
 func (pk *PublicKey) Encode() []byte {
 	return encodePointG1(pk.pg1)
-}
-
-// Decode decodes PublicKey from the given byte slice in an uncompressed form with
-// padding. It expects the slice of [PublicKeyLenPadded] length as an input.
-func (pk *PublicKey) Decode(b []byte) (*PublicKey, error) {
-	pg1, err := decodePointG1(b)
-	if err != nil {
-		return nil, err
-	}
-	pk.pg1 = pg1
-	return pk, nil
 }
 
 // Equal compares if two public keys are the same.
