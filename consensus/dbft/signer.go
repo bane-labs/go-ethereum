@@ -40,7 +40,7 @@ func (s *Signer) signBlock(scheme dbftutil.ExtraVersion, blockRLP []byte) ([]byt
 		if err != nil {
 			return nil, fmt.Errorf("failed to sign share: %w", err)
 		}
-		return share.ToBytes(), nil
+		return share.Bytes(), nil
 	default:
 		return nil, fmt.Errorf("unsupported signature scheme: %d", scheme)
 	}
