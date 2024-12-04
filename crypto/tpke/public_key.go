@@ -8,9 +8,15 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
-// PublicKeyLen is the length of PublicKey in serialized compressed representation.
-const PublicKeyLen = bls12381.SizeOfG1AffineCompressed
+const (
+	// PublicKeyLen is the length of PublicKey in serialized compressed representation.
+	PublicKeyLen = bls12381.SizeOfG1AffineCompressed
+	// PublicKeyLenPadded is the length of PublicKey in a serialized uncompressed
+	// padded representation.
+	PublicKeyLenPadded = 128
+)
 
+// PublicKey is a BLS12-381 based public key implementation used in TPKE scheme.
 type PublicKey struct {
 	pg1 *bls12381.G1Affine // A public value for tpke encryption
 }
@@ -24,7 +30,7 @@ func init() {
 	keycache, _ = lru.New[string, *PublicKey](32)
 }
 
-// NewGlobalPublicKey aggregates and returns a PublicKey
+// NewGlobalPublicKey aggregates and returns a PublicKey.
 func NewGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
 	pg1 := new(bls12381.G1Affine).Set(cs[0].coeff[0])
 	// Add up A0
@@ -38,9 +44,9 @@ func NewGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
 }
 
 // NewPublicKeyFromBytes deserializes PublicKey from the given byte slice. It expects
-// compressed PublicKey representation as an input (see [PublicKey.Bytes]
-// documentation). It uses cache under the hood, hence returned value must not be
-// changed.
+// compressed PublicKey representation as an input with length of [PublicKeyLen] (see
+// [PublicKey.Bytes] documentation). It uses cache under the hood, hence returned
+// value must not be changed.
 func NewPublicKeyFromBytes(b []byte) (*PublicKey, error) {
 	pk, ok := keycache.Get(string(b))
 	if ok {
@@ -61,16 +67,21 @@ func NewPublicKeyFromBytes(b []byte) (*PublicKey, error) {
 }
 
 // Bytes serializes PublicKey into byte slice using compressed [bls12381.G1Affine]
-// representation.
+// representation. The resulting byte slice has the length of
+// [PublicKeyLen].
 func (pk *PublicKey) Bytes() []byte {
 	res := pk.pg1.Bytes()
 	return res[:]
 }
 
+// Encode encodes PublicKey to byte slice in an uncompressed form with padding. The
+// resulting byte slice has the length of [PublicKeyLenPadded].
 func (pk *PublicKey) Encode() []byte {
 	return encodePointG1(pk.pg1)
 }
 
+// Decode decodes PublicKey from the given byte slice in an uncompressed form with
+// padding. It expects the slice of [PublicKeyLenPadded] length as an input.
 func (pk *PublicKey) Decode(b []byte) (*PublicKey, error) {
 	pg1, err := decodePointG1(b)
 	if err != nil {
@@ -80,12 +91,12 @@ func (pk *PublicKey) Decode(b []byte) (*PublicKey, error) {
 	return pk, nil
 }
 
-// Equal compares if two public keys are the same
+// Equal compares if two public keys are the same.
 func (pk *PublicKey) Equal(opk *PublicKey) bool {
 	return pk.pg1.Equal(opk.pg1)
 }
 
-// Encrypt returns an encrypted point with encryption commitment
+// Encrypt returns an encrypted point with encryption commitment.
 func (pk *PublicKey) Encrypt(msg *bls12381.G1Affine) *CipherText {
 	r := randScalar()
 
@@ -105,12 +116,12 @@ func (pk *PublicKey) Encrypt(msg *bls12381.G1Affine) *CipherText {
 	}
 }
 
-// VerifySigShare verifies a signature in form of a single signature
+// VerifySigShare verifies a signature in form of a single signature.
 func (pk *PublicKey) VerifySigShare(msg []byte, sig *SignatureShare) bool {
 	return pk.VerifySig(msg, (*Signature)(sig))
 }
 
-// VerifySig verifies a signature with corresponding message
+// VerifySig verifies a signature with corresponding message.
 func (pk *PublicKey) VerifySig(msg []byte, sig *Signature) bool {
 	g2Hash, _ := bls12381.HashToG2(msg, Domain)
 
