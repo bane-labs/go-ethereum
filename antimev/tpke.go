@@ -19,8 +19,6 @@ var (
 // Encrypt uses the current finished sharing to encrypt the input byte array.
 // It returns an encrypted aes key and an encrypted byte array.
 func (ks *KeyStore) Encrypt(msg []byte) (*tpke.CipherText, []byte, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	if ks.shared == nil {
 		return nil, nil, ErrNoPubKey
 	}
@@ -42,8 +40,6 @@ func (ks *KeyStore) Encrypt(msg []byte) (*tpke.CipherText, []byte, error) {
 // DecryptWithShare generates decryption shares for decrypting an array of
 // aes keys. The returned array is ordered the same as inputs.
 func (ks *KeyStore) DecryptWithShare(cts []*tpke.CipherText) ([]*tpke.DecryptionShare, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	if ks.shared == nil {
 		return nil, ErrNoPrvKey
 	}
@@ -54,8 +50,6 @@ func (ks *KeyStore) DecryptWithShare(cts []*tpke.CipherText) ([]*tpke.Decryption
 // aes keys, which is encrypted by old global public key. The returned
 // array is ordered the same as inputs.
 func (ks *KeyStore) DecryptWithReshare(cts []*tpke.CipherText) ([]*tpke.DecryptionShare, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	if ks.reshared == nil {
 		return nil, ErrNoPrvKey
 	}
@@ -68,8 +62,6 @@ func (ks *KeyStore) DecryptWithReshare(cts []*tpke.CipherText) ([]*tpke.Decrypti
 // inputs is dkg index which starts from 1, when the array index of a member in
 // the key group starts from 0.
 func (ks *KeyStore) AggregateAndDecryptWithShare(cts []*tpke.CipherText, msg [][]byte, inputs map[int]([]*tpke.DecryptionShare)) ([][]byte, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	if ks.shared == nil {
 		return nil, ErrNoPubKey
 	}
@@ -100,8 +92,6 @@ func (ks *KeyStore) AggregateAndDecryptWithShare(cts []*tpke.CipherText, msg [][
 // AggregateAndDecryptWithShare tries to aggregate decryption shares and finally
 // decrypt the aes keys and the raw messages, but the reshared key group is used.
 func (ks *KeyStore) AggregateAndDecryptWithReshare(cts []*tpke.CipherText, msg [][]byte, inputs map[int]([]*tpke.DecryptionShare)) ([][]byte, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	if ks.reshared == nil {
 		return nil, ErrNoPubKey
 	}
