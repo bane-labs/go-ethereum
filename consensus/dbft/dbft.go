@@ -2232,15 +2232,12 @@ func (c *DBFT) getDKGIndex(validatorIndex int, blockNum uint64) (int, error) {
 	if validatorIndex < 0 || validatorIndex >= len(originValidators) {
 		return -1, fmt.Errorf("invalid validator index: validators count is %d, requested %d", len(originValidators), validatorIndex)
 	}
-	orderedValidators := make([]common.Address, len(originValidators))
-	copy(orderedValidators, originValidators)
+	orderedValidators := slices.Clone(originValidators)
 	slices.SortFunc(orderedValidators, common.Address.Cmp)
 	addr := orderedValidators[validatorIndex]
-	for i := range originValidators {
-		if orderedValidators[i] == addr {
-			return i + 1, nil
-		}
+	dkgIndex := slices.Index(orderedValidators, addr) + 1
+	if dkgIndex == 0 {
+		panic("invalid sort")
 	}
-	// impossible case
-	return -1, nil
+	return dkgIndex, nil
 }
