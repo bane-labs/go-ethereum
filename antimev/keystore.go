@@ -36,6 +36,7 @@ type KeyStore struct {
 	path      string            // The local storage path
 	password  string            // The password for storage encryption
 
+	round      int                // The index of latest shared and current using key group
 	recovering *thresholdKeyGroup // The recovering key group
 	resharing  *thresholdKeyGroup // The resharing key group
 	reshared   *thresholdKeyGroup // The group can decrypt old messages
@@ -61,11 +62,13 @@ func (ks *KeyStore) Init(addr common.Address, prvkey *ecies.PrivateKey, groupSiz
 	ks.address = addr
 	ks.ethPrvKey = prvkey
 	ks.password = password
+	ks.round = 0
 	return ks.saveStoreAndReInitialize()
 }
 
-// Reset cleans all dkg progress data and returns to initial state
-func (ks *KeyStore) Reset() error {
+// Reset cleans all dkg progress data and returns to an initial state
+func (ks *KeyStore) Reset(round int) error {
+	ks.round = 0
 	ks.recovering = nil
 	ks.resharing = nil
 	ks.reshared = nil
@@ -99,6 +102,11 @@ func (ks *KeyStore) Path() (string, error) {
 // MessagePubKey returns a hex string of message encryption key
 func (ks *KeyStore) MessagePubKey() string {
 	return hex.EncodeToString(crypto.FromECDSAPub(&ks.ethPrvKey.ExportECDSA().PublicKey))
+}
+
+// Round returns the index of latest and successful dkg round (not the ongoing one)
+func (ks *KeyStore) Round() int {
+	return ks.round
 }
 
 // CurrentGlobalPubKey returns global public key that may be used to verify threshold
@@ -267,6 +275,7 @@ func (ks *KeyStore) OnEpochChange(aggregatedCmt []byte, isMemberOfNewGroup bool)
 	ks.shared = ks.sharing
 	ks.sharing = nil
 	ks.recovering = nil
+	ks.round += 1
 	return ks.saveStoreAndReInitialize()
 }
 
@@ -382,6 +391,7 @@ type keyStoreAux struct {
 	Address   common.Address `json:"address"`     // Self account address
 	EthPrvKey string         `json:"eth_prv_key"` // Self account secret key
 
+	Round      int                   `json:"round"`      // The index of latest shared and current using key group
 	Recovering *thresholdKeyGroupAux `json:"recovering"` // The recovering key group
 	Resharing  *thresholdKeyGroupAux `json:"resharing"`  // The resharing key group
 	Reshared   *thresholdKeyGroupAux `json:"reshared"`   // The group can decrypt old messages
@@ -410,6 +420,7 @@ func (ks *KeyStore) toAux() *keyStoreAux {
 		EthPrvKey: hex.EncodeToString(crypto.FromECDSA(ks.ethPrvKey.ExportECDSA())),
 	}
 
+	aux.Round = ks.round
 	if ks.recovering != nil {
 		aux.Recovering = ks.recovering.toAux()
 	}
@@ -445,6 +456,7 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 	ks.ethPrvKey = ecies.ImportECDSA(privKey)
 
+	ks.round = aux.Round
 	if aux.Recovering != nil {
 		ks.recovering = new(thresholdKeyGroup)
 		err = ks.recovering.fromAux(aux.Recovering)

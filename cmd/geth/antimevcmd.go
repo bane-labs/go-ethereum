@@ -182,10 +182,11 @@ func antimevStatus(ctx *cli.Context) error {
 	}
 	fmt.Printf("Antimev keystore status:\n")
 	fmt.Printf("- Message public key: {%s}\n", ks.MessagePubKey())
-	fmt.Printf("- Resharing: {%t}\n", ks.IsResharing())
-	fmt.Printf("- Sharing: {%t}\n", ks.IsSharing())
-	fmt.Printf("- Reshared: {%t}\n", ks.HasReshared())
-	fmt.Printf("- Shared: {%t}\n", ks.HasShared())
+	fmt.Printf("- Round: {%d}\n", ks.Round())
+	fmt.Printf("- Last round reshared: {%t}\n", ks.HasReshared())
+	fmt.Printf("- This round shared: {%t}\n", ks.HasShared())
+	fmt.Printf("- This round resharing: {%t}\n", ks.IsResharing())
+	fmt.Printf("- Next round sharing: {%t}\n", ks.IsSharing())
 	fmt.Printf("- Current global key: {%s}\n", cpkStr)
 	fmt.Printf("- Last global key: {%s}\n", lpkStr)
 	return nil
@@ -246,7 +247,7 @@ func antimevUpdate(ctx *cli.Context) error {
 func antimevReset(ctx *cli.Context) error {
 	ks := makeAntimevKeystore(ctx)
 	unlockKeyStore(ks, utils.MakeAntiMEVPasswordList(ctx))
-	if err := ks.Reset(); err != nil {
+	if err := ks.Reset(0); err != nil {
 		utils.Fatalf("Could not reset the keystore: %v", err)
 	}
 	return nil
