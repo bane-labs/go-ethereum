@@ -44,11 +44,11 @@ func TestTPKE(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnValidatorList(addrs, pubs)
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		msgs, pvss, err := kss[i].DKGShare()
+		msgs, pvss, err := kss[i].DKGShare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -58,7 +58,7 @@ func TestTPKE(t *testing.T) {
 	// Send secret sharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -78,7 +78,7 @@ func TestTPKE(t *testing.T) {
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt))
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -221,11 +221,11 @@ func TestBenchmark(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnValidatorList(addrs, pubs)
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		msgs, pvss, err := kss[i].DKGShare()
+		msgs, pvss, err := kss[i].DKGShare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -235,7 +235,7 @@ func TestBenchmark(t *testing.T) {
 	// Send secret sharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -255,7 +255,7 @@ func TestBenchmark(t *testing.T) {
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt))
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}

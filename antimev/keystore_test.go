@@ -101,11 +101,11 @@ func TestShare(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnValidatorList(addrs, pubs)
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		msgs, pvss, err := kss[i].DKGShare()
+		msgs, pvss, err := kss[i].DKGShare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -115,7 +115,7 @@ func TestShare(t *testing.T) {
 	// Send secret sharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -136,7 +136,7 @@ func TestShare(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// Try finish DKG without resharing
-		err := kss[i].OnEpochChange(encodePointG1(cmt))
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -168,12 +168,12 @@ func TestReshare(t *testing.T) {
 		sharePVSSes:   make([][]byte, size),
 	}
 	for i := 0; i < size; i++ {
-		// No resharing to handle
-		err := kss[i].OnValidatorList(addrs, pubs)
+		// No reshare to handle
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		msgs, pvss, err := kss[i].DKGShare()
+		msgs, pvss, err := kss[i].DKGShare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -183,7 +183,7 @@ func TestReshare(t *testing.T) {
 	// Send secret sharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -204,22 +204,22 @@ func TestReshare(t *testing.T) {
 	}
 	// Finalize dkg
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt))
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
 	// Execute resharing this time
 	for i := 0; i < size; i++ {
-		err := kss[i].OnValidatorList(addrs, pubs)
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		rMsgs, rPvss, err := kss[i].DKGReshare()
+		rMsgs, rPvss, err := kss[i].DKGReshare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		sMsgs, sPvss, err := kss[i].DKGShare()
+		sMsgs, sPvss, err := kss[i].DKGShare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -231,11 +231,11 @@ func TestReshare(t *testing.T) {
 	// Send resharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretReshare(j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			err := kss[i].ReceiveSecretReshare(i+1, j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
-			err = kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err = kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -256,7 +256,7 @@ func TestReshare(t *testing.T) {
 	}
 	// Check sharing and resharing
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt))
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -289,13 +289,13 @@ func TestGroupChange(t *testing.T) {
 	}
 	for i := 0; i < len(accounts); i++ {
 		// No resharing to handle
-		err := kss[i].OnValidatorList(addrs[:size], pubs[:size])
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 		// Sharing members, i ranges from 0 to 6
 		if i < size {
-			msgs, pvss, err := kss[i].DKGShare()
+			msgs, pvss, err := kss[i].DKGShare(pubs[:size])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -307,7 +307,7 @@ func TestGroupChange(t *testing.T) {
 	// Send secret sharing messages, only broadcast to sharing nodes
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -328,20 +328,20 @@ func TestGroupChange(t *testing.T) {
 	}
 	// Finalize dkg
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt))
+		err := kss[i].OnEpochChange(encodePointG1(cmt), i != 7)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnValidatorList(addrs[1:], pubs[1:])
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 		// Resharing members
 		if i < size {
-			rMsgs, rPvss, err := kss[i].DKGReshare()
+			rMsgs, rPvss, err := kss[i].DKGReshare(pubs[1:])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -349,7 +349,7 @@ func TestGroupChange(t *testing.T) {
 			contract.resharePVSSes[i] = rPvss
 		}
 		if i > 0 {
-			sMsgs, sPvss, err := kss[i].DKGShare()
+			sMsgs, sPvss, err := kss[i].DKGShare(pubs[1:])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -361,12 +361,12 @@ func TestGroupChange(t *testing.T) {
 	for i := 1; i < len(addrs); i++ {
 		for j := 0; j < size; j++ {
 			// Messages from node 0~6 to node 1~7
-			err := kss[i].ReceiveSecretReshare(j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			err := kss[i].ReceiveSecretReshare(i, j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 			// Messages from node 1~7 to node 1~7
-			err = kss[i].ReceiveSecretShare(kss[j+1].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err = kss[i].ReceiveSecretShare(i, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -387,7 +387,7 @@ func TestGroupChange(t *testing.T) {
 	}
 	// Check sharing and resharing
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt))
+		err := kss[i].OnEpochChange(encodePointG1(cmt), i != 0)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -421,13 +421,13 @@ func TestRecover(t *testing.T) {
 	}
 	for i := 0; i < len(addrs); i++ {
 		// No resharing to handle
-		err := kss[i].OnValidatorList(addrs[:size], pubs[:size])
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 		// Sharing members, i ranges from 0 to 6
 		if i < size {
-			msgs, pvss, err := kss[i].DKGShare()
+			msgs, pvss, err := kss[i].DKGShare(pubs[:size])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -439,7 +439,7 @@ func TestRecover(t *testing.T) {
 	// Send secret sharing messages, only broadcast to sharing nodes
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -460,20 +460,20 @@ func TestRecover(t *testing.T) {
 	}
 	// Finalize dkg
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt))
+		err := kss[i].OnEpochChange(encodePointG1(cmt), i != 7)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnValidatorList(addrs[1:], pubs[1:])
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 		// Resharing members
 		if i < size {
-			rMsgs, rPvss, err := kss[i].DKGReshare()
+			rMsgs, rPvss, err := kss[i].DKGReshare(pubs[1:])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -484,7 +484,7 @@ func TestRecover(t *testing.T) {
 	// Send resharing messages, expect which from validator 7
 	for i := 1; i < len(addrs); i++ {
 		for j := 0; j < size-1; j++ {
-			err := kss[i].ReceiveSecretReshare(j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			err := kss[i].ReceiveSecretReshare(i, j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -492,15 +492,14 @@ func TestRecover(t *testing.T) {
 	}
 	// Execute recovering this time, dead index 7, recover to validator 8
 	rIdxs := []int{7}
-	rAddrs := []common.Address{addrs[7]}
 	rPubs := []*ecies.PublicKey{pubs[7]}
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnRecoverPeriodStart(rIdxs, rAddrs, rPubs)
+		err := kss[i].OnRecoverPeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 		if i < 7 {
-			msgs, err := kss[i].DKGRecover()
+			msgs, err := kss[i].DKGRecover(rIdxs, rPubs)
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -509,25 +508,25 @@ func TestRecover(t *testing.T) {
 	}
 	// Send recover messages, broadcast to all nodes
 	for i := 0; i < size-1; i++ {
-		err := kss[7].ReceiveRecoverShare(kss[i].address, contract.recoverMsgs[i][0], contract.sharePVSSes[size-1])
+		err := kss[7].ReceiveRecoverShare(7, i+1, contract.recoverMsgs[i][0], contract.sharePVSSes[size-1])
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
 	// Recover the lost resharing messages
-	msgs, pvss, err := kss[7].TryRecoverReshare()
+	msgs, pvss, err := kss[7].TryRecoverReshare(pubs[1:])
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
 	for i := 1; i < len(addrs); i++ {
-		err := kss[i].ReceiveSecretReshare(7, msgs, pvss)
+		err := kss[i].ReceiveSecretReshare(i, 7, msgs, pvss)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
 	// Only check resharing
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].aggregateReshare()
+		err := kss[i].aggregateReshare(i != 0)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
