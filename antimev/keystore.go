@@ -175,7 +175,9 @@ func (ks *KeyStore) OnRecoverPeriodStart() error {
 	return ks.saveStoreAndReInitialize()
 }
 
-// DKGReshare generates and returns resharing messages and pvss.
+// DKGReshare generates and returns resharing messages and pvss. The input key
+// array should be ordered by DKG index, e.g. keystore will use 1 as the index
+// to generate a reshare message for messagePubKeys[0].
 func (ks *KeyStore) DKGReshare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byte, error) {
 	if ks.resharing == nil {
 		return nil, nil, ErrKeyGroupNotExists
@@ -195,7 +197,9 @@ func (ks *KeyStore) DKGReshare(messagePubKeys []*ecies.PublicKey) ([][]byte, []b
 	return nil, nil, nil
 }
 
-// DKGShare generates and returns sharing messages and pvss.
+// DKGShare generates and returns sharing messages and pvss. The input key array
+// should be ordered by DKG index, e.g. keystore will use 1 as the index to
+// generate a share message for messagePubKeys[0].
 func (ks *KeyStore) DKGShare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byte, error) {
 	if ks.sharing == nil {
 		return nil, nil, ErrKeyGroupNotExists
@@ -216,7 +220,9 @@ func (ks *KeyStore) DKGShare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byt
 	return sMsgs, sPvss.Encode(), nil
 }
 
-// DKGRecover generates and returns recovering messages and pvss.
+// DKGRecover generates and returns recovering messages and pvss. The input index
+// should be a DKG index starts from 1, and the size of two inputs should be the
+// same.
 func (ks *KeyStore) DKGRecover(indexes []int, messagePubKeys []*ecies.PublicKey) ([][]byte, error) {
 	if ks.shared == nil || ks.recovering == nil {
 		return nil, ErrKeyGroupNotExists
@@ -233,7 +239,9 @@ func (ks *KeyStore) DKGRecover(indexes []int, messagePubKeys []*ecies.PublicKey)
 
 // TryRecoverReshare tries to recover a resharing message, should be called when
 // resharing fails and receives a recover message. It returns resharing messages
-// immediately if recoverd, otherwise an error.
+// immediately if recoverd, otherwise an error. The input key array should be
+// ordered by DKG index, e.g. keystore will use 1 as the index to generate a
+// share message for messagePubKeys[0].
 func (ks *KeyStore) TryRecoverReshare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byte, error) {
 	if ks.recovering == nil || ks.resharing == nil {
 		return nil, nil, ErrKeyGroupNotExists
@@ -298,6 +306,7 @@ func (ks *KeyStore) aggregateReshare(isReceiver bool) error {
 }
 
 // ReceiveSecretShare tries to verify a sharing message array and store their data.
+// Both selfIndex and fromIndex should be a DKG index starts from 1.
 func (ks *KeyStore) ReceiveSecretShare(selfIndex int, fromIndex int, ess [][]byte, pvss []byte) error {
 	// Check if out of the period
 	if ks.sharing == nil {
@@ -325,6 +334,7 @@ func (ks *KeyStore) ReceiveSecretShare(selfIndex int, fromIndex int, ess [][]byt
 }
 
 // ReceiveSecretReshare tries to verify a resharing message array and store their data.
+// Both selfIndex and fromIndex should be a DKG index starts from 1.
 func (ks *KeyStore) ReceiveSecretReshare(selfIndex int, fromIndex int, ers [][]byte, pvss []byte) error {
 	// Check if out of the period
 	if ks.shared == nil || ks.resharing == nil {
@@ -352,6 +362,7 @@ func (ks *KeyStore) ReceiveSecretReshare(selfIndex int, fromIndex int, ers [][]b
 }
 
 // ReceiveRecoverShare tries to verify a recovering message array and store their data.
+// Both selfIndex and fromIndex should be a DKG index starts from 1.
 func (ks *KeyStore) ReceiveRecoverShare(selfIndex int, fromIndex int, ers []byte, pvss []byte) error {
 	// Check if out of the period
 	if ks.shared == nil || ks.recovering == nil {
