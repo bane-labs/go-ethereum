@@ -124,41 +124,46 @@ func TestTPKE(t *testing.T) {
 	}
 }
 
-// TestGenerateEncryptedTx generates an encrypted transaction using global key from JS console
+// TestGenerateEncryptedTx generates an encrypted transaction using 7-nodes
 func TestGenerateEncryptedTx(t *testing.T) {
-	// Prepare keystore
-	globalKey := "a5aa188d1c60a7173e59fe49b68b969999e70aa4c1acb76c5a3dd2ad0d19a859b1a2759e3995ce1ceccdea5a57fbf637"
-	b, err := hex.DecodeString(globalKey)
-	if err != nil {
-		t.Fatalf("invalid key string")
-	}
-	ks := new(KeyStore)
-	ks.shared = new(thresholdKeyGroup)
-	pk, err := new(tpke.PublicKey).FromBytes(b)
-	if err != nil {
-		t.Fatalf("invalid key bytes")
-	}
-	ks.shared.globalPubKey = pk
-	tx := buildTransferFromPriv0(t)
+	require.Equal(t, 7, size, "refactor test if different number of CNs is needed")
 
+	// Retrieve and decrypt the set of anti-MEV key storages.
+	kss := make([]*KeyStore, size)
+	for i := range kss {
+		kss[i] = NewKeyStore(filepath.Join("..", "privnet", "seven", fmt.Sprintf("node%d", i+1), "antimev-keystore"))
+		require.NoError(t, kss[i].Load(accounts[i].pwd))
+	}
+	tx := buildTransferFromPriv0(t)
 	// Encrypt transaction.
 	buf := bytes.NewBuffer(nil)
 	require.NoError(t, tx.EncodeRLP(buf))
 	msg := buf.Bytes()
-	encryptedKey, encryptedMsg, err := ks.Encrypt(msg)
+	encryptedKey, encryptedMsg, err := kss[0].Encrypt(msg)
 	require.NoError(t, err)
-
 	// Verify ciphertext.
 	if err := encryptedKey.Verify(); err != nil {
 		t.Fatalf("invalid ciphertext")
 	}
-
 	// Generate envelope.
 	var envelopeData = []byte{0xff, 0xff, 0xff, 0xff}
 	envelopeData = append(envelopeData, encryptedKey.ToBytes()...)
 	envelopeData = append(envelopeData, encryptedMsg...)
 	t.Logf("encryptedKey: %s\nencryptedMsg: %s\nenvelopeData: 0x%s\nencrypted tx hash: %s\n",
 		hex.EncodeToString(encryptedKey.ToBytes()), hex.EncodeToString(encryptedMsg), hex.EncodeToString(envelopeData), tx.Hash())
+	// Verify encrypted data are decryptable. Generate shares.
+	shares := make(map[int][]*tpke.DecryptionShare)
+	for i := 0; i < threshold; i++ {
+		share, err := kss[i].DecryptWithShare([]*tpke.CipherText{encryptedKey})
+		require.NoError(t, err)
+		shares[i+1] = share
+	}
+	// Decrypt and check that it's the same message.
+	results, err := kss[0].AggregateAndDecryptWithShare([]*tpke.CipherText{encryptedKey}, [][]byte{encryptedMsg}, shares)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(results))
+	require.NotNil(t, results[0])
+	require.True(t, bytes.Equal(results[0], msg), hex.EncodeToString(results[0]), hex.EncodeToString(msg))
 }
 
 // buildTransferFromPriv0 returns a signed transaction that transfers 1 wei from
