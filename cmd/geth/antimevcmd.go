@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/console/prompt"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/log"
@@ -246,9 +247,20 @@ func antimevUpdate(ctx *cli.Context) error {
 // antimevReset cleans all DKG data but keep the message keypair and other parameters.
 func antimevReset(ctx *cli.Context) error {
 	ks := makeAntimevKeystore(ctx)
-	unlockKeyStore(ks, utils.MakeAntiMEVPasswordList(ctx))
-	if err := ks.Reset(0); err != nil {
+	path, err := ks.Path()
+	if err != nil {
 		utils.Fatalf("Could not reset the keystore: %v", err)
+	}
+	confirm, err := prompt.Stdin.PromptConfirm(fmt.Sprintf("Reset '%s'?", path))
+	if err != nil {
+		utils.Fatalf("%v", err)
+	}
+	if confirm {
+		unlockKeyStore(ks, utils.MakeAntiMEVPasswordList(ctx))
+		// Reset the keystore to the oldest possible state before any DKG
+		if err := ks.Reset(0); err != nil {
+			utils.Fatalf("Could not reset the keystore: %v", err)
+		}
 	}
 	return nil
 }
