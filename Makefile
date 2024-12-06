@@ -13,6 +13,17 @@ SINGLE_DIR = $(MAIN_DIR)/single
 FOUR_DIR = $(MAIN_DIR)/four
 SEVEN_DIR = $(MAIN_DIR)/seven
 
+BOOTNODE = bootnode
+BOOTNODE_PORT = 30304
+BOOTNODE_LOGLEVEL = 5
+
+# Node 0 is a watch-only CN.
+NODE0 = node0
+NODE0_PORT = 30305
+NODE0_AUTH_PORT = 8551
+NODE0_HTTP_PORT = 8561
+NODE0_WS_PORT = 8571
+
 NODE1 = node1
 NODE1_PORT = 30306
 NODE1_AUTH_PORT = 8552
@@ -63,10 +74,6 @@ NODE8_WS_PORT = 8579
 
 PASSWORD_LEN = 32
 GENESIS_WORK_JSON = genesis_privnet.json
-
-BOOTNODE = bootnode
-BOOTNODE_PORT = 30305
-BOOTNODE_LOGLEVEL = 5
 
 RESTRICTED_NETWORK = 127.0.0.0/24
 NAT_POLICY = none
@@ -159,76 +166,90 @@ privnet_clean: privnet_stop
 	@find $(MAIN_DIR)/* -type d -name 'geth' -print -exec rm -rf {} +
 	@find $(MAIN_DIR)/* -type s,f -not \( -path '*/keystore/*' -or -path '*/antimev-keystore' -or -name '*.json' -or -name '*.txt' -or -name '*.key' -or -name '*.md' \) -print -exec rm -f {} +
 
+$(SINGLE_DIR)/$(NODE0)/geth:
+	@echo "Initializing $(NODE0) (watch-only CN) from genesis"
+	$(call init_node,$(SINGLE_DIR),$(NODE0))
+
 $(SINGLE_DIR)/$(NODE1)/geth:
-	@echo "Initializing $(NODE1) from genesis"
+	@echo "Initializing $(NODE1) (CN) from genesis"
 	$(call init_node,$(SINGLE_DIR),$(NODE1))
 
 $(SINGLE_DIR)/$(NODE2)/geth:
-	@echo "Initializing $(NODE2) from genesis"
+	@echo "Initializing $(NODE2) (seed) from genesis"
 	$(call init_node,$(SINGLE_DIR),$(NODE2))
 
+$(FOUR_DIR)/$(NODE0)/geth:
+	@echo "Initializing $(NODE0) (watch-only CN) from genesis"
+	$(call init_node,$(FOUR_DIR),$(NODE0))
+
 $(FOUR_DIR)/$(NODE1)/geth:
-	@echo "Initializing $(NODE1) from genesis"
+	@echo "Initializing $(NODE1) (CN) from genesis"
 	$(call init_node,$(FOUR_DIR),$(NODE1))
 
 $(FOUR_DIR)/$(NODE2)/geth:
-	@echo "Initializing $(NODE2) from genesis"
+	@echo "Initializing $(NODE2) (CN) from genesis"
 	$(call init_node,$(FOUR_DIR),$(NODE2))
 
 $(FOUR_DIR)/$(NODE3)/geth:
-	@echo "Initializing $(NODE3) from genesis"
+	@echo "Initializing $(NODE3) (CN) from genesis"
 	$(call init_node,$(FOUR_DIR),$(NODE3))
 
 $(FOUR_DIR)/$(NODE4)/geth:
-	@echo "Initializing $(NODE4) from genesis"
+	@echo "Initializing $(NODE4) (CN) from genesis"
 	$(call init_node,$(FOUR_DIR),$(NODE4))
 
 $(FOUR_DIR)/$(NODE5)/geth:
-	@echo "Initializing $(NODE5) from genesis"
+	@echo "Initializing $(NODE5) (seed) from genesis"
 	$(call init_node,$(FOUR_DIR),$(NODE5))
 
+$(SEVEN_DIR)/$(NODE0)/geth:
+	@echo "Initializing $(NODE0) (watch-only CN) from genesis"
+	$(call init_node,$(SEVEN_DIR),$(NODE0))
+
 $(SEVEN_DIR)/$(NODE1)/geth:
-	@echo "Initializing $(NODE1) from genesis"
+	@echo "Initializing $(NODE1) (CN) from genesis"
 	$(call init_node,$(SEVEN_DIR),$(NODE1))
 
 $(SEVEN_DIR)/$(NODE2)/geth:
-	@echo "Initializing $(NODE2) from genesis"
+	@echo "Initializing $(NODE2) (CN) from genesis"
 	$(call init_node,$(SEVEN_DIR),$(NODE2))
 
 $(SEVEN_DIR)/$(NODE3)/geth:
-	@echo "Initializing $(NODE3) from genesis"
+	@echo "Initializing $(NODE3) (CN) from genesis"
 	$(call init_node,$(SEVEN_DIR),$(NODE3))
 
 $(SEVEN_DIR)/$(NODE4)/geth:
-	@echo "Initializing $(NODE4) from genesis"
+	@echo "Initializing $(NODE4) (CN) from genesis"
 	$(call init_node,$(SEVEN_DIR),$(NODE4))
 
 $(SEVEN_DIR)/$(NODE5)/geth:
-	@echo "Initializing $(NODE5) from genesis"
+	@echo "Initializing $(NODE5) (CN) from genesis"
 	$(call init_node,$(SEVEN_DIR),$(NODE5))
 
 $(SEVEN_DIR)/$(NODE6)/geth:
-	@echo "Initializing $(NODE6) from genesis"
+	@echo "Initializing $(NODE6) (CN) from genesis"
 	$(call init_node,$(SEVEN_DIR),$(NODE6))
 
 $(SEVEN_DIR)/$(NODE7)/geth:
-	@echo "Initializing $(NODE7) from genesis"
+	@echo "Initializing $(NODE7) (CN) from genesis"
 	$(call init_node,$(SEVEN_DIR),$(NODE7))
 
 $(SEVEN_DIR)/$(NODE8)/geth:
-	@echo "Initializing $(NODE8) from genesis"
+	@echo "Initializing $(NODE8) (seed) from genesis"
 	$(call init_node,$(SEVEN_DIR),$(NODE8))
 
-privnet_start: $(SINGLE_DIR)/$(NODE1)/geth $(SINGLE_DIR)/$(NODE2)/geth
+privnet_start: $(SINGLE_DIR)/$(NODE0)/geth $(SINGLE_DIR)/$(NODE1)/geth $(SINGLE_DIR)/$(NODE2)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode,$(SINGLE_DIR))
+	$(call run_miner_node,$(SINGLE_DIR),$(NODE0),$(NODE0_PORT),$(NODE0_AUTH_PORT),$(NODE0_HTTP_PORT),$(NODE0_WS_PORT),$(NODE0))
 	$(call run_miner_node,$(SINGLE_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_AUTH_PORT),$(NODE1_HTTP_PORT),$(NODE1_WS_PORT),$(NODE1))
 	$(call run_node,$(SINGLE_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_AUTH_PORT),$(NODE2_HTTP_PORT),$(NODE2_WS_PORT))
 	@echo "OK! Check logs in $(SINGLE_DIR)/<node_dir>/geth_node.log"
 
-privnet_start_four: $(FOUR_DIR)/$(NODE1)/geth $(FOUR_DIR)/$(NODE2)/geth $(FOUR_DIR)/$(NODE3)/geth $(FOUR_DIR)/$(NODE4)/geth $(FOUR_DIR)/$(NODE5)/geth
+privnet_start_four: $(FOUR_DIR)/$(NODE0)/geth $(FOUR_DIR)/$(NODE1)/geth $(FOUR_DIR)/$(NODE2)/geth $(FOUR_DIR)/$(NODE3)/geth $(FOUR_DIR)/$(NODE4)/geth $(FOUR_DIR)/$(NODE5)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode,$(FOUR_DIR))
+	$(call run_miner_node,$(FOUR_DIR),$(NODE0),$(NODE0_PORT),$(NODE0_AUTH_PORT),$(NODE0_HTTP_PORT),$(NODE0_WS_PORT),$(NODE0))
 	$(call run_miner_node,$(FOUR_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_AUTH_PORT),$(NODE1_HTTP_PORT),$(NODE1_WS_PORT),$(NODE1))
 	$(call run_miner_node,$(FOUR_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_AUTH_PORT),$(NODE2_HTTP_PORT),$(NODE2_WS_PORT),$(NODE2))
 	$(call run_miner_node,$(FOUR_DIR),$(NODE3),$(NODE3_PORT),$(NODE3_AUTH_PORT),$(NODE3_HTTP_PORT),$(NODE3_WS_PORT),$(NODE3))
@@ -236,9 +257,10 @@ privnet_start_four: $(FOUR_DIR)/$(NODE1)/geth $(FOUR_DIR)/$(NODE2)/geth $(FOUR_D
 	$(call run_node,$(FOUR_DIR),$(NODE5),$(NODE5_PORT),$(NODE5_AUTH_PORT),$(NODE5_HTTP_PORT),$(NODE5_WS_PORT))
 	@echo "OK! Check logs in $(FOUR_DIR)/<node_dir>/geth_node.log"
 
-privnet_start_seven: $(SEVEN_DIR)/$(NODE1)/geth $(SEVEN_DIR)/$(NODE2)/geth $(SEVEN_DIR)/$(NODE3)/geth $(SEVEN_DIR)/$(NODE4)/geth $(SEVEN_DIR)/$(NODE5)/geth $(SEVEN_DIR)/$(NODE6)/geth $(SEVEN_DIR)/$(NODE7)/geth $(SEVEN_DIR)/$(NODE8)/geth
+privnet_start_seven: $(SEVEN_DIR)/$(NODE0)/geth $(SEVEN_DIR)/$(NODE1)/geth $(SEVEN_DIR)/$(NODE2)/geth $(SEVEN_DIR)/$(NODE3)/geth $(SEVEN_DIR)/$(NODE4)/geth $(SEVEN_DIR)/$(NODE5)/geth $(SEVEN_DIR)/$(NODE6)/geth $(SEVEN_DIR)/$(NODE7)/geth $(SEVEN_DIR)/$(NODE8)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode,$(SEVEN_DIR))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE0),$(NODE0_PORT),$(NODE0_AUTH_PORT),$(NODE0_HTTP_PORT),$(NODE0_WS_PORT),$(NODE0))
 	$(call run_miner_node,$(SEVEN_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_AUTH_PORT),$(NODE1_HTTP_PORT),$(NODE1_WS_PORT),$(NODE1))
 	$(call run_miner_node,$(SEVEN_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_AUTH_PORT),$(NODE2_HTTP_PORT),$(NODE2_WS_PORT),$(NODE2))
 	$(call run_miner_node,$(SEVEN_DIR),$(NODE3),$(NODE3_PORT),$(NODE3_AUTH_PORT),$(NODE3_HTTP_PORT),$(NODE3_WS_PORT),$(NODE3))
