@@ -428,7 +428,7 @@ func (tkg *thresholdKeyGroup) fromAux(aux *thresholdKeyGroupAux, n int, t int) e
 		if err != nil {
 			return err
 		}
-		pubkey, err := new(tpke.PublicKey).Decode(pubBytes)
+		pubkey, err := tpke.NewPublicKeyFromPaddedBytes(pubBytes)
 		if err != nil {
 			return err
 		}

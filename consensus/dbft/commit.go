@@ -62,8 +62,8 @@ func (c *commit) share() (*tpke.SignatureShare, error) {
 		return nil, nil
 	}
 	if c.shareCache == nil {
-		c.shareCache = new(tpke.SignatureShare)
-		_, err := c.shareCache.FromBytes(c.signature)
+		var err error
+		c.shareCache, err = tpke.NewSignatureShareFromBytes(c.signature)
 		if err != nil {
 			return nil, fmt.Errorf("invalid signature share: %w", err)
 		}

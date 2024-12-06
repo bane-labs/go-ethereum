@@ -178,23 +178,17 @@ func getSignersAndSigsV1(cfg *config, extra []byte) (*tpke.PublicKey, *tpke.Sign
 		return nil, nil, fmt.Errorf("%w: expected %d, got %d", errUnexpectedExtraVersion, dbftutil.ExtraV1, extra[0])
 	}
 
-	var (
-		pub    = new(tpke.PublicKey)
-		sig    = new(tpke.Signature)
-		sigLen = tpke.SignatureLen
-		pubLen = tpke.PublicKeyLen
-	)
-	if len(extra) != dbftutil.ExtraVersionLen+pubLen+sigLen {
+	if len(extra) != dbftutil.ExtraVersionLen+tpke.PublicKeyLen+tpke.SignatureLen {
 		return nil, nil, errUnexpectedExtraLen
 	}
 	pubOffset := dbftutil.ExtraVersionLen
 	// Recover global public key and threshold signature.
-	_, err := pub.Decode(extra[pubOffset : pubOffset+pubLen])
+	pub, err := tpke.NewPublicKeyFromBytes(extra[pubOffset : pubOffset+tpke.PublicKeyLen])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to decode public key: %w", err)
 	}
-	sigOffset := len(extra) - sigLen
-	_, err = sig.FromBytes(extra[sigOffset : sigOffset+sigLen])
+	sigOffset := len(extra) - tpke.SignatureLen
+	sig, err := tpke.NewSignatureFromBytes(extra[sigOffset : sigOffset+tpke.SignatureLen])
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to decode signature: %w", err)
 	}
@@ -1162,7 +1156,7 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 		if err != nil {
 			return nil, fmt.Errorf("failed to aggregate signature: %w", err)
 		}
-		res = append(res, sig.ToBytes()...)
+		res = append(res, sig.Bytes()...)
 
 		return res, nil
 	default:
