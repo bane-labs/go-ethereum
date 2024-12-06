@@ -254,7 +254,7 @@ type DBFT struct {
 	fakeDiff bool // Skip difficulty verifications
 
 	// The fields for dkg
-	snapshot    *Snapshot
+	dkgSnapshot *Snapshot
 	txWatchList []*TxWatchRetry
 }
 
