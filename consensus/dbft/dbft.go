@@ -1156,8 +1156,12 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 		// Take all available shares since some of them may be invalid.
 		for i := 0; i < len(vals); i++ {
 			if p := dctx.CommitPayloads[i]; p != nil && p.ViewNumber() == dctx.ViewNumber {
+				dkgIndex := slices.Index(c.dkgSnapshot.CurrentCNs, vals[i]) + 1
+				if dkgIndex < 1 || dkgIndex > len(c.dkgSnapshot.CurrentCNs)+1 {
+					return nil, errors.New("invalid validator dkg index")
+				}
 				var err error
-				shares[i+1], err = p.GetCommit().(*commit).share()
+				shares[dkgIndex], err = p.GetCommit().(*commit).share()
 				if err != nil {
 					// It's a program error since all commits are expected to be verified by this
 					// moment and hence, contain proper share.
@@ -2404,7 +2408,7 @@ func (c *DBFT) getDKGIndex(validatorIndex int, blockNum uint64) (int, error) {
 // getGlobalPublicKey returns TPKE global public key. If state is provided, then this state
 // is used to recalculate local key based on the KeyManagement contract state. If state is
 // not provided, then the node's local keystore is used to retrieve global public key.
-func (c *DBFT) getGlobalPublicKey(state *state.StateDB) (*tpke.PublicKey, error) {
+func (c *DBFT) getGlobalPublicKey() (*tpke.PublicKey, error) {
 	// If state is provided, we need to recalculate global public key for the next
 	// block based on this state. Depends on #332, ref. #353. For now let's always
 	// use key from local keystore.
@@ -2424,7 +2428,7 @@ func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) common.Hash {
 		pubs []dbftutil.Encodable
 	)
 	if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(h.Number, bigOne)) {
-		pub, err := c.getGlobalPublicKey(scp)
+		pub, err := c.getGlobalPublicKey()
 		if err != nil {
 			log.Crit("failed to retrieve global public key to construct next consensus",
 				"err", err)
