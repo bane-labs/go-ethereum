@@ -2153,8 +2153,9 @@ func (c *DBFT) getValidatorsSorted(blockNum *uint64, state *state.StateDB, heade
 		return nil, err
 	}
 
-	slices.SortFunc(res, common.Address.Cmp)
-	return res, err
+	sortedList := slices.Clone(res)
+	slices.SortFunc(sortedList, common.Address.Cmp)
+	return sortedList, err
 }
 
 func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {

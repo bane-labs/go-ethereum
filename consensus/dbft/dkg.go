@@ -307,7 +307,7 @@ func (c *DBFT) loopTaskList(header *types.Header) {
 						needRetry = true
 						log.Error("DKG get transaction receipt failed", "err", err, "txHash", item.TxHash)
 					}
-					if receipt["status"] != uint(1) {
+					if receipt["status"] != types.ReceiptStatusSuccessful {
 						needRetry = true
 						log.Error("DKG get transaction receipt status error", "txHash", item.TxHash, "status", receipt["status"])
 					}
