@@ -11,9 +11,11 @@ type prepareRequest struct {
 	SealingProposal *types.Header
 	TxHashes        []common.Hash
 
-	// Fields that should be included into PrepareRequest for its verification:
-	ParentSealHash common.Hash
-	ParentExtra    []byte
+	// Fields that should be included into PrepareRequest for its verification for
+	// pre-NeoXAMEV fork. These fields are not applicable starting from NeoXAMEV+1
+	// height, hence, marked as optional for RLP serialization.
+	ParentSealHash common.Hash `rlp:optional`
+	ParentExtra    []byte      `rlp:"optional"`
 }
 
 var _ dbft.PrepareRequest[common.Hash] = (*prepareRequest)(nil)

@@ -2,6 +2,7 @@ package antimev
 
 import (
 	"fmt"
+	"maps"
 	"math/big"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSingleSignature(t *testing.T) {
@@ -99,11 +101,16 @@ func TestThresholdSignature(t *testing.T) {
 		shares[i+1] = share
 	}
 
+	sh0 := maps.Clone(shares)
+	sh1 := maps.Clone(shares)
+	delete(sh0, 1)
+	delete(sh1, 2)
 	sig, err := kss[0].AggregateAndVerifySig(msg, shares)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
-	if sig == nil {
-		t.Fatalf("invalid signature")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, sig)
+	sig0, err := kss[0].AggregateAndVerifySig(msg, sh0)
+	require.NoError(t, err)
+	sig1, err := kss[0].AggregateAndVerifySig(msg, sh1)
+	require.NoError(t, err)
+	require.Equal(t, sig0, sig1)
 }

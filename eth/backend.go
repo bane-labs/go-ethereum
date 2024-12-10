@@ -32,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/dbft"
-	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -335,7 +334,8 @@ func makeExtraData(extra []byte, isBFT bool) []byte {
 	if len(extra) == 0 {
 		// create default extradata
 		if isBFT {
-			extra = []byte{dbftutil.ExtraV0}
+			// Will be filled by consensus engine.
+			extra = []byte{}
 		} else {
 			extra, _ = rlp.EncodeToBytes([]interface{}{
 				uint(params.VersionMajor<<16 | params.VersionMinor<<8 | params.VersionPatch),

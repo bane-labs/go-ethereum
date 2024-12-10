@@ -99,6 +99,15 @@ func (ks *KeyStore) Path() (string, error) {
 	return filepath.Abs(ks.path)
 }
 
+// GlobalPublicKey returns global public key that may be used to verify threshold
+// signature against. Do not modify the return value.
+func (ks *KeyStore) GlobalPublicKey() (*tpke.PublicKey, error) {
+	if ks.shared == nil {
+		return nil, ErrNoPubKey
+	}
+	return ks.shared.globalPubKey, nil
+}
+
 // MessagePubKey returns a hex string of message encryption key
 func (ks *KeyStore) MessagePubKey() string {
 	return hex.EncodeToString(crypto.FromECDSAPub(&ks.ethPrvKey.ExportECDSA().PublicKey))

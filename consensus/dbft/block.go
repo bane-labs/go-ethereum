@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	ecrypto "github.com/ethereum/go-ethereum/crypto"
@@ -85,7 +86,7 @@ func (b *Block) Signature() []byte {
 
 // Sign implements [dbft.Block] interface.
 func (b *Block) Sign(key dbft.PrivateKey) error {
-	sighash, err := key.Sign(dbftRLP(b.header))
+	sighash, err := key.(*Signer).signBlock(dbftutil.ExtraVersion(b.header.Extra[0]), dbftRLP(b.header))
 	if err != nil {
 		return fmt.Errorf("failed to sign dbftRLP header: %w", err)
 	}
@@ -96,14 +97,26 @@ func (b *Block) Sign(key dbft.PrivateKey) error {
 
 // Verify implements [dbft.Block] interface.
 func (b *Block) Verify(pub dbft.PublicKey, sign []byte) error {
-	sealHash := HonestSealHash(b.header)
-	pubkey, err := ecrypto.Ecrecover(sealHash.Bytes(), sign)
-	if err != nil {
-		return fmt.Errorf("failed to recover public key from signature: %w", err)
+	switch dbftutil.ExtraVersion(b.header.Extra[0]) {
+	case dbftutil.ExtraV0:
+		sealHash := HonestSealHashV0(b.header)
+		pubkey, err := ecrypto.Ecrecover(sealHash.Bytes(), sign)
+		if err != nil {
+			return fmt.Errorf("failed to recover public key from signature: %w", err)
+		}
+		if pub.(*PublicKey).Account != ecrypto.PubkeyBytesToAddress(pubkey) {
+			return errors.New("invalid block signature")
+		}
+	case dbftutil.ExtraV1:
+		// We don't have a way to verify signature share, because the only way to
+		// verify is to collect at least M shares and verify *the group* of shares
+		// against *the global* public key. Hence, always consider Commit as valid
+		// at this stage.
+		return nil
+	default:
+		return fmt.Errorf("%w: %d", errUnexpectedExtraVersion, b.header.Extra[0])
 	}
-	if pub.(*PublicKey).Account != ecrypto.PubkeyBytesToAddress(pubkey) {
-		return errors.New("invalid block signature")
-	}
+
 	return nil
 }
 

@@ -81,7 +81,7 @@ func TestPayloadSerializable(t *testing.T) {
 	require.NoError(t, rlp.DecodeBytes(b, actual))
 	require.Equal(t, expected.Message, *actual)
 
-	actualP := payloadFromMessage(actual)
+	actualP := payloadFromMessage(actual, nil)
 	require.NoError(t, actualP.decodeData())
 
 	require.Equal(t, expected, actualP)
