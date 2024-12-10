@@ -467,7 +467,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 
 			// Short path if we're primary and there's no Envelopes in the block:
 			// reuse state got after PrepareRequest construction.
-			if ctx.PrimaryIndex == uint(ctx.MyIndex) && pre.finalState == nil {
+			if ctx.IsPrimary() && pre.finalState == nil {
 				return &Block{
 					header:              c.sealingBlock.Header(),
 					withdrawals:         c.sealingBlock.Withdrawals(),
