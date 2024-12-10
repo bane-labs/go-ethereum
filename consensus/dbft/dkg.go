@@ -69,12 +69,15 @@ func (c *DBFT) newSnapshot(h *types.Header, state *state.StateDB, height uint64)
 
 // handleDKG handles the transaction submission for DKG process.
 // It constructs and sends transaction to KeyManagement contract using amev store.
-func (c *DBFT) handleDKG(h *types.Header) error {
+func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 	currentHeight := h.Number.Uint64()
 	amevAddress := c.amevKeystore.Address()
-	state, err := c.chain.StateAt(h.Root)
-	if err != nil {
-		return fmt.Errorf("failed to call StateAt: %v", err)
+	if state == nil {
+		s, err := c.chain.StateAt(h.Root)
+		if err != nil {
+			return fmt.Errorf("failed to call StateAt: %v", err)
+		}
+		state = s
 	}
 	epochDuration, err := c.epochDuration(state, h)
 	if err != nil {

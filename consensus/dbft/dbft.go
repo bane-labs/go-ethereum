@@ -438,7 +438,7 @@ func New(chainCfg *params.ChainConfig, db ethdb.Database) (*DBFT, error) {
 				return fmt.Errorf("failed to construct block witness: %w", err)
 			}
 			dbftBlock.header.Extra = append(dbftBlock.header.Extra, witness...) // Extra version isn't changed, validators addresses and signatures are added.
-
+			state := dbftBlock.state.Copy()
 			res := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
 
 			// Firstly, notify chain about new block.
@@ -450,7 +450,7 @@ func New(chainCfg *params.ChainConfig, db ethdb.Database) (*DBFT, error) {
 				}
 			}
 
-			c.postBlock(res.Header())
+			c.postBlock(res.Header(), state)
 			return nil
 		}),
 		dbft.WithNewBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
@@ -1262,7 +1262,7 @@ func (c *DBFT) WithTxPool(pool txPool) {
 // postBlock is a callback that updates latest accepted block data and resets
 // last proposal data. It must be called every time new block arrives from chain
 // or from consensus.
-func (c *DBFT) postBlock(h *types.Header) {
+func (c *DBFT) postBlock(h *types.Header, state *state.StateDB) {
 	num := h.Number.Uint64()
 	if c.lastIndex < num {
 		c.lastTimestamp = h.Time
@@ -1273,7 +1273,7 @@ func (c *DBFT) postBlock(h *types.Header) {
 
 		// handle DKG
 		if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
-			err := c.handleDKG(h)
+			err := c.handleDKG(h, state)
 			if err != nil {
 				log.Error("handleDKG error", "height", num, "err", err)
 			}
@@ -1778,7 +1778,7 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 			"dBFT latest block index", c.lastIndex,
 			"sealing proposal index", b.NumberU64())
 		ltstHeader := c.chain.GetHeaderByNumber(b.NumberU64() - 1)
-		c.postBlock(ltstHeader)
+		c.postBlock(ltstHeader, nil)
 	}
 
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
@@ -2124,7 +2124,7 @@ func (c *DBFT) handleChainBlock(h *types.Header, checkForSync bool) error {
 			"primary", h.Primary(),
 			"coinbase", h.Coinbase,
 			"mix digest", h.MixDigest.String())
-		c.postBlock(h)
+		c.postBlock(h, nil)
 
 		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
 		if err != nil {
