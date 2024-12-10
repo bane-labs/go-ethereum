@@ -51,7 +51,6 @@ func NewPublicKeyFromBytes(b []byte) (*PublicKey, error) {
 	if ok {
 		return pk, nil
 	}
-
 	if len(b) != PublicKeyLen {
 		return nil, fmt.Errorf("invalid public key length: expected %d, got %d", PublicKeyLen, len(b))
 	}
