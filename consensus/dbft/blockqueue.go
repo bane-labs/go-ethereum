@@ -43,7 +43,8 @@ func (bq *blockQueue) PutBlock(b *types.Block, state *state.StateDB, receipts []
 		return nil
 	}
 
-	// Short circuit if we don't have pre-calculated state.
+	// Short circuit if we don't have pre-calculated state (it's possible only in case of
+	// reorg if dBFT tries to insert new parent during PrepareRequest construction).
 	if state == nil {
 		_, err := bq.chain.InsertChain(types.Blocks{b})
 		if err != nil {

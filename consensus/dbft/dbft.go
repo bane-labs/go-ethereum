@@ -454,13 +454,20 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 					header:      pre.header,
 					withdrawals: pre.withdrawals,
 				}
+
+				// If we're primary, then reuse sealing state got after PrepareRequest
+				// construction.
+				if ctx.IsPrimary() {
+					res.state = c.sealingState
+					res.receipts = c.sealingReceipts
+				}
 				return res
 			}
 			pre := ctx.PreBlock().(*PreBlock)
 
 			// Short path if we're primary and there's no Envelopes in the block:
 			// reuse state got after PrepareRequest construction.
-			if ctx.PrimaryIndex == uint(ctx.MyIndex) && pre.finalState == nil {
+			if ctx.IsPrimary() && pre.finalState == nil {
 				return &Block{
 					header:              c.sealingBlock.Header(),
 					withdrawals:         c.sealingBlock.Withdrawals(),
