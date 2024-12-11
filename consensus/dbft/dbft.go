@@ -888,9 +888,10 @@ func New(chainCfg *params.ChainConfig, db ethdb.Database) (*DBFT, error) {
 				shares := make(map[int][]*tpke.DecryptionShare)
 				for _, preC := range ctx.PreCommitPayloads {
 					if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
-						dkgIndex, err := c.getDKGIndex(int(preC.ValidatorIndex()), pre.header.Number.Uint64())
+						blockNum := pre.header.Number.Uint64() - 1
+						dkgIndex, err := c.getDKGIndex(int(preC.ValidatorIndex()), blockNum)
 						if err != nil {
-							return fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", int(preC.ValidatorIndex()), pre.header.Number.Uint64())
+							return fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", int(preC.ValidatorIndex()), blockNum)
 						}
 						// Indexes in shares map must use dkg index.
 						shares[dkgIndex] = preC.GetPreCommit().(*preCommit).Shares()
@@ -1163,11 +1164,12 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 		// Take all available shares since some of them may be invalid.
 		for i := 0; i < len(vals); i++ {
 			if p := dctx.CommitPayloads[i]; p != nil && p.ViewNumber() == dctx.ViewNumber {
-				dkgIndex := slices.Index(c.dkgSnapshot.CurrentCNs, vals[i]) + 1
-				if dkgIndex < 1 || dkgIndex > len(c.dkgSnapshot.CurrentCNs)+1 {
-					return nil, errors.New("invalid validator dkg index")
-				}
 				var err error
+				blockNum := block.header.Number.Uint64() - 1
+				dkgIndex, err := c.getDKGIndex(i, blockNum)
+				if err != nil {
+					return nil, fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", i, blockNum)
+				}
 				shares[dkgIndex], err = p.GetCommit().(*commit).share()
 				if err != nil {
 					// It's a program error since all commits are expected to be verified by this
@@ -2405,7 +2407,7 @@ func (c *DBFT) getDKGIndex(validatorIndex int, blockNum uint64) (int, error) {
 	orderedValidators := slices.Clone(originValidators)
 	slices.SortFunc(orderedValidators, common.Address.Cmp)
 	addr := orderedValidators[validatorIndex]
-	dkgIndex := slices.Index(orderedValidators, addr) + 1
+	dkgIndex := slices.Index(originValidators, addr) + 1
 	if dkgIndex == 0 {
 		panic("invalid sort")
 	}
