@@ -101,12 +101,6 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 		if err != nil {
 			return fmt.Errorf("failed to call aggregatedCommitments, err: %v", err)
 		}
-		if len(aggregatedCommitments) > 0 && c.dkgSnapshot.Round > 1 {
-			isRoundNumberIncreased, _ := c.isRoundNumberIncreased(c.dkgSnapshot.EpochStartHeight+epochDuration, c.dkgSnapshot.EpochStartHeight, state, h)
-			if !isRoundNumberIncreased {
-				aggregatedCommitments = make([]byte, 0)
-			}
-		}
 		err = c.amevKeystore.OnEpochChange(aggregatedCommitments, indexOfSharing > 0)
 		if err != nil {
 			return fmt.Errorf("failed to call amevKeystore.OnEpochChange, err: %v", err)
@@ -232,9 +226,9 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 			return nil
 		}
 		// If share is ready, pending consensus nodes should ReceiveSecretShare
-		indexOfShare := slices.Index(c.dkgSnapshot.PendingCNs, amevAddress) + 1
-		if indexOfShare > 0 {
-			if err := c.syncThisRoundSecrets(c.dkgSnapshot, indexOfShare, state, h); err != nil {
+		indexOfSharing := slices.Index(c.dkgSnapshot.PendingCNs, amevAddress) + 1
+		if indexOfSharing > 0 {
+			if err := c.syncThisRoundSecrets(c.dkgSnapshot, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync sharing DKG, err: %v", err)
 			}
 		}
@@ -255,11 +249,11 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 				return fmt.Errorf("failed to start DKG recover, err: %v", err)
 			}
 			// Send recover tx from current consensus node
-			indexOfReshare := slices.Index(c.dkgSnapshot.CurrentCNs, amevAddress) + 1
-			if indexOfReshare > 0 {
+			indexOfResharing := slices.Index(c.dkgSnapshot.CurrentCNs, amevAddress) + 1
+			if indexOfResharing > 0 {
 				pubs := make([]*ecies.PublicKey, len(c.dkgSnapshot.IndexNeedRecover))
 				for i, index := range c.dkgSnapshot.IndexNeedRecover {
-					pubs[i], err = c.messagePubkey(&c.dkgSnapshot.CurrentCNs[index-1], state, h)
+					pubs[i], err = c.messagePubkey(&c.dkgSnapshot.PendingCNs[index-1], state, h)
 					if err != nil {
 						return fmt.Errorf("failed to get message keys for recovering, err: %v", err)
 					}
@@ -276,7 +270,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 	if c.amevKeystore.IsRecovering() && currentHeight >= recoverCheckHeight && !c.dkgSnapshot.ReshareRecoverTasked {
 		// Send reshareRecovered at height recoverStartHeigh+c.shareDuration/2
 		// Only index in indexsNeedRecover and pending consensus node need to call reshareRecovered
-		indexOfSharing := slices.Index(c.dkgSnapshot.CurrentCNs, amevAddress) + 1
+		indexOfSharing := slices.Index(c.dkgSnapshot.PendingCNs, amevAddress) + 1
 		if indexOfSharing > 0 && currentHeight < targetHeight && slices.Contains(c.dkgSnapshot.IndexNeedRecover, uint64(indexOfSharing)) {
 			if err := c.syncRecoveredSecrets(c.dkgSnapshot, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync recovering DKG, err: %v", err)
@@ -720,16 +714,6 @@ func (c *DBFT) roundNumber(state *state.StateDB, header *types.Header) (uint64, 
 		return 0, err
 	}
 	return result.Uint64(), nil
-}
-
-func (c *DBFT) isRoundNumberIncreased(epochHeight, lastEpochHeight uint64, state *state.StateDB, header *types.Header) (bool, error) {
-	var result bool
-	err := c.readContract(&result, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
-		state, header, "isRoundNumberIncreased", big.NewInt(int64(epochHeight)), big.NewInt(int64(lastEpochHeight)))
-	if err != nil {
-		return false, err
-	}
-	return result, nil
 }
 
 func (c *DBFT) readContract(res interface{}, contract common.Address, contractAbi abi.ABI,

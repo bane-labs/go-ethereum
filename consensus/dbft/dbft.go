@@ -224,8 +224,7 @@ type DBFT struct {
 	// dBFT engine is not started.
 	syncing atomic.Bool
 
-	config *config        // Consensus engine configuration parameters
-	db     ethdb.Database // Database to store and retrieve snapshot checkpoints
+	config *config // Consensus engine configuration parameters
 
 	signer       common.Address    // Ethereum address of the signing key
 	signFn       SignerFn          // Signer function to authorize hashes with
@@ -298,7 +297,7 @@ type config struct {
 
 // New creates a DBFT proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(chainCfg *params.ChainConfig, db ethdb.Database) (*DBFT, error) {
+func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	cfg := &config{
 		DBFTConfig:            chainCfg.DBFT,
 		dkgEnablingHeight:     -1,
@@ -327,7 +326,6 @@ func New(chainCfg *params.ChainConfig, db ethdb.Database) (*DBFT, error) {
 
 	c := &DBFT{
 		config:     cfg,
-		db:         db,
 		blockQueue: newBlockQueue(),
 
 		messages:        make(chan Payload, msgsChCap),
