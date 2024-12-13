@@ -30,6 +30,12 @@ type TxWatchRetry struct {
 	ConfirmedSuccess bool
 }
 
+// TxWatchList is a watch task list send to loopTaskList by channel
+type TxWatchList struct {
+	WatchList     []TxWatchRetry
+	CurrentHeight uint64
+}
+
 // Snapshot is a temporary record to save progress of a DKG round
 type Snapshot struct {
 	EpochStartHeight     uint64
@@ -71,6 +77,11 @@ func (c *DBFT) newSnapshot(h *types.Header, state *state.StateDB, height uint64)
 // It constructs and sends transaction to KeyManagement contract using amev store.
 func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 	currentHeight := h.Number.Uint64()
+	watchList := &TxWatchList{
+		CurrentHeight: currentHeight,
+		WatchList:     make([]TxWatchRetry, 0),
+	}
+
 	amevAddress := c.amevKeystore.Address()
 	if state == nil {
 		s, err := c.chain.StateAt(h.Root)
@@ -131,9 +142,11 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 	recoverCheckHeight := recoverStartHeight + sharePeriodDuration/2
 	consensusSize := uint64(len(c.dkgSnapshot.CurrentCNs))
 
-	// Retry transaction sending if watch list is not empty
-	if currentHeight > shareStartHeight && currentHeight < targetHeight {
-		c.loopTaskList(h)
+	if currentHeight >= shareStartHeight && currentHeight < targetHeight {
+		// Send watch task list to loopTaskChan when handleDKG finished
+		defer func() {
+			c.loopTaskChan <- watchList
+		}()
 	}
 
 	// If keystore is out-of-date, then sync shared DKG up-tp-date
@@ -198,14 +211,14 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 				return fmt.Errorf("failed to get message keys for sharing, err: %v", err)
 			}
 			if indexOfSharing > 0 {
-				if err = c.taskShare(c.dkgSnapshot.ShareMessageKeys, currentHeight, recoverStartHeight); err != nil {
+				if err = c.taskShare(c.dkgSnapshot.ShareMessageKeys, currentHeight, recoverStartHeight, watchList); err != nil {
 					return fmt.Errorf("failed to task DKG share, err: %v", err)
 				}
 			}
 			// If is a member of current consensus, try reshare but give up if error
 			indexOfResharing := slices.Index(c.dkgSnapshot.CurrentCNs, amevAddress) + 1
 			if indexOfResharing > 0 && c.dkgSnapshot.Round > 1 {
-				if err = c.taskReshare(c.dkgSnapshot.ShareMessageKeys, currentHeight, recoverStartHeight); err != nil {
+				if err = c.taskReshare(c.dkgSnapshot.ShareMessageKeys, currentHeight, recoverStartHeight, watchList); err != nil {
 					c.dkgSnapshot.ShareTasked = true
 					return fmt.Errorf("failed to task DKG reshare, err: %v", err)
 				}
@@ -258,7 +271,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 						return fmt.Errorf("failed to get message keys for recovering, err: %v", err)
 					}
 				}
-				if err := c.taskRecover(c.dkgSnapshot.IndexNeedRecover, pubs, currentHeight, recoverCheckHeight); err != nil {
+				if err := c.taskRecover(c.dkgSnapshot.IndexNeedRecover, pubs, currentHeight, recoverCheckHeight, watchList); err != nil {
 					return fmt.Errorf("failed to task DKG recover, err: %v", err)
 				}
 			}
@@ -275,7 +288,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 			if err := c.syncRecoveredSecrets(c.dkgSnapshot, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync recovering DKG, err: %v", err)
 			}
-			if err := c.taskReshareRecover(c.dkgSnapshot.ShareMessageKeys, currentHeight, targetHeight); err != nil {
+			if err := c.taskReshareRecover(c.dkgSnapshot.ShareMessageKeys, currentHeight, targetHeight, watchList); err != nil {
 				return fmt.Errorf("failed to task DKG reshare recover, err: %v", err)
 			}
 		}
@@ -285,51 +298,60 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 }
 
 // loopTaskList retries every task in tx watch list
-func (c *DBFT) loopTaskList(header *types.Header) {
-	currentHeight := header.Number.Uint64()
-	var retryList []*TxWatchRetry
-	if len(c.txWatchList) > 0 {
-		for _, item := range c.txWatchList {
-			if currentHeight < item.EndHeight && !item.ConfirmedSuccess {
-				needRetry := false
-				// Send failed, just resend and set txHash
-				if item.TxHash == nil {
-					needRetry = true
-				}
+func (c *DBFT) loopTaskList() {
+	for watchList := range c.loopTaskChan {
+		log.Info("DKG loopTaskList", "watchList", watchList)
+		currentHeight := watchList.CurrentHeight
+		// append watchList from loopTaskChan to c.txWatchList
+		for i := range watchList.WatchList {
+			c.txWatchList = append(c.txWatchList, &watchList.WatchList[i])
+		}
 
-				// Send successfully, wait 3 blocks to check tx status
-				if item.TxHash != nil && currentHeight-item.SendHeight == 3 {
-					receipt, err := c.txAPI.GetTransactionReceipt(context.Background(), *item.TxHash)
-					if err != nil {
+		// loop tasks in c.txWatchList
+		var retryList []*TxWatchRetry
+		if len(c.txWatchList) > 0 {
+			for _, item := range c.txWatchList {
+				if currentHeight < item.EndHeight && !item.ConfirmedSuccess {
+					needRetry := false
+					// Send failed, just resend and set txHash
+					if item.TxHash == nil {
 						needRetry = true
-						log.Error("DKG get transaction receipt failed", "err", err, "txHash", item.TxHash)
 					}
-					if receipt["status"] != types.ReceiptStatusSuccessful {
-						needRetry = true
-						log.Error("DKG get transaction receipt status error", "txHash", item.TxHash, "status", receipt["status"])
-					}
-				}
 
-				var err error
-				if needRetry {
-					item.TxHash, err = c.sendTxToKeyManagement(item.Method, item.Params...)
-					if err != nil {
-						retryList = append(retryList, item)
-						log.Error("retry sending transaction failed", "currentHeight", currentHeight, "method", item.Method, "err", err)
-						continue
+					// Send successfully, wait 3 blocks to check tx status
+					if item.TxHash != nil && currentHeight-item.SendHeight == 3 {
+						receipt, err := c.txAPI.GetTransactionReceipt(context.Background(), *item.TxHash)
+						if err != nil {
+							needRetry = true
+							log.Error("DKG get transaction receipt failed", "err", err, "txHash", item.TxHash)
+						}
+						if receipt["status"] != types.ReceiptStatusSuccessful {
+							needRetry = true
+							log.Error("DKG get transaction receipt status error", "txHash", item.TxHash, "status", receipt["status"])
+						}
+					}
+
+					var err error
+					if needRetry {
+						item.TxHash, err = c.sendTxToKeyManagement(item.Method, item.Params...)
+						if err != nil {
+							retryList = append(retryList, item)
+							log.Error("DKG retry sending transaction failed", "currentHeight", currentHeight, "method", item.Method, "err", err)
+							continue
+						} else {
+							item.SendHeight = currentHeight
+							retryList = append(retryList, item)
+							log.Info("DKG retry transaction sent", "method", item.Method, "txHash", item.TxHash)
+						}
 					} else {
-						item.SendHeight = currentHeight
-						retryList = append(retryList, item)
-						log.Info("DKG retry transaction sent", "method", item.Method, "txHash", item.TxHash)
+						item.ConfirmedSuccess = true
+						log.Info("DKG get transaction receipt successfully", "method", item.Method, "txHash", item.TxHash)
 					}
-				} else {
-					item.ConfirmedSuccess = true
-					log.Info("DKG get transaction receipt successfully", "method", item.Method, "txHash", item.TxHash)
 				}
 			}
+			// Only keep retry failed and not reach max retry times
+			c.txWatchList = retryList
 		}
-		// Only keep retry failed and not reach max retry times
-		c.txWatchList = retryList
 	}
 }
 
@@ -444,7 +466,7 @@ func (c *DBFT) syncRecoveredReshares(snap *Snapshot, selfIndex int, state *state
 }
 
 // taskShare tries to send secret shares as a transaction
-func (c *DBFT) taskShare(receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64) error {
+func (c *DBFT) taskShare(receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
 	sMsgs, sPvss, err := c.amevKeystore.DKGShare(receiverMessageKeys)
 	if err != nil {
 		return err
@@ -453,18 +475,18 @@ func (c *DBFT) taskShare(receiverMessageKeys []*ecies.PublicKey, start uint64, e
 	txHash, err := c.share(sPvss, sMsgs)
 	txWatch := &TxWatchRetry{SendHeight: start, EndHeight: end, Method: "share", Params: []interface{}{sPvss, sMsgs}}
 	if err != nil {
-		c.txWatchList = append(c.txWatchList, txWatch)
-		log.Error("failed to send share transaction, err: %v", err)
+		watchList.WatchList = append(watchList.WatchList, *txWatch)
+		log.Error("failed to send share transaction", "err", err)
 	} else {
 		txWatch.TxHash = txHash
-		c.txWatchList = append(c.txWatchList, txWatch)
+		watchList.WatchList = append(watchList.WatchList, *txWatch)
 		log.Info("DKG share transaction sent", "txHash", txHash)
 	}
 	return nil
 }
 
 // taskReshare tries to send secret reshares as a transaction
-func (c *DBFT) taskReshare(receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64) error {
+func (c *DBFT) taskReshare(receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
 	rMsgs, rPvss, err := c.amevKeystore.DKGReshare(receiverMessageKeys)
 	if err != nil {
 		return err
@@ -473,18 +495,18 @@ func (c *DBFT) taskReshare(receiverMessageKeys []*ecies.PublicKey, start uint64,
 	txHash, err := c.reshare(rPvss, rMsgs)
 	txWatch := &TxWatchRetry{SendHeight: start, EndHeight: end, Method: "reshare", Params: []interface{}{rPvss, rMsgs}}
 	if err != nil {
-		c.txWatchList = append(c.txWatchList, txWatch)
-		log.Error("failed to send reshare transaction, err: %v", err)
+		watchList.WatchList = append(watchList.WatchList, *txWatch)
+		log.Error("failed to send reshare transaction", "err", err)
 	} else {
 		txWatch.TxHash = txHash
-		c.txWatchList = append(c.txWatchList, txWatch)
+		watchList.WatchList = append(watchList.WatchList, *txWatch)
 		log.Info("DKG reshare transaction sent", "txHash", txHash)
 	}
 	return nil
 }
 
 // taskRecover tries to send past secret shares as a transaction
-func (c *DBFT) taskRecover(indexesNeedRecover []uint64, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64) error {
+func (c *DBFT) taskRecover(indexesNeedRecover []uint64, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
 	var idxsInt []int
 	for _, idx := range indexesNeedRecover {
 		idxsInt = append(idxsInt, int(idx))
@@ -497,18 +519,18 @@ func (c *DBFT) taskRecover(indexesNeedRecover []uint64, receiverMessageKeys []*e
 	txHash, err := c.recover(idxsInt, msgs)
 	txWatch := &TxWatchRetry{SendHeight: start, EndHeight: end, Method: "recover", Params: []interface{}{indexesNeedRecover, msgs}}
 	if err != nil {
-		c.txWatchList = append(c.txWatchList, txWatch)
-		log.Error("failed to send recover transaction: %v", err)
+		watchList.WatchList = append(watchList.WatchList, *txWatch)
+		log.Error("failed to send recover transaction", "err", err)
 	} else {
 		txWatch.TxHash = txHash
-		c.txWatchList = append(c.txWatchList, txWatch)
+		watchList.WatchList = append(watchList.WatchList, *txWatch)
 		log.Info("DKG recover transaction sent", "txHash", txHash)
 	}
 	return nil
 }
 
 // taskReshareRecover tries to send recovered secret reshares as a transaction
-func (c *DBFT) taskReshareRecover(receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64) error {
+func (c *DBFT) taskReshareRecover(receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
 	// Recover the lost resharing messages
 	msgs, pvss, err := c.amevKeystore.TryRecoverReshare(receiverMessageKeys)
 	if err != nil {
@@ -518,11 +540,11 @@ func (c *DBFT) taskReshareRecover(receiverMessageKeys []*ecies.PublicKey, start 
 	txHash, err := c.reshareRecovered(pvss, msgs)
 	txWatch := &TxWatchRetry{SendHeight: start, EndHeight: end, Method: "reshareRecovered", Params: []interface{}{pvss, msgs}}
 	if err != nil {
-		c.txWatchList = append(c.txWatchList, txWatch)
-		log.Error("failed to send reshareRecovered transaction: %v", err)
+		watchList.WatchList = append(watchList.WatchList, *txWatch)
+		log.Error("failed to send reshareRecovered transaction", "err", err)
 	} else {
 		txWatch.TxHash = txHash
-		c.txWatchList = append(c.txWatchList, txWatch)
+		watchList.WatchList = append(watchList.WatchList, *txWatch)
 		log.Info("DKG reshareRecovered transaction sent", "txHash", txHash)
 	}
 	return nil

@@ -284,8 +284,9 @@ type DBFT struct {
 	fakeDiff bool // Skip difficulty verifications
 
 	// The fields for dkg
-	dkgSnapshot *Snapshot
-	txWatchList []*TxWatchRetry
+	dkgSnapshot  *Snapshot
+	txWatchList  []*TxWatchRetry
+	loopTaskChan chan *TxWatchList
 }
 
 // config represents Engine configuration.
@@ -337,6 +338,8 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		finished: make(chan struct{}),
 
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
+
+		loopTaskChan: make(chan *TxWatchList),
 	}
 
 	var err error
@@ -1730,6 +1733,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
 
 		go c.eventLoop()
+		go c.loopTaskList()
 	}
 }
 
@@ -1990,6 +1994,7 @@ drainLoop:
 	close(c.messages)
 	close(c.txs)
 	close(c.chainHeadEvents)
+	close(c.loopTaskChan)
 	close(c.finished)
 	log.Info("dBFT event loop finished")
 }
