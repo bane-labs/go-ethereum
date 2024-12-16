@@ -303,6 +303,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		bft.WithTxPool(eth.TxPool())
 		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
 		bft.WithMux(eth.EventMux())
+		if config.AntiMEVEnforceECDSABlockSignatureScheme {
+			bft.EnforceECDSASignatures()
+		}
 	}
 
 	// Setup DNS discovery iterators.

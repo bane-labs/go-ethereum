@@ -86,7 +86,7 @@ func (b *Block) Signature() []byte {
 
 // Sign implements [dbft.Block] interface.
 func (b *Block) Sign(key dbft.PrivateKey) error {
-	sighash, err := key.(*Signer).signBlock(dbftutil.ExtraVersion(b.header.Extra[0]), dbftRLP(b.header))
+	sighash, err := key.(*Signer).signBlock(b.header.Extra, dbftRLP(b.header))
 	if err != nil {
 		return fmt.Errorf("failed to sign dbftRLP header: %w", err)
 	}
@@ -97,7 +97,8 @@ func (b *Block) Sign(key dbft.PrivateKey) error {
 
 // Verify implements [dbft.Block] interface.
 func (b *Block) Verify(pub dbft.PublicKey, sign []byte) error {
-	switch dbftutil.ExtraVersion(b.header.Extra[0]) {
+	extra := dbftutil.Extra(b.header.Extra)
+	switch v := extra.Version(); v {
 	case dbftutil.ExtraV0:
 		sealHash := HonestSealHashV0(b.header)
 		pubkey, err := ecrypto.Ecrecover(sealHash.Bytes(), sign)
@@ -108,13 +109,27 @@ func (b *Block) Verify(pub dbft.PublicKey, sign []byte) error {
 			return errors.New("invalid block signature")
 		}
 	case dbftutil.ExtraV1:
-		// We don't have a way to verify signature share, because the only way to
-		// verify is to collect at least M shares and verify *the group* of shares
-		// against *the global* public key. Hence, always consider Commit as valid
-		// at this stage.
-		return nil
+		switch ss := extra.SignatureScheme(); ss {
+		case dbftutil.ExtraV1ECDSAScheme:
+			sealHash := HonestSealHashV0(b.header)
+			pubkey, err := ecrypto.Ecrecover(sealHash.Bytes(), sign)
+			if err != nil {
+				return fmt.Errorf("failed to recover public key from signature: %w", err)
+			}
+			if pub.(*PublicKey).Account != ecrypto.PubkeyBytesToAddress(pubkey) {
+				return errors.New("invalid block signature")
+			}
+		case dbftutil.ExtraV1ThresholdScheme:
+			// We don't have a way to verify signature share, because the only way to
+			// verify is to collect at least M shares and verify *the group* of shares
+			// against *the global* public key. Hence, always consider Commit as valid
+			// at this stage.
+			return nil
+		default:
+			return fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedBlockSignatureScheme, ss)
+		}
 	default:
-		return fmt.Errorf("%w: %d", errUnexpectedExtraVersion, b.header.Extra[0])
+		return fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, v)
 	}
 
 	return nil

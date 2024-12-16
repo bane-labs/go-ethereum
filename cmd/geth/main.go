@@ -128,6 +128,7 @@ var (
 		utils.MinerRecommitIntervalFlag,
 		utils.MinerNewPayloadTimeout,
 		utils.AntiMEVKeyStoreFlag,
+		utils.AntiMEVEnforceECDSABlockSignatureSchemeFlag,
 		utils.AntiMEVPasswordFlag,
 		utils.NATFlag,
 		utils.NoDiscoverFlag,

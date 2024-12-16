@@ -161,6 +161,10 @@ type Config struct {
 
 	// OverrideVerkle (TODO: remove after the fork)
 	OverrideVerkle *uint64 `toml:",omitempty"`
+
+	// AntiMEVEnforceECDSABlockSignatureScheme enables ECDSA multisignatures for
+	// block signing instead of threshold-based.
+	AntiMEVEnforceECDSABlockSignatureScheme bool `toml:",omitempty"`
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain config.
