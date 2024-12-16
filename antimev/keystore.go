@@ -68,7 +68,7 @@ func (ks *KeyStore) Init(addr common.Address, prvkey *ecies.PrivateKey, groupSiz
 
 // Reset cleans all dkg progress data and returns to an initial state
 func (ks *KeyStore) Reset(round int) error {
-	ks.round = 0
+	ks.round = round
 	ks.recovering = nil
 	ks.resharing = nil
 	ks.reshared = nil
