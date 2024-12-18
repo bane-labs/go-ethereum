@@ -16,7 +16,7 @@
     "grayGlacierBlock": 0,
     "shanghaiTime": 0,
     "dbft": {
-      "period": 10,
+      "period": 5,
       "standbyValidators": [
         "0x34a3b2abb99b4c128acf61dcbbd1fcac0b161652",
         "0x641ec1c538fa17e6ad8193c9b580f6850b114280",
