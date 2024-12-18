@@ -312,7 +312,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 // loopTaskList retries every task in tx watch list
 func (c *DBFT) loopTaskList() {
 	for watchList := range c.loopTaskChan {
-		log.Info("DKG loopTaskList", "watchList", watchList)
+		log.Info("DKG loopTaskList", "CurrentHeight", watchList.CurrentHeight, "WatchListLength", len(watchList.WatchList))
 		currentHeight := watchList.CurrentHeight
 		// append watchList from loopTaskChan to c.txWatchList
 		for i := range watchList.WatchList {
