@@ -267,17 +267,20 @@ func (ks *KeyStore) TryRecoverReshare(messagePubKeys []*ecies.PublicKey) ([][]by
 	return msgs, pvss.Encode(), nil
 }
 
+// RevertRound reverts all progress of current round of DKG.
+func (ks *KeyStore) RevertRound() error {
+	ks.resharing = nil
+	ks.sharing = nil
+	ks.recovering = nil
+	return ks.saveStoreAndReInitialize()
+}
+
 // OnEpochChange checks and settles the results of sharing and resharing, will
 // revert both of them of any of them is not successful.
-// This method should only be called in the end of dkg, otherwise use
-// AggregateShare to check if sharing is successful.
 func (ks *KeyStore) OnEpochChange(aggregatedCmt []byte, isMemberOfNewGroup bool) error {
 	// Revert dkg if contract doesn't give a aggregated commitment
 	if len(aggregatedCmt) == 0 {
-		ks.resharing = nil
-		ks.sharing = nil
-		ks.recovering = nil
-		return ks.saveStoreAndReInitialize()
+		return ks.RevertRound()
 	}
 	// If code reaches here, then dkg is successful in contract
 	if err := ks.aggregateReshare(isMemberOfNewGroup); err != nil {

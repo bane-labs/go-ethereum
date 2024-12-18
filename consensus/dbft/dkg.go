@@ -81,7 +81,6 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 		CurrentHeight: currentHeight,
 		WatchList:     make([]TxWatchRetry, 0),
 	}
-
 	amevAddress := c.amevKeystore.Address()
 	if state == nil {
 		s, err := c.chain.StateAt(h.Root)
@@ -120,13 +119,12 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 		c.dkgSnapshot = nil
 	}
 
-	// If there is a snapshot of current epoch, then load, otherwise new
+	// If there is not a snapshot of current epoch, then new
 	epochStartHeight, err := c.currentEpochStartHeight(state, h)
 	if err != nil {
 		return fmt.Errorf("failed to call currentEpochStartHeight: %v", err)
 	}
 	if c.dkgSnapshot == nil {
-		// This is a new epoch for node to acknowledge
 		s, err := c.newSnapshot(h, state, epochStartHeight)
 		if err != nil {
 			return fmt.Errorf("failed to new DKG snapshot, err: %v", err)
@@ -150,21 +148,29 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 	}
 
 	// If keystore is out-of-date, then sync shared DKG up-tp-date
-	if c.dkgSnapshot.Round == 1 && currentHeight < shareStartHeight && c.amevKeystore.IsSharing() {
-		// If the first round failed but the keystore is in sharing state
-		if err := c.amevKeystore.Reset(0); err != nil {
+	keystoreRound := c.amevKeystore.Round()
+	// If keystore has a round of future, then return an error
+	if keystoreRound >= int(c.dkgSnapshot.Round) {
+		return fmt.Errorf("invalid antimev keystore round index: %v", keystoreRound)
+	}
+	// If this round failed but keystore is still in a sharing state
+	if keystoreRound == int(c.dkgSnapshot.Round)-1 && currentHeight < shareStartHeight && c.amevKeystore.IsSharing() {
+		// Here only revert before the new share period, if the node wake up when share,
+		// then data will be overwritten
+		if err := c.amevKeystore.RevertRound(); err != nil {
 			return err
 		}
 	}
-	// Sync only if has at least 1 round successful DKG
-	if c.amevKeystore.Round() < int(c.dkgSnapshot.Round)-1 {
-		// If the keystore is late for more than 1 round, than reset it to the last one
-		if c.amevKeystore.Round() < int(c.dkgSnapshot.Round)-2 {
+	// Sync if keystore needs a sync and contract has at least 1 round successful DKG
+	if keystoreRound < int(c.dkgSnapshot.Round)-1 {
+		// If keystore is late for more than 1 round, than reset it to the last one,
+		// past data are not helpful anymore
+		if keystoreRound < int(c.dkgSnapshot.Round)-2 {
 			if err := c.amevKeystore.Reset(int(c.dkgSnapshot.Round) - 2); err != nil {
 				return err
 			}
 		}
-		// If the keystore is in sharing state already, then regard it has a valid secret
+		// If keystore is in a sharing state already, then regard it has a valid secret
 		if !c.amevKeystore.IsSharing() {
 			if err := c.amevKeystore.OnSharePeriodStart(); err != nil {
 				return fmt.Errorf("failed to sync shared DKG, err: %v", err)
@@ -199,8 +205,10 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 			return fmt.Errorf("failed to call getPendingConsensus: %v", err)
 		}
 		// Prepare and start a DKG
-		if err = c.amevKeystore.OnSharePeriodStart(); err != nil {
-			return fmt.Errorf("failed to start new DKG, err: %v", err)
+		if !c.amevKeystore.IsSharing() {
+			if err = c.amevKeystore.OnSharePeriodStart(); err != nil {
+				return fmt.Errorf("failed to start new DKG, err: %v", err)
+			}
 		}
 		// If the period finished, then skip sending a transaction
 		if currentHeight < recoverStartHeight {
@@ -250,7 +258,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 			return fmt.Errorf("failed to call indexCurrentNeedRecovering, err: %v", err)
 		}
 		// If the period finished, then skip sending a transaction
-		if len(c.dkgSnapshot.IndexNeedRecover) > 0 && currentHeight < recoverCheckHeight {
+		if len(c.dkgSnapshot.IndexNeedRecover) > 0 {
 			// Only indexesNeedRecover <= (consensusSize - threshold) can recover
 			threshold := consensusSize - (consensusSize-1)/3
 			if len(c.dkgSnapshot.IndexNeedRecover) > int(consensusSize-threshold) {
@@ -258,21 +266,25 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 				log.Warn("DKG resharing doesn't meet recoverable threshold, skip recover")
 				return nil
 			}
-			if err := c.amevKeystore.OnRecoverPeriodStart(); err != nil {
-				return fmt.Errorf("failed to start DKG recover, err: %v", err)
-			}
-			// Send recover tx from current consensus node
-			indexOfResharing := slices.Index(c.dkgSnapshot.CurrentCNs, amevAddress) + 1
-			if indexOfResharing > 0 {
-				pubs := make([]*ecies.PublicKey, len(c.dkgSnapshot.IndexNeedRecover))
-				for i, index := range c.dkgSnapshot.IndexNeedRecover {
-					pubs[i], err = c.messagePubkey(&c.dkgSnapshot.PendingCNs[index-1], state, h)
-					if err != nil {
-						return fmt.Errorf("failed to get message keys for recovering, err: %v", err)
-					}
+			if !c.amevKeystore.IsRecovering() {
+				if err := c.amevKeystore.OnRecoverPeriodStart(); err != nil {
+					return fmt.Errorf("failed to start DKG recover, err: %v", err)
 				}
-				if err := c.taskRecover(c.dkgSnapshot.IndexNeedRecover, pubs, currentHeight, recoverCheckHeight, watchList); err != nil {
-					return fmt.Errorf("failed to task DKG recover, err: %v", err)
+			}
+			if currentHeight < recoverCheckHeight {
+				// Send recover tx from current consensus node
+				indexOfResharing := slices.Index(c.dkgSnapshot.CurrentCNs, amevAddress) + 1
+				if indexOfResharing > 0 {
+					pubs := make([]*ecies.PublicKey, len(c.dkgSnapshot.IndexNeedRecover))
+					for i, index := range c.dkgSnapshot.IndexNeedRecover {
+						pubs[i], err = c.messagePubkey(&c.dkgSnapshot.PendingCNs[index-1], state, h)
+						if err != nil {
+							return fmt.Errorf("failed to get message keys for recovering, err: %v", err)
+						}
+					}
+					if err := c.taskRecover(c.dkgSnapshot.IndexNeedRecover, pubs, currentHeight, recoverCheckHeight, watchList); err != nil {
+						return fmt.Errorf("failed to task DKG recover, err: %v", err)
+					}
 				}
 			}
 		}
