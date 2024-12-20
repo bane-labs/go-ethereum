@@ -7,6 +7,8 @@ import (
 	"math/big"
 	"path/filepath"
 
+	"github.com/bane-labs/zk-dkg/encryption"
+	"github.com/consensys/gnark-crypto/ecc/secp256k1"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
@@ -334,7 +336,7 @@ func (ks *KeyStore) ReceiveSecretShare(selfIndex int, fromIndex int, ess [][]byt
 		return ErrInvalidDKGPVSS
 	}
 	// Decrypt and accept the sharing message
-	ss, err := ks.decryptSecretShare(ess[selfIndex-1])
+	ss, err := ks.decryptShareMessage(ess[selfIndex-1])
 	if err != nil {
 		return ErrMessageDecryption
 	}
@@ -362,7 +364,7 @@ func (ks *KeyStore) ReceiveSecretReshare(selfIndex int, fromIndex int, ers [][]b
 		return ErrInvalidDKGPVSS
 	}
 	// Decrypt and accept the resharing message
-	ss, err := ks.decryptSecretShare(ers[selfIndex-1])
+	ss, err := ks.decryptShareMessage(ers[selfIndex-1])
 	if err != nil {
 		return ErrMessageDecryption
 	}
@@ -386,7 +388,7 @@ func (ks *KeyStore) ReceiveRecoverShare(selfIndex int, fromIndex int, ers []byte
 		return ErrInvalidDKGPVSS
 	}
 	// Decrypt and accept the recovering message
-	ss, err := ks.decryptSecretShare(ers)
+	ss, err := ks.decryptShareMessage(ers)
 	if err != nil {
 		return ErrMessageDecryption
 	}
@@ -397,8 +399,17 @@ func (ks *KeyStore) ReceiveRecoverShare(selfIndex int, fromIndex int, ers []byte
 	return ks.saveStoreAndReInitialize()
 }
 
-func (ks *KeyStore) decryptSecretShare(ess []byte) (*big.Int, error) {
-	ss, err := ks.ethPrvKey.Decrypt(ess, nil, nil)
+func (ks *KeyStore) decryptShareMessage(msg []byte) (*big.Int, error) {
+	// len(message)=12+64+len(ess)
+	if len(msg) <= 76 {
+		return nil, errors.New("invalid message length")
+	}
+	var bigR secp256k1.G1Affine
+	_, err := bigR.SetBytes(msg[:64])
+	if err != nil {
+		return nil, err
+	}
+	ss, err := encryption.ECIESDecrypt(ks.ethPrvKey, msg[76:], msg[64:76], bigR)
 	if err != nil {
 		return nil, err
 	}
