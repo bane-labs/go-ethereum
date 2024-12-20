@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/console/prompt"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/log"
@@ -107,6 +109,30 @@ Since only one password can be given, only format update can be performed,
 changing your password is only possible interactively.
 `,
 			},
+			{
+				Name:   "reset",
+				Usage:  "Reset an existing antimev keystore",
+				Action: antimevReset,
+				Flags: []cli.Flag{
+					utils.AntiMEVKeyStoreFlag,
+					utils.AntiMEVPasswordFlag,
+				},
+				Description: `
+    geth antimev reset
+
+Reset the existing antimev keystore.
+
+The keystore is reset to the initial state, all DKG data are deleted to recover
+from a stuck epoch change.
+
+For non-interactive use, password can be specified with --antimev.password flag:
+
+    geth antimev reset [options]
+
+Note, this is meant to be used for emergency only, it is a bad idea to reset your
+keystore when everything runs correctly.
+`,
+			},
 		},
 	}
 )
@@ -146,12 +172,24 @@ func unlockKeyStore(ks *antimev.KeyStore, passwords []string) error {
 func antimevStatus(ctx *cli.Context) error {
 	ks := makeAntimevKeystore(ctx)
 	unlockKeyStore(ks, utils.MakeAntiMEVPasswordList(ctx))
+	var cpkStr, lpkStr string
+	cpk, err := ks.CurrentGlobalPubKey()
+	if err == nil {
+		cpkStr = hex.EncodeToString(cpk.Bytes())
+	}
+	lpk, err := ks.LastGlobalPubKey()
+	if err == nil {
+		lpkStr = hex.EncodeToString(lpk.Bytes())
+	}
 	fmt.Printf("Antimev keystore status:\n")
 	fmt.Printf("- Message public key: {%s}\n", ks.MessagePubKey())
-	fmt.Printf("- Resharing: {%t}\n", ks.IsResharing())
-	fmt.Printf("- Sharing: {%t}\n", ks.IsSharing())
-	fmt.Printf("- Reshared: {%t}\n", ks.HasReshared())
-	fmt.Printf("- Shared: {%t}\n", ks.HasShared())
+	fmt.Printf("- Round: {%d}\n", ks.Round())
+	fmt.Printf("- Last round reshared: {%t}\n", ks.HasReshared())
+	fmt.Printf("- This round shared: {%t}\n", ks.HasShared())
+	fmt.Printf("- This round resharing: {%t}\n", ks.IsResharing())
+	fmt.Printf("- Next round sharing: {%t}\n", ks.IsSharing())
+	fmt.Printf("- Current global key: {%s}\n", cpkStr)
+	fmt.Printf("- Last global key: {%s}\n", lpkStr)
 	return nil
 }
 
@@ -202,6 +240,27 @@ func antimevUpdate(ctx *cli.Context) error {
 	newPassword := utils.GetPassPhraseWithList("Please give a new password. Do not forget this password.", true, 0, nil)
 	if err := ks.Update(newPassword); err != nil {
 		utils.Fatalf("Could not update the keystore: %v", err)
+	}
+	return nil
+}
+
+// antimevReset cleans all DKG data but keep the message keypair and other parameters.
+func antimevReset(ctx *cli.Context) error {
+	ks := makeAntimevKeystore(ctx)
+	path, err := ks.Path()
+	if err != nil {
+		utils.Fatalf("Could not reset the keystore: %v", err)
+	}
+	confirm, err := prompt.Stdin.PromptConfirm(fmt.Sprintf("Reset '%s'?", path))
+	if err != nil {
+		utils.Fatalf("%v", err)
+	}
+	if confirm {
+		unlockKeyStore(ks, utils.MakeAntiMEVPasswordList(ctx))
+		// Reset the keystore to the oldest possible state before any DKG
+		if err := ks.Reset(0); err != nil {
+			utils.Fatalf("Could not reset the keystore: %v", err)
+		}
 	}
 	return nil
 }

@@ -199,53 +199,61 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, vmenv *vm.EVM, statedb *stat
 
 // ProcessOnPersist applies a system call to the governance contract.
 func ProcessOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
+	if err := processKeyManagementOnPersist(vmenv, statedb); err != nil {
+		return err
+	}
+	if err := processGovernanceOnPersist(vmenv, statedb); err != nil {
+		return err
+	}
+	return nil
+}
+
+func processGovernanceOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
 	var (
-		data   []byte
-		err    error
-		isAMEV = vmenv.ChainConfig().IsNeoXAMEV(vmenv.Context.BlockNumber)
+		data []byte
+		err  error
 	)
-	if isAMEV {
-		data, err = systemcontracts.KeyManagementABI.Pack("onPersistV2")
+	if vmenv.ChainConfig().IsNeoXDKG(vmenv.Context.BlockNumber) {
+		data, err = systemcontracts.GovernanceABI.Pack("onPersistV2")
 		if err != nil {
-			return fmt.Errorf("filed to pack KeyManagement onPersistV2 call: %w", err)
+			return fmt.Errorf("failed to pack Governance onPersistV2 call: %w", err)
 		}
 	} else {
 		data, err = systemcontracts.GovernanceABI.Pack("onPersist")
 		if err != nil {
-			return fmt.Errorf("filed to pack Governance onPersist call: %w", err)
+			return fmt.Errorf("failed to pack Governance onPersist call: %w", err)
 		}
 	}
+	return applyLocalSystemCall(systemcontracts.GovernanceProxyHash, data, vmenv, statedb)
+}
+
+func processKeyManagementOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
+	if !vmenv.ChainConfig().IsNeoXDKG(vmenv.Context.BlockNumber) {
+		return nil
+	}
+	data, err := systemcontracts.KeyManagementABI.Pack("onPersistV2")
+	if err != nil {
+		return fmt.Errorf("failed to pack KeyManagement onPersistV2 call: %w", err)
+	}
+	return applyLocalSystemCall(systemcontracts.KeyManagementProxyHash, data, vmenv, statedb)
+}
+
+func applyLocalSystemCall(to common.Address, data []byte, vmenv *vm.EVM, statedb *state.StateDB) error {
 	msg := &Message{
 		From:      params.SystemAddress,
 		GasLimit:  30_000_000,
 		GasPrice:  common.Big0,
 		GasFeeCap: common.Big0,
 		GasTipCap: common.Big0,
-		To:        &systemcontracts.GovernanceProxyHash,
+		To:        &to,
 		Data:      data,
 	}
 	vmenv.Reset(NewEVMTxContext(msg), statedb)
-	statedb.AddAddressToAccessList(systemcontracts.GovernanceProxyHash)
-	if vmenv.ChainConfig().IsNeoXAMEV(vmenv.Context.BlockNumber) {
-		statedb.AddAddressToAccessList(systemcontracts.KeyManagementProxyHash)
-	}
-	_, _, err = vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
+	statedb.AddAddressToAccessList(to)
+	_, _, err := vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
 	if err != nil {
 		return fmt.Errorf("onPersist call failed: %w", err)
 	}
-
-	if isAMEV {
-		data, err = systemcontracts.GovernanceABI.Pack("onPersistV2")
-		if err != nil {
-			return fmt.Errorf("filed to pack Governance onPersistV2 call: %w", err)
-		}
-		msg.Data = data
-		_, _, err = vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
-		if err != nil {
-			return fmt.Errorf("onPersistV2 call failed: %w", err)
-		}
-	}
-
 	statedb.Finalise(true)
 	return nil
 }

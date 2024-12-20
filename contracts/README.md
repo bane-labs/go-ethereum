@@ -100,7 +100,7 @@ Otherwise, the consensus nodes of the next epoch will be the following predefine
 |`0x7976ad987d572377d39fb4bab86c80e08b6f8327`|`0x4fe8af0dbb633283d8e9703668142fd130f2818d`|
 |`0xd711da2d8c71a801fc351163337656f1321343a0`|`0x763452f65353fffe73d46539e51a6ddfc0e2c86a`|
 
-After enabling DKG-related features and the KeyManagement contract for further antimev usage, there will be a short locked period (currently `360` blocks) for key generations before epoch change. In this period, `vote`, `revokeVote`, `transferVote`, `registerCandidate` and `exitCandidate` are not allowed. However, if the consensus nodes of the next epoch keep the same as the current, the Governance election will not be locked.
+After enabling DKG-related features and the KeyManagement contract for further antimev usage, there is a short period (currently `360` blocks) for key generations before epoch change. In this period, the **top 7 candidates** get locked in election, so the voted GAS amount can't further affect the result. Related voter operations (e.g. voting and withdrawing) and candidate operations (e.g. registering and exiting) are still open to use, which provides a smooth UX, but they don't change the election result as well.
 
 ### Reward
 
@@ -128,9 +128,9 @@ Voter `GAS` reward is proportional to different `shareRate` settings and the vot
 
 The rewards for consensus nodes will be immediately sent to their addresses, but the reward settlement for voters obeys some other rules:
 
-1. The rewards after first vote but before the next epoch starts are unclaimable, which means a voter can't benefit without participanting and affecting any election;
+1. A voter can only receive rewards when he votes to a consensus node or start to receive rewards since his voted candidate gets elected as a consensus node;
 2. A voter has to send a calling (e.g. `claimReward()`) by itself to `0x1212000000000000000000000000000000000001` to receive claimable rewards;
-3. The rewards are claimed and transfered as well when the vote amount changes via `vote(address candidateTo)` or `revokeVote()`.
+3. The rewards are claimed and transfered as well when the vote amount changes via `vote(address candidateTo)`, `transferVote(address candidateTo)` or `revokeVote(uint amount)`.
 
 There are several special cases of reward distribution:
 

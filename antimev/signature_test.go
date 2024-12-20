@@ -3,12 +3,11 @@ package antimev
 import (
 	"fmt"
 	"maps"
-	"math/rand"
+	"math/big"
 	"path/filepath"
-	"slices"
 	"testing"
-	"time"
 
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
@@ -28,56 +27,64 @@ func TestSingleSignature(t *testing.T) {
 }
 
 func TestThresholdSignature(t *testing.T) {
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
-
-	cns := slices.Clone(accountsSorted)
+	// Init keystores
+	addrs := make([]common.Address, size)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+		addrs[i] = accounts[i].addr
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(cns[i].addr, key, size, threshold, cns[i].pwd)
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 		kss[i] = ks
 	}
-
-	msgbox := make([][][]byte, size)
-	pvssbox := make([][]byte, size)
-	valList := make([]common.Address, size)
-	for i := range cns {
-		valList[i] = cns[i].addr
+	// Ignore resharing and execute sharing
+	contract := &MockContractStorage{
+		shareMsgs:   make([][][]byte, size),
+		sharePVSSes: make([][]byte, size),
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		_, _, err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// Handle share
-		msgs, pvss, err := kss[i].OnReshareFinish()
+		msgs, pvss, err := kss[i].DKGShare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		msgbox[i] = msgs
-		pvssbox[i] = pvss
+		contract.shareMsgs[i] = msgs
+		contract.sharePVSSes[i] = pvss
 	}
-
+	// Send secret sharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, msgbox[j], pvssbox[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 		}
 	}
-
+	// Aggregate pvss manually
+	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange()
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
+	for i := 0; i < size; i++ {
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}

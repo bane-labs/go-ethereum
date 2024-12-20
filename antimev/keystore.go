@@ -6,7 +6,6 @@ import (
 	"errors"
 	"math/big"
 	"path/filepath"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -19,7 +18,9 @@ import (
 var (
 	ErrInvalidLength     = errors.New("invalid array length")
 	ErrInvalidThreshold  = errors.New("invalid threshold")
-	ErrNotParticipant    = errors.New("not dkg participant")
+	ErrInvalidDKGPVSS    = errors.New("invalid dkg pvss")
+	ErrKeyGroupNotExists = errors.New("required keygroup not found")
+	ErrNoNeedToRecover   = errors.New("no need to recover")
 	ErrUnrecoverable     = errors.New("unrecoverable sharing")
 	ErrMessageDecryption = errors.New("message decryption failed")
 )
@@ -35,13 +36,12 @@ type KeyStore struct {
 	path      string            // The local storage path
 	password  string            // The password for storage encryption
 
+	round      int                // The index of latest shared and current using key group
 	recovering *thresholdKeyGroup // The recovering key group
 	resharing  *thresholdKeyGroup // The resharing key group
 	reshared   *thresholdKeyGroup // The group can decrypt old messages
 	sharing    *thresholdKeyGroup // The sharing key group
 	shared     *thresholdKeyGroup // The group can encrypt and decrypt new messages
-
-	mu sync.RWMutex // Mutex protecting the file persistence
 }
 
 // NewKeyStore returns a new instance of antimev keystore.
@@ -53,8 +53,6 @@ func NewKeyStore(path string) *KeyStore {
 
 // Init initializes necessary fields of an antimev keystore for dkg.
 func (ks *KeyStore) Init(addr common.Address, prvkey *ecies.PrivateKey, groupSize int, threshold int, password string) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
 	if groupSize < threshold {
 		return ErrInvalidThreshold
 	}
@@ -64,21 +62,29 @@ func (ks *KeyStore) Init(addr common.Address, prvkey *ecies.PrivateKey, groupSiz
 	ks.address = addr
 	ks.ethPrvKey = prvkey
 	ks.password = password
+	ks.round = 0
+	return ks.saveStoreAndReInitialize()
+}
+
+// Reset cleans all dkg progress data and returns to an initial state
+func (ks *KeyStore) Reset(round int) error {
+	ks.round = round
+	ks.recovering = nil
+	ks.resharing = nil
+	ks.reshared = nil
+	ks.sharing = nil
+	ks.shared = nil
 	return ks.saveStoreAndReInitialize()
 }
 
 // Load loads hex-encoded anti-MEV keystore from the provided filepath.
 func (ks *KeyStore) Load(password string) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
 	ks.password = password
 	return ks.initializeKeystoreFromFile()
 }
 
 // Update changes the passphrase of anti-MEV keystore
 func (ks *KeyStore) Update(password string) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
 	ks.password = password
 	return ks.saveStoreAndReInitialize()
 }
@@ -90,8 +96,6 @@ func (ks *KeyStore) Address() common.Address {
 
 // Path returns the file path of keystore storage
 func (ks *KeyStore) Path() (string, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	return filepath.Abs(ks.path)
 }
 
@@ -106,104 +110,152 @@ func (ks *KeyStore) GlobalPublicKey() (*tpke.PublicKey, error) {
 
 // MessagePubKey returns a hex string of message encryption key
 func (ks *KeyStore) MessagePubKey() string {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	return hex.EncodeToString(crypto.FromECDSAPub(&ks.ethPrvKey.ExportECDSA().PublicKey))
+}
+
+// Round returns the index of latest and successful dkg round (not the ongoing one)
+func (ks *KeyStore) Round() int {
+	return ks.round
+}
+
+// CurrentGlobalPubKey returns global public key that may be used to verify threshold
+// signature against. Do not modify the return value.
+func (ks *KeyStore) CurrentGlobalPubKey() (*tpke.PublicKey, error) {
+	if ks.shared == nil {
+		return nil, ErrNoPubKey
+	}
+	return ks.shared.globalPubKey, nil
+}
+
+// LastGlobalPubKey returns last round global public key.
+func (ks *KeyStore) LastGlobalPubKey() (*tpke.PublicKey, error) {
+	if ks.reshared == nil {
+		return nil, ErrNoPubKey
+	}
+	return ks.reshared.globalPubKey, nil
 }
 
 // IsResharing returns if there is an ongoing resharing
 func (ks *KeyStore) IsResharing() bool {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	return ks.resharing != nil
 }
 
 // IsSharing returns if there is an ongoing sharing
 func (ks *KeyStore) IsSharing() bool {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	return ks.sharing != nil
+}
+
+// IsRecovering returns if there is an ongoing recovering
+func (ks *KeyStore) IsRecovering() bool {
+	return ks.recovering != nil
 }
 
 // HasReshared returns if there is a completed resharing
 func (ks *KeyStore) HasReshared() bool {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	return ks.reshared != nil
 }
 
 // HasShared returns if there is a completed sharing
 func (ks *KeyStore) HasShared() bool {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
 	return ks.shared != nil
 }
 
 // OnValidatorList initializes sharing and resharing, should be called
-// when the key group members are determined. It returns resharing
-// messages immediately.
-func (ks *KeyStore) OnValidatorList(validators []common.Address, pubkeys []*ecies.PublicKey) ([][]byte, []byte, error) {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	if len(validators) != ks.size || len(pubkeys) != ks.size {
+// when the key group members are determined. It initializes 1 or 2 key groups.
+func (ks *KeyStore) OnSharePeriodStart() error {
+	// Set up groups for dkg resharing
+	if ks.shared != nil {
+		ks.resharing = ks.shared.newTemplateForReshare(ks.size)
+	}
+	// Set groups for dkg sharing
+	ks.sharing = newThresholdKeyGroup(ks.size)
+	// Remove recovering just in case
+	ks.recovering = nil
+	return ks.saveStoreAndReInitialize()
+}
+
+// OnRecoverPeriodStart initializes recovering, should be called after resharing
+// gets finished. It initializes 1 key groups.
+func (ks *KeyStore) OnRecoverPeriodStart() error {
+	if ks.shared == nil {
+		return ErrKeyGroupNotExists
+	}
+	ks.recovering = newThresholdKeyGroup(ks.size)
+	return ks.saveStoreAndReInitialize()
+}
+
+// DKGReshare generates and returns resharing messages and pvss. The input key
+// array should be ordered by DKG index, e.g. keystore will use 1 as the index
+// to generate a reshare message for messagePubKeys[0].
+func (ks *KeyStore) DKGReshare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byte, error) {
+	if ks.resharing == nil {
+		return nil, nil, ErrKeyGroupNotExists
+	}
+	if len(messagePubKeys) != ks.size {
 		return nil, nil, ErrInvalidLength
 	}
-	// Set up groups for dkg sharing and resharing
 	if ks.shared != nil {
-		ks.resharing = ks.shared.newTemplateForReshare(validators, pubkeys)
-	}
-	ks.sharing = newThresholdKeyGroup(ks.address, validators, pubkeys)
-	// Resharing doesn't require persistence, so store here
-	err := ks.saveStoreAndReInitialize()
-	if err != nil {
-		return nil, nil, err
-	}
-	// Generate secret resharing messages and pvss
-	if ks.resharing != nil {
-		rMsgs, pvss, err := ks.shared.dkgReshare(ks.resharing)
-		if err != nil || pvss == nil {
+		// Generate secret resharing messages and pvss
+		rMsgs, rPvss, err := ks.shared.reshare(messagePubKeys)
+		if err != nil {
 			return nil, nil, err
 		}
-		return rMsgs, pvss.Encode(), nil
+		// No data changed so no need to persist
+		return rMsgs, rPvss.Encode(), nil
 	}
-	// Nothing to reshare
 	return nil, nil, nil
 }
 
-func (ks *KeyStore) OnRecoverStart(indexes []int, validators []common.Address, pubkeys []*ecies.PublicKey) ([][]byte, error) {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	if ks.shared == nil {
-		return nil, nil
+// DKGShare generates and returns sharing messages and pvss. The input key array
+// should be ordered by DKG index, e.g. keystore will use 1 as the index to
+// generate a share message for messagePubKeys[0].
+func (ks *KeyStore) DKGShare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byte, error) {
+	if ks.sharing == nil {
+		return nil, nil, ErrKeyGroupNotExists
 	}
-	if len(validators) != len(indexes) || len(pubkeys) != len(indexes) {
-		return nil, ErrInvalidLength
+	if len(messagePubKeys) != ks.size {
+		return nil, nil, ErrInvalidLength
 	}
-	// Return error if amount is more than recoverable
-	if len(indexes) > ks.size-ks.threshold {
-		return nil, ErrUnrecoverable
+	// Generate secret sharing messages and pvss
+	sMsgs, sPvss, err := ks.sharing.prepare(ks.threshold, messagePubKeys)
+	if err != nil || sPvss == nil {
+		return nil, nil, err
 	}
-	// Do nothing if no need to recover
-	if len(indexes) < 1 {
-		return nil, nil
-	}
-	// Only place new ones in recovering group
-	ks.recovering = ks.shared.newTemplateForRecover(indexes, validators, pubkeys)
-	// Recovering doesn't require persistence, so store here
-	err := ks.saveStoreAndReInitialize()
+	// Store only if some secret is generated
+	err = ks.saveStoreAndReInitialize()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	// Generate secret recovering messages
-	return ks.shared.dkgRecover(indexes, pubkeys)
+	return sMsgs, sPvss.Encode(), nil
 }
 
-// OnRecoverFinish tries to finish ongoing recovering, should be called when
-// resharing fails. It returns resharing messages immediately if recoverd.
-func (ks *KeyStore) OnRecoverFinish() ([][]byte, []byte, error) {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	msgs, pvss, err := ks.recovering.dkgReshareRecovered(ks.threshold, ks.resharing)
+// DKGRecover generates and returns recovering messages and pvss. The input index
+// should be a DKG index starts from 1, and the size of two inputs should be the
+// same.
+func (ks *KeyStore) DKGRecover(indexes []int, messagePubKeys []*ecies.PublicKey) ([][]byte, error) {
+	if ks.shared == nil || ks.recovering == nil {
+		return nil, ErrKeyGroupNotExists
+	}
+	if len(messagePubKeys) < 1 {
+		return nil, ErrNoNeedToRecover
+	}
+	if len(messagePubKeys) > ks.size-ks.threshold {
+		return nil, ErrUnrecoverable
+	}
+	// Generate secret recovering messages
+	return ks.shared.recover(indexes, messagePubKeys)
+}
+
+// TryRecoverReshare tries to recover a resharing message, should be called when
+// resharing fails and receives a recover message. It returns resharing messages
+// immediately if recoverd, otherwise an error. The input key array should be
+// ordered by DKG index, e.g. keystore will use 1 as the index to generate a
+// share message for messagePubKeys[0].
+func (ks *KeyStore) TryRecoverReshare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byte, error) {
+	if ks.recovering == nil || ks.resharing == nil {
+		return nil, nil, ErrKeyGroupNotExists
+	}
+	msgs, pvss, err := ks.recovering.reshareRecovered(ks.threshold, messagePubKeys)
 	if err != nil || pvss == nil {
 		return nil, nil, err
 	}
@@ -215,173 +267,134 @@ func (ks *KeyStore) OnRecoverFinish() ([][]byte, []byte, error) {
 	return msgs, pvss.Encode(), nil
 }
 
-// OnReshareFinish tries to finish ongoing resharing, should be called before
-// the new round sharing. It returns sharing messages immediately.
-func (ks *KeyStore) OnReshareFinish() ([][]byte, []byte, error) {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	// Check if resharing are finished and aggregate keys
-	if ks.resharing != nil {
-		err := ks.resharing.dkgAggregate(ks.scaler)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	// Generate secret sharing messages and pvss
-	sMsgs, pvss, err := ks.sharing.dkgPrepare(ks.threshold)
-	if err != nil || pvss == nil {
-		return nil, nil, err
-	}
-	// Store only if some secret is generated
-	err = ks.saveStoreAndReInitialize()
-	if err != nil {
-		return nil, nil, err
-	}
-	return sMsgs, pvss.Encode(), nil
+// RevertRound reverts all progress of current round of DKG.
+func (ks *KeyStore) RevertRound() error {
+	ks.resharing = nil
+	ks.sharing = nil
+	ks.recovering = nil
+	return ks.saveStoreAndReInitialize()
 }
 
-// OnEpochChange tries to finish ongoing sharing, should be called before
-// the key group is needed for encryption and signing.
-func (ks *KeyStore) OnEpochChange() error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	// Check if sharing are finished and aggregate keys
-	if ks.sharing != nil {
-		err := ks.sharing.dkgAggregate(ks.scaler)
-		if err != nil {
-			return err
-		}
+// OnEpochChange checks and settles the results of sharing and resharing, will
+// revert both of them of any of them is not successful.
+func (ks *KeyStore) OnEpochChange(aggregatedCmt []byte, isMemberOfNewGroup bool) error {
+	// Revert dkg if contract doesn't give a aggregated commitment
+	if len(aggregatedCmt) == 0 {
+		return ks.RevertRound()
+	}
+	// If code reaches here, then dkg is successful in contract
+	if err := ks.aggregateReshare(isMemberOfNewGroup); err != nil {
+		return err
+	}
+	if err := ks.aggregateShare(aggregatedCmt, isMemberOfNewGroup); err != nil {
+		return err
 	}
 	// Set finished dkg as current using
 	ks.reshared = ks.resharing
 	ks.resharing = nil
 	ks.shared = ks.sharing
 	ks.sharing = nil
-
+	ks.recovering = nil
+	ks.round += 1
 	return ks.saveStoreAndReInitialize()
 }
 
-// ReceiveSecretShare tries to verify a sharing message array and store their data.
-func (ks *KeyStore) ReceiveSecretShare(from common.Address, ess [][]byte, pvss []byte) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	fromIndex := ks.sharing.holderIndex(from)
-	if fromIndex > ks.size || fromIndex < 1 {
-		return ErrNotParticipant
+// aggregateShare tries to check if sharing is successful and settle the result
+func (ks *KeyStore) aggregateShare(aggregatedCmt []byte, isParticipant bool) error {
+	// Check if sharing is successful and aggregate keys
+	if ks.sharing == nil {
+		return ErrKeyGroupNotExists
 	}
+	return ks.sharing.aggregate(ks.scaler, aggregatedCmt, isParticipant)
+}
+
+// aggregateReshare tries to check if resharing is successful and settle the result
+func (ks *KeyStore) aggregateReshare(isReceiver bool) error {
+	// Check if resharing is successful and aggregate keys
+	if ks.resharing == nil {
+		return nil
+	}
+	return ks.resharing.aggregate(ks.scaler, nil, isReceiver)
+}
+
+// ReceiveSecretShare tries to verify a sharing message array and store their data.
+// Both selfIndex and fromIndex should be a DKG index starts from 1.
+func (ks *KeyStore) ReceiveSecretShare(selfIndex int, fromIndex int, ess [][]byte, pvss []byte) error {
+	// Check if out of the period
+	if ks.sharing == nil {
+		return ErrKeyGroupNotExists
+	}
+	// Check if the secret share has a valid length
+	if len(ess) < ks.size {
+		return ErrDKGSecret
+	}
+	// Decode PVSS
 	p, err := new(tpke.PVSS).Decode(pvss, ks.size, ks.threshold)
 	if err != nil {
-		return ErrDKGPVSS
+		return ErrInvalidDKGPVSS
 	}
-	// If is a member of receiver
-	selfIndex := ks.sharing.holderIndex(ks.address)
-	if selfIndex > 0 {
-		ss, err := ks.decryptSecretShare(ess[selfIndex-1])
-		if err != nil {
-			return ErrDecryptionFailed
-		}
-		err = ks.sharing.receiveShareMessage(fromIndex, ss, p)
-		if err != nil {
-			return err
-		}
-		return ks.saveStoreAndReInitialize()
-	} else {
-		err = ks.sharing.receiveShareMessage(fromIndex, nil, p)
-		if err != nil {
-			return err
-		}
-		return ks.saveStoreAndReInitialize()
+	// Decrypt and accept the sharing message
+	ss, err := ks.decryptSecretShare(ess[selfIndex-1])
+	if err != nil {
+		return ErrMessageDecryption
 	}
+	err = ks.sharing.receiveShareMessage(fromIndex, ss, p, selfIndex)
+	if err != nil {
+		return err
+	}
+	return ks.saveStoreAndReInitialize()
 }
 
 // ReceiveSecretReshare tries to verify a resharing message array and store their data.
-func (ks *KeyStore) ReceiveSecretReshare(from common.Address, ers [][]byte, pvss []byte) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	fromIndex := ks.shared.holderIndex(from)
-	if fromIndex > ks.size || fromIndex < 1 {
-		return ErrNotParticipant
+// Both selfIndex and fromIndex should be a DKG index starts from 1.
+func (ks *KeyStore) ReceiveSecretReshare(selfIndex int, fromIndex int, ers [][]byte, pvss []byte) error {
+	// Check if out of the period
+	if ks.shared == nil || ks.resharing == nil {
+		return ErrKeyGroupNotExists
 	}
+	// Check if the secret share has a valid length
+	if len(ers) < ks.size {
+		return ErrDKGSecret
+	}
+	// Decode PVSS
 	p, err := new(tpke.PVSS).Decode(pvss, ks.size, ks.threshold)
 	if err != nil {
-		return ErrDKGPVSS
+		return ErrInvalidDKGPVSS
 	}
-	// If is a member of receiver
-	selfIndex := ks.resharing.holderIndex(ks.address)
-	if selfIndex > 0 {
-		ss, err := ks.decryptSecretShare(ers[selfIndex-1])
-		if err != nil {
-			return ErrDecryptionFailed
-		}
-		err = ks.resharing.receiveReshareMessage(fromIndex, ss, p)
-		if err != nil {
-			return err
-		}
-		return ks.saveStoreAndReInitialize()
-	} else {
-		err = ks.resharing.receiveReshareMessage(fromIndex, nil, p)
-		if err != nil {
-			return err
-		}
-		return ks.saveStoreAndReInitialize()
-	}
-}
-
-// ReceiveRecoveredReshare tries to verify a resharing message array and store their data.
-func (ks *KeyStore) ReceiveRecoveredReshare(from common.Address, ers [][]byte, pvss []byte) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	fromIndex := ks.recovering.holderIndex(from)
-	if fromIndex > ks.size || fromIndex < 1 {
-		return ErrNotParticipant
-	}
-	p, err := new(tpke.PVSS).Decode(pvss, ks.size, ks.threshold)
+	// Decrypt and accept the resharing message
+	ss, err := ks.decryptSecretShare(ers[selfIndex-1])
 	if err != nil {
-		return ErrDKGPVSS
+		return ErrMessageDecryption
 	}
-	// If is a member of receiver
-	selfIndex := ks.resharing.holderIndex(ks.address)
-	if selfIndex > 0 {
-		ss, err := ks.decryptSecretShare(ers[selfIndex-1])
-		if err != nil {
-			return ErrDecryptionFailed
-		}
-		err = ks.resharing.receiveReshareMessage(fromIndex, ss, p)
-		if err != nil {
-			return err
-		}
-		return ks.saveStoreAndReInitialize()
-	} else {
-		err = ks.resharing.receiveReshareMessage(fromIndex, nil, p)
-		if err != nil {
-			return err
-		}
-		return ks.saveStoreAndReInitialize()
+	err = ks.resharing.receiveReshareMessage(fromIndex, ss, p, selfIndex)
+	if err != nil {
+		return err
 	}
+	return ks.saveStoreAndReInitialize()
 }
 
 // ReceiveRecoverShare tries to verify a recovering message array and store their data.
-func (ks *KeyStore) ReceiveRecoverShare(from common.Address, ers []byte) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-	fromIndex := ks.shared.holderIndex(from)
-	if fromIndex > ks.size || fromIndex < 1 {
-		return ErrNotParticipant
+// Both selfIndex and fromIndex should be a DKG index starts from 1.
+func (ks *KeyStore) ReceiveRecoverShare(selfIndex int, fromIndex int, ers []byte, pvss []byte) error {
+	// Check if out of the period
+	if ks.shared == nil || ks.recovering == nil {
+		return ErrKeyGroupNotExists
 	}
-	// If is a member of receiver
-	selfIndex := ks.recovering.holderIndex(ks.address)
-	if selfIndex > 0 {
-		ss, err := ks.decryptSecretShare(ers)
-		if err != nil {
-			return ErrDecryptionFailed
-		}
-		err = ks.recovering.receiveRecoverMessage(fromIndex, ss)
-		if err != nil {
-			return err
-		}
-		return ks.saveStoreAndReInitialize()
+	// Decode PVSS
+	p, err := new(tpke.PVSS).Decode(pvss, ks.size, ks.threshold)
+	if err != nil {
+		return ErrInvalidDKGPVSS
 	}
-	return nil
+	// Decrypt and accept the recovering message
+	ss, err := ks.decryptSecretShare(ers)
+	if err != nil {
+		return ErrMessageDecryption
+	}
+	err = ks.recovering.receiveRecoverMessage(fromIndex, ss, p, selfIndex)
+	if err != nil {
+		return err
+	}
+	return ks.saveStoreAndReInitialize()
 }
 
 func (ks *KeyStore) decryptSecretShare(ess []byte) (*big.Int, error) {
@@ -401,6 +414,7 @@ type keyStoreAux struct {
 	Address   common.Address `json:"address"`     // Self account address
 	EthPrvKey string         `json:"eth_prv_key"` // Self account secret key
 
+	Round      int                   `json:"round"`      // The index of latest shared and current using key group
 	Recovering *thresholdKeyGroupAux `json:"recovering"` // The recovering key group
 	Resharing  *thresholdKeyGroupAux `json:"resharing"`  // The resharing key group
 	Reshared   *thresholdKeyGroupAux `json:"reshared"`   // The group can decrypt old messages
@@ -429,6 +443,7 @@ func (ks *KeyStore) toAux() *keyStoreAux {
 		EthPrvKey: hex.EncodeToString(crypto.FromECDSA(ks.ethPrvKey.ExportECDSA())),
 	}
 
+	aux.Round = ks.round
 	if ks.recovering != nil {
 		aux.Recovering = ks.recovering.toAux()
 	}
@@ -464,9 +479,10 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 	ks.ethPrvKey = ecies.ImportECDSA(privKey)
 
+	ks.round = aux.Round
 	if aux.Recovering != nil {
 		ks.recovering = new(thresholdKeyGroup)
-		err = ks.recovering.fromAux(aux.Recovering, ks.size, ks.threshold)
+		err = ks.recovering.fromAux(aux.Recovering)
 		if err != nil {
 			return err
 		}
@@ -475,7 +491,7 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 	if aux.Resharing != nil {
 		ks.resharing = new(thresholdKeyGroup)
-		err = ks.resharing.fromAux(aux.Resharing, ks.size, ks.threshold)
+		err = ks.resharing.fromAux(aux.Resharing)
 		if err != nil {
 			return err
 		}
@@ -484,7 +500,7 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 	if aux.Reshared != nil {
 		ks.reshared = new(thresholdKeyGroup)
-		err = ks.reshared.fromAux(aux.Reshared, ks.size, ks.threshold)
+		err = ks.reshared.fromAux(aux.Reshared)
 		if err != nil {
 			return err
 		}
@@ -493,7 +509,7 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 	if aux.Sharing != nil {
 		ks.sharing = new(thresholdKeyGroup)
-		err = ks.sharing.fromAux(aux.Sharing, ks.size, ks.threshold)
+		err = ks.sharing.fromAux(aux.Sharing)
 		if err != nil {
 			return err
 		}
@@ -502,7 +518,7 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 	if aux.Shared != nil {
 		ks.shared = new(thresholdKeyGroup)
-		err = ks.shared.fromAux(aux.Shared, ks.size, ks.threshold)
+		err = ks.shared.fromAux(aux.Shared)
 		if err != nil {
 			return err
 		}

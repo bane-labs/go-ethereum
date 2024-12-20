@@ -1023,6 +1023,10 @@ func overrideConfig(original *params.ChainConfig, override *params.ChainConfig) 
 		copy.ShanghaiTime = timestamp
 		canon = false
 	}
+	if block := override.NeoXDKGBlock; block != nil {
+		copy.NeoXDKGBlock = block
+		canon = false
+	}
 	if block := override.NeoXAMEVBlock; block != nil {
 		copy.NeoXAMEVBlock = block
 		canon = false

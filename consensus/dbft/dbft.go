@@ -277,15 +277,22 @@ type DBFT struct {
 
 	// various native contract APIs that dBFT uses.
 	ethAPI          *ethapi.BlockChainAPI
+	txAPI           *ethapi.TransactionAPI
 	validatorsCache *lru.Cache[uint64, []common.Address]
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
+
+	// The fields for dkg
+	dkgSnapshot  *Snapshot
+	txWatchList  []*TxWatchRetry
+	loopTaskChan chan *TxWatchList
 }
 
 // config represents Engine configuration.
 type config struct {
 	*params.DBFTConfig
+	dkgEnablingHeight     int64
 	antiMEVEnablingHeight int64
 }
 
@@ -294,6 +301,7 @@ type config struct {
 func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	cfg := &config{
 		DBFTConfig:            chainCfg.DBFT,
+		dkgEnablingHeight:     -1,
 		antiMEVEnablingHeight: -1,
 	}
 	if cfg.SecondsPerBlock == 0 {
@@ -310,6 +318,9 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	slices.SortFunc(bftCfg.StandByValidators, common.Address.Cmp)
 	cfg.DBFTConfig = &bftCfg
 
+	if chainCfg.NeoXDKGBlock != nil {
+		cfg.dkgEnablingHeight = chainCfg.NeoXDKGBlock.Int64()
+	}
 	if chainCfg.NeoXAMEVBlock != nil {
 		cfg.antiMEVEnablingHeight = chainCfg.NeoXAMEVBlock.Int64()
 	}
@@ -327,6 +338,8 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		finished: make(chan struct{}),
 
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
+
+		loopTaskChan: make(chan *TxWatchList),
 	}
 
 	var err error
@@ -378,12 +391,12 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				err   error
 			)
 			if txs == nil {
-				// getValidators with empty args is used by dbft to fill the list of
+				// getValidatorsSorted with empty args is used by dbft to fill the list of
 				// block's validators, thus should return validators from the current
 				// epoch without recalculation.
-				pKeys, err = c.getValidators(&c.lastIndex, nil, nil)
+				pKeys, err = c.getValidatorsSorted(&c.lastIndex, nil, nil)
 			}
-			// getValidators with non-empty args is used by dbft to fill block's
+			// getValidatorsSorted with non-empty args is used by dbft to fill block's
 			// NextConsensus field, but DBFT doesn't provide WithGetConsensusAddress
 			// callback and fills NextConsensus by itself via WithNewBlockFromContext
 			// callback. Thus, leave pKeys empty if txes != nil.
@@ -426,7 +439,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				return fmt.Errorf("failed to construct block witness: %w", err)
 			}
 			dbftBlock.header.Extra = append(dbftBlock.header.Extra, witness...) // Extra version isn't changed, validators addresses and signatures are added.
-
+			state := dbftBlock.state.Copy()
 			res := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
 
 			// Firstly, notify chain about new block.
@@ -438,7 +451,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				}
 			}
 
-			c.postBlock(res.Header())
+			c.postBlock(res.Header(), state)
 			return nil
 		}),
 		dbft.WithNewBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
@@ -876,8 +889,13 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 				shares := make(map[int][]*tpke.DecryptionShare)
 				for _, preC := range ctx.PreCommitPayloads {
 					if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
-						// Indexes in shares map must start with 1, thus increment validator's index.
-						shares[int(preC.ValidatorIndex())+1] = preC.GetPreCommit().(*preCommit).Shares()
+						blockNum := pre.header.Number.Uint64() - 1
+						dkgIndex, err := c.getDKGIndex(int(preC.ValidatorIndex()), blockNum)
+						if err != nil {
+							return fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", int(preC.ValidatorIndex()), blockNum)
+						}
+						// Indexes in shares map must use dkg index.
+						shares[dkgIndex] = preC.GetPreCommit().(*preCommit).Shares()
 					}
 				}
 				var (
@@ -1148,7 +1166,12 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 		for i := 0; i < len(vals); i++ {
 			if p := dctx.CommitPayloads[i]; p != nil && p.ViewNumber() == dctx.ViewNumber {
 				var err error
-				shares[i+1], err = p.GetCommit().(*commit).share()
+				blockNum := block.header.Number.Uint64() - 1
+				dkgIndex, err := c.getDKGIndex(i, blockNum)
+				if err != nil {
+					return nil, fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", i, blockNum)
+				}
+				shares[dkgIndex], err = p.GetCommit().(*commit).share()
 				if err != nil {
 					// It's a program error since all commits are expected to be verified by this
 					// moment and hence, contain proper share.
@@ -1174,6 +1197,11 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 // WithEthAPI initializes Eth blockchain API for proper consensus module work.
 func (c *DBFT) WithEthAPI(api *ethapi.BlockChainAPI) {
 	c.ethAPI = api
+}
+
+// WithTxAPI initializes Eth transaction API for sending transaction.
+func (c *DBFT) WithTxAPI(api *ethapi.TransactionAPI) {
+	c.txAPI = api
 }
 
 // WithBroadcast sets callback to notify the caller about new consensus message.
@@ -1244,7 +1272,7 @@ func (c *DBFT) WithTxPool(pool txPool) {
 // postBlock is a callback that updates latest accepted block data and resets
 // last proposal data. It must be called every time new block arrives from chain
 // or from consensus.
-func (c *DBFT) postBlock(h *types.Header) {
+func (c *DBFT) postBlock(h *types.Header, state *state.StateDB) {
 	num := h.Number.Uint64()
 	if c.lastIndex < num {
 		c.lastTimestamp = h.Time
@@ -1252,6 +1280,14 @@ func (c *DBFT) postBlock(h *types.Header) {
 		c.lastBlockHash = h.Hash()
 		c.lastBlockSealHash = HonestSealHashV0(h)
 		c.lastBlockExtra = h.Extra
+
+		// handle DKG
+		if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
+			err := c.handleDKG(h, state)
+			if err != nil {
+				log.Error("handleDKG error", "height", num, "err", err)
+			}
+		}
 	}
 }
 
@@ -1697,6 +1733,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
 
 		go c.eventLoop()
+		go c.loopTaskList()
 	}
 }
 
@@ -1752,7 +1789,7 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 			"dBFT latest block index", c.lastIndex,
 			"sealing proposal index", b.NumberU64())
 		ltstHeader := c.chain.GetHeaderByNumber(b.NumberU64() - 1)
-		c.postBlock(ltstHeader)
+		c.postBlock(ltstHeader, nil)
 	}
 
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
@@ -1957,6 +1994,7 @@ drainLoop:
 	close(c.messages)
 	close(c.txs)
 	close(c.chainHeadEvents)
+	close(c.loopTaskChan)
 	close(c.finished)
 	log.Info("dBFT event loop finished")
 }
@@ -2026,7 +2064,7 @@ func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.In
 
 func (c *DBFT) validatePayload(p *Payload) error {
 	h := c.chain.CurrentBlock().Number.Uint64()
-	validators, err := c.getValidators(&h, nil, nil)
+	validators, err := c.getValidatorsSorted(&h, nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get next block validators: %w", err)
 	}
@@ -2050,7 +2088,7 @@ func (c *DBFT) IsExtensibleAllowed(h uint64, u common.Address) error {
 		return dbftproto.ErrSyncing
 	}
 	// Only validators are included into extensible whitelist for now.
-	validators, err := c.getValidators(&h, nil, nil)
+	validators, err := c.getValidatorsSorted(&h, nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get validators: %w", err)
 	}
@@ -2098,7 +2136,7 @@ func (c *DBFT) handleChainBlock(h *types.Header, checkForSync bool) error {
 			"primary", h.Primary(),
 			"coinbase", h.Coinbase,
 			"mix digest", h.MixDigest.String())
-		c.postBlock(h)
+		c.postBlock(h, nil)
 
 		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
 		if err != nil {
@@ -2128,7 +2166,7 @@ func (c *DBFT) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, pa
 
 func (c *DBFT) calcDifficulty(signer common.Address, parent *types.Header) *big.Int {
 	h := parent.Number.Uint64()
-	vals, err := c.getValidators(&h, nil, nil)
+	vals, err := c.getValidatorsSorted(&h, nil, nil)
 	if err != nil {
 		return nil
 	}
@@ -2280,13 +2318,30 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	}}
 }
 
-// getValidators returns validators chosen in the result of the latest
+// getValidatorsSorted returns validators chosen in the result of the latest
 // finalized voting epoch. It calls Governance contract under the hood. The call
 // is based on the provided state or (if not provided) on the state of the block
 // with the specified height. Validators returned from this method are always
 // sorted by bytes order (even if the list returned from governance contract is
 // sorted in another way). This method uses cached values in case of validators
 // requested by block height.
+func (c *DBFT) getValidatorsSorted(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	res, err := c.getValidators(blockNum, state, header)
+	if err != nil {
+		return nil, err
+	}
+
+	sortedList := slices.Clone(res)
+	slices.SortFunc(sortedList, common.Address.Cmp)
+	return sortedList, err
+}
+
+// getValidators returns validators chosen in the result of the latest finalized
+// voting epoch. It calls Governance contract under the hood. The call is based
+// on the provided state or (if not provided) on the state of the block with the
+// specified height. Validators returned from this method are sorted in the original
+// order used by Governance contract. This method uses cached values in case of
+// validators requested by block height.
 func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
 	if c.ethAPI == nil {
 		return nil, errors.New("eth blockchain API is not initialized, dBFT can't function properly")
@@ -2334,7 +2389,6 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 	if err != nil {
 		return nil, fmt.Errorf("failed to unpack validators: %w", err)
 	}
-	slices.SortFunc(res, common.Address.Cmp)
 
 	// Update cache in case if existing state was used for validators retrieval.
 	if state == nil && blockNum != nil {
@@ -2344,10 +2398,29 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 	return res, err
 }
 
+// getDKGIndex returns validator dkg index (original validator index +1) by validatorIndex (ordered validator index).
+func (c *DBFT) getDKGIndex(validatorIndex int, blockNum uint64) (int, error) {
+	originValidators, err := c.getValidators(&blockNum, nil, nil)
+	if err != nil {
+		return -1, err
+	}
+	if validatorIndex < 0 || validatorIndex >= len(originValidators) {
+		return -1, fmt.Errorf("invalid validator index: validators count is %d, requested %d", len(originValidators), validatorIndex)
+	}
+	orderedValidators := slices.Clone(originValidators)
+	slices.SortFunc(orderedValidators, common.Address.Cmp)
+	addr := orderedValidators[validatorIndex]
+	dkgIndex := slices.Index(originValidators, addr) + 1
+	if dkgIndex == 0 {
+		panic("invalid sort")
+	}
+	return dkgIndex, nil
+}
+
 // getGlobalPublicKey returns TPKE global public key. If state is provided, then this state
 // is used to recalculate local key based on the KeyManagement contract state. If state is
 // not provided, then the node's local keystore is used to retrieve global public key.
-func (c *DBFT) getGlobalPublicKey(state *state.StateDB) (*tpke.PublicKey, error) {
+func (c *DBFT) getGlobalPublicKey() (*tpke.PublicKey, error) {
 	// If state is provided, we need to recalculate global public key for the next
 	// block based on this state. Depends on #332, ref. #353. For now let's always
 	// use key from local keystore.
@@ -2367,14 +2440,14 @@ func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) common.Hash {
 		pubs []dbftutil.Encodable
 	)
 	if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(h.Number, bigOne)) {
-		pub, err := c.getGlobalPublicKey(scp)
+		pub, err := c.getGlobalPublicKey()
 		if err != nil {
 			log.Crit("failed to retrieve global public key to construct next consensus",
 				"err", err)
 		}
 		pubs = []dbftutil.Encodable{pub}
 	} else {
-		nextVals, err := c.getValidators(nil, scp, h)
+		nextVals, err := c.getValidatorsSorted(nil, scp, h)
 		if err != nil {
 			log.Crit("Failed to compute next block validators",
 				"err", err)

@@ -30,17 +30,16 @@ func init() {
 	keycache, _ = lru.New[string, *PublicKey](32)
 }
 
-// NewGlobalPublicKey aggregates and returns a PublicKey.
-func NewGlobalPublicKey(cs []*Commitment, scaler int) *PublicKey {
-	pg1 := new(bls12381.G1Affine).Set(cs[0].coeff[0])
-	// Add up A0
-	for i := 1; i < len(cs); i++ {
-		pg1.Add(pg1, cs[i].coeff[0])
+// NewGlobalPublicKey generates and returns a PublicKey from aggregated commitment data
+func NewGlobalPublicKey(aggregatedCmt []byte, scaler int) (*PublicKey, error) {
+	pg1, err := decodePointG1(aggregatedCmt)
+	if err != nil {
+		return nil, err
 	}
 	pg1.ScalarMultiplication(pg1, big.NewInt(int64(scaler)))
 	return &PublicKey{
 		pg1: pg1,
-	}
+	}, nil
 }
 
 // NewPublicKeyFromBytes deserializes PublicKey from the given byte slice. It expects
@@ -52,7 +51,6 @@ func NewPublicKeyFromBytes(b []byte) (*PublicKey, error) {
 	if ok {
 		return pk, nil
 	}
-
 	if len(b) != PublicKeyLen {
 		return nil, fmt.Errorf("invalid public key length: expected %d, got %d", PublicKeyLen, len(b))
 	}
@@ -63,24 +61,6 @@ func NewPublicKeyFromBytes(b []byte) (*PublicKey, error) {
 		return nil, err
 	}
 	keycache.Add(string(b), pk)
-	return pk, nil
-}
-
-// NewPublicKeyFromPaddedBytes deserializes PublicKey from the given byte slice.
-// It expects uncompressed padded PublicKey representation as an input with length of
-// [PublicKeyLenPadded] (see [PublicKey.Bytes] documentation).
-func NewPublicKeyFromPaddedBytes(b []byte) (*PublicKey, error) {
-	if len(b) != PublicKeyLenPadded {
-		return nil, fmt.Errorf("invalid public key length: expected %d, got %d", PublicKeyLenPadded, len(b))
-	}
-	var (
-		pk  = new(PublicKey)
-		err error
-	)
-	pk.pg1, err = decodePointG1(b)
-	if err != nil {
-		return nil, err
-	}
 	return pk, nil
 }
 

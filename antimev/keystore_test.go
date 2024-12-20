@@ -1,16 +1,18 @@
 package antimev
 
 import (
+	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"path/filepath"
-	"slices"
 	"testing"
-	"time"
 
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
+	"github.com/ethereum/go-ethereum/crypto/tpke"
 )
 
 // 7-CN privnet related constants.
@@ -22,49 +24,49 @@ const (
 
 // account is a structure combining CN node address and its password in the privnet setup.
 type account struct {
-	addr common.Address
-	pwd  string
+	addr       common.Address
+	pwd        string
+	msgPrivKey string
 }
 
-var (
-	// accounts is a list of the seven-node privnet CN addresses/passwords sorted by
-	// the order of CN nodes from CN1 to CN7. Do not modify this list in tests; make
-	// a copy if modification is needed since some tests rely on the order of accounts.
-	// Ref. https://github.com/bane-labs/go-ethereum/tree/bane-main/privnet/seven.
-	accounts = []account{
-		{
-			common.HexToAddress("0x74f4effb0b538baec703346b03b6d9292f53a4cd"),
-			"fBfgE23FfqSVZRCGzFZbFvqabF3Ewvcg",
-		}, {
-			common.HexToAddress("0x910ad1641b7125eff746accdca1f11148b22f472"),
-			"2fGwcFf14fVVZTRDqcFqCtSA4FDTXqXz",
-		}, {
-			common.HexToAddress("0xfef5f250af14df73f983caab7b1f5002189c42e0"),
-			"RWDCWc3DqvRaf3vbqtzdRqQXfVqFcDw5",
-		}, {
-			common.HexToAddress("0xc51964013acbc6b271feecb0febd9e7a01202930"),
-			"2xDvRCASaqCQs5e4cD2fAcScCaBxX3Zv",
-		}, {
-			common.HexToAddress("0xc5bbd9652546bc96be3dec97a38ee335f7873dfa"),
-			"r3Sc25F54rzDdgC5VtBCzWcZwsAvEa5g",
-		}, {
-			common.HexToAddress("0x26f1794b81df2b832545b8b6bbca196b82e4feb1"),
-			"4vaT1GgAVbDGZeVarCC2AVR55rxarcsa",
-		}, {
-			common.HexToAddress("0x0b51369d02e47ee3f143391b837aa08c31aaa19b"),
-			"VxwXgET3VF1d453rvCazQVDAwBraCqsq",
-		},
-	}
-	// accountsSorted is a list of seven-node privnet CN addresses/passwords sorted by
-	// addresses. Do not modify this list in tests, make a copy if needed.
-	accountsSorted []account
-)
-
-func init() {
-	accountsSorted = slices.Clone(accounts)
-	slices.SortFunc(accountsSorted, func(a, b account) int {
-		return common.Address.Cmp(a.addr, b.addr)
-	})
+// accounts is a list of the seven-node privnet CN addresses/passwords sorted by
+// the order of CN nodes from CN1 to CN7. Do not modify this list in tests; make
+// a copy if modification is needed since some tests rely on the order of accounts.
+// Ref. https://github.com/bane-labs/go-ethereum/tree/bane-main/privnet/seven.
+var accounts = []account{
+	{
+		common.HexToAddress("0x74f4effb0b538baec703346b03b6d9292f53a4cd"),
+		"fBfgE23FfqSVZRCGzFZbFvqabF3Ewvcg",
+		"0d0244862b62f2f4d6c2202b296e8cc84acd2921407c4a4e2b8ad341ddf12a8b",
+	}, {
+		common.HexToAddress("0x910ad1641b7125eff746accdca1f11148b22f472"),
+		"2fGwcFf14fVVZTRDqcFqCtSA4FDTXqXz",
+		"da124526518be708571dfc2af60bc16cce56ba679b867069eace340a5caf8ddd",
+	}, {
+		common.HexToAddress("0xfef5f250af14df73f983caab7b1f5002189c42e0"),
+		"RWDCWc3DqvRaf3vbqtzdRqQXfVqFcDw5",
+		"3689920e1b1eb9709539aa7d1504b8593e7d6e0ccc9b6947bdc8d824b3eeeba3",
+	}, {
+		common.HexToAddress("0xc51964013acbc6b271feecb0febd9e7a01202930"),
+		"2xDvRCASaqCQs5e4cD2fAcScCaBxX3Zv",
+		"4cec022d6349c8236db7dac14c854d8c60ed6574ae2705e6b22830afeb480dc5",
+	}, {
+		common.HexToAddress("0xc5bbd9652546bc96be3dec97a38ee335f7873dfa"),
+		"r3Sc25F54rzDdgC5VtBCzWcZwsAvEa5g",
+		"934ec9b8674064112fc39d5123c7f16907e901c07c1f7216ede96f0369bfcb4a",
+	}, {
+		common.HexToAddress("0x26f1794b81df2b832545b8b6bbca196b82e4feb1"),
+		"4vaT1GgAVbDGZeVarCC2AVR55rxarcsa",
+		"f853f01aba25bc1374d79e37cc41e3e914102695bed90ee50eea3c0ed557e52d",
+	}, {
+		common.HexToAddress("0x0b51369d02e47ee3f143391b837aa08c31aaa19b"),
+		"VxwXgET3VF1d453rvCazQVDAwBraCqsq",
+		"63e8d515b467d512dfaf3b25634a6d68cd666955dbd7f260cb3a817f67ae51ac",
+	}, {
+		common.HexToAddress("0x1f013ef87a88b3a77a405efba90c20ab0c2cb91a"),
+		"gvZCas2wF3gScsGV3we1acAaG2dEqq5d",
+		"71abf6553a0edf00d2beba93d7c711a88067a84b7d387ccb349e185f4d9ce9c4",
+	},
 }
 
 type MockContractStorage struct {
@@ -75,19 +77,18 @@ type MockContractStorage struct {
 	recoverMsgs   [][][]byte
 }
 
-func TestDKG(t *testing.T) {
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
+func TestShare(t *testing.T) {
 	dir := t.TempDir()
 	// Init keystores
-	cns := slices.Clone(accountsSorted)
+	addrs := make([]common.Address, size)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+		addrs[i] = accounts[i].addr
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(cns[i].addr, key, size, threshold, cns[i].pwd)
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -98,17 +99,13 @@ func TestDKG(t *testing.T) {
 		shareMsgs:   make([][][]byte, size),
 		sharePVSSes: make([][]byte, size),
 	}
-	valList := make([]common.Address, size)
-	for i := range cns {
-		valList[i] = cns[i].addr
-	}
 	for i := 0; i < size; i++ {
-		_, _, err := kss[i].OnValidatorList(valList, pubs)
+		// No reshare to handle
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// No reshare to handle
-		msgs, pvss, err := kss[i].OnReshareFinish()
+		msgs, pvss, err := kss[i].DKGShare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -118,15 +115,28 @@ func TestDKG(t *testing.T) {
 	// Send secret sharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 		}
 	}
-	// Only check sharing
+	// Aggregate pvss manually
+	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange()
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
+	for i := 0; i < size; i++ {
+		// Try finish DKG without resharing
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -134,18 +144,17 @@ func TestDKG(t *testing.T) {
 }
 
 func TestReshare(t *testing.T) {
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	cns := slices.Clone(accountsSorted)
+	addrs := make([]common.Address, size)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+		addrs[i] = accounts[i].addr
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(cns[i].addr, key, size, threshold, cns[i].pwd)
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -158,17 +167,13 @@ func TestReshare(t *testing.T) {
 		shareMsgs:     make([][][]byte, size),
 		sharePVSSes:   make([][]byte, size),
 	}
-	valList := make([]common.Address, size)
-	for i := range cns {
-		valList[i] = cns[i].addr
-	}
 	for i := 0; i < size; i++ {
-		_, _, err := kss[i].OnValidatorList(valList, pubs)
+		// No reshare to handle
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// No reshare to handle
-		msgs, pvss, err := kss[i].OnReshareFinish()
+		msgs, pvss, err := kss[i].DKGShare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -178,40 +183,80 @@ func TestReshare(t *testing.T) {
 	// Send secret sharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 		}
 	}
+	// Aggregate pvss manually
+	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
+	for i := 0; i < size; i++ {
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
 	// Finalize dkg
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange()
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
 	// Execute resharing this time
 	for i := 0; i < size; i++ {
-		msgs, pvss, err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		contract.reshareMsgs[i] = msgs
-		contract.resharePVSSes[i] = pvss
+		rMsgs, rPvss, err := kss[i].DKGReshare(pubs)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		sMsgs, sPvss, err := kss[i].DKGShare(pubs)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		contract.shareMsgs[i] = sMsgs
+		contract.sharePVSSes[i] = sPvss
+		contract.reshareMsgs[i] = rMsgs
+		contract.resharePVSSes[i] = rPvss
 	}
 	// Send resharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretReshare(kss[j].address, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			err := kss[i].ReceiveSecretReshare(i+1, j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			if err != nil {
+				t.Fatalf(err.Error())
+			}
+			err = kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 		}
 	}
-	// Only check resharing
+	// Aggregate pvss manually
+	cmt = new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
-		_, _, err := kss[i].OnReshareFinish()
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
+	// Check sharing and resharing
+	for i := 0; i < size; i++ {
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -219,100 +264,130 @@ func TestReshare(t *testing.T) {
 }
 
 func TestGroupChange(t *testing.T) {
-	// Add another address for group change
-	addrs := []common.Address{
-		common.HexToAddress("0xcbbeca26e89011e32ba25610520b20741b809007"),
-		common.HexToAddress("0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc"),
-		common.HexToAddress("0xd10f47396dc6c76ad53546158751582d3e2683ef"),
-		common.HexToAddress("0xa51fe05b0183d01607bf48c1718d1168a1c11171"),
-		common.HexToAddress("0x01b517b301bb143476da35bb4a1399500d925514"),
-		common.HexToAddress("0x7976ad987d572377d39fb4bab86c80e08b6f8327"),
-		common.HexToAddress("0xd711da2d8c71a801fc351163337656f1321343a0"),
-		common.HexToAddress("0xd94b88c9d92845256019ee3bd9b07a57ca067970"),
-	}
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	pubs := make([]*ecies.PublicKey, len(addrs))
-	kss := make([]*KeyStore, len(addrs))
-	for i := 0; i < len(addrs); i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+	pubs := make([]*ecies.PublicKey, len(accounts))
+	addrs := make([]common.Address, len(accounts))
+	kss := make([]*KeyStore, len(accounts))
+	for i := 0; i < len(accounts); i++ {
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(addrs[i], key, size, threshold, "pwd")
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
+		addrs[i] = accounts[i].addr
 		kss[i] = ks
 	}
 	// Ignore resharing and execute sharing
 	contract := &MockContractStorage{
-		reshareMsgs:   make([][][]byte, 0),
-		resharePVSSes: make([][]byte, 0),
-		shareMsgs:     make([][][]byte, 0),
-		sharePVSSes:   make([][]byte, 0),
+		reshareMsgs:   make([][][]byte, size),
+		resharePVSSes: make([][]byte, size),
+		shareMsgs:     make([][][]byte, size),
+		sharePVSSes:   make([][]byte, size),
 	}
-	for i := 0; i < len(addrs); i++ {
-		_, _, err := kss[i].OnValidatorList(addrs[:size], pubs[:size])
+	for i := 0; i < len(accounts); i++ {
+		// No resharing to handle
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// No reshare to handle
-		msgs, pvss, err := kss[i].OnReshareFinish()
-		if err != nil {
-			t.Fatalf(err.Error())
+		// Sharing members, i ranges from 0 to 6
+		if i < size {
+			msgs, pvss, err := kss[i].DKGShare(pubs[:size])
+			if err != nil {
+				t.Fatalf(err.Error())
+			}
+			contract.shareMsgs[i] = msgs
+			contract.sharePVSSes[i] = pvss
 		}
-		if len(msgs) > 0 {
-			contract.sharePVSSes = append(contract.sharePVSSes, pvss)
-			contract.shareMsgs = append(contract.shareMsgs, msgs)
-		}
+		// Not a member, do nothing, i is 7
 	}
-	if len(contract.sharePVSSes) != size || len(contract.shareMsgs) != size {
-		t.Fatalf("invalid message amount")
-	}
-	// Send secret sharing messages, broadcast to all nodes
-	for i := 0; i < len(addrs); i++ {
+	// Send secret sharing messages, only broadcast to sharing nodes
+	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 		}
 	}
+	// Aggregate pvss manually
+	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
+	for i := 0; i < size; i++ {
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
 	// Finalize dkg
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnEpochChange()
+		err := kss[i].OnEpochChange(encodePointG1(cmt), i != 7)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
-		msgs, pvss, err := kss[i].OnValidatorList(addrs[1:], pubs[1:])
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		if len(msgs) > 0 {
-			contract.resharePVSSes = append(contract.resharePVSSes, pvss)
-			contract.reshareMsgs = append(contract.reshareMsgs, msgs)
+		// Resharing members
+		if i < size {
+			rMsgs, rPvss, err := kss[i].DKGReshare(pubs[1:])
+			if err != nil {
+				t.Fatalf(err.Error())
+			}
+			contract.reshareMsgs[i] = rMsgs
+			contract.resharePVSSes[i] = rPvss
+		}
+		if i > 0 {
+			sMsgs, sPvss, err := kss[i].DKGShare(pubs[1:])
+			if err != nil {
+				t.Fatalf(err.Error())
+			}
+			contract.shareMsgs[i-1] = sMsgs
+			contract.sharePVSSes[i-1] = sPvss
 		}
 	}
-	if len(contract.reshareMsgs) != size {
-		t.Fatalf("invalid message amount")
-	}
-	// Send resharing messages, broadcast to all nodes
-	for i := 0; i < len(addrs); i++ {
+	// Send resharing messages, only broadcast to sharing nodes, i ranges from 1 to 7
+	for i := 1; i < len(addrs); i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretReshare(kss[j].address, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			// Messages from node 0~6 to node 1~7
+			err := kss[i].ReceiveSecretReshare(i, j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			if err != nil {
+				t.Fatalf(err.Error())
+			}
+			// Messages from node 1~7 to node 1~7
+			err = kss[i].ReceiveSecretShare(i, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 		}
 	}
-	// Only check resharing
+	// Aggregate pvss manually
+	cmt = new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
+	for i := 0; i < size; i++ {
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
+	// Check sharing and resharing
 	for i := 0; i < len(addrs); i++ {
-		_, _, err := kss[i].OnReshareFinish()
+		err := kss[i].OnEpochChange(encodePointG1(cmt), i != 0)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -320,93 +395,96 @@ func TestGroupChange(t *testing.T) {
 }
 
 func TestRecover(t *testing.T) {
-	// Add another address for group change
-	addrs := []common.Address{
-		common.HexToAddress("0xcbbeca26e89011e32ba25610520b20741b809007"),
-		common.HexToAddress("0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc"),
-		common.HexToAddress("0xd10f47396dc6c76ad53546158751582d3e2683ef"),
-		common.HexToAddress("0xa51fe05b0183d01607bf48c1718d1168a1c11171"),
-		common.HexToAddress("0x01b517b301bb143476da35bb4a1399500d925514"),
-		common.HexToAddress("0x7976ad987d572377d39fb4bab86c80e08b6f8327"),
-		common.HexToAddress("0xd711da2d8c71a801fc351163337656f1321343a0"),
-		common.HexToAddress("0xd94b88c9d92845256019ee3bd9b07a57ca067970"),
-	}
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
 	// Init keystores
-	pubs := make([]*ecies.PublicKey, len(addrs))
-	kss := make([]*KeyStore, len(addrs))
-	for i := 0; i < len(addrs); i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+	pubs := make([]*ecies.PublicKey, len(accounts))
+	addrs := make([]common.Address, len(accounts))
+	kss := make([]*KeyStore, len(accounts))
+	for i := 0; i < len(accounts); i++ {
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(addrs[i], key, size, threshold, "pwd")
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
+		addrs[i] = accounts[i].addr
 		kss[i] = ks
 	}
 	// Ignore resharing and execute sharing
 	contract := &MockContractStorage{
-		reshareMsgs:   make([][][]byte, 0),
-		resharePVSSes: make([][]byte, 0),
-		shareMsgs:     make([][][]byte, 0),
-		sharePVSSes:   make([][]byte, 0),
-		recoverMsgs:   make([][][]byte, 0),
+		reshareMsgs:   make([][][]byte, size),
+		resharePVSSes: make([][]byte, size),
+		shareMsgs:     make([][][]byte, size),
+		sharePVSSes:   make([][]byte, size),
+		recoverMsgs:   make([][][]byte, size),
 	}
 	for i := 0; i < len(addrs); i++ {
-		_, _, err := kss[i].OnValidatorList(addrs[:size], pubs[:size])
+		// No resharing to handle
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// No reshare to handle
-		msgs, pvss, err := kss[i].OnReshareFinish()
-		if err != nil {
-			t.Fatalf(err.Error())
+		// Sharing members, i ranges from 0 to 6
+		if i < size {
+			msgs, pvss, err := kss[i].DKGShare(pubs[:size])
+			if err != nil {
+				t.Fatalf(err.Error())
+			}
+			contract.shareMsgs[i] = msgs
+			contract.sharePVSSes[i] = pvss
 		}
-		if len(msgs) > 0 {
-			contract.sharePVSSes = append(contract.sharePVSSes, pvss)
-			contract.shareMsgs = append(contract.shareMsgs, msgs)
-		}
+		// Not a member, do nothing, i is 7
 	}
-	if len(contract.shareMsgs) != size {
-		t.Fatalf("invalid message amount")
-	}
-	// Send secret sharing messages, broadcast to all nodes
-	for i := 0; i < len(addrs); i++ {
+	// Send secret sharing messages, only broadcast to sharing nodes
+	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, contract.shareMsgs[j], contract.sharePVSSes[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 		}
 	}
+	// Aggregate pvss manually
+	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
+	for i := 0; i < size; i++ {
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
 	// Finalize dkg
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnEpochChange()
+		err := kss[i].OnEpochChange(encodePointG1(cmt), i != 7)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
-		msgs, pvss, err := kss[i].OnValidatorList(addrs[1:], pubs[1:])
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		if len(msgs) > 0 {
-			contract.reshareMsgs = append(contract.reshareMsgs, msgs)
-			contract.resharePVSSes = append(contract.resharePVSSes, pvss)
+		// Resharing members
+		if i < size {
+			rMsgs, rPvss, err := kss[i].DKGReshare(pubs[1:])
+			if err != nil {
+				t.Fatalf(err.Error())
+			}
+			contract.reshareMsgs[i] = rMsgs
+			contract.resharePVSSes[i] = rPvss
 		}
 	}
-	if len(contract.reshareMsgs) != size {
-		t.Fatalf("invalid message amount")
-	}
-	// Send resharing messages, expect validator 7
-	for i := 0; i < len(addrs); i++ {
+	// Send resharing messages, expect which from validator 7
+	for i := 1; i < len(addrs); i++ {
 		for j := 0; j < size-1; j++ {
-			err := kss[i].ReceiveSecretReshare(kss[j].address, contract.reshareMsgs[j], contract.resharePVSSes[j])
+			err := kss[i].ReceiveSecretReshare(i, j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
@@ -414,44 +492,88 @@ func TestRecover(t *testing.T) {
 	}
 	// Execute recovering this time, dead index 7, recover to validator 8
 	rIdxs := []int{7}
-	rAddrs := []common.Address{addrs[7]}
 	rPubs := []*ecies.PublicKey{pubs[7]}
 	for i := 0; i < len(addrs); i++ {
-		msgs, err := kss[i].OnRecoverStart(rIdxs, rAddrs, rPubs)
+		err := kss[i].OnRecoverPeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// Length of msgs is 1
-		if msgs != nil {
-			contract.recoverMsgs = append(contract.recoverMsgs, msgs)
+		if i < 7 {
+			msgs, err := kss[i].DKGRecover(rIdxs, rPubs)
+			if err != nil {
+				t.Fatalf(err.Error())
+			}
+			contract.recoverMsgs[i] = msgs
 		}
-	}
-	if len(contract.recoverMsgs) != size {
-		t.Fatalf("invalid message amount")
 	}
 	// Send recover messages, broadcast to all nodes
 	for i := 0; i < size-1; i++ {
-		err := kss[7].ReceiveRecoverShare(kss[i].address, contract.recoverMsgs[i][0])
+		err := kss[7].ReceiveRecoverShare(7, i+1, contract.recoverMsgs[i][0], contract.sharePVSSes[size-1])
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
 	// Recover the lost resharing messages
-	msgs, pvss, err := kss[7].OnRecoverFinish()
+	msgs, pvss, err := kss[7].TryRecoverReshare(pubs[1:])
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
-	for i := 0; i < size; i++ {
-		err := kss[i].ReceiveRecoveredReshare(kss[7].address, msgs, pvss)
+	for i := 1; i < len(addrs); i++ {
+		err := kss[i].ReceiveSecretReshare(i, 7, msgs, pvss)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
 	// Only check resharing
-	for i := 0; i < size; i++ {
-		_, _, err := kss[i].OnReshareFinish()
+	for i := 0; i < len(addrs); i++ {
+		err := kss[i].aggregateReshare(i != 0)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 	}
+}
+
+func encodePointG1(p *bls12381.G1Affine) []byte {
+	out := make([]byte, 128)
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(out[16:]), p.X)
+	fp.BigEndian.PutElement((*[fp.Bytes]byte)(out[64+16:]), p.Y)
+	return out
+}
+
+func decodePointG1(in []byte) (*bls12381.G1Affine, error) {
+	if len(in) != 128 {
+		return nil, errors.New("Decode error")
+	}
+	// decode x
+	x, err := decodeBLS12381FieldElement(in[:64])
+	if err != nil {
+		return nil, err
+	}
+	// decode y
+	y, err := decodeBLS12381FieldElement(in[64:])
+	if err != nil {
+		return nil, err
+	}
+	elem := bls12381.G1Affine{X: x, Y: y}
+	if !elem.IsOnCurve() {
+		return nil, errors.New("Decode error")
+	}
+
+	return &elem, nil
+}
+
+func decodeBLS12381FieldElement(in []byte) (fp.Element, error) {
+	if len(in) != 64 {
+		return fp.Element{}, errors.New("Decode error")
+	}
+	// check top bytes
+	for i := 0; i < 16; i++ {
+		if in[i] != byte(0x00) {
+			return fp.Element{}, errors.New("Decode error")
+		}
+	}
+	var res [48]byte
+	copy(res[:], in[16:])
+
+	return fp.BigEndian.Element(&res)
 }

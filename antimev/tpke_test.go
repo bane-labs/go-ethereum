@@ -7,10 +7,10 @@ import (
 	"math/big"
 	"math/rand"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -21,56 +21,64 @@ import (
 )
 
 func TestTPKE(t *testing.T) {
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
-
-	cns := slices.Clone(accountsSorted)
+	// Init keystores
+	addrs := make([]common.Address, size)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+		addrs[i] = accounts[i].addr
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(cns[i].addr, key, size, threshold, cns[i].pwd)
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 		kss[i] = ks
 	}
-
-	msgbox := make([][][]byte, size)
-	pvssbox := make([][]byte, size)
-	valList := make([]common.Address, size)
-	for i := range cns {
-		valList[i] = cns[i].addr
+	// Ignore resharing and execute sharing
+	contract := &MockContractStorage{
+		shareMsgs:   make([][][]byte, size),
+		sharePVSSes: make([][]byte, size),
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		_, _, err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// Handle share
-		msgs, pvss, err := kss[i].OnReshareFinish()
+		msgs, pvss, err := kss[i].DKGShare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		msgbox[i] = msgs
-		pvssbox[i] = pvss
+		contract.shareMsgs[i] = msgs
+		contract.sharePVSSes[i] = pvss
 	}
-
+	// Send secret sharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, msgbox[j], pvssbox[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 		}
 	}
-
+	// Aggregate pvss manually
+	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange()
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
+	for i := 0; i < size; i++ {
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -116,60 +124,42 @@ func TestTPKE(t *testing.T) {
 	}
 }
 
-// keystoreWithAddress holds anti-MEV keystore combined with Eth validator's address.
-type keystoreWithAddress struct {
-	ks   *KeyStore
-	addr common.Address
-}
-
-// TestGenerateEncryptedTx generates an encrypted transaction using 4-nodes
+// TestGenerateEncryptedTx generates an encrypted transaction using 7-nodes
 func TestGenerateEncryptedTx(t *testing.T) {
 	require.Equal(t, 7, size, "refactor test if different number of CNs is needed")
-	
+
 	// Retrieve and decrypt the set of anti-MEV key storages.
-	kss := make([]*keystoreWithAddress, size)
+	kss := make([]*KeyStore, size)
 	for i := range kss {
-		kss[i] = &keystoreWithAddress{
-			ks:   NewKeyStore(filepath.Join("..", "privnet", "seven", fmt.Sprintf("node%d", i+1), "antimev-keystore")),
-			addr: accounts[i].addr,
-		}
-		require.NoError(t, kss[i].ks.Load(accounts[i].pwd))
+		kss[i] = NewKeyStore(filepath.Join("..", "privnet", "seven", fmt.Sprintf("node%d", i+1), "antimev-keystore"))
+		require.NoError(t, kss[i].Load(accounts[i].pwd))
 	}
-	slices.SortFunc(kss, func(a, b *keystoreWithAddress) int {
-		return common.Address.Cmp(a.addr, b.addr)
-	})
-
 	tx := buildTransferFromPriv0(t)
-
 	// Encrypt transaction.
 	buf := bytes.NewBuffer(nil)
 	require.NoError(t, tx.EncodeRLP(buf))
 	msg := buf.Bytes()
-	encryptedKey, encryptedMsg, err := kss[0].ks.Encrypt(msg)
+	encryptedKey, encryptedMsg, err := kss[0].Encrypt(msg)
 	require.NoError(t, err)
-
 	// Verify ciphertext.
 	if err := encryptedKey.Verify(); err != nil {
 		t.Fatalf("invalid ciphertext")
 	}
-
 	// Generate envelope.
 	var envelopeData = []byte{0xff, 0xff, 0xff, 0xff}
 	envelopeData = append(envelopeData, encryptedKey.ToBytes()...)
 	envelopeData = append(envelopeData, encryptedMsg...)
 	t.Logf("encryptedKey: %s\nencryptedMsg: %s\nenvelopeData: 0x%s\nencrypted tx hash: %s\n",
 		hex.EncodeToString(encryptedKey.ToBytes()), hex.EncodeToString(encryptedMsg), hex.EncodeToString(envelopeData), tx.Hash())
-
 	// Verify encrypted data are decryptable. Generate shares.
 	shares := make(map[int][]*tpke.DecryptionShare)
 	for i := 0; i < threshold; i++ {
-		share, err := kss[i].ks.DecryptWithShare([]*tpke.CipherText{encryptedKey})
+		share, err := kss[i].DecryptWithShare([]*tpke.CipherText{encryptedKey})
 		require.NoError(t, err)
 		shares[i+1] = share
 	}
-
 	// Decrypt and check that it's the same message.
-	results, err := kss[0].ks.AggregateAndDecryptWithShare([]*tpke.CipherText{encryptedKey}, [][]byte{encryptedMsg}, shares)
+	results, err := kss[0].AggregateAndDecryptWithShare([]*tpke.CipherText{encryptedKey}, [][]byte{encryptedMsg}, shares)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(results))
 	require.NotNil(t, results[0])
@@ -213,57 +203,64 @@ func TestBenchmark(t *testing.T) {
 	size := 7
 	threshold := 5
 
-	// DKG
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	dir := t.TempDir()
-
-	cns := slices.Clone(accountsSorted)
+	// Init keystores
+	addrs := make([]common.Address, size)
 	pubs := make([]*ecies.PublicKey, size)
 	kss := make([]*KeyStore, size)
 	for i := 0; i < size; i++ {
-		key, _ := ecies.GenerateKey(random, crypto.S256(), nil)
-		pubs[i] = &key.PublicKey
+		addrs[i] = accounts[i].addr
+		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
+		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
-		err := ks.Init(cns[i].addr, key, size, threshold, cns[i].pwd)
+		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
 		kss[i] = ks
 	}
-
-	msgbox := make([][][]byte, size)
-	pvssbox := make([][]byte, size)
-	valList := make([]common.Address, size)
-	for i := range cns {
-		valList[i] = cns[i].addr
+	// Ignore resharing and execute sharing
+	contract := &MockContractStorage{
+		shareMsgs:   make([][][]byte, size),
+		sharePVSSes: make([][]byte, size),
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		_, _, err := kss[i].OnValidatorList(valList, pubs)
+		err := kss[i].OnSharePeriodStart()
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		// Handle share
-		msgs, pvss, err := kss[i].OnReshareFinish()
+		msgs, pvss, err := kss[i].DKGShare(pubs)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
-		msgbox[i] = msgs
-		pvssbox[i] = pvss
+		contract.shareMsgs[i] = msgs
+		contract.sharePVSSes[i] = pvss
 	}
-
+	// Send secret sharing messages
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
-			err := kss[i].ReceiveSecretShare(kss[j].address, msgbox[j], pvssbox[j])
+			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
 			if err != nil {
 				t.Fatalf(err.Error())
 			}
 		}
 	}
-
+	// Aggregate pvss manually
+	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange()
+		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
+		if err != nil {
+			t.Fatalf(err.Error())
+		}
+		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+	}
+	for i := 0; i < size; i++ {
+		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
