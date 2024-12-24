@@ -39,6 +39,11 @@ func GenerateSecretShares(r *big.Int, size int, secret *Secret) (*PVSS, []*big.I
 
 func (pvss *PVSS) GetCommitment() *Commitment { return pvss.commitment }
 
+// IsFrom verifies if a PVSS is generated from input secret
+func (pvss *PVSS) IsFrom(secret *Secret) bool {
+	return pvss.commitment.Equals(secret.Commitment())
+}
+
 func (pvss *PVSS) Encode() []byte {
 	arr := make([]byte, 0)
 	arr = append(arr, pvss.commitment.Encode()...)

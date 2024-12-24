@@ -84,7 +84,7 @@ func TestThresholdSignature(t *testing.T) {
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
