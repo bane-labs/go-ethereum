@@ -6,7 +6,6 @@ import (
 	"math/big"
 
 	"github.com/bane-labs/zk-dkg/encryption"
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
 )
@@ -21,8 +20,9 @@ var (
 // thresholdKeyGroup records the process and result of a round of dkg.
 // PVSS is verified in DKG contract and used as input parameters here.
 type thresholdKeyGroup struct {
-	localSecret     *tpke.Secret // The local random secret
-	receivedSecrets []*big.Int   // Received secret sharings
+	localSecret     *tpke.Secret   // The final local random secret
+	pendingSecrets  []*tpke.Secret // Pending secrets which may get confirmed by contract
+	receivedSecrets []*big.Int     // Received secret sharings
 
 	globalPubKey *tpke.PublicKey  // The aggregated global public key
 	localPrvKey  *tpke.PrivateKey // The aggregated local secret key
@@ -31,6 +31,7 @@ type thresholdKeyGroup struct {
 // newThresholdKeyGroup returns a new key group with the input address list.
 func newThresholdKeyGroup(size int) *thresholdKeyGroup {
 	return &thresholdKeyGroup{
+		pendingSecrets:  make([]*tpke.Secret, 0),
 		receivedSecrets: make([]*big.Int, size),
 	}
 }
@@ -47,9 +48,21 @@ func (tkg *thresholdKeyGroup) newTemplateForReshare(size int) *thresholdKeyGroup
 // prepare generates local secrets and returns sharing messages.
 func (tkg *thresholdKeyGroup) prepare(threshold int, messagePubKeys []*ecies.PublicKey) ([][]byte, *tpke.PVSS, error) {
 	// Generate local secret
-	tkg.localSecret = tpke.RandomSecret(threshold)
+	secret := tpke.RandomSecret(threshold)
+	tkg.pendingSecrets = append(tkg.pendingSecrets, secret)
 	// Generate and encrypt messages to share the secret
-	return generateShareMessages(tkg.localSecret, messagePubKeys)
+	return generateShareMessages(secret, messagePubKeys)
+}
+
+// confirmSecret requires the final contract-received PVSS to confirm the secret.
+func (tkg *thresholdKeyGroup) confirmSecret(pvss *tpke.PVSS) error {
+	for _, secret := range tkg.pendingSecrets {
+		if pvss.IsFrom(secret) {
+			tkg.localSecret = secret
+			return nil
+		}
+	}
+	return ErrDKGSecret
 }
 
 // aggregate aggregates received secrets and commitments to get global
@@ -192,9 +205,9 @@ func (tkg *thresholdKeyGroup) receiveRecoverMessage(fromIndex int, rs *big.Int, 
 
 // thresholdKeyGroupAux is an auxiliary structure for thresholdKeyGroup JSON marshalling.
 type thresholdKeyGroupAux struct {
-	SelfAddr        common.Address `json:"self_addr"`        // Self address
-	LocalSecret     []*big.Int     `json:"local_secret"`     // The local random secret
-	ReceivedSecrets []*big.Int     `json:"received_secrets"` // Received secret sharings
+	LocalSecret     []*big.Int   `json:"local_secret"`     // The local random secret
+	PendingSecrets  [][]*big.Int `json:"pending_secrets"`  // Sent-but-pending secrets
+	ReceivedSecrets []*big.Int   `json:"received_secrets"` // Received secret sharings
 
 	GlobalPubKey string `json:"global_pubkey"` // The aggregated global public key
 	LocalPrvKey  string `json:"local_prvkey"`  // The aggregated local secret key
@@ -209,6 +222,12 @@ func (tkg *thresholdKeyGroup) toAux() *thresholdKeyGroupAux {
 	// Possible be nil when dkg is undergoing
 	if tkg.localSecret != nil {
 		aux.LocalSecret = tkg.localSecret.ToBigIntArray()
+	}
+	aux.PendingSecrets = make([][]*big.Int, 0)
+	if len(tkg.pendingSecrets) > 0 {
+		for _, secret := range tkg.pendingSecrets {
+			aux.PendingSecrets = append(aux.PendingSecrets, secret.ToBigIntArray())
+		}
 	}
 	if tkg.globalPubKey != nil {
 		aux.GlobalPubKey = hex.EncodeToString(tkg.globalPubKey.Bytes())
@@ -226,6 +245,14 @@ func (tkg *thresholdKeyGroup) fromAux(aux *thresholdKeyGroupAux) error {
 	if aux.LocalSecret != nil {
 		tkg.localSecret = new(tpke.Secret)
 		tkg.localSecret.FromBigIntArray(aux.LocalSecret)
+	}
+	tkg.pendingSecrets = make([]*tpke.Secret, 0)
+	if len(aux.PendingSecrets) > 0 {
+		for _, arr := range aux.PendingSecrets {
+			secret := new(tpke.Secret)
+			secret.FromBigIntArray(arr)
+			tkg.pendingSecrets = append(tkg.pendingSecrets, secret)
+		}
 	}
 	if len(aux.GlobalPubKey) > 0 {
 		pubBytes, err := hex.DecodeString(aux.GlobalPubKey)

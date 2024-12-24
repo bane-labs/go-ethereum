@@ -279,16 +279,22 @@ func (ks *KeyStore) RevertRound() error {
 
 // OnEpochChange checks and settles the results of sharing and resharing, will
 // revert both of them of any of them is not successful.
-func (ks *KeyStore) OnEpochChange(aggregatedCmt []byte, isMemberOfNewGroup bool) error {
+func (ks *KeyStore) OnEpochChange(selfPvss []byte, aggregatedCmt []byte, isMemberOfNewGroup bool) error {
 	// Revert dkg if contract doesn't give a aggregated commitment
 	if len(aggregatedCmt) == 0 {
 		return ks.RevertRound()
+	}
+	if isMemberOfNewGroup && len(selfPvss) == 0 {
+		return ErrLengthMismatch
+	}
+	if !isMemberOfNewGroup && len(selfPvss) > 0 {
+		return ErrLengthMismatch
 	}
 	// If code reaches here, then dkg is successful in contract
 	if err := ks.aggregateReshare(isMemberOfNewGroup); err != nil {
 		return err
 	}
-	if err := ks.aggregateShare(aggregatedCmt, isMemberOfNewGroup); err != nil {
+	if err := ks.aggregateShare(selfPvss, aggregatedCmt, isMemberOfNewGroup); err != nil {
 		return err
 	}
 	// Set finished dkg as current using
@@ -302,10 +308,21 @@ func (ks *KeyStore) OnEpochChange(aggregatedCmt []byte, isMemberOfNewGroup bool)
 }
 
 // aggregateShare tries to check if sharing is successful and settle the result
-func (ks *KeyStore) aggregateShare(aggregatedCmt []byte, isParticipant bool) error {
+func (ks *KeyStore) aggregateShare(selfPvss []byte, aggregatedCmt []byte, isParticipant bool) error {
 	// Check if sharing is successful and aggregate keys
 	if ks.sharing == nil {
 		return ErrKeyGroupNotExists
+	}
+	// Check which secret is finally confirmed by contract
+	if isParticipant {
+		p, err := new(tpke.PVSS).Decode(selfPvss, ks.size, ks.threshold)
+		if err != nil {
+			return ErrInvalidDKGPVSS
+		}
+		err = ks.sharing.confirmSecret(p)
+		if err != nil {
+			return err
+		}
 	}
 	return ks.sharing.aggregate(ks.scaler, aggregatedCmt, isParticipant)
 }

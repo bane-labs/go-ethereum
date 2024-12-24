@@ -136,7 +136,7 @@ func TestShare(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// Try finish DKG without resharing
-		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -204,7 +204,7 @@ func TestReshare(t *testing.T) {
 	}
 	// Finalize dkg
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -256,7 +256,7 @@ func TestReshare(t *testing.T) {
 	}
 	// Check sharing and resharing
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -327,11 +327,15 @@ func TestGroupChange(t *testing.T) {
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	// Finalize dkg
-	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt), i != 7)
+	for i := 0; i < size; i++ {
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
+	}
+	err := kss[7].OnEpochChange(nil, encodePointG1(cmt), false)
+	if err != nil {
+		t.Fatalf(err.Error())
 	}
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
@@ -386,8 +390,12 @@ func TestGroupChange(t *testing.T) {
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	// Check sharing and resharing
-	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt), i != 0)
+	err = kss[0].OnEpochChange(nil, encodePointG1(cmt), false)
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+	for i := 1; i <= size; i++ {
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i-1], encodePointG1(cmt), i != 0)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
@@ -459,11 +467,15 @@ func TestRecover(t *testing.T) {
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	// Finalize dkg
-	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnEpochChange(encodePointG1(cmt), i != 7)
+	for i := 0; i < size; i++ {
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
 		if err != nil {
 			t.Fatalf(err.Error())
 		}
+	}
+	err := kss[7].OnEpochChange(nil, encodePointG1(cmt), false)
+	if err != nil {
+		t.Fatalf(err.Error())
 	}
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
