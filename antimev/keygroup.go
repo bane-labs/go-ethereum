@@ -4,16 +4,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"math/big"
-	"math/rand"
-	"time"
 
+	"github.com/bane-labs/zk-dkg/encryption"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
 )
 
 var (
-	ErrMessageEncryption    = errors.New("message encryption failed")
 	ErrDKGSecret            = errors.New("invalid dkg secret")
 	ErrNoSecretToReshare    = errors.New("no secret to reshare")
 	ErrInvalidRecover       = errors.New("invalid recover")
@@ -78,18 +76,11 @@ func (tkg *thresholdKeyGroup) aggregate(scaler int, aggregatedCmt []byte, isRece
 
 // recover returns received shared secrets with different message encryption.
 func (tkg *thresholdKeyGroup) recover(secretIndexs []int, receiverEthPubKeys []*ecies.PublicKey) ([][]byte, error) {
-	// Random source for message encryption
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	// Generate message
 	srms := make([][]byte, len(secretIndexs))
 	for i, index := range secretIndexs {
 		arrIndex := index - 1
-		ess, err := ecies.Encrypt(random, receiverEthPubKeys[i], tkg.receivedSecrets[arrIndex].Bytes(), nil, nil)
-		if err != nil {
-			return nil, ErrMessageEncryption
-		}
-		srms[i] = ess
+		srms[i] = encryptShareMessage(receiverEthPubKeys[i], tkg.receivedSecrets[arrIndex].Bytes())
 	}
 
 	return srms, nil
@@ -129,9 +120,6 @@ func (tkg *thresholdKeyGroup) reshareRecovered(threshold int, messagePubKeys []*
 // generateShareMessages generates secret sharing messages.
 // Secret shares can be decrypted by specific receivers, but pvss is public.
 func generateShareMessages(secret *tpke.Secret, messagePubkeys []*ecies.PublicKey) ([][]byte, *tpke.PVSS, error) {
-	// Random source for message encryption
-	source := rand.NewSource(time.Now().UnixNano())
-	random := rand.New(source)
 	// Random value for pvss generation
 	randR := randScalar()
 	size := len(messagePubkeys)
@@ -139,14 +127,21 @@ func generateShareMessages(secret *tpke.Secret, messagePubkeys []*ecies.PublicKe
 	// Generate message
 	messages := make([][]byte, size)
 	for i, key := range messagePubkeys {
-		ess, err := ecies.Encrypt(random, key, ss[i].Bytes(), nil, nil)
-		if err != nil {
-			return nil, nil, ErrMessageEncryption
-		}
-		messages[i] = ess
+		messages[i] = encryptShareMessage(key, ss[i].Bytes())
 	}
 
 	return messages, pvss, nil
+}
+
+func encryptShareMessage(pub *ecies.PublicKey, share []byte) []byte {
+	nonce, ess, _, bigR := encryption.ECIESEncrypt(pub, share)
+	bigRBytes := bigR.RawBytes()
+	// len(message)=64+12+len(ess)
+	msg := make([]byte, 0)
+	msg = append(msg, bigRBytes[:]...)
+	msg = append(msg, nonce...)
+	msg = append(msg, ess...)
+	return msg
 }
 
 // receiveShareMessage verifies received sharing messages. It verifies shared
