@@ -60,21 +60,8 @@ jobs:
           go-version: '1.22'
           cache: true
 
-      - name: Install SSH Key
-        uses: shimataro/ssh-key-action@v2.7.0
-        with:
-          key: ${{ secrets.ZK_DKG_DEPLOY_KEY }}
-          known_hosts: ${{ secrets.GIT_KNOWN_HOSTS }}
-
-      - name: Enforce Git SSH
-        run: |
-          git config --global url."git@github.com:".insteadOf "https://github.com/"
-
       - name: Build Alltools
-        run: |
-          make all
-        env:
-          GOPRIVATE: github.com/bane-labs
+        run: make all
 
       - name: Prepare Geth and Alltools target binaries
         run: |
@@ -124,22 +111,10 @@ jobs:
           go-version: '1.22'
           cache: true
 
-      - name: Install SSH Key
-        uses: shimataro/ssh-key-action@v2.7.0
-        with:
-          key: ${{ secrets.ZK_DKG_DEPLOY_KEY }}
-          known_hosts: ${{ secrets.GIT_KNOWN_HOSTS }}
-
-      - name: Enforce Git SSH
-        run: |
-          git config --global url."git@github.com:".insteadOf "https://github.com/"
-
       - name: Build geth
         run: |
           make geth
           ./build/bin/geth --version
-        env:
-          GOPRIVATE: github.com/bane-labs
 
       - name: Set env
         id: setvars
