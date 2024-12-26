@@ -513,6 +513,11 @@ var (
 		Usage:    "Password file to unlock anti-MEV keystore",
 		Category: flags.AntiMEVCategory,
 	}
+	AntiMEVEnforceECDSABlockSignatureSchemeFlag = &cli.BoolFlag{
+		Name:     "antimev.force-ecdsa-signatures",
+		Usage:    "Enforce ECDSA-based block signing scheme after NeoXAMEV transition with ExtraV1 block extra version",
+		Category: flags.AntiMEVCategory,
+	}
 
 	// EVM settings
 	VMEnableDebugFlag = &cli.BoolFlag{
@@ -1724,6 +1729,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(CacheLogSizeFlag.Name) {
 		cfg.FilterLogCacheSize = ctx.Int(CacheLogSizeFlag.Name)
+	}
+	if ctx.IsSet(AntiMEVEnforceECDSABlockSignatureSchemeFlag.Name) {
+		cfg.AntiMEVEnforceECDSABlockSignatureScheme = ctx.Bool(AntiMEVEnforceECDSABlockSignatureSchemeFlag.Name)
 	}
 	if !ctx.Bool(SnapshotFlag.Name) || cfg.SnapshotCache == 0 {
 		// If snap-sync is requested, this flag is also required

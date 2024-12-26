@@ -12,8 +12,9 @@ type prepareRequest struct {
 	TxHashes        []common.Hash
 
 	// Fields that should be included into PrepareRequest for its verification for
-	// pre-NeoXAMEV fork. These fields are not applicable starting from NeoXAMEV+1
-	// height, hence, marked as optional for RLP serialization.
+	// pre-NeoXAMEV fork. Starting from NeoXAMEV+1 height these fields are filled
+	// only if multisignature signing scheme is enforced, hence marked as optional
+	// for RLP serialization.
 	ParentSealHash common.Hash `rlp:optional`
 	ParentExtra    []byte      `rlp:"optional"`
 }

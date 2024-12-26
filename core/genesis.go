@@ -435,10 +435,10 @@ func (g *Genesis) ToBlock() *types.Block {
 			m = crypto.GetBFTHonestNodeCount(n)
 		)
 		if len(g.ExtraData) == 0 {
-			extra := make([]byte, dbftutil.ExtraVersionLen+n*common.AddressLength+m*crypto.SignatureLength)
+			extra := make([]byte, dbftutil.HashableExtraV0Len+n*common.AddressLength+m*crypto.SignatureLength)
 			extra[0] = byte(dbftutil.ExtraV0)
 			for i, v := range sb[:n] {
-				offset := dbftutil.ExtraVersionLen + i*common.AddressLength
+				offset := dbftutil.HashableExtraV0Len + i*common.AddressLength
 				copy(extra[offset:offset+common.AddressLength], v.Bytes())
 			}
 			head.Extra = extra
@@ -498,12 +498,12 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *triedb.Database) (*types.Blo
 		)
 		switch extra[0] {
 		case byte(dbftutil.ExtraV0):
-			if len(extra) < dbftutil.ExtraVersionLen+n*common.AddressLength+m*crypto.SignatureLength {
+			if len(extra) < dbftutil.HashableExtraV0Len+n*common.AddressLength+m*crypto.SignatureLength {
 				return nil, errors.New("can't start dBFT chain without validators addresses/signatures set in the genesis")
 			}
 			vals := make([]common.Address, n)
 			for i := range vals {
-				offset := dbftutil.ExtraVersionLen + i*common.AddressLength
+				offset := dbftutil.HashableExtraV0Len + i*common.AddressLength
 				vals[i] = common.BytesToAddress(extra[offset : offset+common.AddressLength])
 			}
 			expected := dbftutil.GetNextConsensusHash(vals)

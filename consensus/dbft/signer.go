@@ -30,18 +30,25 @@ func (s *Signer) Sign(msg []byte) ([]byte, error) {
 	return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, msg)
 }
 
-// signBlock signs block RLP bytes using the given signing scheme.
-func (s *Signer) signBlock(scheme dbftutil.ExtraVersion, blockRLP []byte) ([]byte, error) {
-	switch scheme {
+// signBlock signs block RLP bytes using the given extra version and signing scheme.
+func (s *Signer) signBlock(extra dbftutil.Extra, blockRLP []byte) ([]byte, error) {
+	switch v := extra.Version(); v {
 	case dbftutil.ExtraV0:
 		return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, blockRLP)
 	case dbftutil.ExtraV1:
-		share, err := s.AmevKeystore.SignShare(blockRLP)
-		if err != nil {
-			return nil, fmt.Errorf("failed to sign share: %w", err)
+		switch ss := extra.SignatureScheme(); ss {
+		case dbftutil.ExtraV1ECDSAScheme:
+			return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, blockRLP)
+		case dbftutil.ExtraV1ThresholdScheme:
+			share, err := s.AmevKeystore.SignShare(blockRLP)
+			if err != nil {
+				return nil, fmt.Errorf("failed to sign share: %w", err)
+			}
+			return share.Bytes(), nil
+		default:
+			return nil, fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedBlockSignatureScheme, ss)
 		}
-		return share.Bytes(), nil
 	default:
-		return nil, fmt.Errorf("unsupported signature scheme: %d", scheme)
+		return nil, fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, v)
 	}
 }
