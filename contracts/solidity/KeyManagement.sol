@@ -24,7 +24,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
     // height=>round
     mapping(uint => uint) public roundNumberOfEpochs;
     // public key for sharing message encryption
-    mapping(address => string) public messagePubkeys;
+    mapping(address => bytes) public messagePubkeys;
     // round=>index=>shares, the index of msg is the array index, starts from 0
     mapping(uint => mapping(uint => bytes[])) public reshareMsgs;
     mapping(uint => mapping(uint => bytes[])) public shareMsgs;
@@ -63,11 +63,12 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
 
     function registerMessageKey(
         address candidate,
-        string calldata pubkey
+        bytes calldata pubkey
     ) external {
         if (msg.sender != candidate && msg.sender != GOV)
             revert Errors.SideCallNotAllowed();
         if (tx.origin != candidate) revert Errors.OnlyEOA();
+        if (pubkey.length != 65) revert Errors.InvalidMessageKey();
         messagePubkeys[msg.sender] = pubkey;
     }
 

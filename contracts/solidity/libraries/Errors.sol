@@ -33,6 +33,7 @@ library Errors {
     error ElectionLocked();
 
     // KeyManagement Errors
+    error InvalidMessageKey();
     error InvalidRoundNumber();
     error NotShareMember();
     error PeriodNotStarted();
