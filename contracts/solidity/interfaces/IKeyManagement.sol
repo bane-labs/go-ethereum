@@ -21,7 +21,7 @@ interface IKeyManagement {
     // register or update the Secp256k1 pubkey for sharing message encryption
     function registerMessageKey(
         address candidate,
-        string calldata pubkey
+        bytes calldata pubkey
     ) external;
 
     // upload reshare messages and related commitment, only allowed in the
@@ -68,7 +68,7 @@ interface IKeyManagement {
     function isShareReady() external view returns (bool);
 
     // get public key of addr
-    function messagePubkeys(address addr) external view returns (string memory);
+    function messagePubkeys(address addr) external view returns (bytes memory);
 
     // get share msgs by height and index
     function getShareMsgs(
