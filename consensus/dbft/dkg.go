@@ -643,11 +643,7 @@ func getMessagePubkey(api *ethapi.BlockChainAPI, addr common.Address, state *sta
 		err = errors.New("messagePubkey is empty, addr: " + addr.String())
 		return nil, err
 	}
-	keyBytes, err := hex.DecodeString(result.(string))
-	if err != nil {
-		return nil, err
-	}
-	key, err := crypto.UnmarshalPubkey(keyBytes)
+	key, err := crypto.UnmarshalPubkey([]byte(result.(string)))
 	if err != nil {
 		return nil, err
 	}
