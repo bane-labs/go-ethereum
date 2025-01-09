@@ -167,10 +167,14 @@ type DBFT struct {
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
 	// received from dBFT or from chain. These fields have exactly those type
 	// that Eth offers, thus, they need to be converted before feeding to dBFT.
-	lastTimestamp     uint64 // in seconds, like Eth requires.
-	lastIndex         uint64
-	lastBlockHash     common.Hash
-	lastBlockSealHash common.Hash
+	lastTimestamp uint64 // in seconds, like Eth requires.
+	lastIndex     uint64
+	lastBlockHash common.Hash
+	// lastBlockSealHash is a honest seal hash of the last block received either from
+	// dBFT or from chain. It holds bytes of either Kechaak256 hash (in case if
+	// multisignature is used for block signing) or G2 point on BLS12381 (in case if
+	// threshold signature is used for block signing).
+	lastBlockSealHash []byte
 	lastBlockExtra    dbftutil.Extra
 
 	// lastProposal holds the latest proposal submitted to dBFT by miner. It is updated
@@ -561,7 +565,9 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			c.sealingReceipts = receipts
 
 			req.SealingProposal = c.sealingProposal
-			req.ParentSealHash = c.lastBlockSealHash
+			if len(c.lastBlockSealHash) == common.HashLength {
+				req.ParentSealHashV0.SetBytes(c.lastBlockSealHash)
+			}
 			req.ParentExtra = c.lastBlockExtra
 			req.TxHashes = txHashes
 
@@ -668,23 +674,25 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 
 			if req.SealingProposal.ParentHash != c.lastBlockHash {
-				if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(req.SealingProposal.Number, bigOne)) && c.lastBlockExtra.SignatureScheme() != dbftutil.ExtraV1ECDSAScheme {
-					return fmt.Errorf("invalid parent hash: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
+				if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(req.SealingProposal.Number, bigOne)) && c.lastBlockExtra.SignatureScheme() == dbftutil.ExtraV1ThresholdScheme {
+					return fmt.Errorf("invalid parent hash after NeoXAMEV with threshold signing scheme: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
 				}
 				// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
 				// the one that prepareRequest declares as a parent hash, otherwise it's an error.
 				if c.dbft.BlockIndex <= 1 {
 					return fmt.Errorf("invalid parent: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
 				}
-				if req.ParentSealHash != c.lastBlockSealHash {
-					return fmt.Errorf("parent seal hash doesn't match the last block seal hash: expected %s, got %s", c.lastBlockSealHash, req.ParentSealHash)
+				var expected common.Hash
+				expected.SetBytes(c.lastBlockSealHash)
+				if req.ParentSealHashV0 != expected {
+					return fmt.Errorf("parent seal hash doesn't match the last block seal hash: expected %s, got %s", expected, req.ParentSealHashV0)
 				}
 				// Verify proposed parent's signature.
 				savedGrandparent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 2)
 				if savedGrandparent == nil {
 					return errors.New("failed to verify parent: failed to retrieve grandparent from storage")
 				}
-				err := c.verifyExtra(req.ParentSealHash.Bytes(), req.ParentExtra, savedGrandparent.Header().NextConsensus(), savedGrandparent.Extra())
+				err := c.verifyExtra(req.ParentSealHashV0.Bytes(), req.ParentExtra, savedGrandparent.Header().NextConsensus(), savedGrandparent.Extra())
 				if err != nil {
 					return fmt.Errorf("invalid parent: parent's witness verification failed: %w", err)
 				}
@@ -714,7 +722,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 					"number", parentHeader.Number,
 					"old hash", oldHash.String(),
 					"new hash", req.SealingProposal.ParentHash.String(),
-					"sealhash", req.ParentSealHash.String(),
+					"sealhash", req.ParentSealHashV0.String(),
 					"old extra", hex.EncodeToString(oldExtra),
 					"new extra", hex.EncodeToString(req.ParentExtra))
 			}
@@ -1267,7 +1275,7 @@ func (c *DBFT) postBlock(h *types.Header, state *state.StateDB) {
 		c.lastTimestamp = h.Time
 		c.lastIndex = h.Number.Uint64()
 		c.lastBlockHash = h.Hash()
-		c.lastBlockSealHash = HonestSealHashV0(h)
+		c.lastBlockSealHash, _ = honestSealHash(h) // no error expected, h is verified.
 		c.lastBlockExtra = h.Extra
 
 		// handle DKG
@@ -1545,28 +1553,12 @@ func (c *DBFT) verifySeal(header *types.Header, parents []*types.Header, parent 
 	if number == 0 {
 		return errUnknownBlock
 	}
-	var (
-		sealHash []byte
-		extra    = dbftutil.Extra(header.Extra)
-	)
-	switch v := extra.Version(); v {
-	case dbftutil.ExtraV0:
-		sealHash = HonestSealHashV0(header).Bytes()
-	case dbftutil.ExtraV1:
-		switch ss := extra.SignatureScheme(); ss {
-		case dbftutil.ExtraV1ECDSAScheme:
-			sealHash = HonestSealHashV0(header).Bytes()
-		case dbftutil.ExtraV1ThresholdScheme:
-			b := HonestSealHashV1(header).Bytes()
-			sealHash = b[:]
-		default:
-			return fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedBlockSignatureScheme, ss)
-		}
-	default:
-		return fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, v)
-	}
 
-	err := c.verifyExtra(sealHash, header.Extra, parent.NextConsensus(), parent.Extra)
+	sealHash, err := honestSealHash(header)
+	if err != nil {
+		return fmt.Errorf("failed to calculate hash: %w", err)
+	}
+	err = c.verifyExtra(sealHash, header.Extra, parent.NextConsensus(), parent.Extra)
 	if err != nil {
 		return fmt.Errorf("invalid extra: %w", err)
 	}
@@ -1765,7 +1757,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.lastIndex = currHeader.Number.Uint64()
 		c.lastTimestamp = currHeader.Time
 		c.lastBlockHash = currHeader.Hash()
-		c.lastBlockSealHash = HonestSealHashV0(currHeader)
+		c.lastBlockSealHash, _ = honestSealHash(currHeader) // no error is expected, currHeader is verified.
 		c.lastBlockExtra = currHeader.Extra
 
 		// Before consensus start we should wait for initial sealing proposal to be
@@ -1847,10 +1839,6 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 	}
 
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
-		// Parent hash is constant starting from NeoXAMEV+1 height (with threshold signature scheme).
-		if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(b.Number(), bigOne)) {
-			return fmt.Errorf("invalid sealing task: parent hash mismatch with NeoXAMEV fork enabled: expected %s, got %s", c.lastBlockHash, b.ParentHash())
-		}
 		// In case of chain reorg it may happen that DBFT last block cache stores
 		// outdated parent hash and Extra, thus, if the rest of new parent information
 		// is valid, then use it to construct new sealing proposal.
@@ -1858,8 +1846,17 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 		if parent == nil {
 			return fmt.Errorf("can't verify sealing task: failed to get parent from chain: expected %s, got %s", c.lastBlockHash, b.ParentHash())
 		}
-		if actual := HonestSealHashV0(parent); c.lastBlockSealHash != actual {
-			return fmt.Errorf("invalid sealing task: invalid Parent honest seal hash: expected %s, got %s", c.lastBlockSealHash, actual)
+		// Parent hash is constant starting from NeoXAMEV+1 height in case if threshold signature is used by parent.
+		if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(b.Number(), bigOne)) && dbftutil.Extra(parent.Extra).SignatureScheme() == dbftutil.ExtraV1ThresholdScheme {
+			return fmt.Errorf("invalid sealing task: parent hash mismatch with NeoXAMEV fork enabled and threshold signature scheme: expected %s, got %s", c.lastBlockHash, b.ParentHash())
+		}
+
+		actual, err := honestSealHash(parent)
+		if err != nil {
+			return fmt.Errorf("invalid sealing task: failed to calculate Parent honest seal hash: %w", err)
+		}
+		if bytes.Compare(c.lastBlockSealHash, actual) != 0 {
+			return fmt.Errorf("invalid sealing task: invalid Parent honest seal hash: expected %s, got %s", hex.EncodeToString(c.lastBlockSealHash), hex.EncodeToString(actual))
 		}
 		log.Info("Update cached dBFT last block information",
 			"number", c.lastIndex,
@@ -2290,9 +2287,33 @@ func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 	}
 }
 
+func honestSealHash(header *types.Header) ([]byte, error) {
+	var (
+		extra    = dbftutil.Extra(header.Extra)
+		sealHash []byte
+	)
+	switch v := extra.Version(); v {
+	case dbftutil.ExtraV0:
+		sealHash = HonestSealHashV0(header).Bytes()
+	case dbftutil.ExtraV1:
+		switch ss := extra.SignatureScheme(); ss {
+		case dbftutil.ExtraV1ECDSAScheme:
+			sealHash = HonestSealHashV0(header).Bytes()
+		case dbftutil.ExtraV1ThresholdScheme:
+			b := HonestSealHashV1(header).Bytes()
+			sealHash = b[:]
+		default:
+			return sealHash, fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedBlockSignatureScheme, ss)
+		}
+	default:
+		return sealHash, fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, v)
+	}
+	return sealHash, nil
+}
+
 // HonestSealHashV0 returns the hash of a block prior to it being sealed. It differs
 // from WorkerSealHash in that all block fields except Extra's signature bytes are being
-// hashed.
+// hashed. This hash represents a Keccaak256 hash of header.
 func HonestSealHashV0(header *types.Header) (hash common.Hash) {
 	hasher := sha3.NewLegacyKeccak256()
 	encodeSigHeader(hasher, header)
@@ -2302,7 +2323,7 @@ func HonestSealHashV0(header *types.Header) (hash common.Hash) {
 
 // HonestSealHashV1 returns the hash of a block prior to it being sealed. It differs
 // from WorkerSealHash in that all block fields except Extra's signature bytes are being
-// hashed.
+// hashed. This hash represents a G2 point on BLS12381 curve.
 func HonestSealHashV1(header *types.Header) *bls12381.G2Affine {
 	res, _ := bls12381.HashToG2(dbftRLP(header), tpke.Domain)
 	return &res
