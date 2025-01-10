@@ -86,7 +86,7 @@ func (s *Snapshot) reset() {
 
 // handleDKG handles the transaction submission for DKG process.
 // It constructs and sends transaction to KeyManagement contract using amev store.
-func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *types.Header, state *state.StateDB) error {
+func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *types.Header, state *state.StateDB, suspended bool) error {
 	currentHeight := h.Number.Uint64()
 	watchList := &TxWatchList{
 		CurrentHeight: currentHeight,
@@ -240,14 +240,14 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 			if err != nil {
 				return fmt.Errorf("failed to get message keys, err: %v", err)
 			}
-			if indexOfSharing > 0 {
+			if !suspended && indexOfSharing > 0 {
 				if err = c.taskShare(keystore, receiverMessageKeys, currentHeight, recoverStartHeight, watchList); err != nil {
 					return fmt.Errorf("failed to task DKG share, err: %v", err)
 				}
 			}
 			// If is a member of current consensus, try reshare but give up if error
 			indexOfResharing := slices.Index(snapshot.CurrentCNs, amevAddress) + 1
-			if indexOfResharing > 0 && snapshot.Round > 1 {
+			if !suspended && indexOfResharing > 0 && snapshot.Round > 1 {
 				if err = c.taskReshare(keystore, receiverMessageKeys, currentHeight, recoverStartHeight, watchList); err != nil {
 					snapshot.ShareTasked = true
 					return fmt.Errorf("failed to task DKG reshare, err: %v", err)
@@ -293,7 +293,7 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 					return fmt.Errorf("failed to start DKG recover, err: %v", err)
 				}
 			}
-			if currentHeight < recoverCheckHeight {
+			if !suspended && currentHeight < recoverCheckHeight {
 				// Send recover tx from current consensus node
 				indexOfResharing := slices.Index(snapshot.CurrentCNs, amevAddress) + 1
 				if indexOfResharing > 0 {
@@ -322,12 +322,14 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 			if err := c.syncRecoveredSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync recovering DKG, err: %v", err)
 			}
-			receiverMessageKeys, err := getMessagePubkeys(c.backend, snapshot.PendingCNs, state, h)
-			if err != nil {
-				return fmt.Errorf("failed to fecth message keys, err: %v", err)
-			}
-			if err := c.taskReshareRecover(keystore, receiverMessageKeys, currentHeight, targetHeight, watchList); err != nil {
-				return fmt.Errorf("failed to task DKG reshare recover, err: %v", err)
+			if !suspended {
+				receiverMessageKeys, err := getMessagePubkeys(c.backend, snapshot.PendingCNs, state, h)
+				if err != nil {
+					return fmt.Errorf("failed to fecth message keys, err: %v", err)
+				}
+				if err := c.taskReshareRecover(keystore, receiverMessageKeys, currentHeight, targetHeight, watchList); err != nil {
+					return fmt.Errorf("failed to task DKG reshare recover, err: %v", err)
+				}
 			}
 		}
 		snapshot.ReshareRecoverTasked = true

@@ -1280,7 +1280,7 @@ func (c *DBFT) postBlock(h *types.Header, state *state.StateDB) {
 
 		// handle DKG
 		if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
-			err := c.handleDKG(c.dkgSnapshot, c.amevKeystore, h, state)
+			err := c.handleDKG(c.dkgSnapshot, c.amevKeystore, h, state, false)
 			if err != nil {
 				log.Error("handleDKG error", "height", num, "err", err)
 			}
