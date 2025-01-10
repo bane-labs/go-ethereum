@@ -49,16 +49,16 @@ type Snapshot struct {
 }
 
 // newSnapshot creates a new snapshot with the specified startup parameters.
-func (c *DBFT) newSnapshot(h *types.Header, state *state.StateDB, height uint64) (*Snapshot, error) {
+func newSnapshot(api *ethapi.Backend, h *types.Header, state *state.StateDB, height uint64) (*Snapshot, error) {
 	snap := &Snapshot{}
 	snap.EpochStartHeight = height
-	round, err := getRoundNumber(c.backend, state, h)
+	round, err := getRoundNumber(api, state, h)
 	if err != nil {
 		return nil, err
 	}
 	// Snapshot round index points to the new round, so plus 1
 	snap.Round = round + 1
-	snap.CurrentCNs, err = getCurrentConsensus(c.backend, state, h)
+	snap.CurrentCNs, err = getCurrentConsensus(api, state, h)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 		return fmt.Errorf("failed to fetch current epoch start height: %v", err)
 	}
 	if c.dkgSnapshot == nil {
-		s, err := c.newSnapshot(h, state, epochStartHeight)
+		s, err := newSnapshot(c.backend, h, state, epochStartHeight)
 		if err != nil {
 			return fmt.Errorf("failed to new DKG snapshot, err: %v", err)
 		}
