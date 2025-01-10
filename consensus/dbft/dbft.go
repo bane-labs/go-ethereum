@@ -274,6 +274,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 
+		dkgSnapshot:  NewSnapshot(),
 		loopTaskChan: make(chan *TxWatchList),
 	}
 
@@ -1279,7 +1280,7 @@ func (c *DBFT) postBlock(h *types.Header, state *state.StateDB) {
 
 		// handle DKG
 		if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
-			err := c.handleDKG(h, state)
+			err := c.handleDKG(c.dkgSnapshot, h, state)
 			if err != nil {
 				log.Error("handleDKG error", "height", num, "err", err)
 			}
