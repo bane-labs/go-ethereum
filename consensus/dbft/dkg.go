@@ -57,6 +57,17 @@ func NewSnapshot() *Snapshot {
 	return &Snapshot{}
 }
 
+// Copy creates a copy of Snapshot.
+func (s *Snapshot) Copy() *Snapshot {
+	cp := *s
+
+	cp.CurrentCNs = slices.Clone(s.CurrentCNs)
+	cp.PendingCNs = slices.Clone(s.PendingCNs)
+	cp.IndexNeedRecover = slices.Clone(s.IndexNeedRecover)
+
+	return &cp
+}
+
 // init initializes snapshot with the specified startup parameters.
 func (s *Snapshot) init(api *ethapi.Backend, h *types.Header, state *state.StateDB, height uint64) error {
 	s.EpochStartHeight = height

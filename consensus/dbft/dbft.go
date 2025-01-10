@@ -2503,11 +2503,22 @@ func (c *DBFT) getDKGIndex(validatorIndex int, blockNum uint64) (int, error) {
 // getGlobalPublicKey returns TPKE global public key. If state is provided, then this state
 // is used to recalculate local key based on the KeyManagement contract state. If state is
 // not provided, then the node's local keystore is used to retrieve global public key.
-func (c *DBFT) getGlobalPublicKey() (*tpke.PublicKey, error) {
-	// If state is provided, we need to recalculate global public key for the next
-	// block based on this state. Depends on #332, ref. #353. For now let's always
-	// use key from local keystore.
-	pub, err := c.amevKeystore.GlobalPublicKey()
+func (c *DBFT) getGlobalPublicKey(h *types.Header, s *state.StateDB) (*tpke.PublicKey, error) {
+	// Replace anti-MEV keystore and DKG snapshot with a temporary copy to avoid
+	// original keystore modification.
+	snapshot := c.dkgSnapshot.Copy()
+	keystore, err := c.amevKeystore.Copy()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create keystore backup: %w", err)
+	}
+
+	err = c.handleDKG(snapshot, keystore, h, s.Copy(), true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to handle DKG at %d: %w", h.Number.Uint64(), err)
+	}
+
+	// Recalculate global public key for the next block based on this state.
+	pub, err := keystore.GlobalPublicKey()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get public key from keystore: %w", err)
 	}
@@ -2532,7 +2543,7 @@ func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) (common.Hash,
 	if !c.chain.Config().IsNeoXAMEV(new(big.Int).Add(h.Number, bigOne)) {
 		return multisig, threshold
 	}
-	pub, err := c.getGlobalPublicKey()
+	pub, err := c.getGlobalPublicKey(h, s)
 	if err != nil {
 		// Do not treat this error as critical because for case of ExtraV1 fallback signing
 		// scheme an error is allowed during NextConsensus calculation. Just return an empty
