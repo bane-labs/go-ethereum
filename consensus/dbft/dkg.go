@@ -192,7 +192,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 		}
 		// if indexOfSharing is 0, then selfPvss should be nil
 		// Ref https://github.com/bane-labs/go-ethereum/blob/4c9105ea2bc246729db0540fce2df02074e21087/contracts/solidity/KeyManagement.sol#L113
-		selfPvss, err := getSharePVSS(c.ethAPI, c.dkgSnapshot.Round, uint64(indexOfSharing), state, h)
+		selfPvss, err := getSharePVSS(c.ethAPI, c.dkgSnapshot.Round-1, uint64(indexOfSharing), state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch spvsses, err: %v", err)
 		}
