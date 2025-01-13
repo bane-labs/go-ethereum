@@ -295,10 +295,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	eth.dbftSrv = dbftproto.New(ethapi.NewBlockChainAPI(eth.APIBackend), onPayload, isExtensibleAllowed)
 	if bft != nil {
-		ethAPI := ethapi.NewBlockChainAPI(eth.APIBackend)
-		bft.WithEthAPI(ethAPI)
-		txAPI := ethapi.NewTransactionAPI(eth.APIBackend, new(ethapi.AddrLocker))
-		bft.WithTxAPI(txAPI)
+		bft.WithEthAPIBackend(eth.APIBackend)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
 		bft.WithTxPool(eth.TxPool())
 		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
