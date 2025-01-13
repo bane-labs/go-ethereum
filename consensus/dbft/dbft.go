@@ -31,6 +31,7 @@ import (
 	"time"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -45,6 +46,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
 	"github.com/ethereum/go-ethereum/eth/downloader"
@@ -204,7 +206,7 @@ type DBFT struct {
 	finished chan struct{}
 
 	// various native contract APIs that dBFT uses.
-	ethAPI          *ethapi.BlockChainAPI
+	backend         *ethapi.Backend
 	txAPI           *ethapi.TransactionAPI
 	validatorsCache *lru.Cache[uint64, []common.Address]
 
@@ -1177,14 +1179,11 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 	}
 }
 
-// WithEthAPI initializes Eth blockchain API for proper consensus module work.
-func (c *DBFT) WithEthAPI(api *ethapi.BlockChainAPI) {
-	c.ethAPI = api
-}
-
-// WithTxAPI initializes Eth transaction API for sending transaction.
-func (c *DBFT) WithTxAPI(api *ethapi.TransactionAPI) {
-	c.txAPI = api
+// WithEthAPIBackend initializes Eth API backend and transaction API for
+// proper consensus module work.
+func (c *DBFT) WithEthAPIBackend(b ethapi.Backend) {
+	c.backend = &b
+	c.txAPI = ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))
 }
 
 // EnforceECDSASignatures enforces ECDSA multisignature block signing scheme.
@@ -2406,8 +2405,8 @@ func (c *DBFT) getValidatorsSorted(blockNum *uint64, state *state.StateDB, heade
 // order used by Governance contract. This method uses cached values in case of
 // validators requested by block height.
 func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
-	if c.ethAPI == nil {
-		return nil, errors.New("eth blockchain API is not initialized, dBFT can't function properly")
+	if c.backend == nil {
+		return nil, errors.New("eth API backend is not initialized, dBFT can't function properly")
 	}
 
 	if state == nil && blockNum != nil {
@@ -2434,23 +2433,22 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel when we are finished consuming integers.
 	defer cancel()
-	var result hexutil.Bytes
+	var result *core.ExecutionResult
 	if state != nil {
-		result, err = c.ethAPI.CallAtState(ctx, args, state, header)
+		result, err = ethapi.DoCallAtState(ctx, *c.backend, args, state, header, nil, nil, 0, 0)
 	} else if blockNum != nil {
 		blockNr := rpc.BlockNumberOrHashWithNumber(rpc.BlockNumber(*blockNum))
-		result, err = c.ethAPI.Call(ctx, args, &blockNr, nil, nil)
+		result, err = ethapi.DoCall(ctx, *c.backend, args, blockNr, nil, nil, 0, 0)
 	} else {
 		return nil, fmt.Errorf("failed to compute validators: both block number and state are nil")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to perform '%s' call: %w", method, err)
 	}
-
 	var res []common.Address
-	err = systemcontracts.GovernanceABI.UnpackIntoInterface(&res, method, result)
+	err = unpackContractExecutionResult(&res, result, systemcontracts.GovernanceABI, method)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unpack validators: %w", err)
+		return nil, err
 	}
 
 	// Update cache in case if existing state was used for validators retrieval.
@@ -2527,4 +2525,16 @@ func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) (common.Hash,
 
 func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
 	return blockNum%uint64(len(c.config.StandByValidators)) == 0
+}
+
+func unpackContractExecutionResult(res interface{}, result *core.ExecutionResult, contractAbi abi.ABI, method string) error {
+	if len(result.Revert()) > 0 {
+		reason, errUnpack := abi.UnpackRevert(result.Revert())
+		if errUnpack == nil {
+			return fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason)
+		} else {
+			return fmt.Errorf("%w, failed to unpack revert reason: %w", vm.ErrExecutionReverted, errUnpack)
+		}
+	}
+	return contractAbi.UnpackIntoInterface(&res, method, result.Return())
 }

@@ -52,13 +52,13 @@ type Snapshot struct {
 func (c *DBFT) newSnapshot(h *types.Header, state *state.StateDB, height uint64) (*Snapshot, error) {
 	snap := &Snapshot{}
 	snap.EpochStartHeight = height
-	round, err := getRoundNumber(c.ethAPI, state, h)
+	round, err := getRoundNumber(c.backend, state, h)
 	if err != nil {
 		return nil, err
 	}
 	// Snapshot round index points to the new round, so plus 1
 	snap.Round = round + 1
-	snap.CurrentCNs, err = getCurrentConsensus(c.ethAPI, state, h)
+	snap.CurrentCNs, err = getCurrentConsensus(c.backend, state, h)
 	if err != nil {
 		return nil, err
 	}
@@ -86,11 +86,11 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 		}
 		state = s
 	}
-	epochDuration, err := getEpochDuration(c.ethAPI, state, h)
+	epochDuration, err := getEpochDuration(c.backend, state, h)
 	if err != nil {
 		return fmt.Errorf("failed to fetch epoch duration: %v", err)
 	}
-	sharePeriodDuration, err := getSharePeriodDuration(c.ethAPI, state, h)
+	sharePeriodDuration, err := getSharePeriodDuration(c.backend, state, h)
 	if err != nil {
 		return fmt.Errorf("failed to fetch share period duration: %v", err)
 	}
@@ -106,11 +106,11 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 		}
 		// if indexOfSharing is 0, then selfPvss should be nil
 		// Ref https://github.com/bane-labs/go-ethereum/blob/4c9105ea2bc246729db0540fce2df02074e21087/contracts/solidity/KeyManagement.sol#L113
-		selfPvss, err := getSharePVSS(c.ethAPI, c.dkgSnapshot.Round, uint64(indexOfSharing), state, h)
+		selfPvss, err := getSharePVSS(c.backend, c.dkgSnapshot.Round, uint64(indexOfSharing), state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch spvss, err: %v", err)
 		}
-		aggregatedCommitment, err := getAggregatedCommitment(c.ethAPI, c.dkgSnapshot.Round, state, h)
+		aggregatedCommitment, err := getAggregatedCommitment(c.backend, c.dkgSnapshot.Round, state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
 		}
@@ -123,7 +123,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 	}
 
 	// If there is not a snapshot of current epoch, then new
-	epochStartHeight, err := getCurrentEpochStartHeight(c.ethAPI, state, h)
+	epochStartHeight, err := getCurrentEpochStartHeight(c.backend, state, h)
 	if err != nil {
 		return fmt.Errorf("failed to fetch current epoch start height: %v", err)
 	}
@@ -192,11 +192,11 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 		}
 		// if indexOfSharing is 0, then selfPvss should be nil
 		// Ref https://github.com/bane-labs/go-ethereum/blob/4c9105ea2bc246729db0540fce2df02074e21087/contracts/solidity/KeyManagement.sol#L113
-		selfPvss, err := getSharePVSS(c.ethAPI, c.dkgSnapshot.Round-1, uint64(indexOfSharing), state, h)
+		selfPvss, err := getSharePVSS(c.backend, c.dkgSnapshot.Round-1, uint64(indexOfSharing), state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch spvsses, err: %v", err)
 		}
-		aggregatedCommitment, err := getAggregatedCommitment(c.ethAPI, c.dkgSnapshot.Round-1, state, h)
+		aggregatedCommitment, err := getAggregatedCommitment(c.backend, c.dkgSnapshot.Round-1, state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
 		}
@@ -209,7 +209,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 	// DKG checkpoint handling, also syncs the dkg process if keystore is out-of-date
 	if currentHeight >= shareStartHeight && !c.dkgSnapshot.ShareTasked {
 		// Send share and reshare tx when currentHeight == shareStartHeight
-		c.dkgSnapshot.PendingCNs, err = getPendingConsensus(c.ethAPI, state, h)
+		c.dkgSnapshot.PendingCNs, err = getPendingConsensus(c.backend, state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch pending consensus: %v", err)
 		}
@@ -223,7 +223,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 		if currentHeight < recoverStartHeight {
 			// If is a member of pending consensus
 			indexOfSharing := slices.Index(c.dkgSnapshot.PendingCNs, amevAddress) + 1
-			receiverMessageKeys, err := getMessagePubkeys(c.ethAPI, c.dkgSnapshot.PendingCNs, state, h)
+			receiverMessageKeys, err := getMessagePubkeys(c.backend, c.dkgSnapshot.PendingCNs, state, h)
 			if err != nil {
 				return fmt.Errorf("failed to get message keys, err: %v", err)
 			}
@@ -246,7 +246,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 
 	if currentHeight >= recoverStartHeight && !c.dkgSnapshot.RecoverTasked {
 		// Check isShareReady at height recoverStartHeight
-		ready, err := isShareReady(c.ethAPI, state, h)
+		ready, err := isShareReady(c.backend, state, h)
 		if err != nil {
 			return fmt.Errorf("failed to check if sharing is ready: %v", err)
 		}
@@ -262,7 +262,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 				return fmt.Errorf("failed to sync sharing DKG, err: %v", err)
 			}
 		}
-		c.dkgSnapshot.IndexNeedRecover, err = getIndexCurrentNeedRecovering(c.ethAPI, state, h)
+		c.dkgSnapshot.IndexNeedRecover, err = getIndexCurrentNeedRecovering(c.backend, state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fecth index need recovering, err: %v", err)
 		}
@@ -286,7 +286,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 				if indexOfResharing > 0 {
 					pubs := make([]*ecies.PublicKey, len(c.dkgSnapshot.IndexNeedRecover))
 					for i, index := range c.dkgSnapshot.IndexNeedRecover {
-						pubs[i], err = getMessagePubkey(c.ethAPI, c.dkgSnapshot.PendingCNs[index-1], state, h)
+						pubs[i], err = getMessagePubkey(c.backend, c.dkgSnapshot.PendingCNs[index-1], state, h)
 						if err != nil {
 							return fmt.Errorf("failed to get message keys for recovering, err: %v", err)
 						}
@@ -309,7 +309,7 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 			if err := c.syncRecoveredSecrets(c.dkgSnapshot, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync recovering DKG, err: %v", err)
 			}
-			receiverMessageKeys, err := getMessagePubkeys(c.ethAPI, c.dkgSnapshot.PendingCNs, state, h)
+			receiverMessageKeys, err := getMessagePubkeys(c.backend, c.dkgSnapshot.PendingCNs, state, h)
 			if err != nil {
 				return fmt.Errorf("failed to fecth message keys, err: %v", err)
 			}
@@ -412,11 +412,11 @@ func (c *DBFT) syncThisRoundSecrets(snap *Snapshot, selfIndex int, state *state.
 
 func (c *DBFT) downloadAndReceiveShare(round uint64, fromIndex int, selfIndex int, state *state.StateDB, header *types.Header) error {
 	// Call ReceiveSecretShare
-	shareMsgs, err := getShareMsgs(c.ethAPI, round, uint64(fromIndex), state, header)
+	shareMsgs, err := getShareMsgs(c.backend, round, uint64(fromIndex), state, header)
 	if err != nil {
 		return err
 	}
-	spvss, err := getSharePVSS(c.ethAPI, round, uint64(fromIndex), state, header)
+	spvss, err := getSharePVSS(c.backend, round, uint64(fromIndex), state, header)
 	if err != nil {
 		return err
 	}
@@ -429,13 +429,13 @@ func (c *DBFT) downloadAndReceiveShare(round uint64, fromIndex int, selfIndex in
 
 func (c *DBFT) downloadAndReceiveReshare(round uint64, fromIndex int, selfIndex int, state *state.StateDB, header *types.Header) error {
 	// Call ReceiveSecretReshare
-	rpvss, err := getResharePVSS(c.ethAPI, round, uint64(fromIndex), state, header)
+	rpvss, err := getResharePVSS(c.backend, round, uint64(fromIndex), state, header)
 	if err != nil {
 		return err
 	}
 	// Only receive reshare has value
 	if len(rpvss) > 0 {
-		reshareMsgs, err := getReshareMsgs(c.ethAPI, round, uint64(fromIndex), state, header)
+		reshareMsgs, err := getReshareMsgs(c.backend, round, uint64(fromIndex), state, header)
 		if err != nil {
 			return err
 		}
@@ -449,12 +449,12 @@ func (c *DBFT) downloadAndReceiveReshare(round uint64, fromIndex int, selfIndex 
 
 // syncRecoveredSecrets downloads DKG recoverings and related PVSS, and sends to keystore
 func (c *DBFT) syncRecoveredSecrets(snap *Snapshot, selfIndex int, state *state.StateDB, header *types.Header) error {
-	pvss, err := getSharePVSS(c.ethAPI, snap.Round-1, uint64(selfIndex), state, header)
+	pvss, err := getSharePVSS(c.backend, snap.Round-1, uint64(selfIndex), state, header)
 	if err != nil {
 		return err
 	}
 	for i := range snap.CurrentCNs {
-		msg, err := getRecoverMsgs(c.ethAPI, snap.Round, uint64(i+1), uint64(selfIndex-1), state, header)
+		msg, err := getRecoverMsgs(c.backend, snap.Round, uint64(i+1), uint64(selfIndex-1), state, header)
 		if err != nil {
 			return err
 		}
@@ -472,12 +472,12 @@ func (c *DBFT) syncRecoveredSecrets(snap *Snapshot, selfIndex int, state *state.
 func (c *DBFT) syncRecoveredReshares(snap *Snapshot, selfIndex int, state *state.StateDB, header *types.Header) error {
 	for _, index := range snap.IndexNeedRecover {
 		// Call ReceiveSecretReshare
-		rpvss, err := getResharePVSS(c.ethAPI, snap.Round, index, state, header)
+		rpvss, err := getResharePVSS(c.backend, snap.Round, index, state, header)
 		if err != nil {
 			return err
 		}
 		if len(rpvss) > 0 {
-			reshareMsgs, err := getReshareMsgs(c.ethAPI, snap.Round, index, state, header)
+			reshareMsgs, err := getReshareMsgs(c.backend, snap.Round, index, state, header)
 			if err != nil {
 				return err
 			}
@@ -576,55 +576,60 @@ func (c *DBFT) taskReshareRecover(receiverMessageKeys []*ecies.PublicKey, start 
 }
 
 // getCurrentConsensus returns an address list of current CNs
-func getCurrentConsensus(api *ethapi.BlockChainAPI, state *state.StateDB, header *types.Header) ([]common.Address, error) {
-	result, err := readFromContract(api, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "getCurrentConsensus")
+func getCurrentConsensus(backend *ethapi.Backend, state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	var result []common.Address
+	err := readFromContract(&result, backend, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "getCurrentConsensus")
 	if err != nil {
 		return nil, err
 	}
-	return result.([]common.Address), nil
+	return result, nil
 }
 
 // getPendingConsensus returns an address list of pending CNs
-func getPendingConsensus(api *ethapi.BlockChainAPI, state *state.StateDB, header *types.Header) ([]common.Address, error) {
-	result, err := readFromContract(api, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "getPendingConsensus")
+func getPendingConsensus(backend *ethapi.Backend, state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	var result []common.Address
+	err := readFromContract(&result, backend, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "getPendingConsensus")
 	if err != nil {
 		return nil, err
 	}
-	return result.([]common.Address), nil
+	return result, nil
 }
 
 // getSharePeriodDuration returns a number of blocks as the duration of each sharing period
-func getSharePeriodDuration(api *ethapi.BlockChainAPI, state *state.StateDB, header *types.Header) (uint64, error) {
-	result, err := readFromContract(api, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "sharePeriodDuration")
+func getSharePeriodDuration(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
+	var result *big.Int
+	err := readFromContract(&result, backend, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "sharePeriodDuration")
 	if err != nil {
 		return 0, err
 	}
-	return result.(*big.Int).Uint64(), nil
+	return result.Uint64(), nil
 }
 
 // getEpochDuration returns a number of blocks as the duration of each governanace epoch
-func getEpochDuration(api *ethapi.BlockChainAPI, state *state.StateDB, header *types.Header) (uint64, error) {
-	result, err := readFromContract(api, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "epochDuration")
+func getEpochDuration(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
+	var result *big.Int
+	err := readFromContract(&result, backend, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "epochDuration")
 	if err != nil {
 		return 0, err
 	}
-	return result.(*big.Int).Uint64(), nil
+	return result.Uint64(), nil
 }
 
 // getCurrentEpochStartHeight returns the block height when the current governanace epoch starts
-func getCurrentEpochStartHeight(api *ethapi.BlockChainAPI, state *state.StateDB, header *types.Header) (uint64, error) {
-	result, err := readFromContract(api, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "currentEpochStartHeight")
+func getCurrentEpochStartHeight(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
+	var result *big.Int
+	err := readFromContract(&result, backend, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "currentEpochStartHeight")
 	if err != nil {
 		return 0, err
 	}
-	return result.(*big.Int).Uint64(), nil
+	return result.Uint64(), nil
 }
 
 // getMessagePubkeys returns the message keys of input address list
-func getMessagePubkeys(api *ethapi.BlockChainAPI, addrs []common.Address, state *state.StateDB, header *types.Header) ([]*ecies.PublicKey, error) {
+func getMessagePubkeys(backend *ethapi.Backend, addrs []common.Address, state *state.StateDB, header *types.Header) ([]*ecies.PublicKey, error) {
 	result := make([]*ecies.PublicKey, len(addrs))
 	for i, addr := range addrs {
-		pub, err := getMessagePubkey(api, addr, state, header)
+		pub, err := getMessagePubkey(backend, addr, state, header)
 		if err != nil {
 			return nil, err
 		}
@@ -634,16 +639,17 @@ func getMessagePubkeys(api *ethapi.BlockChainAPI, addrs []common.Address, state 
 }
 
 // getMessagePubkey returns the message key of input address
-func getMessagePubkey(api *ethapi.BlockChainAPI, addr common.Address, state *state.StateDB, header *types.Header) (*ecies.PublicKey, error) {
-	result, err := readFromContract(api, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI, state, header, "messagePubkeys", addr)
+func getMessagePubkey(backend *ethapi.Backend, addr common.Address, state *state.StateDB, header *types.Header) (*ecies.PublicKey, error) {
+	var result string
+	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI, state, header, "messagePubkeys", addr)
 	if err != nil {
 		return nil, err
 	}
-	if len(result.(string)) == 0 {
+	if len(result) == 0 {
 		err = errors.New("messagePubkey is empty, addr: " + addr.String())
 		return nil, err
 	}
-	key, err := crypto.UnmarshalPubkey([]byte(result.(string)))
+	key, err := crypto.UnmarshalPubkey([]byte(result))
 	if err != nil {
 		return nil, err
 	}
@@ -651,97 +657,106 @@ func getMessagePubkey(api *ethapi.BlockChainAPI, addr common.Address, state *sta
 }
 
 // getIndexCurrentNeedRecovering returns an array of DKG index that needs recover
-func getIndexCurrentNeedRecovering(api *ethapi.BlockChainAPI, state *state.StateDB, header *types.Header) ([]uint64, error) {
-	result, err := readFromContract(api, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI, state, header, "indexCurrentNeedRecovering")
+func getIndexCurrentNeedRecovering(backend *ethapi.Backend, state *state.StateDB, header *types.Header) ([]uint64, error) {
+	var result []*big.Int
+	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI, state, header, "indexCurrentNeedRecovering")
 	if err != nil {
 		return nil, err
 	}
 	var indexs []uint64
-	for _, item := range result.([]*big.Int) {
+	for _, item := range result {
 		indexs = append(indexs, item.Uint64())
 	}
 	return indexs, nil
 }
 
 // isShareReady checks if the DKG sharing is 100% uploaded
-func isShareReady(api *ethapi.BlockChainAPI, state *state.StateDB, header *types.Header) (bool, error) {
-	result, err := readFromContract(api, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI, state, header, "isShareReady")
+func isShareReady(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (bool, error) {
+	var result bool
+	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI, state, header, "isShareReady")
 	if err != nil {
 		return false, err
 	}
-	return result.(bool), nil
+	return result, nil
 }
 
-func getReshareMsgs(api *ethapi.BlockChainAPI, round, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
-	result, err := readFromContract(api, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+func getReshareMsgs(backend *ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
+	var result [][]byte
+	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
 		state, header, "getReshareMsgs", big.NewInt(int64(round)), big.NewInt(int64(index)))
 	if err != nil {
 		return nil, err
 	}
-	return result.([][]byte), nil
+	return result, nil
 }
 
-func getResharePVSS(api *ethapi.BlockChainAPI, round, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
-	result, err := readFromContract(api, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+func getResharePVSS(backend *ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+	var result []byte
+	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
 		state, header, "rpvsses", big.NewInt(int64(round)), big.NewInt(int64(index)))
 	if err != nil {
 		return nil, err
 	}
-	return result.([]byte), nil
+	return result, nil
 }
 
-func getShareMsgs(api *ethapi.BlockChainAPI, round, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
-	result, err := readFromContract(api, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+func getShareMsgs(backend *ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
+	var result [][]byte
+	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
 		state, header, "getShareMsgs", big.NewInt(int64(round)), big.NewInt(int64(index)))
 	if err != nil {
 		return nil, err
 	}
-	return result.([][]byte), nil
+	return result, nil
 }
 
-func getSharePVSS(api *ethapi.BlockChainAPI, round, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
-	result, err := readFromContract(api, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+func getSharePVSS(backend *ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+	var result []byte
+	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
 		state, header, "spvsses", big.NewInt(int64(round)), big.NewInt(int64(index)))
 	if err != nil {
 		return nil, err
 	}
-	return result.([]byte), nil
+	return result, nil
 }
 
-func getRecoverMsgs(api *ethapi.BlockChainAPI, round, senderIndex, arrIndex uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
-	result, err := readFromContract(api, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+func getRecoverMsgs(backend *ethapi.Backend, round, senderIndex, arrIndex uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+	var result []byte
+	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
 		state, header, "recoverMsgs", big.NewInt(int64(round)), big.NewInt(int64(senderIndex)), big.NewInt(int64(arrIndex)))
 	if err != nil {
 		return nil, err
 	}
-	return result.([]byte), nil
+	return result, nil
 }
 
-func getAggregatedCommitment(api *ethapi.BlockChainAPI, round uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
-	result, err := readFromContract(api, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+func getAggregatedCommitment(backend *ethapi.Backend, round uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+	var result []byte
+	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
 		state, header, "aggregatedCommitments", big.NewInt(int64(round)))
 	if err != nil {
 		return nil, err
 	}
-	return result.([]byte), nil
+	return result, nil
 }
 
-func getRoundNumber(api *ethapi.BlockChainAPI, state *state.StateDB, header *types.Header) (uint64, error) {
-	result, err := readFromContract(api, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
+func getRoundNumber(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
+	var result *big.Int
+	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABI,
 		state, header, "roundNumber")
 	if err != nil {
 		return 0, err
 	}
-	return result.(*big.Int).Uint64(), nil
+	return result.Uint64(), nil
 }
 
-func readFromContract(api *ethapi.BlockChainAPI, contract common.Address, contractAbi abi.ABI, state *state.StateDB, header *types.Header, method string, args ...interface{}) (interface{}, error) {
-	if api == nil {
-		return nil, errors.New("eth blockchain API is not initialized, DKG can't function properly")
+func readFromContract(res interface{}, backend *ethapi.Backend, contract common.Address, contractAbi abi.ABI, state *state.StateDB, header *types.Header, method string, args ...interface{}) error {
+	if backend == nil {
+		return errors.New("eth API backend is not initialized, DKG can't function properly")
 	}
 	data, err := contractAbi.Pack(method, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to pack '%s': %v", method, err)
+		return fmt.Errorf("failed to pack '%s': %v", method, err)
 	}
 	msgData := hexutil.Bytes(data)
 	gas := hexutil.Uint64(50_000_000) // More than enough for validators call processing.
@@ -754,15 +769,11 @@ func readFromContract(api *ethapi.BlockChainAPI, contract common.Address, contra
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel when we are finished consuming integers.
 	defer cancel()
-	result, err := api.CallAtState(ctx, txArgs, state, header)
+	result, err := ethapi.DoCallAtState(ctx, *backend, txArgs, state, header, nil, nil, 0, 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call at state '%s': %v", method, err)
+		return fmt.Errorf("failed to call at state '%s': %v", method, err)
 	}
-	results, err := contractAbi.Unpack(method, result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unpack result: %v", err)
-	}
-	return results[0], nil
+	return unpackContractExecutionResult(res, result, contractAbi, method)
 }
 
 func sendReshareTx(api *ethapi.TransactionAPI, from common.Address, pvss []byte, messages [][]byte) (*common.Hash, error) {
