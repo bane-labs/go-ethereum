@@ -15,8 +15,8 @@ type prepareRequest struct {
 	// pre-NeoXAMEV fork. Starting from NeoXAMEV+1 height these fields are filled
 	// only if multisignature signing scheme is enforced, hence marked as optional
 	// for RLP serialization.
-	ParentSealHash common.Hash `rlp:optional`
-	ParentExtra    []byte      `rlp:"optional"`
+	ParentSealHashV0 common.Hash `rlp:optional`
+	ParentExtra      []byte      `rlp:"optional"`
 }
 
 var _ dbft.PrepareRequest[common.Hash] = (*prepareRequest)(nil)

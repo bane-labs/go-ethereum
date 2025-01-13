@@ -39,9 +39,9 @@ func TestPayloadSerializable(t *testing.T) {
 			ExcessBlobGas:    nil,
 			ParentBeaconRoot: nil,
 		},
-		TxHashes:       []common.Hash{},
-		ParentSealHash: common.Hash{1, 2, 3},
-		ParentExtra:    []byte{1, 2, 3},
+		TxHashes:         []common.Hash{},
+		ParentSealHashV0: common.Hash{1, 2, 3},
+		ParentExtra:      []byte{1, 2, 3},
 	}
 	expected := &Payload{
 		Message: dbftproto.Message{
