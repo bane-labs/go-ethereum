@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"path/filepath"
 
@@ -77,6 +78,27 @@ func (ks *KeyStore) Reset(round int) error {
 	ks.sharing = nil
 	ks.shared = nil
 	return ks.saveStoreAndReInitialize()
+}
+
+// Copy creates a deep copy of KeyStore.
+func (ks *KeyStore) Copy() (*KeyStore, error) {
+	res := new(KeyStore)
+	res.path = ks.path
+	res.password = ks.password
+
+	// A tiny hack implemented for the current keystore implementation consistency
+	// until a proper persistence functionality is implemented over KeyStore, ref.
+	// https://github.com/bane-labs/go-ethereum/issues/388.
+	err := res.initializeKeystoreFromFile()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize keystore from file: %w", err)
+	}
+
+	// Explicitly set path to empty as a temporary replacement of proper persistence
+	// functionality, ref. https://github.com/bane-labs/go-ethereum/issues/388.
+	res.path = ""
+
+	return res, nil
 }
 
 // Load loads hex-encoded anti-MEV keystore from the provided filepath.
@@ -568,6 +590,11 @@ func (ks *KeyStore) initializeKeystoreFromFile() error {
 	if err != nil {
 		return err
 	}
+
+	return ks.initializeKeystoreFromBytes(encoded)
+}
+
+func (ks *KeyStore) initializeKeystoreFromBytes(encoded []byte) error {
 	keystoreFile := &keystoreRepresentation{}
 	if err := json.Unmarshal(encoded, keystoreFile); err != nil {
 		return err
@@ -596,12 +623,20 @@ func (ks *KeyStore) saveStoreAndReInitialize() error {
 	if err != nil {
 		return err
 	}
-	err = writeFileAtPath(filepath.Dir(ks.path), filepath.Base(ks.path), encodedData)
-	if err != nil {
-		return err
+	// A temporary hack to avoid useless keystore file overwrites until persistence logic is
+	// implemented over keystore, ref. https://github.com/bane-labs/go-ethereum/issues/388.
+	if ks.path != "" {
+		err = writeFileAtPath(filepath.Dir(ks.path), filepath.Base(ks.path), encodedData)
+		if err != nil {
+			return err
+		}
+
+		// ReInitialize and update the memory
+		err = ks.initializeKeystoreFromFile()
+	} else {
+		err = ks.initializeKeystoreFromBytes(encodedData)
 	}
-	// ReInitialize and update the memory
-	err = ks.initializeKeystoreFromFile()
+
 	return err
 }
 

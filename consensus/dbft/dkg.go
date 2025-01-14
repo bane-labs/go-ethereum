@@ -8,6 +8,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -46,39 +47,63 @@ type Snapshot struct {
 	ShareTasked          bool
 	RecoverTasked        bool
 	ReshareRecoverTasked bool
+
+	// initDone denotes whether snapshot initialization procedure has passed.
+	initDone bool
 }
 
-// newSnapshot creates a new snapshot with the specified startup parameters.
-func (c *DBFT) newSnapshot(h *types.Header, state *state.StateDB, height uint64) (*Snapshot, error) {
-	snap := &Snapshot{}
-	snap.EpochStartHeight = height
-	round, err := getRoundNumber(c.backend, state, h)
+// NewSnapshot creates the new instance of DKG snapshot.
+func NewSnapshot() *Snapshot {
+	return &Snapshot{}
+}
+
+// Copy creates a copy of Snapshot.
+func (s *Snapshot) Copy() *Snapshot {
+	cp := *s
+
+	cp.CurrentCNs = slices.Clone(s.CurrentCNs)
+	cp.PendingCNs = slices.Clone(s.PendingCNs)
+	cp.IndexNeedRecover = slices.Clone(s.IndexNeedRecover)
+
+	return &cp
+}
+
+// init initializes snapshot with the specified startup parameters.
+func (s *Snapshot) init(api *ethapi.Backend, h *types.Header, state *state.StateDB, height uint64) error {
+	s.EpochStartHeight = height
+	round, err := getRoundNumber(api, state, h)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// Snapshot round index points to the new round, so plus 1
-	snap.Round = round + 1
-	snap.CurrentCNs, err = getCurrentConsensus(c.backend, state, h)
+	s.Round = round + 1
+	s.CurrentCNs, err = getCurrentConsensus(api, state, h)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	snap.PendingCNs = make([]common.Address, 0)
-	snap.IndexNeedRecover = make([]uint64, 0)
-	snap.ShareTasked = false
-	snap.RecoverTasked = false
-	snap.ReshareRecoverTasked = false
-	return snap, nil
+	s.PendingCNs = make([]common.Address, 0)
+	s.IndexNeedRecover = make([]uint64, 0)
+	s.ShareTasked = false
+	s.RecoverTasked = false
+	s.ReshareRecoverTasked = false
+	s.initDone = true
+	return nil
+}
+
+// reset resets snapshot state to default.
+func (s *Snapshot) reset() {
+	*s = Snapshot{}
 }
 
 // handleDKG handles the transaction submission for DKG process.
 // It constructs and sends transaction to KeyManagement contract using amev store.
-func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
+func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *types.Header, state *state.StateDB, suspended bool) error {
 	currentHeight := h.Number.Uint64()
 	watchList := &TxWatchList{
 		CurrentHeight: currentHeight,
 		WatchList:     make([]TxWatchRetry, 0),
 	}
-	amevAddress := c.amevKeystore.Address()
+	amevAddress := keystore.Address()
 	if state == nil {
 		s, err := c.chain.StateAt(h.Root)
 		if err != nil {
@@ -96,30 +121,30 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 	}
 
 	// If there is an ongoing round and it's time to epoch change
-	if c.dkgSnapshot != nil && currentHeight == c.dkgSnapshot.EpochStartHeight+epochDuration {
-		indexOfSharing := slices.Index(c.dkgSnapshot.PendingCNs, amevAddress) + 1
+	if snapshot.initDone && currentHeight == snapshot.EpochStartHeight+epochDuration {
+		indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
 		// Call ReceiveRecoveredReshare at targetHeight, only at this block height we can get aggregatedCommitments
-		if len(c.dkgSnapshot.IndexNeedRecover) > 0 && indexOfSharing > 0 {
-			if err := c.syncRecoveredReshares(c.dkgSnapshot, indexOfSharing, state, h); err != nil {
+		if len(snapshot.IndexNeedRecover) > 0 && indexOfSharing > 0 {
+			if err := c.syncRecoveredReshares(snapshot, keystore, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync recovered secrets, err: %v", err)
 			}
 		}
 		// if indexOfSharing is 0, then selfPvss should be nil
 		// Ref https://github.com/bane-labs/go-ethereum/blob/4c9105ea2bc246729db0540fce2df02074e21087/contracts/solidity/KeyManagement.sol#L113
-		selfPvss, err := getSharePVSS(c.backend, c.dkgSnapshot.Round, uint64(indexOfSharing), state, h)
+		selfPvss, err := getSharePVSS(c.backend, snapshot.Round, uint64(indexOfSharing), state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch spvss, err: %v", err)
 		}
-		aggregatedCommitment, err := getAggregatedCommitment(c.backend, c.dkgSnapshot.Round, state, h)
+		aggregatedCommitment, err := getAggregatedCommitment(c.backend, snapshot.Round, state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
 		}
-		err = c.amevKeystore.OnEpochChange(selfPvss, aggregatedCommitment, indexOfSharing > 0)
+		err = keystore.OnEpochChange(selfPvss, aggregatedCommitment, indexOfSharing > 0)
 		if err != nil {
 			return fmt.Errorf("failed to change keystore epoch, err: %v", err)
 		}
-		log.Info("DKG reached targetHeight", "round", c.dkgSnapshot.Round, "currentHeight", currentHeight, "aggregatedCommitment", hex.EncodeToString(aggregatedCommitment))
-		c.dkgSnapshot = nil
+		log.Info("DKG reached targetHeight", "round", snapshot.Round, "currentHeight", currentHeight, "aggregatedCommitment", hex.EncodeToString(aggregatedCommitment))
+		snapshot.reset()
 	}
 
 	// If there is not a snapshot of current epoch, then new
@@ -127,21 +152,20 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 	if err != nil {
 		return fmt.Errorf("failed to fetch current epoch start height: %v", err)
 	}
-	if c.dkgSnapshot == nil {
-		s, err := c.newSnapshot(h, state, epochStartHeight)
+	if !snapshot.initDone {
+		err = snapshot.init(c.backend, h, state, epochStartHeight)
 		if err != nil {
 			return fmt.Errorf("failed to new DKG snapshot, err: %v", err)
 		}
-		c.dkgSnapshot = s
-		log.Info("DKG info", "roundNumber", c.dkgSnapshot.Round, "epochStartHeight", c.dkgSnapshot.EpochStartHeight, "epochDuration", epochDuration,
-			"sharePeriodDuration", sharePeriodDuration, "consensusList", c.dkgSnapshot.CurrentCNs)
+		log.Info("DKG info", "roundNumber", snapshot.Round, "epochStartHeight", snapshot.EpochStartHeight, "epochDuration", epochDuration,
+			"sharePeriodDuration", sharePeriodDuration, "consensusList", snapshot.CurrentCNs)
 	}
 	// Compute periods based on realtime data, in case there is an update in governanace contract
-	targetHeight := c.dkgSnapshot.EpochStartHeight + epochDuration
+	targetHeight := snapshot.EpochStartHeight + epochDuration
 	shareStartHeight := targetHeight - 2*sharePeriodDuration
 	recoverStartHeight := shareStartHeight + sharePeriodDuration
 	recoverCheckHeight := recoverStartHeight + sharePeriodDuration/2
-	consensusSize := uint64(len(c.dkgSnapshot.CurrentCNs))
+	consensusSize := uint64(len(snapshot.CurrentCNs))
 
 	if currentHeight >= shareStartHeight && currentHeight < targetHeight {
 		// Send watch task list to loopTaskChan when handleDKG finished
@@ -151,173 +175,175 @@ func (c *DBFT) handleDKG(h *types.Header, state *state.StateDB) error {
 	}
 
 	// If keystore is out-of-date, then sync shared DKG up-tp-date
-	keystoreRound := c.amevKeystore.Round()
+	keystoreRound := keystore.Round()
 	// If keystore has a round of future, then return an error
-	if keystoreRound >= int(c.dkgSnapshot.Round) {
+	if keystoreRound >= int(snapshot.Round) {
 		return fmt.Errorf("invalid antimev keystore round index: %v", keystoreRound)
 	}
 	// If this round failed but keystore is still in a sharing state
-	if keystoreRound == int(c.dkgSnapshot.Round)-1 && currentHeight < shareStartHeight && c.amevKeystore.IsSharing() {
+	if keystoreRound == int(snapshot.Round)-1 && currentHeight < shareStartHeight && keystore.IsSharing() {
 		// Here only revert before the new share period, if the node wake up when share,
 		// then data will be overwritten
-		if err := c.amevKeystore.RevertRound(); err != nil {
+		if err := keystore.RevertRound(); err != nil {
 			return err
 		}
 	}
 	// Sync if keystore needs a sync and contract has at least 1 round successful DKG
-	if keystoreRound < int(c.dkgSnapshot.Round)-1 {
+	if keystoreRound < int(snapshot.Round)-1 {
 		// If keystore is late for more than 1 round, than reset it to the last one,
 		// past data are not helpful anymore
-		if keystoreRound < int(c.dkgSnapshot.Round)-2 {
-			if err := c.amevKeystore.Reset(int(c.dkgSnapshot.Round) - 2); err != nil {
+		if keystoreRound < int(snapshot.Round)-2 {
+			if err := keystore.Reset(int(snapshot.Round) - 2); err != nil {
 				return err
 			}
 		}
 		// If keystore is in a sharing state already, then regard it has a valid secret
-		if !c.amevKeystore.IsSharing() {
-			if err := c.amevKeystore.OnSharePeriodStart(); err != nil {
+		if !keystore.IsSharing() {
+			if err := keystore.OnSharePeriodStart(); err != nil {
 				return fmt.Errorf("failed to sync shared DKG, err: %v", err)
 			}
 		}
 		// If is a member of current consensus, then try sync secrets
-		indexOfSharing := slices.Index(c.dkgSnapshot.CurrentCNs, amevAddress) + 1
+		indexOfSharing := slices.Index(snapshot.CurrentCNs, amevAddress) + 1
 		if indexOfSharing > 0 {
 			// Only a warning here, since it doesn't destroy dBFT and anti-mev,
 			// a new DKG can perform and the next reshare is recoverable.
 			// But it is dangerous if more than 1/3 CNs reinit their keystores
 			// or change their message key.
-			if err := c.syncLastRoundSecrets(c.dkgSnapshot, indexOfSharing, state, h); err != nil {
+			if err := c.syncLastRoundSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
 				log.Warn("failed to sync shared DKG", "err", err)
 			}
 		}
 		// if indexOfSharing is 0, then selfPvss should be nil
 		// Ref https://github.com/bane-labs/go-ethereum/blob/4c9105ea2bc246729db0540fce2df02074e21087/contracts/solidity/KeyManagement.sol#L113
-		selfPvss, err := getSharePVSS(c.backend, c.dkgSnapshot.Round-1, uint64(indexOfSharing), state, h)
+		selfPvss, err := getSharePVSS(c.backend, snapshot.Round-1, uint64(indexOfSharing), state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch spvsses, err: %v", err)
 		}
-		aggregatedCommitment, err := getAggregatedCommitment(c.backend, c.dkgSnapshot.Round-1, state, h)
+		aggregatedCommitment, err := getAggregatedCommitment(c.backend, snapshot.Round-1, state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
 		}
-		if err := c.amevKeystore.OnEpochChange(selfPvss, aggregatedCommitment, indexOfSharing > 0); err != nil {
+		if err := keystore.OnEpochChange(selfPvss, aggregatedCommitment, indexOfSharing > 0); err != nil {
 			return fmt.Errorf("failed to sync shared DKG, err: %v", err)
 		}
-		log.Info("DKG sync to", "round", c.dkgSnapshot.Round-1, "currentHeight", currentHeight, "aggregatedCommitment", hex.EncodeToString(aggregatedCommitment))
+		log.Info("DKG sync to", "round", snapshot.Round-1, "currentHeight", currentHeight, "aggregatedCommitment", hex.EncodeToString(aggregatedCommitment))
 	}
 
 	// DKG checkpoint handling, also syncs the dkg process if keystore is out-of-date
-	if currentHeight >= shareStartHeight && !c.dkgSnapshot.ShareTasked {
+	if currentHeight >= shareStartHeight && !snapshot.ShareTasked {
 		// Send share and reshare tx when currentHeight == shareStartHeight
-		c.dkgSnapshot.PendingCNs, err = getPendingConsensus(c.backend, state, h)
+		snapshot.PendingCNs, err = getPendingConsensus(c.backend, state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fetch pending consensus: %v", err)
 		}
 		// Prepare and start a DKG
-		if !c.amevKeystore.IsSharing() {
-			if err = c.amevKeystore.OnSharePeriodStart(); err != nil {
+		if !keystore.IsSharing() {
+			if err = keystore.OnSharePeriodStart(); err != nil {
 				return fmt.Errorf("failed to start new DKG, err: %v", err)
 			}
 		}
 		// If the period finished, then skip sending a transaction
 		if currentHeight < recoverStartHeight {
 			// If is a member of pending consensus
-			indexOfSharing := slices.Index(c.dkgSnapshot.PendingCNs, amevAddress) + 1
-			receiverMessageKeys, err := getMessagePubkeys(c.backend, c.dkgSnapshot.PendingCNs, state, h)
+			indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
+			receiverMessageKeys, err := getMessagePubkeys(c.backend, snapshot.PendingCNs, state, h)
 			if err != nil {
 				return fmt.Errorf("failed to get message keys, err: %v", err)
 			}
-			if indexOfSharing > 0 {
-				if err = c.taskShare(receiverMessageKeys, currentHeight, recoverStartHeight, watchList); err != nil {
+			if !suspended && indexOfSharing > 0 {
+				if err = c.taskShare(keystore, receiverMessageKeys, currentHeight, recoverStartHeight, watchList); err != nil {
 					return fmt.Errorf("failed to task DKG share, err: %v", err)
 				}
 			}
 			// If is a member of current consensus, try reshare but give up if error
-			indexOfResharing := slices.Index(c.dkgSnapshot.CurrentCNs, amevAddress) + 1
-			if indexOfResharing > 0 && c.dkgSnapshot.Round > 1 {
-				if err = c.taskReshare(receiverMessageKeys, currentHeight, recoverStartHeight, watchList); err != nil {
-					c.dkgSnapshot.ShareTasked = true
+			indexOfResharing := slices.Index(snapshot.CurrentCNs, amevAddress) + 1
+			if !suspended && indexOfResharing > 0 && snapshot.Round > 1 {
+				if err = c.taskReshare(keystore, receiverMessageKeys, currentHeight, recoverStartHeight, watchList); err != nil {
+					snapshot.ShareTasked = true
 					return fmt.Errorf("failed to task DKG reshare, err: %v", err)
 				}
 			}
 		}
-		c.dkgSnapshot.ShareTasked = true
+		snapshot.ShareTasked = true
 	}
 
-	if currentHeight >= recoverStartHeight && !c.dkgSnapshot.RecoverTasked {
+	if currentHeight >= recoverStartHeight && !snapshot.RecoverTasked {
 		// Check isShareReady at height recoverStartHeight
 		ready, err := isShareReady(c.backend, state, h)
 		if err != nil {
 			return fmt.Errorf("failed to check if sharing is ready: %v", err)
 		}
 		if !ready {
-			c.dkgSnapshot.RecoverTasked = true
+			snapshot.RecoverTasked = true
 			log.Warn("DKG sharing is not ready, skip recover")
 			return nil
 		}
 		// If share is ready, pending consensus nodes should ReceiveSecretShare
-		indexOfSharing := slices.Index(c.dkgSnapshot.PendingCNs, amevAddress) + 1
+		indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
 		if indexOfSharing > 0 {
-			if err := c.syncThisRoundSecrets(c.dkgSnapshot, indexOfSharing, state, h); err != nil {
+			if err := c.syncThisRoundSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync sharing DKG, err: %v", err)
 			}
 		}
-		c.dkgSnapshot.IndexNeedRecover, err = getIndexCurrentNeedRecovering(c.backend, state, h)
+		snapshot.IndexNeedRecover, err = getIndexCurrentNeedRecovering(c.backend, state, h)
 		if err != nil {
 			return fmt.Errorf("failed to fecth index need recovering, err: %v", err)
 		}
 		// If the period finished, then skip sending a transaction
-		if len(c.dkgSnapshot.IndexNeedRecover) > 0 {
+		if len(snapshot.IndexNeedRecover) > 0 {
 			// Only indexesNeedRecover <= (consensusSize - threshold) can recover
 			threshold := consensusSize - (consensusSize-1)/3
-			if len(c.dkgSnapshot.IndexNeedRecover) > int(consensusSize-threshold) {
-				c.dkgSnapshot.RecoverTasked = true
+			if len(snapshot.IndexNeedRecover) > int(consensusSize-threshold) {
+				snapshot.RecoverTasked = true
 				log.Warn("DKG resharing doesn't meet recoverable threshold, skip recover")
 				return nil
 			}
-			if !c.amevKeystore.IsRecovering() {
-				if err := c.amevKeystore.OnRecoverPeriodStart(); err != nil {
+			if !keystore.IsRecovering() {
+				if err := keystore.OnRecoverPeriodStart(); err != nil {
 					return fmt.Errorf("failed to start DKG recover, err: %v", err)
 				}
 			}
-			if currentHeight < recoverCheckHeight {
+			if !suspended && currentHeight < recoverCheckHeight {
 				// Send recover tx from current consensus node
-				indexOfResharing := slices.Index(c.dkgSnapshot.CurrentCNs, amevAddress) + 1
+				indexOfResharing := slices.Index(snapshot.CurrentCNs, amevAddress) + 1
 				if indexOfResharing > 0 {
-					pubs := make([]*ecies.PublicKey, len(c.dkgSnapshot.IndexNeedRecover))
-					for i, index := range c.dkgSnapshot.IndexNeedRecover {
-						pubs[i], err = getMessagePubkey(c.backend, c.dkgSnapshot.PendingCNs[index-1], state, h)
+					pubs := make([]*ecies.PublicKey, len(snapshot.IndexNeedRecover))
+					for i, index := range snapshot.IndexNeedRecover {
+						pubs[i], err = getMessagePubkey(c.backend, snapshot.PendingCNs[index-1], state, h)
 						if err != nil {
 							return fmt.Errorf("failed to get message keys for recovering, err: %v", err)
 						}
 					}
-					if err := c.taskRecover(c.dkgSnapshot.IndexNeedRecover, pubs, currentHeight, recoverCheckHeight, watchList); err != nil {
+					if err := c.taskRecover(keystore, snapshot.IndexNeedRecover, pubs, currentHeight, recoverCheckHeight, watchList); err != nil {
 						return fmt.Errorf("failed to task DKG recover, err: %v", err)
 					}
 				}
 			}
 		}
-		c.dkgSnapshot.RecoverTasked = true
+		snapshot.RecoverTasked = true
 	}
 
 	// Keystore should anyway be up-to-date here
-	if c.amevKeystore.IsRecovering() && currentHeight >= recoverCheckHeight && !c.dkgSnapshot.ReshareRecoverTasked {
+	if keystore.IsRecovering() && currentHeight >= recoverCheckHeight && !snapshot.ReshareRecoverTasked {
 		// Send reshareRecovered at height recoverStartHeigh+c.shareDuration/2
 		// Only index in indexsNeedRecover and pending consensus node need to call reshareRecovered
-		indexOfSharing := slices.Index(c.dkgSnapshot.PendingCNs, amevAddress) + 1
-		if indexOfSharing > 0 && currentHeight < targetHeight && slices.Contains(c.dkgSnapshot.IndexNeedRecover, uint64(indexOfSharing)) {
-			if err := c.syncRecoveredSecrets(c.dkgSnapshot, indexOfSharing, state, h); err != nil {
+		indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
+		if indexOfSharing > 0 && currentHeight < targetHeight && slices.Contains(snapshot.IndexNeedRecover, uint64(indexOfSharing)) {
+			if err := c.syncRecoveredSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync recovering DKG, err: %v", err)
 			}
-			receiverMessageKeys, err := getMessagePubkeys(c.backend, c.dkgSnapshot.PendingCNs, state, h)
-			if err != nil {
-				return fmt.Errorf("failed to fecth message keys, err: %v", err)
-			}
-			if err := c.taskReshareRecover(receiverMessageKeys, currentHeight, targetHeight, watchList); err != nil {
-				return fmt.Errorf("failed to task DKG reshare recover, err: %v", err)
+			if !suspended {
+				receiverMessageKeys, err := getMessagePubkeys(c.backend, snapshot.PendingCNs, state, h)
+				if err != nil {
+					return fmt.Errorf("failed to fecth message keys, err: %v", err)
+				}
+				if err := c.taskReshareRecover(keystore, receiverMessageKeys, currentHeight, targetHeight, watchList); err != nil {
+					return fmt.Errorf("failed to task DKG reshare recover, err: %v", err)
+				}
 			}
 		}
-		c.dkgSnapshot.ReshareRecoverTasked = true
+		snapshot.ReshareRecoverTasked = true
 	}
 	return nil
 }
@@ -381,13 +407,13 @@ func (c *DBFT) loopTaskList() {
 }
 
 // syncLastRoundSecrets downloads DKG sharings and related PVSS, and sends to keystore
-func (c *DBFT) syncLastRoundSecrets(snap *Snapshot, selfIndex int, state *state.StateDB, header *types.Header) error {
+func (c *DBFT) syncLastRoundSecrets(snap *Snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
 	for i := range snap.CurrentCNs {
-		if err := c.downloadAndReceiveShare(snap.Round-1, i+1, selfIndex, state, header); err != nil {
+		if err := c.downloadAndReceiveShare(keystore, snap.Round-1, i+1, selfIndex, state, header); err != nil {
 			return err
 		}
 		if snap.Round > 1 {
-			if err := c.downloadAndReceiveReshare(snap.Round-1, i+1, selfIndex, state, header); err != nil {
+			if err := c.downloadAndReceiveReshare(keystore, snap.Round-1, i+1, selfIndex, state, header); err != nil {
 				return err
 			}
 		}
@@ -396,21 +422,21 @@ func (c *DBFT) syncLastRoundSecrets(snap *Snapshot, selfIndex int, state *state.
 }
 
 // syncThisRoundSecrets downloads DKG sharings and related PVSS, and sends to keystore
-func (c *DBFT) syncThisRoundSecrets(snap *Snapshot, selfIndex int, state *state.StateDB, header *types.Header) error {
+func (c *DBFT) syncThisRoundSecrets(snap *Snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
 	for i := range snap.PendingCNs {
-		if err := c.downloadAndReceiveShare(snap.Round, i+1, selfIndex, state, header); err != nil {
+		if err := c.downloadAndReceiveShare(keystore, snap.Round, i+1, selfIndex, state, header); err != nil {
 			return err
 		}
 	}
 	for i := range snap.CurrentCNs {
-		if err := c.downloadAndReceiveReshare(snap.Round, i+1, selfIndex, state, header); err != nil {
+		if err := c.downloadAndReceiveReshare(keystore, snap.Round, i+1, selfIndex, state, header); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *DBFT) downloadAndReceiveShare(round uint64, fromIndex int, selfIndex int, state *state.StateDB, header *types.Header) error {
+func (c *DBFT) downloadAndReceiveShare(keystore *antimev.KeyStore, round uint64, fromIndex int, selfIndex int, state *state.StateDB, header *types.Header) error {
 	// Call ReceiveSecretShare
 	shareMsgs, err := getShareMsgs(c.backend, round, uint64(fromIndex), state, header)
 	if err != nil {
@@ -420,14 +446,14 @@ func (c *DBFT) downloadAndReceiveShare(round uint64, fromIndex int, selfIndex in
 	if err != nil {
 		return err
 	}
-	err = c.amevKeystore.ReceiveSecretShare(selfIndex, fromIndex, shareMsgs, spvss)
+	err = keystore.ReceiveSecretShare(selfIndex, fromIndex, shareMsgs, spvss)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *DBFT) downloadAndReceiveReshare(round uint64, fromIndex int, selfIndex int, state *state.StateDB, header *types.Header) error {
+func (c *DBFT) downloadAndReceiveReshare(keystore *antimev.KeyStore, round uint64, fromIndex int, selfIndex int, state *state.StateDB, header *types.Header) error {
 	// Call ReceiveSecretReshare
 	rpvss, err := getResharePVSS(c.backend, round, uint64(fromIndex), state, header)
 	if err != nil {
@@ -439,7 +465,7 @@ func (c *DBFT) downloadAndReceiveReshare(round uint64, fromIndex int, selfIndex 
 		if err != nil {
 			return err
 		}
-		err = c.amevKeystore.ReceiveSecretReshare(selfIndex, fromIndex, reshareMsgs, rpvss)
+		err = keystore.ReceiveSecretReshare(selfIndex, fromIndex, reshareMsgs, rpvss)
 		if err != nil {
 			return err
 		}
@@ -448,7 +474,7 @@ func (c *DBFT) downloadAndReceiveReshare(round uint64, fromIndex int, selfIndex 
 }
 
 // syncRecoveredSecrets downloads DKG recoverings and related PVSS, and sends to keystore
-func (c *DBFT) syncRecoveredSecrets(snap *Snapshot, selfIndex int, state *state.StateDB, header *types.Header) error {
+func (c *DBFT) syncRecoveredSecrets(snap *Snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
 	pvss, err := getSharePVSS(c.backend, snap.Round-1, uint64(selfIndex), state, header)
 	if err != nil {
 		return err
@@ -459,7 +485,7 @@ func (c *DBFT) syncRecoveredSecrets(snap *Snapshot, selfIndex int, state *state.
 			return err
 		}
 		if len(msg) > 0 {
-			err = c.amevKeystore.ReceiveRecoverShare(selfIndex, i+1, msg, pvss)
+			err = keystore.ReceiveRecoverShare(selfIndex, i+1, msg, pvss)
 			if err != nil {
 				return err
 			}
@@ -469,7 +495,7 @@ func (c *DBFT) syncRecoveredSecrets(snap *Snapshot, selfIndex int, state *state.
 }
 
 // syncRecoveredReshares downloads recovered DKG resharings and related PVSS, and sends to keystore
-func (c *DBFT) syncRecoveredReshares(snap *Snapshot, selfIndex int, state *state.StateDB, header *types.Header) error {
+func (c *DBFT) syncRecoveredReshares(snap *Snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
 	for _, index := range snap.IndexNeedRecover {
 		// Call ReceiveSecretReshare
 		rpvss, err := getResharePVSS(c.backend, snap.Round, index, state, header)
@@ -481,7 +507,7 @@ func (c *DBFT) syncRecoveredReshares(snap *Snapshot, selfIndex int, state *state
 			if err != nil {
 				return err
 			}
-			err = c.amevKeystore.ReceiveSecretReshare(selfIndex, int(index), reshareMsgs, rpvss)
+			err = keystore.ReceiveSecretReshare(selfIndex, int(index), reshareMsgs, rpvss)
 			if err != nil {
 				return err
 			}
@@ -491,8 +517,8 @@ func (c *DBFT) syncRecoveredReshares(snap *Snapshot, selfIndex int, state *state
 }
 
 // taskShare tries to send secret shares as a transaction
-func (c *DBFT) taskShare(receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
-	sMsgs, sPvss, err := c.amevKeystore.DKGShare(receiverMessageKeys)
+func (c *DBFT) taskShare(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
+	sMsgs, sPvss, err := keystore.DKGShare(receiverMessageKeys)
 	if err != nil {
 		return err
 	}
@@ -511,8 +537,8 @@ func (c *DBFT) taskShare(receiverMessageKeys []*ecies.PublicKey, start uint64, e
 }
 
 // taskReshare tries to send secret reshares as a transaction
-func (c *DBFT) taskReshare(receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
-	rMsgs, rPvss, err := c.amevKeystore.DKGReshare(receiverMessageKeys)
+func (c *DBFT) taskReshare(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
+	rMsgs, rPvss, err := keystore.DKGReshare(receiverMessageKeys)
 	if err != nil {
 		return err
 	}
@@ -531,12 +557,12 @@ func (c *DBFT) taskReshare(receiverMessageKeys []*ecies.PublicKey, start uint64,
 }
 
 // taskRecover tries to send past secret shares as a transaction
-func (c *DBFT) taskRecover(indexesNeedRecover []uint64, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
+func (c *DBFT) taskRecover(keystore *antimev.KeyStore, indexesNeedRecover []uint64, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
 	var idxsInt []int
 	for _, idx := range indexesNeedRecover {
 		idxsInt = append(idxsInt, int(idx))
 	}
-	msgs, err := c.amevKeystore.DKGRecover(idxsInt, receiverMessageKeys)
+	msgs, err := keystore.DKGRecover(idxsInt, receiverMessageKeys)
 	if err != nil {
 		return err
 	}
@@ -555,9 +581,9 @@ func (c *DBFT) taskRecover(indexesNeedRecover []uint64, receiverMessageKeys []*e
 }
 
 // taskReshareRecover tries to send recovered secret reshares as a transaction
-func (c *DBFT) taskReshareRecover(receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
+func (c *DBFT) taskReshareRecover(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
 	// Recover the lost resharing messages
-	msgs, pvss, err := c.amevKeystore.TryRecoverReshare(receiverMessageKeys)
+	msgs, pvss, err := keystore.TryRecoverReshare(receiverMessageKeys)
 	if err != nil {
 		return err
 	}
