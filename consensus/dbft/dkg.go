@@ -167,7 +167,7 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 	recoverCheckHeight := recoverStartHeight + sharePeriodDuration/2
 	consensusSize := uint64(len(snapshot.CurrentCNs))
 
-	if currentHeight >= shareStartHeight && currentHeight < targetHeight {
+	if !suspended && currentHeight >= shareStartHeight && currentHeight < targetHeight {
 		// Send watch task list to loopTaskChan when handleDKG finished
 		defer func() {
 			c.loopTaskChan <- watchList
