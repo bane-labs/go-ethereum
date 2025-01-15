@@ -358,7 +358,9 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			// of code is guaranteed to be called once by dBFT.
 			var pub *tpke.PublicKey
 			if c.chain.Config().IsNeoXAMEV(dbftBlock.header.Number) {
+				c.lock.RLock()
 				pub, _ = c.amevKeystore.GlobalPublicKey()
+				c.lock.RUnlock()
 			}
 			witness, err := c.getBlockWitness(pub, dbftBlock)
 			if err != nil {
@@ -1181,7 +1183,10 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 			}
 		}
 		msg := dbftRLP(block.header)
-		sig, err := c.amevKeystore.AggregateAndVerifySig(msg, shares)
+		c.lock.RLock()
+		ks := c.amevKeystore
+		c.lock.RUnlock()
+		sig, err := ks.AggregateAndVerifySig(msg, shares)
 		if err != nil {
 			return nil, fmt.Errorf("failed to aggregate signature: %w", err)
 		}
@@ -1285,7 +1290,10 @@ func (c *DBFT) postBlock(h *types.Header, state *state.StateDB) {
 
 		// handle DKG
 		if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
-			err := c.handleDKG(c.dkgSnapshot, c.amevKeystore, h, state, false)
+			c.lock.RLock()
+			ks := c.amevKeystore
+			c.lock.RUnlock()
+			err := c.handleDKG(c.dkgSnapshot, ks, h, state, false)
 			if err != nil {
 				log.Error("handleDKG error", "height", num, "err", err)
 			}
@@ -2512,7 +2520,10 @@ func (c *DBFT) getGlobalPublicKey(h *types.Header, s *state.StateDB) (*tpke.Publ
 	// Replace anti-MEV keystore and DKG snapshot with a temporary copy to avoid
 	// original keystore modification.
 	snapshot := c.dkgSnapshot.Copy()
-	keystore, err := c.amevKeystore.Copy()
+	c.lock.RLock()
+	ks := c.amevKeystore
+	c.lock.RUnlock()
+	keystore, err := ks.Copy()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create keystore backup: %w", err)
 	}
