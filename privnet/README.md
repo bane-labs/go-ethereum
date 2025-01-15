@@ -358,80 +358,17 @@ data: '0xffffffff9700c6906942f0db87d4c54b83be740e8fceef927bd36eeb70bea33176fb383
 });
 ```
 
-## Reinitialize privnet
+## Privnet setups
 
 Privnet configuration includes a set of solid files containing network settings and
 nodes accounts/passwords. To simplify development process, it is supposed not to
 change these configuration files from run to run to keep the privnet as stable
-as possible in development environment. However, it's possible to reinitialize
-all configuration information if needed. Privnet reinitialization includes:
- * Node accounts/passwords regeneration (`privnet/single/node[1,2]/node_address.txt`,
-   `privnet/single/node[1,2]/password.txt`, `privnet/single/node[1,2]/keystore`, `privnet/single/bootnode/bootnode.key`, `privnet/single/bootnode/bootnode_address.txt`);
- * Network ID regeneration (`privnet/single/networkid.txt`);
- * Genesis block settings regeneration (`privnet/single/node[1,2]/genesis_privnet.json`);
- * Corresponding network configuration file update (`privnet/single/config.json`).
-
-Note, that the reinitialisation operation is not supposed to be used during
-standard development flow. To reinitialize the entire private network, please
-follow the steps below:
-
-1. Reinitialize the private network by running `make privnet_init`. It cleans 
-   the files mentioned above and generates the new ones.
-   
-   <details>
-    <summary>Example of reinitialization logs</summary>
-    
-   ```
-   Killing bootnode processes
-   bootnode: no process found
-   Killing nodes processes
-   geth: no process found
-   Cleaning the nodes database files from ./privnet
-   Generate  genesis_privnet.json file
-   Network ID is 2309261357
-   Generate bootnode
-   Create accounts
-   INFO [09-26|13:57:21.034] Maximum peer count                       ETH=50 LES=0 total=50
-   INFO [09-26|13:57:21.035] Smartcard socket not found, disabling    err="stat /run/pcscd/pcscd.comm: no such file or directory"
-   
-   Your new key was generated
-   
-   Public address of the key:   0x9F32FE98fFe189139500Fa10b7A42bD384F3dd19
-   Path of the secret key file: privnet/single/node1/keystore/UTC--2023-09-26T10-57-21.036319562Z--9f32fe98ffe189139500fa10b7a42bd384f3dd19
-   
-   - You can share your public address with anyone. Others need it to interact with you.
-   - You must NEVER share the secret key with anyone! The key controls access to your funds!
-   - You must BACKUP your key file! Without the key, it's impossible to access account funds!
-   - You must REMEMBER your password! Without the password, it's impossible to decrypt the key!
-   
-   Account node1: 9f32fe98ffe189139500fa10b7a42bd384f3dd19
-   INFO [09-26|13:57:22.282] Maximum peer count                       ETH=50 LES=0 total=50
-   INFO [09-26|13:57:22.284] Smartcard socket not found, disabling    err="stat /run/pcscd/pcscd.comm: no such file or directory"
-   
-   Your new key was generated
-   
-   Public address of the key:   0xD44cB7Ecf44C3878DD1028FD658501427Bd2728D
-   Path of the secret key file: privnet/single/node2/keystore/UTC--2023-09-26T10-57-22.284551374Z--d44cb7ecf44c3878dd1028fd658501427bd2728d
-   
-   - You can share your public address with anyone. Others need it to interact with you.
-   - You must NEVER share the secret key with anyone! The key controls access to your funds!
-   - You must BACKUP your key file! Without the key, it's impossible to access account funds!
-   - You must REMEMBER your password! Without the password, it's impossible to decrypt the key!
-   
-   Account node2: d44cb7ecf44c3878dd1028fd658501427bd2728d
-   Copy genesis_privnet.json into nodes
-   OK! For starting use 'make privnet_start'
-   ```
-   </details>
-
-2. Commit changes.
-
-## Privnet setups
+as possible in development environment.
 
 There are several configurations of privnet:
-1. Single consensus (AKA miner) node + one non-miner RPC node. Can be run with `make privnet_start` and stopped with `make privnet_stop`.
-2. Four consensus nodes + one PPC node. Can be run with `make privnet_start_four` and stopped with `make privnet_stop`.
-3. Seven consensus nodes + one RPC node. Can be run with `make privnet_start_seven` and stopped with `make privnet_stop`.
+1. Single consensus (AKA miner) node + one watch-only consensus node + one non-miner RPC node. Can be run with `make privnet_start` and stopped with `make privnet_stop`.
+2. Four consensus nodes + one watch-only consensus node + one PPC node. Can be run with `make privnet_start_four` and stopped with `make privnet_stop`.
+3. Seven consensus nodes + one watch-only consensus node + one RPC node. Can be run with `make privnet_start_seven` and stopped with `make privnet_stop`.
 
-Node's databases, accounts and logs can be found in the setup-specific path, i.e. `./privnet/single/node[1,2]` for single-node consensus setup,
-`./privnet/four/node[1-5]` for four-nodes consensus setup and `./privnet/seven/node[1-8]` for seven-node consensus setup.
+Node's databases, accounts and logs can be found in the setup-specific path, i.e. `./privnet/single/node[0,1,2]` for single-node consensus setup,
+`./privnet/four/node[0-5]` for four-nodes consensus setup and `./privnet/seven/node[0-8]` for seven-node consensus setup.
