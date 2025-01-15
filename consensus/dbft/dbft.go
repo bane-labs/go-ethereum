@@ -306,16 +306,19 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithNewRecoveryRequest[common.Hash](c.newRecoveryRequestCb),
 		dbft.WithNewRecoveryMessage[common.Hash](c.newRecoveryMessageCb),
 		dbft.WithVerifyPrepareResponse[common.Hash](func(_ dbft.ConsensusPayload[common.Hash]) error { return nil }),
-		dbft.WithVerifyPreCommit[common.Hash](func(preCommit dbft.ConsensusPayload[common.Hash]) error { return nil }),
 		dbft.WithVerifyCommit[common.Hash](c.verifyCommitCb),
 		dbft.WithVerifyPrepareRequest[common.Hash](c.verifyPrepareRequestCb),
-		dbft.WithVerifyPreBlock[common.Hash](c.verifyPreBlockCb),
 		dbft.WithVerifyBlock[common.Hash](c.verifyBlockCb),
 		dbft.WithBroadcast[common.Hash](c.broadcastCb),
 		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash](c.config.antiMEVEnablingHeight),
-		dbft.WithNewPreCommit[common.Hash](c.newPreCommitCb),
-		dbft.WithNewPreBlockFromContext[common.Hash](c.newPreBlockFromContextCb),
-		dbft.WithProcessPreBlock(c.processPreBlockCb),
+	}
+	if c.config.antiMEVEnablingHeight >= 0 {
+		dbftCfg = append(dbftCfg,
+			dbft.WithNewPreCommit[common.Hash](c.newPreCommitCb),
+			dbft.WithVerifyPreCommit[common.Hash](func(preCommit dbft.ConsensusPayload[common.Hash]) error { return nil }),
+			dbft.WithNewPreBlockFromContext[common.Hash](c.newPreBlockFromContextCb),
+			dbft.WithVerifyPreBlock[common.Hash](c.verifyPreBlockCb),
+			dbft.WithProcessPreBlock(c.processPreBlockCb))
 	}
 	c.dbft, err = dbft.New[common.Hash](dbftCfg...)
 	if err != nil {
