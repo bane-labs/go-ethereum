@@ -283,759 +283,831 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize dBFT logger: %w", err)
 	}
-	c.dbft, err = dbft.New[common.Hash](
+	dbftCfg := []func(*dbft.Config[common.Hash]){
 		dbft.WithTimer[common.Hash](timer.New()),
 		dbft.WithLogger[common.Hash](logger),
 		dbft.WithSecondsPerBlock[common.Hash](time.Duration(bftCfg.SecondsPerBlock) * time.Second),
-		dbft.WithGetKeyPair[common.Hash](func(keys []dbft.PublicKey) (int, dbft.PrivateKey, dbft.PublicKey) {
-			c.lock.RLock()
-			signer, signFn, ks := c.signer, c.signFn, c.amevKeystore
-			c.lock.RUnlock()
-
-			// Bail out if we're unauthorized to sign a block
-			for i, validator := range keys {
-				if validator.(*PublicKey).Account.Cmp(signer) == 0 {
-					s := &Signer{
-						Signer:       signer,
-						SignFn:       signFn,
-						AmevKeystore: ks,
-					}
-					return i,
-						s,
-						validator // This "public key" is not used by dBFT in any way, but we can provide it, so let it be here.
-				}
-			}
-
-			return -1, nil, nil
-		}),
-		// Consensus engine doesn't have access to the blockchain at the moment of call to constructor. Thus,
-		// we use these `lastIndex` and `lastBlockHash` fields cached in the service.
-		dbft.WithCurrentHeight[common.Hash](func() uint32 {
-			return uint32(c.lastIndex)
-		}),
-		dbft.WithCurrentBlockHash[common.Hash](func() common.Hash {
-			return c.lastBlockHash
-		}),
-		dbft.WithGetValidators[common.Hash](func(txs ...dbft.Transaction[common.Hash]) []dbft.PublicKey {
-			if c.lastBlockHash.Cmp(common.Hash{}) == 0 {
-				// Program bug.
-				panic("last block hash wasn't initialized")
-			}
-
-			var (
-				pKeys []common.Address
-				err   error
-			)
-			if txs == nil {
-				// getValidatorsSorted with empty args is used by dbft to fill the list of
-				// block's validators, thus should return validators from the current
-				// epoch without recalculation.
-				pKeys, err = c.getValidatorsSorted(&c.lastIndex, nil, nil)
-			}
-			// getValidatorsSorted with non-empty args is used by dbft to fill block's
-			// NextConsensus field, but DBFT doesn't provide WithGetConsensusAddress
-			// callback and fills NextConsensus by itself via WithNewBlockFromContext
-			// callback. Thus, leave pKeys empty if txes != nil.
-			if err != nil {
-				// Program bug.
-				panic(fmt.Errorf("failed to retrieve next block validators: %w", err))
-			}
-			res := make([]dbft.PublicKey, len(pKeys))
-			for i, s := range pKeys {
-				res[i] = &PublicKey{
-					Account: s,
-				}
-			}
-			return res
-		}),
-		dbft.WithProcessBlock[common.Hash](func(b dbft.Block[common.Hash]) error {
-			dbftBlock := b.(*Block)
-			if uint64(dbftBlock.Index()) <= c.lastIndex {
-				return nil
-			}
-
-			// Avoid copying and may safely change the block itself, as this part
-			// of code is guaranteed to be called once by dBFT.
-			var pub *tpke.PublicKey
-			if c.chain.Config().IsNeoXAMEV(dbftBlock.header.Number) {
-				c.lock.RLock()
-				pub, _ = c.amevKeystore.GlobalPublicKey()
-				c.lock.RUnlock()
-			}
-			witness, err := c.getBlockWitness(pub, dbftBlock)
-			if err != nil {
-				var count int
-				for _, cm := range c.dbft.Context.CommitPayloads {
-					if cm != nil {
-						count++
-					}
-				}
-				if !errors.Is(err, antimev.ErrSigAggregation) || count == c.dbft.N() {
-					log.Crit("bug: unexpected error during signature aggregation", "error", err)
-				}
-				// Not enough valid shares, waiting for more Commits to be collected.
-				return fmt.Errorf("failed to construct block witness: %w", err)
-			}
-			dbftBlock.header.Extra = append(dbftBlock.header.Extra, witness...) // Extra version isn't changed, validators addresses and signatures are added.
-			state := dbftBlock.state.Copy()
-			res := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
-
-			// Firstly, notify chain about new block.
-			if err := c.blockQueue.PutBlock(res, dbftBlock.state, dbftBlock.receipts); err != nil {
-				// The block might already be added via the regular network
-				// interaction.
-				if h := c.chain.GetHeaderByNumber(res.Number().Uint64()); h == nil {
-					log.Warn("error on enqueue block", "error", err.Error())
-				}
-			}
-
-			c.postBlock(res.Header(), state)
-			return nil
-		}),
-		dbft.WithNewBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
-			if !c.chain.Config().IsNeoXAMEV(big.NewInt(int64(ctx.BlockIndex))) {
-				prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
-				if prepareReq == nil {
-					panic("can't create new block from context: prepare request is nil")
-				}
-				// Reuse PreBlock helper to avoid code duplications.
-				pre := c.newPreBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
-				res := &Block{
-					isLegacy:    true,
-					header:      pre.header,
-					withdrawals: pre.withdrawals,
-				}
-
-				// If we're primary, then reuse sealing state got after PrepareRequest
-				// construction.
-				if ctx.IsPrimary() {
-					res.state = c.sealingState
-					res.receipts = c.sealingReceipts
-				}
-				return res
-			}
-			pre := ctx.PreBlock().(*PreBlock)
-
-			// Short path if we're primary and there's no Envelopes in the block:
-			// reuse state got after PrepareRequest construction.
-			if ctx.IsPrimary() && pre.finalState == nil {
-				return &Block{
-					header:              c.sealingBlock.Header(),
-					withdrawals:         c.sealingBlock.Withdrawals(),
-					transactions:        c.sealingBlock.Transactions(),
-					localSignatureBytes: nil,
-					state:               c.sealingState,
-					receipts:            c.sealingReceipts,
-				}
-			}
-
-			// Manually update header's fields based on fresh state. Avoid changing
-			// the original PreBlock.
-			finalBlock := &PreBlock{
-				header:                 pre.header,
-				transactions:           pre.finalTransactions,
-				withdrawals:            pre.withdrawals,
-				enforceECDSASignatures: c.config.enforceECDSASignatures,
-			}
-			ethBlock := finalBlock.ToEthBlock()
-			h := ethBlock.Header()
-			h.GasUsed = pre.finalGASUsed
-			multisig, threshold := c.getNextConsensus(h, pre.finalState)
-			// treshold may be empty if some error occurs during calculation. Don't
-			// check it, we always have multisig as a backup scheme.
-			h.MixDigest = threshold
-			h.Extra = append(h.Extra[:dbftutil.ExtraVersionLen+dbftutil.ExtraV1SignatureSchemeLen], multisig.Bytes()...)
-
-			// Update state root, transactions root, receipts hash and bloom.
-			res, err := c.FinalizeAndAssemble(c.chain, h, pre.finalState, pre.finalTransactions, nil, pre.finalReceipts, ethBlock.Withdrawals())
-			if err != nil {
-				log.Crit("Failed to finalize and assemble final Block",
-					"err", err)
-			}
-
-			return &Block{
-				header:              res.Header(),
-				withdrawals:         res.Withdrawals(),
-				transactions:        res.Transactions(),
-				localSignatureBytes: nil,
-				state:               pre.finalState,
-				receipts:            pre.finalReceipts,
-			}
-		}),
-		dbft.WithWatchOnly[common.Hash](func() bool {
-			return false
-		}),
-		dbft.WithGetTx[common.Hash](func(h common.Hash) dbft.Transaction[common.Hash] {
-			tx := c.txpool.Get(h)
-			// This check is needed, because in case of missing transaction dBFT
-			// expects a pure nil.
-			if tx != nil {
-				return &Transaction{
-					Tx: tx,
-				}
-			}
-
-			// Do not try to retrieve on-chain transaction.
-			return nil
-		}),
-		dbft.WithGetVerified[common.Hash](func() []dbft.Transaction[common.Hash] {
-			var txs types.Transactions
-			// Check the sealing proposal, because c.sealingTransactions may be nil
-			// in case of missing pending transactions, and it's OK.
-			if c.sealingProposal == nil {
-				// Program bug.
-				panic("missing pending sealing work")
-			}
-			txs = c.sealingTransactions
-
-			res := make([]dbft.Transaction[common.Hash], len(txs))
-			for i := range txs {
-				res[i] = &Transaction{
-					Tx: txs[i],
-				}
-			}
-			return res
-		}),
-		dbft.WithRequestTx[common.Hash](func(hashes ...common.Hash) {
-			if len(hashes) == 0 {
-				return
-			}
-
-			sorted := slices.Clone(hashes)
-			slices.SortFunc(sorted, common.Hash.Cmp)
-			c.txCbList.Store(sorted)
-
-			c.requestTxs(sorted)
-		}),
-		dbft.WithStopTxFlow[common.Hash](func() {
-			var hashes []common.Hash
-			c.txCbList.Store(hashes)
-		}),
-		dbft.WithNewConsensusPayload[common.Hash](c.newPayload),
-		dbft.WithNewPrepareRequest[common.Hash](func(ts uint64, nonce uint64, txHashes []common.Hash) dbft.PrepareRequest[common.Hash] {
-			var req = new(prepareRequest)
-			if c.sealingProposal == nil {
-				panic("bug: sealing proposal is not initialized")
-			}
-
-			// Recalculate block state provided by miner and update sealing proposal if context-related
-			// block fields were changed.
-			dbftBlock := c.newPreBlockFromContext(c.sealingProposal)
-			dbftBlock.transactions = c.sealingTransactions
-			ethBlock := dbftBlock.ToEthBlock()
-
-			state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
-			if err != nil {
-				log.Crit("failed to process state from proposal",
-					"err", err,
-					"number", ethBlock.NumberU64(),
-					"seal hash", c.SealHash(ethBlock.Header()),
-					"parent hash", ethBlock.ParentHash().String(),
-					"intermediate merkle root", ethBlock.Root(),
-					"coinbase", ethBlock.Coinbase().String(),
-					"gas limit", ethBlock.GasLimit(),
-					"gas used", ethBlock.GasUsed(),
-					"difficulty", ethBlock.Difficulty().String(),
-					"mix digest", ethBlock.MixDigest().String(),
-					"nonce", ethBlock.Nonce(),
-					"time", ethBlock.Time(),
-					"uncle hash", ethBlock.UncleHash().String(),
-					"txs", len(ethBlock.Transactions()))
-			}
-
-			header := ethBlock.Header()
-			header.GasUsed = gasUsed
-			multisig, threshold := c.getNextConsensus(header, state)
-			if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne)) {
-				header.MixDigest = threshold
-			} else {
-				header.MixDigest = multisig
-			}
-
-			// Enforce V1 signing scheme startign from NeoXAMEV+1 height to be able to
-			// use block signature fallback mechanism starting from NeoXAMEV height.
-			if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne)) {
-				header.Extra = append(header.Extra[:dbftutil.ExtraVersionLen+dbftutil.ExtraV1SignatureSchemeLen], multisig.Bytes()...)
-			}
-
-			// Update state root, transactions root, receipts hash and bloom.
-			res, err := c.FinalizeAndAssemble(c.chain, header, state, dbftBlock.transactions, nil, receipts, ethBlock.Withdrawals())
-			if err != nil {
-				log.Crit("Failed to finalize and assemble proposed block",
-					"err", err)
-			}
-
-			c.sealingProposal = res.Header()
-			c.sealingState = state
-			c.sealingBlock = res
-			c.sealingReceipts = receipts
-
-			req.SealingProposal = c.sealingProposal
-			if len(c.lastBlockSealHash) == common.HashLength {
-				req.ParentSealHashV0.SetBytes(c.lastBlockSealHash)
-			}
-			req.ParentExtra = c.lastBlockExtra
-			req.TxHashes = txHashes
-
-			return req
-		}),
-		dbft.WithNewCommit[common.Hash](func(sig []byte) dbft.Commit {
-			res := new(commit)
-			res.signature = slices.Clone(sig)
-			res.version = c.getBlockExtraVersion(big.NewInt(int64(c.dbft.Context.BlockIndex)))
-			return res
-		}),
-		dbft.WithNewPrepareResponse[common.Hash](func(prepH common.Hash) dbft.PrepareResponse[common.Hash] {
-			return &prepareResponse{
-				PreparationHashExt: prepH,
-			}
-		}),
-		dbft.WithNewChangeView[common.Hash](func(newView byte, reason dbft.ChangeViewReason, ts uint64) dbft.ChangeView {
-			return &changeView{
-				newViewNumber: newView,
-				ReasonExt:     reason,
-				TimestampExt:  ts,
-			}
-		}),
-		dbft.WithNewRecoveryRequest[common.Hash](func(ts uint64) dbft.RecoveryRequest {
-			return &recoveryRequest{
-				TimestampExt: ts,
-			}
-		}),
-		dbft.WithNewRecoveryMessage[common.Hash](func() dbft.RecoveryMessage[common.Hash] {
-			r := &recoveryMessage{
-				version: c.getBlockExtraVersion(big.NewInt(int64(c.dbft.Context.BlockIndex))),
-			}
-			return r
-		}),
+		dbft.WithGetKeyPair[common.Hash](c.getKeyPairCb),
+		dbft.WithCurrentHeight[common.Hash](c.currentHeightCb),
+		dbft.WithCurrentBlockHash[common.Hash](c.currentBlockHashCb),
+		dbft.WithGetValidators[common.Hash](c.getValidatorsCb),
+		dbft.WithProcessBlock[common.Hash](c.processBlockCb),
+		dbft.WithNewBlockFromContext[common.Hash](c.newBlockFromContextCb),
+		dbft.WithWatchOnly[common.Hash](func() bool { return false }),
+		dbft.WithGetTx[common.Hash](c.getTxCb),
+		dbft.WithGetVerified[common.Hash](c.getVerifiedCb),
+		dbft.WithRequestTx[common.Hash](c.requestTxCb),
+		dbft.WithStopTxFlow[common.Hash](c.stopTxFlowCb),
+		dbft.WithNewConsensusPayload[common.Hash](c.newConsensusPayloadCb),
+		dbft.WithNewPrepareRequest[common.Hash](c.newPrepareRequestCb),
+		dbft.WithNewCommit[common.Hash](c.newCommitCb),
+		dbft.WithNewPrepareResponse[common.Hash](c.newPrepareResponseCb),
+		dbft.WithNewChangeView[common.Hash](c.newChangeViewCb),
+		dbft.WithNewRecoveryRequest[common.Hash](c.newRecoveryRequestCb),
+		dbft.WithNewRecoveryMessage[common.Hash](c.newRecoveryMessageCb),
 		dbft.WithVerifyPrepareResponse[common.Hash](func(_ dbft.ConsensusPayload[common.Hash]) error { return nil }),
 		dbft.WithVerifyPreCommit[common.Hash](func(preCommit dbft.ConsensusPayload[common.Hash]) error { return nil }),
-		dbft.WithVerifyCommit[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) error {
-			cc := p.GetCommit().(*commit)
-			h := big.NewInt(int64(p.Height()))
-
-			if expected := c.getBlockExtraVersion(h); cc.version != expected {
-				return fmt.Errorf("%w: expected %d, got %d", dbftutil.ErrUnexpectedExtraVersion, expected, cc.version)
-			}
-
-			var (
-				expectedLen int
-				v           = cc.version
-				isAMEV      = c.chain.Config().IsNeoXAMEV(h)
-			)
-			switch v {
-			case dbftutil.ExtraV0:
-				expectedLen = crypto.SignatureLength
-			case dbftutil.ExtraV1:
-				if c.config.enforceECDSASignatures || (!isAMEV && c.chain.Config().IsNeoXAMEV(new(big.Int).Add(h, bigOne))) {
-					expectedLen = crypto.SignatureLength
-				} else {
-					expectedLen = tpke.SignatureShareLen
-				}
-			default:
-				return fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, cc.version)
-			}
-			if len(cc.signature) != expectedLen {
-				return fmt.Errorf("invalid signature length: expected %d, got %d", expectedLen, len(cc.signature))
-			}
-
-			// Update share cache for TPKE commits.
-			if expectedLen == tpke.SignatureShareLen {
-				_, err := cc.share()
-				if err != nil {
-					return fmt.Errorf("invalid commit: %w", err)
-				}
-			}
-
-			return nil
-		}),
-		dbft.WithVerifyPrepareRequest[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) error {
-			req := p.GetPrepareRequest().(*prepareRequest)
-			if req.SealingProposal == nil {
-				return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
-			}
-			// Do not verify MixDigest since it depends on block state and will be verified once all transactions
-			// are fetched.
-			parent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 1)
-			if parent == nil {
-				return fmt.Errorf("no parent found for height %d", req.SealingProposal.Number.Uint64()-1)
-			}
-			parentHeader := parent.Header()
-			err := c.verifyHeader(c.chain, req.SealingProposal, []*types.Header{parentHeader}, false)
-			if err != nil {
-				return fmt.Errorf("invalid header: %w", err)
-			}
-
-			// A separate check for post-NeoXAMEV block signing scheme since it depends
-			// on runtime node configuration.
-			extra := dbftutil.Extra(req.SealingProposal.Extra)
-			if c.chain.Config().IsNeoXAMEV(req.SealingProposal.Number) && extra.Version() == dbftutil.ExtraV1 {
-				var expected = dbftutil.ExtraV1ThresholdScheme
-				if c.config.enforceECDSASignatures {
-					expected = dbftutil.ExtraV1ECDSAScheme
-				}
-				if extra.SignatureScheme() != expected {
-					return fmt.Errorf("%w: expected %d, got %d", dbftutil.ErrUnexpectedBlockSignatureScheme, expected, extra.SignatureScheme())
-				}
-			}
-
-			if req.SealingProposal.ParentHash != c.lastBlockHash {
-				if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(req.SealingProposal.Number, bigOne)) && c.lastBlockExtra.SignatureScheme() == dbftutil.ExtraV1ThresholdScheme {
-					return fmt.Errorf("invalid parent hash after NeoXAMEV with threshold signing scheme: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
-				}
-				// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
-				// the one that prepareRequest declares as a parent hash, otherwise it's an error.
-				if c.dbft.BlockIndex <= 1 {
-					return fmt.Errorf("invalid parent: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
-				}
-				var expected common.Hash
-				expected.SetBytes(c.lastBlockSealHash)
-				if req.ParentSealHashV0 != expected {
-					return fmt.Errorf("parent seal hash doesn't match the last block seal hash: expected %s, got %s", expected, req.ParentSealHashV0)
-				}
-				// Verify proposed parent's signature.
-				savedGrandparent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 2)
-				if savedGrandparent == nil {
-					return errors.New("failed to verify parent: failed to retrieve grandparent from storage")
-				}
-				err := c.verifyExtra(req.ParentSealHashV0.Bytes(), req.ParentExtra, savedGrandparent.Header().NextConsensus(), savedGrandparent.Extra())
-				if err != nil {
-					return fmt.Errorf("invalid parent: parent's witness verification failed: %w", err)
-				}
-
-				// After that we assume that parent block is totally valid, and it can be inserted to chain.
-				// Internal fork resolving mechanism will deal with forks.
-				oldHash := c.lastBlockHash
-				oldExtra := c.lastBlockExtra
-				parentHeader.Extra = req.ParentExtra
-				err = c.blockQueue.PutBlock(parent.WithSeal(parentHeader), nil, nil)
-				if err != nil {
-					err = fmt.Errorf("failed to enqueue parent with updated extra for height %d (old hash %s, new hash %s): %w",
-						req.SealingProposal.Number.Uint64()-1,
-						parent.Hash(),
-						req.SealingProposal.ParentHash,
-						err)
-					// This error is critical for further dBFT functioning.
-					log.Warn(err.Error())
-					return err
-				}
-
-				c.lastBlockHash = req.SealingProposal.ParentHash
-				c.lastBlockExtra = req.ParentExtra
-				c.dbft.PrevHash = req.SealingProposal.ParentHash
-
-				log.Info("New parent stored",
-					"number", parentHeader.Number,
-					"old hash", oldHash.String(),
-					"new hash", req.SealingProposal.ParentHash.String(),
-					"sealhash", req.ParentSealHashV0.String(),
-					"old extra", hex.EncodeToString(oldExtra),
-					"new extra", hex.EncodeToString(req.ParentExtra))
-			}
-
-			c.sealingProposal = req.SealingProposal
-
-			// Do not fill c.sealingTransactions. If the node is primary, then sealing txs must be
-			// properly filled by this moment from the new miner proposal in Seal (it happens even
-			// before the dBFT initialisation for this round). If the node is backup, then
-			// sealingTransactions are not needed for proper dBFT functioning (dBFT will collect
-			// transactions via internal mechanism in this consensus view).
-			c.sealingTransactions = nil
-
-			return nil
-		}),
-		dbft.WithVerifyPreBlock[common.Hash](func(b dbft.PreBlock[common.Hash]) bool {
-			dbftBlock := b.(*PreBlock)
-			parent := c.chain.CurrentBlock()
-			if parent.Number.Cmp(dbftBlock.header.Number) >= 0 {
-				log.Warn("proposed PreBlock has already outdated",
-					"current block number", parent.Number.Uint64(),
-					"proposed block number", dbftBlock.header.Number)
-				return false
-			}
-			if c.lastTimestamp > dbftBlock.header.Time {
-				log.Warn("proposed PreBlock has small timestamp",
-					"ts", dbftBlock.header.Time,
-					"last", c.lastTimestamp)
-				return false
-			}
-			ethBlock := dbftBlock.ToEthBlock()
-
-			localPool := c.newLocalPool(parent)
-			errs := localPool.Add(dbftBlock.transactions, false, false)
-			for i, err := range errs {
-				if err != nil {
-					log.Warn("proposed PreBlock has invalid transaction",
-						"index", i,
-						"hash", dbftBlock.transactions[i].Hash(),
-						"error", err,
-					)
-					return false
-				}
-			}
-
-			state, receipts, gasUsed, err := c.chain.VerifyBlock(ethBlock, true)
-			if err != nil {
-				log.Warn("proposed PreBlock verification failed",
-					"err", err.Error())
-				return false
-			}
-
-			// Cache processing result for further usage in case if there's no envelopes
-			// in the block or fallback signing scheme is used.
-			pre := b.(*PreBlock)
-			pre.finalState = state
-			pre.finalReceipts = receipts
-			pre.finalGASUsed = gasUsed
-
-			return true
-		}),
-		dbft.WithVerifyBlock[common.Hash](func(b dbft.Block[common.Hash]) bool {
-			if !c.chain.Config().IsNeoXAMEV(big.NewInt(int64(c.dbft.Context.BlockIndex))) {
-				dbftBlock := b.(*Block)
-				parent := c.chain.CurrentBlock()
-				if parent.Number.Cmp(dbftBlock.header.Number) >= 0 {
-					log.Warn("proposed block has already outdated",
-						"current block number", parent.Number.Uint64(),
-						"proposed block number", dbftBlock.header.Number)
-					return false
-				}
-				if c.lastTimestamp > dbftBlock.header.Time {
-					log.Warn("proposed block has small timestamp",
-						"ts", dbftBlock.header.Time,
-						"last", c.lastTimestamp)
-					return false
-				}
-
-				ethBlock := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
-				state, receipts, _, err := c.chain.VerifyBlock(ethBlock, true)
-				if err != nil {
-					log.Warn("proposed block verification failed",
-						"err", err.Error())
-					return false
-				}
-
-				// Verify NextConsensus based on the state got after in-block transactions processing.
-				var expected common.Hash
-				multisig, threshold := c.getNextConsensus(dbftBlock.header, state)
-				if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(dbftBlock.header.Number, bigOne)) {
-					expected = threshold
-				} else {
-					expected = multisig
-				}
-				if dbftBlock.header.MixDigest != expected {
-					log.Warn("Invalid NextConsensus in the proposed block",
-						"expected", expected.String(),
-						"actual", dbftBlock.header.MixDigest.String())
-					return false
-				}
-
-				dbftBlock.state = state
-				dbftBlock.receipts = receipts
-
-				return true
-			}
-
-			log.Crit("unexpected call to VerifyBlock")
-
-			return false
-		}),
-		dbft.WithBroadcast[common.Hash](func(p dbft.ConsensusPayload[common.Hash]) {
-			if err := p.(*Payload).Sign(c.dbft.Priv.(*Signer)); err != nil {
-				log.Warn("can't sign consensus payload", "error", err)
-			}
-
-			ep := &p.(*Payload).Message
-			err := c.broadcast(ep)
-			if err != nil {
-				log.Warn("can't broadcast consensus message", "error", err)
-			}
-		}),
+		dbft.WithVerifyCommit[common.Hash](c.verifyCommitCb),
+		dbft.WithVerifyPrepareRequest[common.Hash](c.verifyPrepareRequestCb),
+		dbft.WithVerifyPreBlock[common.Hash](c.verifyPreBlockCb),
+		dbft.WithVerifyBlock[common.Hash](c.verifyBlockCb),
+		dbft.WithBroadcast[common.Hash](c.broadcastCb),
 		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash](c.config.antiMEVEnablingHeight),
-		dbft.WithNewPreCommit[common.Hash](func(data []byte) dbft.PreCommit {
-			return &preCommit{
-				dataExt: data,
-			}
-		}),
-		dbft.WithNewPreBlockFromContext[common.Hash](func(ctx *dbft.Context[common.Hash]) dbft.PreBlock[common.Hash] {
-			prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
-			if prepareReq == nil {
-				panic("can't create new PreBlock from context: prepare request is nil")
-			}
-
-			return c.newPreBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
-		}),
-		dbft.WithProcessPreBlock(func(b dbft.PreBlock[common.Hash]) error {
-			var (
-				ctx             = c.dbft.Context
-				pre             = b.(*PreBlock)
-				hasDecryptedTxs bool
-			)
-			// A short path: there's no envelopes at all, use proposed transactions as-is.
-			if len(pre.envelopesData) == 0 {
-				pre.finalTransactions = pre.transactions
-			} else {
-				shares := make(map[int][]*tpke.DecryptionShare)
-				for _, preC := range ctx.PreCommitPayloads {
-					if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
-						blockNum := pre.header.Number.Uint64() - 1
-						dkgIndex, err := c.getDKGIndex(int(preC.ValidatorIndex()), blockNum)
-						if err != nil {
-							return fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", int(preC.ValidatorIndex()), blockNum)
-						}
-						// Indexes in shares map must use dkg index.
-						shares[dkgIndex] = preC.GetPreCommit().(*preCommit).Shares()
-					}
-				}
-				var (
-					encryptedKeys = make([]*tpke.CipherText, len(pre.envelopesData))
-					encryptedMsgs = make([][]byte, len(pre.envelopesData))
-				)
-				for i := range pre.envelopesData {
-					encryptedKeys[i] = pre.envelopesData[i].encryptedKey
-					encryptedMsgs[i] = pre.envelopesData[i].encryptedMsg
-				}
-				c.lock.RLock()
-				ks := c.amevKeystore
-				c.lock.RUnlock()
-
-				decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
-				if err != nil {
-					// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
-					return fmt.Errorf("failed to decrypt Encrypted transactions, not enough valid shares: %w", err)
-				}
-
-				if len(decryptedTxsBytes) != len(pre.envelopesData) {
-					// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
-					return fmt.Errorf("invalid number of Decrypted transactions: expected %d, actual %d", len(pre.envelopesData), len(decryptedTxsBytes))
-				}
-
-				var (
-					j                  int
-					txx                = make([]*types.Transaction, len(pre.transactions))
-					parent             = c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
-					localPool          = c.newLocalPool(parent)
-					fallbackToEnvelope = func(i int, incrementJ bool, reason string) bool {
-						if len(reason) != 0 {
-							log.Info("Falling back to envelope",
-								"envelope hash", pre.transactions[i].Hash(),
-								"envelope index", i,
-								"reason", reason)
-						}
-						errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
-						if errs[0] != nil {
-							log.Info("Falling back to original set of transactions",
-								"envelope hash", pre.transactions[i].Hash(),
-								"envelope index", i,
-								"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
-							txx = pre.transactions
-							hasDecryptedTxs = false
-							return false
-						}
-						txx[i] = pre.transactions[i]
-						if incrementJ {
-							j++
-						}
-						return true
-					}
-				)
-				for i := range pre.transactions {
-					var isEnvelope = j < len(pre.envelopesData) && pre.envelopesData[j].index == i
-					if !isEnvelope || // pre.transactions[i] is not an envelope, use it as-is.
-						decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
-						var reason string
-						if isEnvelope {
-							reason = "envelope data decryption failed"
-						}
-						if fallbackToEnvelope(i, isEnvelope, reason) {
-							continue
-						} else {
-							break
-						}
-					}
-					log.Info("Envelope data decrypted",
-						"envelope hash", pre.transactions[i].Hash(),
-						"envelope index", i,
-						"data", hex.EncodeToString(decryptedTxsBytes[j]))
-					var decryptedTx = new(types.Transaction)
-					err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
-					if err != nil {
-						if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction decoding failed: %s", err)) {
-							continue
-						} else {
-							break
-						}
-					}
-					err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i])
-					if err != nil {
-						if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction verification failed: %s", err)) {
-							continue
-						} else {
-							break
-						}
-					}
-					errs := localPool.Add([]*types.Transaction{decryptedTx}, false, false)
-					if errs[0] != nil {
-						if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction has pool conflicts: %s", errs[0].Error())) {
-							continue
-						} else {
-							break
-						}
-					}
-					txx[i] = decryptedTx
-					j++
-					hasDecryptedTxs = true
-				}
-				pre.finalTransactions = txx
-			}
-
-			// Use cached processing results if no new transactions were included into
-			// the block compared to the original proposal.
-			if !hasDecryptedTxs {
-				return nil
-			}
-
-			// Process state with constructed list of transactions to fill state-dependent
-			// block fields.
-			finalBlock := &PreBlock{
-				header:                 pre.header,
-				transactions:           pre.finalTransactions,
-				withdrawals:            pre.withdrawals,
-				enforceECDSASignatures: c.config.enforceECDSASignatures,
-			}
-			ethBlock := finalBlock.ToEthBlock()
-			state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
-			if err != nil {
-				// Something went wrong, fallback to the original set of transactions and cached
-				// processing results.
-				log.Error("failed to process PreBlock, falling back to the original proposal",
-					"err", err,
-					"number", ethBlock.NumberU64(),
-					"seal hash", c.SealHash(ethBlock.Header()),
-					"parent hash", ethBlock.ParentHash().String(),
-					"intermediate merkle root", ethBlock.Root(),
-					"coinbase", ethBlock.Coinbase().String(),
-					"gas limit", ethBlock.GasLimit(),
-					"gas used", ethBlock.GasUsed(),
-					"difficulty", ethBlock.Difficulty().String(),
-					"mix digest", ethBlock.MixDigest().String(),
-					"nonce", ethBlock.Nonce(),
-					"time", ethBlock.Time(),
-					"uncle hash", ethBlock.UncleHash().String(),
-					"txs", len(ethBlock.Transactions()))
-				pre.finalTransactions = pre.transactions
-				return nil
-			}
-
-			pre.finalState, pre.finalReceipts, pre.finalGASUsed = state, receipts, gasUsed
-			return nil
-		}),
-	)
+		dbft.WithNewPreCommit[common.Hash](c.newPreCommitCb),
+		dbft.WithNewPreBlockFromContext[common.Hash](c.newPreBlockFromContextCb),
+		dbft.WithProcessPreBlock(c.processPreBlockCb),
+	}
+	c.dbft, err = dbft.New[common.Hash](dbftCfg...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize dBFT: %w", err)
 	}
 
 	return c, nil
+}
+
+// getKeyPairCb is a dbft library setting callback.
+func (c *DBFT) getKeyPairCb(keys []dbft.PublicKey) (int, dbft.PrivateKey, dbft.PublicKey) {
+	c.lock.RLock()
+	signer, signFn, ks := c.signer, c.signFn, c.amevKeystore
+	c.lock.RUnlock()
+
+	// Bail out if we're unauthorized to sign a block
+	for i, validator := range keys {
+		if validator.(*PublicKey).Account.Cmp(signer) == 0 {
+			s := &Signer{
+				Signer:       signer,
+				SignFn:       signFn,
+				AmevKeystore: ks,
+			}
+			return i,
+				s,
+				validator // This "public key" is not used by dBFT in any way, but we can provide it, so let it be here.
+		}
+	}
+
+	return -1, nil, nil
+}
+
+// currentHeightCb is a dbft library setting callback. Consensus engine doesn't have
+// access to the blockchain at the moment of call to constructor. Thus, we use `lastIndex`
+// field cached in the service.
+func (c *DBFT) currentHeightCb() uint32 {
+	return uint32(c.lastIndex)
+}
+
+// currentBlockHashCb is a dbft library setting callback. Consensus engine doesn't have
+// access to the blockchain at the moment of call to constructor. Thus, we use `lastBlockHash`
+// field cached in the service.
+func (c *DBFT) currentBlockHashCb() common.Hash {
+	return c.lastBlockHash
+}
+
+// getValidatorsCb is a dbft library setting callback.
+func (c *DBFT) getValidatorsCb(txs ...dbft.Transaction[common.Hash]) []dbft.PublicKey {
+	if c.lastBlockHash.Cmp(common.Hash{}) == 0 {
+		// Program bug.
+		panic("last block hash wasn't initialized")
+	}
+
+	var (
+		pKeys []common.Address
+		err   error
+	)
+	if txs == nil {
+		// getValidatorsSorted with empty args is used by dbft to fill the list of
+		// block's validators, thus should return validators from the current
+		// epoch without recalculation.
+		pKeys, err = c.getValidatorsSorted(&c.lastIndex, nil, nil)
+	}
+	// getValidatorsSorted with non-empty args is used by dbft to fill block's
+	// NextConsensus field, but DBFT doesn't provide WithGetConsensusAddress
+	// callback and fills NextConsensus by itself via WithNewBlockFromContext
+	// callback. Thus, leave pKeys empty if txes != nil.
+	if err != nil {
+		// Program bug.
+		panic(fmt.Errorf("failed to retrieve next block validators: %w", err))
+	}
+	res := make([]dbft.PublicKey, len(pKeys))
+	for i, s := range pKeys {
+		res[i] = &PublicKey{
+			Account: s,
+		}
+	}
+	return res
+}
+
+// processBlockCb is a dbft library setting callback.
+func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
+	dbftBlock := b.(*Block)
+	if uint64(dbftBlock.Index()) <= c.lastIndex {
+		return nil
+	}
+
+	// Avoid copying and may safely change the block itself, as this part
+	// of code is guaranteed to be called once by dBFT.
+	var pub *tpke.PublicKey
+	if c.chain.Config().IsNeoXAMEV(dbftBlock.header.Number) {
+		c.lock.RLock()
+		ks := c.amevKeystore
+		c.lock.RUnlock()
+		pub, _ = ks.GlobalPublicKey()
+	}
+	witness, err := c.getBlockWitness(pub, dbftBlock)
+	if err != nil {
+		var count int
+		for _, cm := range c.dbft.Context.CommitPayloads {
+			if cm != nil {
+				count++
+			}
+		}
+		if !errors.Is(err, antimev.ErrSigAggregation) || count == c.dbft.N() {
+			log.Crit("bug: unexpected error during signature aggregation", "error", err)
+		}
+		// Not enough valid shares, waiting for more Commits to be collected.
+		return fmt.Errorf("failed to construct block witness: %w", err)
+	}
+	dbftBlock.header.Extra = append(dbftBlock.header.Extra, witness...) // Extra version isn't changed, validators addresses and signatures are added.
+	state := dbftBlock.state.Copy()
+	res := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
+
+	// Firstly, notify chain about new block.
+	if err := c.blockQueue.PutBlock(res, dbftBlock.state, dbftBlock.receipts); err != nil {
+		// The block might already be added via the regular network
+		// interaction.
+		if h := c.chain.GetHeaderByNumber(res.Number().Uint64()); h == nil {
+			log.Warn("error on enqueue block", "error", err.Error())
+		}
+	}
+
+	c.postBlock(res.Header(), state)
+	return nil
+}
+
+// newBlockFromContextCb is a dbft library setting callback.
+func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
+	if !c.chain.Config().IsNeoXAMEV(big.NewInt(int64(ctx.BlockIndex))) {
+		prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
+		if prepareReq == nil {
+			panic("can't create new block from context: prepare request is nil")
+		}
+		// Reuse PreBlock helper to avoid code duplications.
+		pre := c.newPreBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
+		res := &Block{
+			isLegacy:    true,
+			header:      pre.header,
+			withdrawals: pre.withdrawals,
+		}
+
+		// If we're primary, then reuse sealing state got after PrepareRequest
+		// construction.
+		if ctx.IsPrimary() {
+			res.state = c.sealingState
+			res.receipts = c.sealingReceipts
+		}
+		return res
+	}
+	pre := ctx.PreBlock().(*PreBlock)
+
+	// Short path if we're primary and there's no Envelopes in the block:
+	// reuse state got after PrepareRequest construction.
+	if ctx.IsPrimary() && pre.finalState == nil {
+		return &Block{
+			header:              c.sealingBlock.Header(),
+			withdrawals:         c.sealingBlock.Withdrawals(),
+			transactions:        c.sealingBlock.Transactions(),
+			localSignatureBytes: nil,
+			state:               c.sealingState,
+			receipts:            c.sealingReceipts,
+		}
+	}
+
+	// Manually update header's fields based on fresh state. Avoid changing
+	// the original PreBlock.
+	finalBlock := &PreBlock{
+		header:                 pre.header,
+		transactions:           pre.finalTransactions,
+		withdrawals:            pre.withdrawals,
+		enforceECDSASignatures: c.config.enforceECDSASignatures,
+	}
+	ethBlock := finalBlock.ToEthBlock()
+	h := ethBlock.Header()
+	h.GasUsed = pre.finalGASUsed
+	multisig, threshold := c.getNextConsensus(h, pre.finalState)
+	// treshold may be empty if some error occurs during calculation. Don't
+	// check it, we always have multisig as a backup scheme.
+	h.MixDigest = threshold
+	h.Extra = append(h.Extra[:dbftutil.ExtraVersionLen+dbftutil.ExtraV1SignatureSchemeLen], multisig.Bytes()...)
+
+	// Update state root, transactions root, receipts hash and bloom.
+	res, err := c.FinalizeAndAssemble(c.chain, h, pre.finalState, pre.finalTransactions, nil, pre.finalReceipts, ethBlock.Withdrawals())
+	if err != nil {
+		log.Crit("Failed to finalize and assemble final Block",
+			"err", err)
+	}
+
+	return &Block{
+		header:              res.Header(),
+		withdrawals:         res.Withdrawals(),
+		transactions:        res.Transactions(),
+		localSignatureBytes: nil,
+		state:               pre.finalState,
+		receipts:            pre.finalReceipts,
+	}
+}
+
+// getTxCb is a dbft library setting callback.
+func (c *DBFT) getTxCb(h common.Hash) dbft.Transaction[common.Hash] {
+	tx := c.txpool.Get(h)
+	// This check is needed, because in case of missing transaction dBFT
+	// expects a pure nil.
+	if tx != nil {
+		return &Transaction{
+			Tx: tx,
+		}
+	}
+
+	// Do not try to retrieve on-chain transaction.
+	return nil
+}
+
+// getVerifiedCb is a dbft library setting callback.
+func (c *DBFT) getVerifiedCb() []dbft.Transaction[common.Hash] {
+	var txs types.Transactions
+	// Check the sealing proposal, because c.sealingTransactions may be nil
+	// in case of missing pending transactions, and it's OK.
+	if c.sealingProposal == nil {
+		// Program bug.
+		panic("missing pending sealing work")
+	}
+	txs = c.sealingTransactions
+
+	res := make([]dbft.Transaction[common.Hash], len(txs))
+	for i := range txs {
+		res[i] = &Transaction{
+			Tx: txs[i],
+		}
+	}
+	return res
+}
+
+// requestTxCb is a dbft library setting callback.
+func (c *DBFT) requestTxCb(hashes ...common.Hash) {
+	if len(hashes) == 0 {
+		return
+	}
+
+	sorted := slices.Clone(hashes)
+	slices.SortFunc(sorted, common.Hash.Cmp)
+	c.txCbList.Store(sorted)
+
+	c.requestTxs(sorted)
+}
+
+// stopTxFlowCb is a dbft library setting callback.
+func (c *DBFT) stopTxFlowCb() {
+	var hashes []common.Hash
+	c.txCbList.Store(hashes)
+}
+
+// newPrepareRequestCb is a dbft library setting callback.
+func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Hash) dbft.PrepareRequest[common.Hash] {
+	var req = new(prepareRequest)
+	if c.sealingProposal == nil {
+		panic("bug: sealing proposal is not initialized")
+	}
+
+	// Recalculate block state provided by miner and update sealing proposal if context-related
+	// block fields were changed.
+	dbftBlock := c.newPreBlockFromContext(c.sealingProposal)
+	dbftBlock.transactions = c.sealingTransactions
+	ethBlock := dbftBlock.ToEthBlock()
+
+	state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
+	if err != nil {
+		log.Crit("failed to process state from proposal",
+			"err", err,
+			"number", ethBlock.NumberU64(),
+			"seal hash", c.SealHash(ethBlock.Header()),
+			"parent hash", ethBlock.ParentHash().String(),
+			"intermediate merkle root", ethBlock.Root(),
+			"coinbase", ethBlock.Coinbase().String(),
+			"gas limit", ethBlock.GasLimit(),
+			"gas used", ethBlock.GasUsed(),
+			"difficulty", ethBlock.Difficulty().String(),
+			"mix digest", ethBlock.MixDigest().String(),
+			"nonce", ethBlock.Nonce(),
+			"time", ethBlock.Time(),
+			"uncle hash", ethBlock.UncleHash().String(),
+			"txs", len(ethBlock.Transactions()))
+	}
+
+	header := ethBlock.Header()
+	header.GasUsed = gasUsed
+	multisig, threshold := c.getNextConsensus(header, state)
+	if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne)) {
+		header.MixDigest = threshold
+	} else {
+		header.MixDigest = multisig
+	}
+
+	// Enforce V1 signing scheme startign from NeoXAMEV+1 height to be able to
+	// use block signature fallback mechanism starting from NeoXAMEV height.
+	if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne)) {
+		header.Extra = append(header.Extra[:dbftutil.ExtraVersionLen+dbftutil.ExtraV1SignatureSchemeLen], multisig.Bytes()...)
+	}
+
+	// Update state root, transactions root, receipts hash and bloom.
+	res, err := c.FinalizeAndAssemble(c.chain, header, state, dbftBlock.transactions, nil, receipts, ethBlock.Withdrawals())
+	if err != nil {
+		log.Crit("Failed to finalize and assemble proposed block",
+			"err", err)
+	}
+
+	c.sealingProposal = res.Header()
+	c.sealingState = state
+	c.sealingBlock = res
+	c.sealingReceipts = receipts
+
+	req.SealingProposal = c.sealingProposal
+	if len(c.lastBlockSealHash) == common.HashLength {
+		req.ParentSealHashV0.SetBytes(c.lastBlockSealHash)
+	}
+	req.ParentExtra = c.lastBlockExtra
+	req.TxHashes = txHashes
+
+	return req
+}
+
+// newCommitCb is a dbft library setting callback.
+func (c *DBFT) newCommitCb(sig []byte) dbft.Commit {
+	res := new(commit)
+	res.signature = slices.Clone(sig)
+	res.version = c.getBlockExtraVersion(big.NewInt(int64(c.dbft.Context.BlockIndex)))
+	return res
+}
+
+// newPrepareResponseCb is a dbft library setting callback.
+func (c *DBFT) newPrepareResponseCb(prepH common.Hash) dbft.PrepareResponse[common.Hash] {
+	return &prepareResponse{
+		PreparationHashExt: prepH,
+	}
+}
+
+// newChangeViewCb is a dbft library setting callback.
+func (c *DBFT) newChangeViewCb(newView byte, reason dbft.ChangeViewReason, ts uint64) dbft.ChangeView {
+	return &changeView{
+		newViewNumber: newView,
+		ReasonExt:     reason,
+		TimestampExt:  ts,
+	}
+}
+
+// newRecoveryRequestCb is a dbft library setting callback.
+func (c *DBFT) newRecoveryRequestCb(ts uint64) dbft.RecoveryRequest {
+	return &recoveryRequest{
+		TimestampExt: ts,
+	}
+}
+
+// newRecoveryMessageCb is a dbft library setting callback.
+func (c *DBFT) newRecoveryMessageCb() dbft.RecoveryMessage[common.Hash] {
+	r := &recoveryMessage{
+		version: c.getBlockExtraVersion(big.NewInt(int64(c.dbft.Context.BlockIndex))),
+	}
+	return r
+}
+
+// verifyCommitCb is a dbft library setting callback.
+func (c *DBFT) verifyCommitCb(p dbft.ConsensusPayload[common.Hash]) error {
+	cc := p.GetCommit().(*commit)
+	h := big.NewInt(int64(p.Height()))
+
+	if expected := c.getBlockExtraVersion(h); cc.version != expected {
+		return fmt.Errorf("%w: expected %d, got %d", dbftutil.ErrUnexpectedExtraVersion, expected, cc.version)
+	}
+
+	var (
+		expectedLen int
+		v           = cc.version
+		isAMEV      = c.chain.Config().IsNeoXAMEV(h)
+	)
+	switch v {
+	case dbftutil.ExtraV0:
+		expectedLen = crypto.SignatureLength
+	case dbftutil.ExtraV1:
+		if c.config.enforceECDSASignatures || (!isAMEV && c.chain.Config().IsNeoXAMEV(new(big.Int).Add(h, bigOne))) {
+			expectedLen = crypto.SignatureLength
+		} else {
+			expectedLen = tpke.SignatureShareLen
+		}
+	default:
+		return fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, cc.version)
+	}
+	if len(cc.signature) != expectedLen {
+		return fmt.Errorf("invalid signature length: expected %d, got %d", expectedLen, len(cc.signature))
+	}
+
+	// Update share cache for TPKE commits.
+	if expectedLen == tpke.SignatureShareLen {
+		_, err := cc.share()
+		if err != nil {
+			return fmt.Errorf("invalid commit: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// verifyPrepareRequestCb is a dbft library setting callback.
+func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) error {
+	req := p.GetPrepareRequest().(*prepareRequest)
+	if req.SealingProposal == nil {
+		return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
+	}
+	// Do not verify MixDigest since it depends on block state and will be verified once all transactions
+	// are fetched.
+	parent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 1)
+	if parent == nil {
+		return fmt.Errorf("no parent found for height %d", req.SealingProposal.Number.Uint64()-1)
+	}
+	parentHeader := parent.Header()
+	err := c.verifyHeader(c.chain, req.SealingProposal, []*types.Header{parentHeader}, false)
+	if err != nil {
+		return fmt.Errorf("invalid header: %w", err)
+	}
+
+	// A separate check for post-NeoXAMEV block signing scheme since it depends
+	// on runtime node configuration.
+	extra := dbftutil.Extra(req.SealingProposal.Extra)
+	if c.chain.Config().IsNeoXAMEV(req.SealingProposal.Number) && extra.Version() == dbftutil.ExtraV1 {
+		var expected = dbftutil.ExtraV1ThresholdScheme
+		if c.config.enforceECDSASignatures {
+			expected = dbftutil.ExtraV1ECDSAScheme
+		}
+		if extra.SignatureScheme() != expected {
+			return fmt.Errorf("%w: expected %d, got %d", dbftutil.ErrUnexpectedBlockSignatureScheme, expected, extra.SignatureScheme())
+		}
+	}
+
+	if req.SealingProposal.ParentHash != c.lastBlockHash {
+		if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(req.SealingProposal.Number, bigOne)) && c.lastBlockExtra.SignatureScheme() == dbftutil.ExtraV1ThresholdScheme {
+			return fmt.Errorf("invalid parent hash after NeoXAMEV with threshold signing scheme: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
+		}
+		// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
+		// the one that prepareRequest declares as a parent hash, otherwise it's an error.
+		if c.dbft.BlockIndex <= 1 {
+			return fmt.Errorf("invalid parent: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
+		}
+		var expected common.Hash
+		expected.SetBytes(c.lastBlockSealHash)
+		if req.ParentSealHashV0 != expected {
+			return fmt.Errorf("parent seal hash doesn't match the last block seal hash: expected %s, got %s", expected, req.ParentSealHashV0)
+		}
+		// Verify proposed parent's signature.
+		savedGrandparent := c.chain.GetBlockByNumber(req.SealingProposal.Number.Uint64() - 2)
+		if savedGrandparent == nil {
+			return errors.New("failed to verify parent: failed to retrieve grandparent from storage")
+		}
+		err := c.verifyExtra(req.ParentSealHashV0.Bytes(), req.ParentExtra, savedGrandparent.Header().NextConsensus(), savedGrandparent.Extra())
+		if err != nil {
+			return fmt.Errorf("invalid parent: parent's witness verification failed: %w", err)
+		}
+
+		// After that we assume that parent block is totally valid, and it can be inserted to chain.
+		// Internal fork resolving mechanism will deal with forks.
+		oldHash := c.lastBlockHash
+		oldExtra := c.lastBlockExtra
+		parentHeader.Extra = req.ParentExtra
+		err = c.blockQueue.PutBlock(parent.WithSeal(parentHeader), nil, nil)
+		if err != nil {
+			err = fmt.Errorf("failed to enqueue parent with updated extra for height %d (old hash %s, new hash %s): %w",
+				req.SealingProposal.Number.Uint64()-1,
+				parent.Hash(),
+				req.SealingProposal.ParentHash,
+				err)
+			// This error is critical for further dBFT functioning.
+			log.Warn(err.Error())
+			return err
+		}
+
+		c.lastBlockHash = req.SealingProposal.ParentHash
+		c.lastBlockExtra = req.ParentExtra
+		c.dbft.PrevHash = req.SealingProposal.ParentHash
+
+		log.Info("New parent stored",
+			"number", parentHeader.Number,
+			"old hash", oldHash.String(),
+			"new hash", req.SealingProposal.ParentHash.String(),
+			"sealhash", req.ParentSealHashV0.String(),
+			"old extra", hex.EncodeToString(oldExtra),
+			"new extra", hex.EncodeToString(req.ParentExtra))
+	}
+
+	c.sealingProposal = req.SealingProposal
+
+	// Do not fill c.sealingTransactions. If the node is primary, then sealing txs must be
+	// properly filled by this moment from the new miner proposal in Seal (it happens even
+	// before the dBFT initialisation for this round). If the node is backup, then
+	// sealingTransactions are not needed for proper dBFT functioning (dBFT will collect
+	// transactions via internal mechanism in this consensus view).
+	c.sealingTransactions = nil
+
+	return nil
+}
+
+// verifyPreBlockCb is a dbft library setting callback.
+func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
+	dbftBlock := b.(*PreBlock)
+	parent := c.chain.CurrentBlock()
+	if parent.Number.Cmp(dbftBlock.header.Number) >= 0 {
+		log.Warn("proposed PreBlock has already outdated",
+			"current block number", parent.Number.Uint64(),
+			"proposed block number", dbftBlock.header.Number)
+		return false
+	}
+	if c.lastTimestamp > dbftBlock.header.Time {
+		log.Warn("proposed PreBlock has small timestamp",
+			"ts", dbftBlock.header.Time,
+			"last", c.lastTimestamp)
+		return false
+	}
+	ethBlock := dbftBlock.ToEthBlock()
+
+	localPool := c.newLocalPool(parent)
+	errs := localPool.Add(dbftBlock.transactions, false, false)
+	for i, err := range errs {
+		if err != nil {
+			log.Warn("proposed PreBlock has invalid transaction",
+				"index", i,
+				"hash", dbftBlock.transactions[i].Hash(),
+				"error", err,
+			)
+			return false
+		}
+	}
+
+	state, receipts, gasUsed, err := c.chain.VerifyBlock(ethBlock, true)
+	if err != nil {
+		log.Warn("proposed PreBlock verification failed",
+			"err", err.Error())
+		return false
+	}
+
+	// Cache processing result for further usage in case if there's no envelopes
+	// in the block or fallback signing scheme is used.
+	pre := b.(*PreBlock)
+	pre.finalState = state
+	pre.finalReceipts = receipts
+	pre.finalGASUsed = gasUsed
+
+	return true
+}
+
+// verifyBlockCb is a dbft library setting callback.
+func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash]) bool {
+	if !c.chain.Config().IsNeoXAMEV(big.NewInt(int64(c.dbft.Context.BlockIndex))) {
+		dbftBlock := b.(*Block)
+		parent := c.chain.CurrentBlock()
+		if parent.Number.Cmp(dbftBlock.header.Number) >= 0 {
+			log.Warn("proposed block has already outdated",
+				"current block number", parent.Number.Uint64(),
+				"proposed block number", dbftBlock.header.Number)
+			return false
+		}
+		if c.lastTimestamp > dbftBlock.header.Time {
+			log.Warn("proposed block has small timestamp",
+				"ts", dbftBlock.header.Time,
+				"last", c.lastTimestamp)
+			return false
+		}
+
+		ethBlock := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
+		state, receipts, _, err := c.chain.VerifyBlock(ethBlock, true)
+		if err != nil {
+			log.Warn("proposed block verification failed",
+				"err", err.Error())
+			return false
+		}
+
+		// Verify NextConsensus based on the state got after in-block transactions processing.
+		var expected common.Hash
+		multisig, threshold := c.getNextConsensus(dbftBlock.header, state)
+		if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(dbftBlock.header.Number, bigOne)) {
+			expected = threshold
+		} else {
+			expected = multisig
+		}
+		if dbftBlock.header.MixDigest != expected {
+			log.Warn("Invalid NextConsensus in the proposed block",
+				"expected", expected.String(),
+				"actual", dbftBlock.header.MixDigest.String())
+			return false
+		}
+
+		dbftBlock.state = state
+		dbftBlock.receipts = receipts
+
+		return true
+	}
+
+	log.Crit("unexpected call to VerifyBlock")
+
+	return false
+}
+
+// broadcastCb is a dbft library setting callback.
+func (c *DBFT) broadcastCb(p dbft.ConsensusPayload[common.Hash]) {
+	if err := p.(*Payload).Sign(c.dbft.Priv.(*Signer)); err != nil {
+		log.Warn("can't sign consensus payload", "error", err)
+	}
+
+	ep := &p.(*Payload).Message
+	err := c.broadcast(ep)
+	if err != nil {
+		log.Warn("can't broadcast consensus message", "error", err)
+	}
+}
+
+// newPreCommitCb is a dbft library setting callback.
+func (c *DBFT) newPreCommitCb(data []byte) dbft.PreCommit {
+	return &preCommit{dataExt: data}
+}
+
+// newPreBlockFromContextCb is a dbft library setting callback.
+func (c *DBFT) newPreBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.PreBlock[common.Hash] {
+	prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
+	if prepareReq == nil {
+		panic("can't create new PreBlock from context: prepare request is nil")
+	}
+
+	return c.newPreBlockFromContext(prepareReq.GetPrepareRequest().(*prepareRequest).SealingProposal)
+}
+
+// processPreBlockCb is a dbft library setting callback.
+func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
+	var (
+		ctx             = c.dbft.Context
+		pre             = b.(*PreBlock)
+		hasDecryptedTxs bool
+	)
+	// A short path: there's no envelopes at all, use proposed transactions as-is.
+	if len(pre.envelopesData) == 0 {
+		pre.finalTransactions = pre.transactions
+	} else {
+		shares := make(map[int][]*tpke.DecryptionShare)
+		for _, preC := range ctx.PreCommitPayloads {
+			if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
+				blockNum := pre.header.Number.Uint64() - 1
+				dkgIndex, err := c.getDKGIndex(int(preC.ValidatorIndex()), blockNum)
+				if err != nil {
+					return fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", int(preC.ValidatorIndex()), blockNum)
+				}
+				// Indexes in shares map must use dkg index.
+				shares[dkgIndex] = preC.GetPreCommit().(*preCommit).Shares()
+			}
+		}
+		var (
+			encryptedKeys = make([]*tpke.CipherText, len(pre.envelopesData))
+			encryptedMsgs = make([][]byte, len(pre.envelopesData))
+		)
+		for i := range pre.envelopesData {
+			encryptedKeys[i] = pre.envelopesData[i].encryptedKey
+			encryptedMsgs[i] = pre.envelopesData[i].encryptedMsg
+		}
+		c.lock.RLock()
+		ks := c.amevKeystore
+		c.lock.RUnlock()
+
+		decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
+		if err != nil {
+			// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
+			return fmt.Errorf("failed to decrypt Encrypted transactions, not enough valid shares: %w", err)
+		}
+
+		if len(decryptedTxsBytes) != len(pre.envelopesData) {
+			// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
+			return fmt.Errorf("invalid number of Decrypted transactions: expected %d, actual %d", len(pre.envelopesData), len(decryptedTxsBytes))
+		}
+
+		var (
+			j                  int
+			txx                = make([]*types.Transaction, len(pre.transactions))
+			parent             = c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
+			localPool          = c.newLocalPool(parent)
+			fallbackToEnvelope = func(i int, incrementJ bool, reason string) bool {
+				if len(reason) != 0 {
+					log.Info("Falling back to envelope",
+						"envelope hash", pre.transactions[i].Hash(),
+						"envelope index", i,
+						"reason", reason)
+				}
+				errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
+				if errs[0] != nil {
+					log.Info("Falling back to original set of transactions",
+						"envelope hash", pre.transactions[i].Hash(),
+						"envelope index", i,
+						"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
+					txx = pre.transactions
+					hasDecryptedTxs = false
+					return false
+				}
+				txx[i] = pre.transactions[i]
+				if incrementJ {
+					j++
+				}
+				return true
+			}
+		)
+		for i := range pre.transactions {
+			var isEnvelope = j < len(pre.envelopesData) && pre.envelopesData[j].index == i
+			if !isEnvelope || // pre.transactions[i] is not an envelope, use it as-is.
+				decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
+				var reason string
+				if isEnvelope {
+					reason = "envelope data decryption failed"
+				}
+				if fallbackToEnvelope(i, isEnvelope, reason) {
+					continue
+				} else {
+					break
+				}
+			}
+			log.Info("Envelope data decrypted",
+				"envelope hash", pre.transactions[i].Hash(),
+				"envelope index", i,
+				"data", hex.EncodeToString(decryptedTxsBytes[j]))
+			var decryptedTx = new(types.Transaction)
+			err := decryptedTx.DecodeRLP(rlp.NewStream(bytes.NewReader(decryptedTxsBytes[j]), 0))
+			if err != nil {
+				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction decoding failed: %s", err)) {
+					continue
+				} else {
+					break
+				}
+			}
+			err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i])
+			if err != nil {
+				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction verification failed: %s", err)) {
+					continue
+				} else {
+					break
+				}
+			}
+			errs := localPool.Add([]*types.Transaction{decryptedTx}, false, false)
+			if errs[0] != nil {
+				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction has pool conflicts: %s", errs[0].Error())) {
+					continue
+				} else {
+					break
+				}
+			}
+			txx[i] = decryptedTx
+			j++
+			hasDecryptedTxs = true
+		}
+		pre.finalTransactions = txx
+	}
+
+	// Use cached processing results if no new transactions were included into
+	// the block compared to the original proposal.
+	if !hasDecryptedTxs {
+		return nil
+	}
+
+	// Process state with constructed list of transactions to fill state-dependent
+	// block fields.
+	finalBlock := &PreBlock{
+		header:                 pre.header,
+		transactions:           pre.finalTransactions,
+		withdrawals:            pre.withdrawals,
+		enforceECDSASignatures: c.config.enforceECDSASignatures,
+	}
+	ethBlock := finalBlock.ToEthBlock()
+	state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
+	if err != nil {
+		// Something went wrong, fallback to the original set of transactions and cached
+		// processing results.
+		log.Error("failed to process PreBlock, falling back to the original proposal",
+			"err", err,
+			"number", ethBlock.NumberU64(),
+			"seal hash", c.SealHash(ethBlock.Header()),
+			"parent hash", ethBlock.ParentHash().String(),
+			"intermediate merkle root", ethBlock.Root(),
+			"coinbase", ethBlock.Coinbase().String(),
+			"gas limit", ethBlock.GasLimit(),
+			"gas used", ethBlock.GasUsed(),
+			"difficulty", ethBlock.Difficulty().String(),
+			"mix digest", ethBlock.MixDigest().String(),
+			"nonce", ethBlock.Nonce(),
+			"time", ethBlock.Time(),
+			"uncle hash", ethBlock.UncleHash().String(),
+			"txs", len(ethBlock.Transactions()))
+		pre.finalTransactions = pre.transactions
+		return nil
+	}
+
+	pre.finalState, pre.finalReceipts, pre.finalGASUsed = state, receipts, gasUsed
+	return nil
 }
 
 // newLocalPool returns an initialized instance of LegacyPool with default config
@@ -2163,7 +2235,7 @@ func (c *DBFT) IsExtensibleAllowed(h uint64, u common.Address) error {
 	return nil
 }
 
-func (c *DBFT) newPayload(ctx *dbft.Context[common.Hash], t dbft.MessageType, msg any) dbft.ConsensusPayload[common.Hash] {
+func (c *DBFT) newConsensusPayloadCb(ctx *dbft.Context[common.Hash], t dbft.MessageType, msg any) dbft.ConsensusPayload[common.Hash] {
 	var cp = new(Payload)
 	cp.BlockIndex = uint64(ctx.BlockIndex)
 	cp.message.ValidatorIndex = byte(ctx.MyIndex)
