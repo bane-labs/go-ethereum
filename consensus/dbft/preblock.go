@@ -22,8 +22,13 @@ type PreBlock struct {
 	localShares  []byte
 
 	// envelopesData is the ordered list of decoded content of Envelopes
-	// transactions of the proposed PreBlock.
+	// transactions of the proposed PreBlock. In case if enforceECDSASignatures
+	// is enabled, an attempt to decode Envelope transactions won't be taken, hence
+	// envelopesData will be empty.
 	envelopesData []envelopeData
+	// enforceECDSASignatures reflects whether dBFT uses backup multisignature
+	// block signing scheme.
+	enforceECDSASignatures bool
 
 	// finalTransactions is the cached final list of transactions formed after TPKE
 	// decryption of Envelopes content. This list includes both simple standard and
@@ -41,13 +46,17 @@ func (p *PreBlock) Data() []byte { return p.localShares }
 
 // SetData implements [dbft.PreBlock] interface.
 func (p *PreBlock) SetData(pk dbft.PrivateKey) error {
-	encryptedKeys := make([]*tpke.CipherText, len(p.envelopesData))
-	for i := range p.envelopesData {
-		encryptedKeys[i] = p.envelopesData[i].encryptedKey
-	}
-	shares, err := pk.(*Signer).AmevKeystore.DecryptWithShare(encryptedKeys)
-	if err != nil {
-		return fmt.Errorf("failed to construct shares: %w", err)
+	var shares []*tpke.DecryptionShare
+	if !p.enforceECDSASignatures {
+		encryptedKeys := make([]*tpke.CipherText, len(p.envelopesData))
+		for i := range p.envelopesData {
+			encryptedKeys[i] = p.envelopesData[i].encryptedKey
+		}
+		var err error
+		shares, err = pk.(*Signer).AmevKeystore.DecryptWithShare(encryptedKeys)
+		if err != nil {
+			return fmt.Errorf("failed to construct decryption shares: %w", err)
+		}
 	}
 
 	p.localShares = encodeShares(shares)
@@ -58,10 +67,10 @@ func (p *PreBlock) SetData(pk dbft.PrivateKey) error {
 func (p *PreBlock) Verify(_ dbft.PublicKey, data []byte) error {
 	shares, err := decodeShares(data)
 	if err != nil {
-		return fmt.Errorf("decode shares: %w", err)
+		return fmt.Errorf("failed to decode decryption shares: %w", err)
 	}
 	if len(shares) != len(p.envelopesData) {
-		return fmt.Errorf("invalid Envelopes count: expected %d, got %d", len(p.envelopesData), len(shares))
+		return fmt.Errorf("invalid decryption shares count: expected %d, got %d", len(p.envelopesData), len(shares))
 	}
 	return nil
 }
@@ -86,7 +95,7 @@ func (b *PreBlock) SetTransactions(txx []dbft.Transaction[common.Hash]) {
 	)
 	for i, tx := range txx {
 		txs[i] = tx.(*Transaction).Tx
-		if isEnvelope(txs[i]) {
+		if !b.enforceECDSASignatures && isEnvelope(txs[i]) {
 			d, err := decodeEnvelopeData(txs[i].Data())
 			if err != nil {
 				// Not an Envelope in fact since it contains malformed data. Include
