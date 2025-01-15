@@ -430,9 +430,10 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			// Manually update header's fields based on fresh state. Avoid changing
 			// the original PreBlock.
 			finalBlock := &PreBlock{
-				header:       pre.header,
-				transactions: pre.finalTransactions,
-				withdrawals:  pre.withdrawals,
+				header:                 pre.header,
+				transactions:           pre.finalTransactions,
+				withdrawals:            pre.withdrawals,
+				enforceECDSASignatures: c.config.enforceECDSASignatures,
 			}
 			ethBlock := finalBlock.ToEthBlock()
 			h := ethBlock.Header()
@@ -779,7 +780,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			}
 
 			// Cache processing result for further usage in case if there's no envelopes
-			// in the block.
+			// in the block or fallback signing scheme is used.
 			pre := b.(*PreBlock)
 			pre.finalState = state
 			pre.finalReceipts = receipts
@@ -995,9 +996,10 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			// Process state with constructed list of transactions to fill state-dependent
 			// block fields.
 			finalBlock := &PreBlock{
-				header:       pre.header,
-				transactions: pre.finalTransactions,
-				withdrawals:  pre.withdrawals,
+				header:                 pre.header,
+				transactions:           pre.finalTransactions,
+				withdrawals:            pre.withdrawals,
+				enforceECDSASignatures: c.config.enforceECDSASignatures,
 			}
 			ethBlock := finalBlock.ToEthBlock()
 			state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
@@ -1105,7 +1107,10 @@ func (c *DBFT) newPreBlockFromContext(sealingProposal *types.Header) *PreBlock {
 	// (dBFT has only the full set of their hashes). Once all transactions are
 	// fetched and the commits are collected, SetTransactions callback will be
 	// called by dBFT library to properly initialize PreBlock's transactions.
-	res := &PreBlock{header: h}
+	res := &PreBlock{
+		header:                 h,
+		enforceECDSASignatures: c.config.enforceECDSASignatures,
+	}
 	// Withdrawals are temporary empty if Shanghai is passed.
 	if c.chain.Config().IsShanghai(h.Number, h.Time) {
 		res.withdrawals = emptyWithdrawals
