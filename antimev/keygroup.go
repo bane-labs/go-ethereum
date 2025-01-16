@@ -45,6 +45,31 @@ func (tkg *thresholdKeyGroup) newTemplateForReshare(size int) *thresholdKeyGroup
 	}
 }
 
+// copy creates a deep copy of thresholdKeyGroup.
+func (tkg *thresholdKeyGroup) copy() *thresholdKeyGroup {
+	res := new(thresholdKeyGroup)
+	if tkg.localSecret != nil {
+		res.localSecret = tkg.localSecret.Copy()
+	}
+	res.pendingSecrets = make([]*tpke.Secret, len(tkg.pendingSecrets))
+	for i := range tkg.pendingSecrets {
+		res.pendingSecrets[i] = tkg.pendingSecrets[i].Copy()
+	}
+	res.receivedSecrets = make([]*big.Int, len(tkg.receivedSecrets))
+	for i, secret := range tkg.receivedSecrets {
+		if secret != nil {
+			res.receivedSecrets[i] = new(big.Int).Set(secret)
+		}
+	}
+	if tkg.globalPubKey != nil {
+		res.globalPubKey = tkg.globalPubKey.Copy()
+	}
+	if tkg.localPrvKey != nil {
+		res.localPrvKey = tkg.localPrvKey.Copy()
+	}
+	return res
+}
+
 // prepare generates local secrets and returns sharing messages.
 func (tkg *thresholdKeyGroup) prepare(threshold int, messagePubKeys []*ecies.PublicKey) ([][]byte, *tpke.PVSS, error) {
 	// Generate local secret

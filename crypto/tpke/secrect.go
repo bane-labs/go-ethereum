@@ -24,6 +24,13 @@ func RecoverSecret(is []int, fis []*big.Int) *Secret {
 	}
 }
 
+// Copy returns a deep copy of Secret
+func (s *Secret) Copy() *Secret {
+	return &Secret{
+		poly: s.poly.Copy(),
+	}
+}
+
 func (s *Secret) ToBigIntArray() []*big.Int {
 	return s.poly.coeff
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math/big"
 	"path/filepath"
 
@@ -80,31 +79,36 @@ func (ks *KeyStore) Reset(round int) error {
 	return ks.saveStoreAndReInitialize()
 }
 
-// Copy creates a deep copy of KeyStore.
-func (ks *KeyStore) Copy() (*KeyStore, error) {
-	res := new(KeyStore)
-	res.path = ks.path
-	res.password = ks.password
-
-	// A tiny hack implemented for the current keystore implementation consistency
-	// until a proper persistence functionality is implemented over KeyStore, ref.
-	// https://github.com/bane-labs/go-ethereum/issues/388.
-	err := res.initializeKeystoreFromFile()
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize keystore from file: %w", err)
-	}
-
-	// Explicitly set path to empty as a temporary replacement of proper persistence
-	// functionality, ref. https://github.com/bane-labs/go-ethereum/issues/388.
-	res.path = ""
-
-	return res, nil
-}
-
 // Load loads hex-encoded anti-MEV keystore from the provided filepath.
 func (ks *KeyStore) Load(password string) error {
 	ks.password = password
 	return ks.initializeKeystoreFromFile()
+}
+
+// Copy creates a deep copy of KeyStore.
+func (ks *KeyStore) Copy() *KeyStore {
+	cp := *ks
+	res := &cp
+	if ks.ethPrvKey != nil {
+		k := *ks.ethPrvKey
+		res.ethPrvKey = &k
+	}
+	if ks.recovering != nil {
+		res.recovering = ks.recovering.copy()
+	}
+	if ks.resharing != nil {
+		res.resharing = ks.resharing.copy()
+	}
+	if ks.reshared != nil {
+		res.reshared = ks.reshared.copy()
+	}
+	if ks.sharing != nil {
+		res.sharing = ks.sharing.copy()
+	}
+	if ks.shared != nil {
+		res.shared = ks.shared.copy()
+	}
+	return res
 }
 
 // Update changes the passphrase of anti-MEV keystore
