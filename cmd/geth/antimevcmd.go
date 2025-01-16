@@ -173,21 +173,19 @@ func antimevStatus(ctx *cli.Context) error {
 	ks := makeAntimevKeystore(ctx)
 	unlockKeyStore(ks, utils.MakeAntiMEVPasswordList(ctx))
 	var cpkStr, lpkStr string
-	cpk, err := ks.CurrentGlobalPubKey()
+	cpk, err := ks.GlobalPublicKey()
 	if err == nil {
 		cpkStr = hex.EncodeToString(cpk.Bytes())
 	}
-	lpk, err := ks.LastGlobalPubKey()
+	lpk, err := ks.LastGlobalPublicKey()
 	if err == nil {
 		lpkStr = hex.EncodeToString(lpk.Bytes())
 	}
 	fmt.Printf("Antimev keystore status:\n")
 	fmt.Printf("- Message public key: {%s}\n", ks.MessagePubKey())
-	fmt.Printf("- Round: {%d}\n", ks.Round())
-	fmt.Printf("- Last round reshared: {%t}\n", ks.HasReshared())
-	fmt.Printf("- This round shared: {%t}\n", ks.HasShared())
-	fmt.Printf("- This round resharing: {%t}\n", ks.IsResharing())
-	fmt.Printf("- Next round sharing: {%t}\n", ks.IsSharing())
+	fmt.Printf("- Successful rounds: {%d}\n", ks.Round())
+	fmt.Printf("- Resharing: {%t}\n", ks.IsResharing())
+	fmt.Printf("- Sharing: {%t}\n", ks.IsSharing())
 	fmt.Printf("- Current global key: {%s}\n", cpkStr)
 	fmt.Printf("- Last global key: {%s}\n", lpkStr)
 	return nil
@@ -221,6 +219,10 @@ func antimevInit(ctx *cli.Context) error {
 	if err != nil {
 		utils.Fatalf("Failed to init antimev keystore: %v", err)
 	}
+	err = ks.Persist()
+	if err != nil {
+		utils.Fatalf("Failed to persist antimev keystore: %v", err)
+	}
 	path, err := ks.Path()
 	if err != nil {
 		utils.Fatalf("Failed to get antimev keystore path: %v", err)
@@ -238,7 +240,8 @@ func antimevUpdate(ctx *cli.Context) error {
 	ks := makeAntimevKeystore(ctx)
 	unlockKeyStore(ks, utils.MakeAntiMEVPasswordList(ctx))
 	newPassword := utils.GetPassPhraseWithList("Please give a new password. Do not forget this password.", true, 0, nil)
-	if err := ks.Update(newPassword); err != nil {
+	ks.UpdatePassword(newPassword)
+	if err := ks.Persist(); err != nil {
 		utils.Fatalf("Could not update the keystore: %v", err)
 	}
 	return nil
@@ -258,7 +261,8 @@ func antimevReset(ctx *cli.Context) error {
 	if confirm {
 		unlockKeyStore(ks, utils.MakeAntiMEVPasswordList(ctx))
 		// Reset the keystore to the oldest possible state before any DKG
-		if err := ks.Reset(0); err != nil {
+		ks.Reset(0)
+		if err := ks.Persist(); err != nil {
 			utils.Fatalf("Could not reset the keystore: %v", err)
 		}
 	}

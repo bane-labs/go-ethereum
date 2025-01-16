@@ -2596,14 +2596,10 @@ func (c *DBFT) getGlobalPublicKey(h *types.Header, s *state.StateDB) (*tpke.Publ
 	// original keystore modification.
 	snapshot := c.dkgSnapshot.Copy()
 	c.lock.RLock()
-	ks := c.amevKeystore
+	keystore := c.amevKeystore.Copy()
 	c.lock.RUnlock()
-	keystore, err := ks.Copy()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create keystore backup: %w", err)
-	}
 
-	err = c.handleDKG(snapshot, keystore, h, s.Copy(), true)
+	err := c.handleDKG(snapshot, keystore, h, s.Copy(), true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to handle DKG at %d: %w", h.Number.Uint64(), err)
 	}

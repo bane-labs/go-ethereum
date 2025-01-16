@@ -35,6 +35,17 @@ func (p *Poly) evaluate(x *big.Int) *big.Int {
 	return result
 }
 
+// Copy returns a deep copy of Poly
+func (p *Poly) Copy() *Poly {
+	coeff := make([]*big.Int, len(p.coeff))
+	for i := range coeff {
+		coeff[i] = new(big.Int).Set(p.coeff[i])
+	}
+	return &Poly{
+		coeff: coeff,
+	}
+}
+
 func (p *Poly) AddAssign(op *Poly) {
 	pLen := len(p.coeff)
 	opLen := len(op.coeff)

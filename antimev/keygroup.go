@@ -14,6 +14,7 @@ var (
 	ErrDKGSecret            = errors.New("invalid dkg secret")
 	ErrNoSecretToReshare    = errors.New("no secret to reshare")
 	ErrInvalidRecover       = errors.New("invalid recover")
+	ErrInvalidMessageKey    = errors.New("invalid message key")
 	ErrSecretShareNotEnough = errors.New("secret share not enough")
 )
 
@@ -43,6 +44,31 @@ func (tkg *thresholdKeyGroup) newTemplateForReshare(size int) *thresholdKeyGroup
 		receivedSecrets: make([]*big.Int, size),
 		globalPubKey:    tkg.globalPubKey,
 	}
+}
+
+// copy creates a deep copy of thresholdKeyGroup.
+func (tkg *thresholdKeyGroup) copy() *thresholdKeyGroup {
+	res := new(thresholdKeyGroup)
+	if tkg.localSecret != nil {
+		res.localSecret = tkg.localSecret.Copy()
+	}
+	res.pendingSecrets = make([]*tpke.Secret, len(tkg.pendingSecrets))
+	for i := range tkg.pendingSecrets {
+		res.pendingSecrets[i] = tkg.pendingSecrets[i].Copy()
+	}
+	res.receivedSecrets = make([]*big.Int, len(tkg.receivedSecrets))
+	for i, secret := range tkg.receivedSecrets {
+		if secret != nil {
+			res.receivedSecrets[i] = new(big.Int).Set(secret)
+		}
+	}
+	if tkg.globalPubKey != nil {
+		res.globalPubKey = tkg.globalPubKey.Copy()
+	}
+	if tkg.localPrvKey != nil {
+		res.localPrvKey = tkg.localPrvKey.Copy()
+	}
+	return res
 }
 
 // prepare generates local secrets and returns sharing messages.
@@ -93,6 +119,9 @@ func (tkg *thresholdKeyGroup) recover(secretIndexs []int, receiverEthPubKeys []*
 	srms := make([][]byte, len(secretIndexs))
 	for i, index := range secretIndexs {
 		arrIndex := index - 1
+		if tkg.receivedSecrets[arrIndex] == nil {
+			return nil, ErrUnrecoverable
+		}
 		srms[i] = encryptShareMessage(receiverEthPubKeys[i], tkg.receivedSecrets[arrIndex].Bytes())
 	}
 
@@ -140,6 +169,9 @@ func generateShareMessages(secret *tpke.Secret, messagePubkeys []*ecies.PublicKe
 	// Generate message
 	messages := make([][]byte, size)
 	for i, key := range messagePubkeys {
+		if key == nil {
+			return nil, nil, ErrInvalidMessageKey
+		}
 		messages[i] = encryptShareMessage(key, ss[i].Bytes())
 	}
 

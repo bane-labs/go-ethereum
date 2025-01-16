@@ -64,6 +64,13 @@ func NewPublicKeyFromBytes(b []byte) (*PublicKey, error) {
 	return pk, nil
 }
 
+// Copy returns a deep copy of PublicKey
+func (pk *PublicKey) Copy() *PublicKey {
+	return &PublicKey{
+		pg1: new(bls12381.G1Affine).Set(pk.pg1),
+	}
+}
+
 // Bytes serializes PublicKey into byte slice using compressed [bls12381.G1Affine]
 // representation. The resulting byte slice has the length of
 // [PublicKeyLen].

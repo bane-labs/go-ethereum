@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
+	"github.com/stretchr/testify/require"
 )
 
 // 7-CN privnet related constants.
@@ -34,12 +35,11 @@ type account struct {
 // a copy if modification is needed since some tests rely on the order of accounts.
 // Ref. https://github.com/bane-labs/go-ethereum/tree/bane-main/privnet/seven.
 var accounts = []account{
-	// Node 0, only used as a watch-only node
-	// {
-	// 	common.HexToAddress("0x5e6D9680428e6fe62a09BBb6AC23Df5bFE069AE8"),
-	// 	"",
-	// 	"400fe4a0c2d74a4fb5cab917cc0e344f6ad33916b8e0e2e3815d2943134ddbe7",
-	// },
+	{
+		common.HexToAddress("0x5e6D9680428e6fe62a09BBb6AC23Df5bFE069AE8"),
+		"",
+		"400fe4a0c2d74a4fb5cab917cc0e344f6ad33916b8e0e2e3815d2943134ddbe7",
+	},
 	{
 		common.HexToAddress("0x74f4effb0b538baec703346b03b6d9292f53a4cd"),
 		"fBfgE23FfqSVZRCGzFZbFvqabF3Ewvcg",
@@ -95,9 +95,7 @@ func TestShare(t *testing.T) {
 		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
 		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		kss[i] = ks
 	}
 	// Ignore resharing and execute sharing
@@ -107,14 +105,9 @@ func TestShare(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnSharePeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnSharePeriodStart()
 		msgs, pvss, err := kss[i].DKGShare(pubs)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		contract.shareMsgs[i] = msgs
 		contract.sharePVSSes[i] = pvss
 	}
@@ -131,21 +124,15 @@ func TestShare(t *testing.T) {
 	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
 		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	for i := 0; i < size; i++ {
 		// Try finish DKG without resharing
 		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 }
 
@@ -161,9 +148,7 @@ func TestReshare(t *testing.T) {
 		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
 		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		kss[i] = ks
 	}
 	// Ignore resharing and execute sharing
@@ -175,14 +160,9 @@ func TestReshare(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnSharePeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnSharePeriodStart()
 		msgs, pvss, err := kss[i].DKGShare(pubs)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		contract.shareMsgs[i] = msgs
 		contract.sharePVSSes[i] = pvss
 	}
@@ -199,36 +179,23 @@ func TestReshare(t *testing.T) {
 	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
 		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	// Finalize dkg
 	for i := 0; i < size; i++ {
 		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 	// Execute resharing this time
 	for i := 0; i < size; i++ {
-		err := kss[i].OnSharePeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnSharePeriodStart()
 		rMsgs, rPvss, err := kss[i].DKGReshare(pubs)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		sMsgs, sPvss, err := kss[i].DKGShare(pubs)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		contract.shareMsgs[i] = sMsgs
 		contract.sharePVSSes[i] = sPvss
 		contract.reshareMsgs[i] = rMsgs
@@ -251,38 +218,30 @@ func TestReshare(t *testing.T) {
 	cmt = new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
 		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	// Check sharing and resharing
 	for i := 0; i < size; i++ {
 		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 }
 
 func TestGroupChange(t *testing.T) {
 	dir := t.TempDir()
 	// Init keystores
-	pubs := make([]*ecies.PublicKey, len(accounts))
-	addrs := make([]common.Address, len(accounts))
-	kss := make([]*KeyStore, len(accounts))
-	for i := 0; i < len(accounts); i++ {
+	pubs := make([]*ecies.PublicKey, size+1)
+	addrs := make([]common.Address, size+1)
+	kss := make([]*KeyStore, size+1)
+	for i := 0; i < size+1; i++ {
 		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
 		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
 		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		addrs[i] = accounts[i].addr
 		kss[i] = ks
 	}
@@ -293,18 +252,13 @@ func TestGroupChange(t *testing.T) {
 		shareMsgs:     make([][][]byte, size),
 		sharePVSSes:   make([][]byte, size),
 	}
-	for i := 0; i < len(accounts); i++ {
+	for i := 0; i < len(addrs); i++ {
 		// No resharing to handle
-		err := kss[i].OnSharePeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnSharePeriodStart()
 		// Sharing members, i ranges from 0 to 6
 		if i < size {
 			msgs, pvss, err := kss[i].DKGShare(pubs[:size])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 			contract.shareMsgs[i] = msgs
 			contract.sharePVSSes[i] = pvss
 		}
@@ -314,55 +268,38 @@ func TestGroupChange(t *testing.T) {
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
 			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 		}
 	}
 	// Aggregate pvss manually
 	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
 		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	// Finalize dkg
 	for i := 0; i < size; i++ {
 		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 	err := kss[7].OnEpochChange(nil, encodePointG1(cmt), false)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	require.NoError(t, err)
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnSharePeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnSharePeriodStart()
 		// Resharing members
 		if i < size {
 			rMsgs, rPvss, err := kss[i].DKGReshare(pubs[1:])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 			contract.reshareMsgs[i] = rMsgs
 			contract.resharePVSSes[i] = rPvss
 		}
 		if i > 0 {
 			sMsgs, sPvss, err := kss[i].DKGShare(pubs[1:])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 			contract.shareMsgs[i-1] = sMsgs
 			contract.sharePVSSes[i-1] = sPvss
 		}
@@ -372,56 +309,42 @@ func TestGroupChange(t *testing.T) {
 		for j := 0; j < size; j++ {
 			// Messages from node 0~6 to node 1~7
 			err := kss[i].ReceiveSecretReshare(i, j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 			// Messages from node 1~7 to node 1~7
 			err = kss[i].ReceiveSecretShare(i, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 		}
 	}
 	// Aggregate pvss manually
 	cmt = new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
 		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	// Check sharing and resharing
 	err = kss[0].OnEpochChange(nil, encodePointG1(cmt), false)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	require.NoError(t, err)
 	for i := 1; i <= size; i++ {
 		err := kss[i].OnEpochChange(contract.sharePVSSes[i-1], encodePointG1(cmt), i != 0)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 }
 
 func TestRecover(t *testing.T) {
 	dir := t.TempDir()
 	// Init keystores
-	pubs := make([]*ecies.PublicKey, len(accounts))
-	addrs := make([]common.Address, len(accounts))
-	kss := make([]*KeyStore, len(accounts))
-	for i := 0; i < len(accounts); i++ {
+	pubs := make([]*ecies.PublicKey, size+1)
+	addrs := make([]common.Address, size+1)
+	kss := make([]*KeyStore, size+1)
+	for i := 0; i < size+1; i++ {
 		key, _ := crypto.HexToECDSA(accounts[i].msgPrivKey)
 		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
 		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		addrs[i] = accounts[i].addr
 		kss[i] = ks
 	}
@@ -435,16 +358,11 @@ func TestRecover(t *testing.T) {
 	}
 	for i := 0; i < len(addrs); i++ {
 		// No resharing to handle
-		err := kss[i].OnSharePeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnSharePeriodStart()
 		// Sharing members, i ranges from 0 to 6
 		if i < size {
 			msgs, pvss, err := kss[i].DKGShare(pubs[:size])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 			contract.shareMsgs[i] = msgs
 			contract.sharePVSSes[i] = pvss
 		}
@@ -454,47 +372,32 @@ func TestRecover(t *testing.T) {
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
 			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 		}
 	}
 	// Aggregate pvss manually
 	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
 		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	// Finalize dkg
 	for i := 0; i < size; i++ {
 		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 	err := kss[7].OnEpochChange(nil, encodePointG1(cmt), false)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	require.NoError(t, err)
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnSharePeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnSharePeriodStart()
 		// Resharing members
 		if i < size {
 			rMsgs, rPvss, err := kss[i].DKGReshare(pubs[1:])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 			contract.reshareMsgs[i] = rMsgs
 			contract.resharePVSSes[i] = rPvss
 		}
@@ -503,51 +406,37 @@ func TestRecover(t *testing.T) {
 	for i := 1; i < len(addrs); i++ {
 		for j := 0; j < size-1; j++ {
 			err := kss[i].ReceiveSecretReshare(i, j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 		}
 	}
 	// Execute recovering this time, dead index 7, recover to validator 8
 	rIdxs := []int{7}
 	rPubs := []*ecies.PublicKey{pubs[7]}
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].OnRecoverPeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnRecoverPeriodStart()
+		require.NoError(t, err)
 		if i < 7 {
 			msgs, err := kss[i].DKGRecover(rIdxs, rPubs)
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 			contract.recoverMsgs[i] = msgs
 		}
 	}
 	// Send recover messages, broadcast to all nodes
 	for i := 0; i < size-1; i++ {
 		err := kss[7].ReceiveRecoverShare(7, i+1, contract.recoverMsgs[i][0], contract.sharePVSSes[size-1])
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 	// Recover the lost resharing messages
 	msgs, pvss, err := kss[7].TryRecoverReshare(pubs[1:])
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	require.NoError(t, err)
 	for i := 1; i < len(addrs); i++ {
 		err := kss[i].ReceiveSecretReshare(i, 7, msgs, pvss)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 	// Only check resharing
 	for i := 0; i < len(addrs); i++ {
 		err := kss[i].aggregateReshare(i != 0)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 }
 

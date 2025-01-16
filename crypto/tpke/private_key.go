@@ -30,6 +30,13 @@ func NewPrivateKey(secretShares []*big.Int) *PrivateKey {
 	}
 }
 
+// Copy returns a deep copy of PrivateKey
+func (sk *PrivateKey) Copy() *PrivateKey {
+	return &PrivateKey{
+		fr: new(big.Int).Set(sk.fr),
+	}
+}
+
 func (sk *PrivateKey) Bytes() []byte {
 	fe := new(fr.Element).SetBigInt(sk.fr)
 	b := fe.Bytes()
