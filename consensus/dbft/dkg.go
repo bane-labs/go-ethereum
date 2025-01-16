@@ -143,7 +143,9 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 		if err != nil {
 			return fmt.Errorf("failed to change keystore epoch, err: %v", err)
 		}
-		log.Info("DKG reached targetHeight", "round", snapshot.Round, "currentHeight", currentHeight, "aggregatedCommitment", hex.EncodeToString(aggregatedCommitment))
+		if !suspended {
+			log.Info("DKG reached targetHeight", "round", snapshot.Round, "currentHeight", currentHeight, "aggregatedCommitment", hex.EncodeToString(aggregatedCommitment))
+		}
 		snapshot.reset()
 	}
 
@@ -157,8 +159,10 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 		if err != nil {
 			return fmt.Errorf("failed to new DKG snapshot, err: %v", err)
 		}
-		log.Info("DKG info", "roundNumber", snapshot.Round, "epochStartHeight", snapshot.EpochStartHeight, "epochDuration", epochDuration,
-			"sharePeriodDuration", sharePeriodDuration, "consensusList", snapshot.CurrentCNs)
+		if !suspended {
+			log.Info("DKG info", "roundNumber", snapshot.Round, "epochStartHeight", snapshot.EpochStartHeight, "epochDuration", epochDuration,
+				"sharePeriodDuration", sharePeriodDuration, "consensusList", snapshot.CurrentCNs)
+		}
 	}
 	// Compute periods based on realtime data, in case there is an update in governanace contract
 	targetHeight := snapshot.EpochStartHeight + epochDuration
@@ -221,7 +225,9 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 		if err := keystore.OnEpochChange(selfPvss, aggregatedCommitment, indexOfSharing > 0); err != nil {
 			return fmt.Errorf("failed to sync shared DKG, err: %v", err)
 		}
-		log.Info("DKG sync to", "round", snapshot.Round-1, "currentHeight", currentHeight, "aggregatedCommitment", hex.EncodeToString(aggregatedCommitment))
+		if !suspended {
+			log.Info("DKG sync to", "round", snapshot.Round-1, "currentHeight", currentHeight, "aggregatedCommitment", hex.EncodeToString(aggregatedCommitment))
+		}
 	}
 
 	// DKG checkpoint handling, also syncs the dkg process if keystore is out-of-date
