@@ -333,8 +333,10 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 		snapshot.ReshareRecoverTasked = true
 	}
 
-	if err := keystore.Persist(); err != nil {
-		return fmt.Errorf("failed to persist keystore, err: %v", err)
+	if !suspended {
+		if err := keystore.Persist(); err != nil {
+			return fmt.Errorf("failed to persist keystore, err: %v", err)
+		}
 	}
 	return nil
 }
