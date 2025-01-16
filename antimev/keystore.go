@@ -25,6 +25,9 @@ var (
 	ErrNoNeedToRecover   = errors.New("no need to recover")
 	ErrUnrecoverable     = errors.New("unrecoverable sharing")
 	ErrMessageDecryption = errors.New("message decryption failed")
+
+	ErrKeystoreEncryption = errors.New("could not encrypt keystore")
+	ErrKeystoreDecryption = errors.New("could not decrypt keystore")
 )
 
 // KeyStore is the container of all useful dkg information.
@@ -65,24 +68,46 @@ func (ks *KeyStore) Init(addr common.Address, prvkey *ecies.PrivateKey, groupSiz
 	ks.ethPrvKey = prvkey
 	ks.password = password
 	ks.round = 0
-	return ks.saveStoreAndReInitialize()
+	return nil
+}
+
+// UpdatePassword changes the passphrase
+func (ks *KeyStore) UpdatePassword(password string) {
+	ks.password = password
 }
 
 // Reset cleans all dkg progress data and returns to an initial state
-func (ks *KeyStore) Reset(round int) error {
+func (ks *KeyStore) Reset(round int) {
 	ks.round = round
 	ks.recovering = nil
 	ks.resharing = nil
 	ks.reshared = nil
 	ks.sharing = nil
 	ks.shared = nil
-	return ks.saveStoreAndReInitialize()
 }
 
 // Load loads hex-encoded anti-MEV keystore from the provided filepath.
 func (ks *KeyStore) Load(password string) error {
 	ks.password = password
-	return ks.initializeKeystoreFromFile()
+	encoded, err := readFileAtPath(filepath.Dir(ks.path), filepath.Base(ks.path))
+	if err != nil {
+		return err
+	}
+	keystoreFile := &keystoreRepresentation{}
+	if err := json.Unmarshal(encoded, keystoreFile); err != nil {
+		return err
+	}
+	// Extract the validator signing private key from the keystore
+	decryptor := keystorev4.New()
+	enc, err := decryptor.Decrypt(keystoreFile.Crypto, ks.password)
+	if err != nil {
+		return ErrKeystoreDecryption
+	}
+	store := &keyStoreAux{}
+	if err := json.Unmarshal(enc, store); err != nil {
+		return err
+	}
+	return ks.fromAux(store)
 }
 
 // Copy creates a deep copy of KeyStore.
@@ -111,10 +136,17 @@ func (ks *KeyStore) Copy() *KeyStore {
 	return res
 }
 
-// Update changes the passphrase of anti-MEV keystore
-func (ks *KeyStore) Update(password string) error {
-	ks.password = password
-	return ks.saveStoreAndReInitialize()
+// Persist saves current keystore data to the provided filepath.
+func (ks *KeyStore) Persist() error {
+	keystoreRepr, err := createKeystoreRepresentation(ks.toAux(), ks.password)
+	if err != nil {
+		return err
+	}
+	encodedData, err := json.MarshalIndent(keystoreRepr, "", "\t")
+	if err != nil {
+		return err
+	}
+	return writeFileAtPath(filepath.Dir(ks.path), filepath.Base(ks.path), encodedData)
 }
 
 // Address returns the keystore specified participant address in DKG
@@ -127,15 +159,6 @@ func (ks *KeyStore) Path() (string, error) {
 	return filepath.Abs(ks.path)
 }
 
-// GlobalPublicKey returns global public key that may be used to verify threshold
-// signature against. Do not modify the return value.
-func (ks *KeyStore) GlobalPublicKey() (*tpke.PublicKey, error) {
-	if ks.shared == nil {
-		return nil, ErrNoPubKey
-	}
-	return ks.shared.globalPubKey, nil
-}
-
 // MessagePubKey returns a hex string of message encryption key
 func (ks *KeyStore) MessagePubKey() string {
 	return hex.EncodeToString(crypto.FromECDSAPub(&ks.ethPrvKey.ExportECDSA().PublicKey))
@@ -146,17 +169,17 @@ func (ks *KeyStore) Round() int {
 	return ks.round
 }
 
-// CurrentGlobalPubKey returns global public key that may be used to verify threshold
+// GlobalPublicKey returns global public key that may be used to verify threshold
 // signature against. Do not modify the return value.
-func (ks *KeyStore) CurrentGlobalPubKey() (*tpke.PublicKey, error) {
+func (ks *KeyStore) GlobalPublicKey() (*tpke.PublicKey, error) {
 	if ks.shared == nil {
 		return nil, ErrNoPubKey
 	}
 	return ks.shared.globalPubKey, nil
 }
 
-// LastGlobalPubKey returns last round global public key.
-func (ks *KeyStore) LastGlobalPubKey() (*tpke.PublicKey, error) {
+// LastGlobalPublicKey returns last round global public key.
+func (ks *KeyStore) LastGlobalPublicKey() (*tpke.PublicKey, error) {
 	if ks.reshared == nil {
 		return nil, ErrNoPubKey
 	}
@@ -178,19 +201,9 @@ func (ks *KeyStore) IsRecovering() bool {
 	return ks.recovering != nil
 }
 
-// HasReshared returns if there is a completed resharing
-func (ks *KeyStore) HasReshared() bool {
-	return ks.reshared != nil
-}
-
-// HasShared returns if there is a completed sharing
-func (ks *KeyStore) HasShared() bool {
-	return ks.shared != nil
-}
-
 // OnValidatorList initializes sharing and resharing, should be called
 // when the key group members are determined. It initializes 1 or 2 key groups.
-func (ks *KeyStore) OnSharePeriodStart() error {
+func (ks *KeyStore) OnSharePeriodStart() {
 	// Set up groups for dkg resharing
 	if ks.shared != nil {
 		ks.resharing = ks.shared.newTemplateForReshare(ks.size)
@@ -199,17 +212,12 @@ func (ks *KeyStore) OnSharePeriodStart() error {
 	ks.sharing = newThresholdKeyGroup(ks.size)
 	// Remove recovering just in case
 	ks.recovering = nil
-	return ks.saveStoreAndReInitialize()
 }
 
 // OnRecoverPeriodStart initializes recovering, should be called after resharing
 // gets finished. It initializes 1 key groups.
-func (ks *KeyStore) OnRecoverPeriodStart() error {
-	if ks.shared == nil {
-		return ErrKeyGroupNotExists
-	}
+func (ks *KeyStore) OnRecoverPeriodStart() {
 	ks.recovering = newThresholdKeyGroup(ks.size)
-	return ks.saveStoreAndReInitialize()
 }
 
 // DKGReshare generates and returns resharing messages and pvss. The input key
@@ -249,11 +257,6 @@ func (ks *KeyStore) DKGShare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byt
 	if err != nil || sPvss == nil {
 		return nil, nil, err
 	}
-	// Store only if some secret is generated
-	err = ks.saveStoreAndReInitialize()
-	if err != nil {
-		return nil, nil, err
-	}
 	return sMsgs, sPvss.Encode(), nil
 }
 
@@ -287,20 +290,14 @@ func (ks *KeyStore) TryRecoverReshare(messagePubKeys []*ecies.PublicKey) ([][]by
 	if err != nil || pvss == nil {
 		return nil, nil, err
 	}
-	// Store only if some secret is recovered
-	err = ks.saveStoreAndReInitialize()
-	if err != nil {
-		return nil, nil, err
-	}
 	return msgs, pvss.Encode(), nil
 }
 
 // RevertRound reverts all progress of current round of DKG.
-func (ks *KeyStore) RevertRound() error {
+func (ks *KeyStore) RevertRound() {
 	ks.resharing = nil
 	ks.sharing = nil
 	ks.recovering = nil
-	return ks.saveStoreAndReInitialize()
 }
 
 // OnEpochChange checks and settles the results of sharing and resharing, will
@@ -308,7 +305,8 @@ func (ks *KeyStore) RevertRound() error {
 func (ks *KeyStore) OnEpochChange(selfPvss []byte, aggregatedCmt []byte, isMemberOfNewGroup bool) error {
 	// Revert dkg if contract doesn't give a aggregated commitment
 	if len(aggregatedCmt) == 0 {
-		return ks.RevertRound()
+		ks.RevertRound()
+		return nil
 	}
 	if isMemberOfNewGroup && len(selfPvss) == 0 {
 		return ErrLengthMismatch
@@ -330,7 +328,7 @@ func (ks *KeyStore) OnEpochChange(selfPvss []byte, aggregatedCmt []byte, isMembe
 	ks.sharing = nil
 	ks.recovering = nil
 	ks.round += 1
-	return ks.saveStoreAndReInitialize()
+	return nil
 }
 
 // aggregateShare tries to check if sharing is successful and settle the result
@@ -387,7 +385,7 @@ func (ks *KeyStore) ReceiveSecretShare(selfIndex int, fromIndex int, ess [][]byt
 	if err != nil {
 		return err
 	}
-	return ks.saveStoreAndReInitialize()
+	return nil
 }
 
 // ReceiveSecretReshare tries to verify a resharing message array and store their data.
@@ -415,7 +413,7 @@ func (ks *KeyStore) ReceiveSecretReshare(selfIndex int, fromIndex int, ers [][]b
 	if err != nil {
 		return err
 	}
-	return ks.saveStoreAndReInitialize()
+	return nil
 }
 
 // ReceiveRecoverShare tries to verify a recovering message array and store their data.
@@ -439,7 +437,7 @@ func (ks *KeyStore) ReceiveRecoverShare(selfIndex int, fromIndex int, ers []byte
 	if err != nil {
 		return err
 	}
-	return ks.saveStoreAndReInitialize()
+	return nil
 }
 
 func (ks *KeyStore) decryptShareMessage(msg []byte) (*big.Int, error) {
@@ -581,67 +579,6 @@ func (ks *KeyStore) fromAux(aux *keyStoreAux) error {
 	}
 
 	return nil
-}
-
-var (
-	ErrKeystoreEncryption = errors.New("could not encrypt keystore")
-	ErrKeystoreDecryption = errors.New("could not decrypt keystore")
-)
-
-// initializeKeystoreFromFile loads an existing keystore from file.
-func (ks *KeyStore) initializeKeystoreFromFile() error {
-	encoded, err := readFileAtPath(filepath.Dir(ks.path), filepath.Base(ks.path))
-	if err != nil {
-		return err
-	}
-
-	return ks.initializeKeystoreFromBytes(encoded)
-}
-
-func (ks *KeyStore) initializeKeystoreFromBytes(encoded []byte) error {
-	keystoreFile := &keystoreRepresentation{}
-	if err := json.Unmarshal(encoded, keystoreFile); err != nil {
-		return err
-	}
-	// Extract the validator signing private key from the keystore
-	decryptor := keystorev4.New()
-	enc, err := decryptor.Decrypt(keystoreFile.Crypto, ks.password)
-	if err != nil {
-		return ErrKeystoreDecryption
-	}
-	store := &keyStoreAux{}
-	if err := json.Unmarshal(enc, store); err != nil {
-		return err
-	}
-	return ks.fromAux(store)
-}
-
-// saveStoreAndReInitialize saves the keystore to disk and re-initializes the keystore from file.
-func (ks *KeyStore) saveStoreAndReInitialize() error {
-	// Save the copy to disk
-	keystoreRepr, err := createKeystoreRepresentation(ks.toAux(), ks.password)
-	if err != nil {
-		return err
-	}
-	encodedData, err := json.MarshalIndent(keystoreRepr, "", "\t")
-	if err != nil {
-		return err
-	}
-	// A temporary hack to avoid useless keystore file overwrites until persistence logic is
-	// implemented over keystore, ref. https://github.com/bane-labs/go-ethereum/issues/388.
-	if ks.path != "" {
-		err = writeFileAtPath(filepath.Dir(ks.path), filepath.Base(ks.path), encodedData)
-		if err != nil {
-			return err
-		}
-
-		// ReInitialize and update the memory
-		err = ks.initializeKeystoreFromFile()
-	} else {
-		err = ks.initializeKeystoreFromBytes(encodedData)
-	}
-
-	return err
 }
 
 // createKeystoreRepresentation is a pure function that takes a keystore and password and returns the encrypted formatted json version for file writing.

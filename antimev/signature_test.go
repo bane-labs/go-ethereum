@@ -38,9 +38,7 @@ func TestThresholdSignature(t *testing.T) {
 		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
 		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		kss[i] = ks
 	}
 	// Ignore resharing and execute sharing
@@ -50,14 +48,9 @@ func TestThresholdSignature(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnSharePeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnSharePeriodStart()
 		msgs, pvss, err := kss[i].DKGShare(pubs)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		contract.shareMsgs[i] = msgs
 		contract.sharePVSSes[i] = pvss
 	}
@@ -74,20 +67,14 @@ func TestThresholdSignature(t *testing.T) {
 	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
 		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	for i := 0; i < size; i++ {
 		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 
 	// Test functionality
@@ -95,9 +82,7 @@ func TestThresholdSignature(t *testing.T) {
 	shares := make(map[int]*tpke.SignatureShare)
 	for i := 0; i < size; i++ {
 		share, err := kss[i].SignShare(msg)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		shares[i+1] = share
 	}
 

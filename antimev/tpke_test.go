@@ -32,9 +32,7 @@ func TestTPKE(t *testing.T) {
 		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
 		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		kss[i] = ks
 	}
 	// Ignore resharing and execute sharing
@@ -44,14 +42,9 @@ func TestTPKE(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnSharePeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnSharePeriodStart()
 		msgs, pvss, err := kss[i].DKGShare(pubs)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		contract.shareMsgs[i] = msgs
 		contract.sharePVSSes[i] = pvss
 	}
@@ -59,37 +52,27 @@ func TestTPKE(t *testing.T) {
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
 			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 		}
 	}
 	// Aggregate pvss manually
 	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
 		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	for i := 0; i < size; i++ {
 		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 
 	// Encrypt
 	msg := []byte("some data that is more than 105 bytes in length: pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza")
 	encryptedKey, encryptedMsg, err := kss[0].Encrypt(msg)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	require.NoError(t, err)
 
 	// Verify ciphertext
 	if err := encryptedKey.Verify(); err != nil {
@@ -106,17 +89,13 @@ func TestTPKE(t *testing.T) {
 	shares := make(map[int][]*tpke.DecryptionShare)
 	for i := 0; i < size-2; i++ {
 		share, err := kss[i].DecryptWithShare([]*tpke.CipherText{encryptedKey})
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		shares[i+1] = share
 	}
 
 	// Decrypt
 	results, err := kss[0].AggregateAndDecryptWithShare([]*tpke.CipherText{encryptedKey}, [][]byte{encryptedMsg}, shares)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	require.NoError(t, err)
 	for i := 0; i < len(msg); i++ {
 		if msg[i] != results[0][i] {
 			t.Fatalf("decryption failed.")
@@ -214,9 +193,7 @@ func TestBenchmark(t *testing.T) {
 		pubs[i] = &ecies.ImportECDSA(key).PublicKey
 		ks := NewKeyStore(filepath.Join(dir, "antimev-keystore"+fmt.Sprint(i)))
 		err := ks.Init(accounts[i].addr, ecies.ImportECDSA(key), size, threshold, accounts[i].pwd)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		kss[i] = ks
 	}
 	// Ignore resharing and execute sharing
@@ -226,14 +203,9 @@ func TestBenchmark(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		err := kss[i].OnSharePeriodStart()
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		kss[i].OnSharePeriodStart()
 		msgs, pvss, err := kss[i].DKGShare(pubs)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		contract.shareMsgs[i] = msgs
 		contract.sharePVSSes[i] = pvss
 	}
@@ -241,29 +213,21 @@ func TestBenchmark(t *testing.T) {
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
 			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 		}
 	}
 	// Aggregate pvss manually
 	cmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
 		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	for i := 0; i < size; i++ {
 		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 	}
 
 	// Build a 1MB script
@@ -282,26 +246,20 @@ func TestBenchmark(t *testing.T) {
 		go parallelCTVerify(encryptedSeeds[i], ch)
 	}
 	_, _, err := messageHandler(ch, sampleAmount)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	require.NoError(t, err)
 
 	// Generate shares
 	shares := make(map[int][]*tpke.DecryptionShare)
 	for i := 0; i < size; i++ {
 		share, err := kss[i].DecryptWithShare(encryptedSeeds)
-		if err != nil {
-			t.Fatalf(err.Error())
-		}
+		require.NoError(t, err)
 		shares[i+1] = share
 	}
 
 	// Decrypt
 	t1 := time.Now()
 	results, err := kss[0].AggregateAndDecryptWithShare(encryptedSeeds, encryptedMsgs, shares)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	require.NoError(t, err)
 	t.Logf("threshold decryption time: %v", time.Since(t1))
 	for i := 0; i < sampleAmount; i++ {
 		if !bytes.Equal(results[i], script) {
