@@ -35,12 +35,11 @@ type account struct {
 // a copy if modification is needed since some tests rely on the order of accounts.
 // Ref. https://github.com/bane-labs/go-ethereum/tree/bane-main/privnet/seven.
 var accounts = []account{
-	// Node 0, only used as a watch-only node
-	// {
-	// 	common.HexToAddress("0x5e6D9680428e6fe62a09BBb6AC23Df5bFE069AE8"),
-	// 	"",
-	// 	"400fe4a0c2d74a4fb5cab917cc0e344f6ad33916b8e0e2e3815d2943134ddbe7",
-	// },
+	{
+		common.HexToAddress("0x5e6D9680428e6fe62a09BBb6AC23Df5bFE069AE8"),
+		"",
+		"400fe4a0c2d74a4fb5cab917cc0e344f6ad33916b8e0e2e3815d2943134ddbe7",
+	},
 	{
 		common.HexToAddress("0x74f4effb0b538baec703346b03b6d9292f53a4cd"),
 		"fBfgE23FfqSVZRCGzFZbFvqabF3Ewvcg",

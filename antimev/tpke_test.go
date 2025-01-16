@@ -103,6 +103,29 @@ func TestTPKE(t *testing.T) {
 	}
 }
 
+const regenerate = false
+
+// TestInitKeyStores generates antimev keystores to privnets
+func TestInitKeyStores(t *testing.T) {
+	if !regenerate {
+		return
+	}
+	sizes := []int{1, 4, 7}
+	thresholds := []int{1, 3, 5}
+	folders := []string{"single", "four", "seven"}
+
+	for i := range sizes {
+		for j := 0; j <= sizes[i]; j++ {
+			key, _ := crypto.HexToECDSA(accounts[j].msgPrivKey)
+			ks := NewKeyStore(filepath.Join("../privnet/"+folders[i]+"/node"+fmt.Sprint(j), "antimev-keystore"))
+			err := ks.Init(accounts[j].addr, ecies.ImportECDSA(key), sizes[i], thresholds[i], accounts[j].pwd)
+			require.NoError(t, err)
+			err = ks.Persist()
+			require.NoError(t, err)
+		}
+	}
+}
+
 // TestGenerateEncryptedTx generates an encrypted transaction using 7-nodes
 func TestGenerateEncryptedTx(t *testing.T) {
 	require.Equal(t, 7, size, "refactor test if different number of CNs is needed")
