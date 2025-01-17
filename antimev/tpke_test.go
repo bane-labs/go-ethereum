@@ -2,6 +2,7 @@ package antimev
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -128,6 +129,9 @@ func TestInitKeyStores(t *testing.T) {
 
 // TestGenerateEncryptedTx generates an encrypted transaction using 7-nodes
 func TestGenerateEncryptedTx(t *testing.T) {
+	// epoch is an epoch of Envelope data encryption. The resulting encrypted transaction can be
+	// decrypted only during this or next epoch.
+	const epoch = 1
 	require.Equal(t, 7, size, "refactor test if different number of CNs is needed")
 
 	// Retrieve and decrypt the set of anti-MEV key storages.
@@ -148,7 +152,11 @@ func TestGenerateEncryptedTx(t *testing.T) {
 		t.Fatalf("invalid ciphertext")
 	}
 	// Generate envelope.
-	var envelopeData = []byte{0xff, 0xff, 0xff, 0xff}
+	var envelopeData = []byte{
+		0xff, 0xff, 0xff, 0xff, // version
+		0, 0, 0, 0, // epoch
+	}
+	binary.LittleEndian.PutUint32(envelopeData[4:8], epoch)
 	envelopeData = append(envelopeData, encryptedKey.ToBytes()...)
 	envelopeData = append(envelopeData, encryptedMsg...)
 	t.Logf("encryptedKey: %s\nencryptedMsg: %s\nenvelopeData: 0x%s\nencrypted tx hash: %s\n",

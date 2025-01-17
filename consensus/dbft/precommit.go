@@ -2,7 +2,6 @@ package dbft
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 
@@ -26,8 +25,9 @@ type preCommit struct {
 	dataExt []byte
 
 	// cached indicates whether shares content is decoded from dataExt.
-	cached bool
-	shares []*tpke.DecryptionShare
+	cached     bool
+	sharesCurr []*tpke.DecryptionShare
+	sharesPrev []*tpke.DecryptionShare
 }
 
 // preCommitAux is an auxiliary structure used for preCommit RLP encoding.
@@ -51,63 +51,91 @@ func (m *preCommit) EncodeRLP(w io.Writer) error {
 
 // DecodeRLP decodes preCommit from RLP.
 func (m *preCommit) DecodeRLP(s *rlp.Stream) error {
-	var aux preCommitAux
-	if err := s.Decode(&aux); err != nil {
+	var (
+		aux preCommitAux
+		err error
+	)
+	if err = s.Decode(&aux); err != nil {
 		return err
 	}
 
 	m.dataExt = aux.DataExt
-	shares, err := decodeShares(m.dataExt)
+	m.sharesCurr, m.sharesPrev, err = decodeShares(m.dataExt)
 	if err != nil {
-		return fmt.Errorf("decode shares: %w", err)
+		return fmt.Errorf("failed to decode shares: %w", err)
 	}
-	m.shares = shares
 	m.cached = true
 
 	return nil
 }
 
 // Shares returns the slice of tpke.DecryptionShare that preCommit carries.
-func (m *preCommit) Shares() []*tpke.DecryptionShare {
+func (m *preCommit) Shares() ([]*tpke.DecryptionShare, []*tpke.DecryptionShare) {
 	if !m.cached {
-		shares, err := decodeShares(m.dataExt)
+		var err error
+		m.sharesCurr, m.sharesPrev, err = decodeShares(m.dataExt)
 		if err != nil {
 			panic(fmt.Errorf("bug: invalid locally constructed shares: %w", err))
 		}
-		m.shares = shares
 		m.cached = true
 	}
-	return m.shares
+	return m.sharesCurr, m.sharesPrev
 }
 
 // encodeShares encodes the slice of tpke.DecryptionShare in the same way as it's
 // required by preCommit serialization rules.
-func encodeShares(shares []*tpke.DecryptionShare) []byte {
-	var res = make([]byte, 4, tpke.DecryptionShareSize*len(shares)+4)
-	binary.LittleEndian.PutUint32(res, uint32(len(shares)))
-	for i := range shares {
-		res = append(res, shares[i].ToBytes()...)
+func encodeShares(sharesCurr []*tpke.DecryptionShare, sharesPrev []*tpke.DecryptionShare) []byte {
+	var res = make([]byte, 4*2, 4*2+tpke.DecryptionShareSize*(len(sharesCurr)+len(sharesPrev)))
+	binary.LittleEndian.PutUint32(res, uint32(len(sharesCurr)))
+	binary.LittleEndian.PutUint32(res[4:], uint32(len(sharesPrev)))
+	for i := range sharesCurr {
+		res = append(res, sharesCurr[i].ToBytes()...)
+	}
+	for i := range sharesPrev {
+		res = append(res, sharesPrev[i].ToBytes()...)
 	}
 	return res
 }
 
 // decodeShares decodes the list of tpke.DecryptionShare from the provided
 // data following preCommit serialization rules.
-func decodeShares(data []byte) ([]*tpke.DecryptionShare, error) {
-	if len(data) < 4 {
-		return nil, errors.New("shares slice is too short")
+func decodeShares(data []byte) ([]*tpke.DecryptionShare, []*tpke.DecryptionShare, error) {
+	offset := 8
+	if len(data) < offset {
+		return nil, nil, fmt.Errorf("shares slice is too short: expected at least %d bytes, got %d", offset, len(data))
 	}
-	n := binary.LittleEndian.Uint32(data[:4])
+
+	nCurr := binary.LittleEndian.Uint32(data[:4])
+	nPrev := binary.LittleEndian.Uint32(data[4:offset])
+	n := nCurr + nPrev
 	if n > maxDecryptionSharesPerBlock {
-		return nil, fmt.Errorf("too many shares: got %d, allowed %d", n, maxDecryptionSharesPerBlock)
+		return nil, nil, fmt.Errorf("too many shares: got %d/%d, allowed %d at max", nCurr, nPrev, maxDecryptionSharesPerBlock)
 	}
-	shares := make([]*tpke.DecryptionShare, n)
-	for i := range shares {
-		shares[i] = &tpke.DecryptionShare{}
-		_, err := shares[i].FromBytes(data[4+i*tpke.DecryptionShareSize : 4+(i+1)*tpke.DecryptionShareSize])
+	expectedLen := offset + int(n*tpke.DecryptionShareSize)
+	if len(data) != expectedLen {
+		return nil, nil, fmt.Errorf("shares slise has invalid length: expected %d, got %d", expectedLen, len(data))
+	}
+
+	var (
+		curr = make([]*tpke.DecryptionShare, nCurr)
+		prev = make([]*tpke.DecryptionShare, nPrev)
+	)
+	for i := range curr {
+		curr[i] = &tpke.DecryptionShare{}
+		_, err := curr[i].FromBytes(data[offset : offset+tpke.DecryptionShareSize])
 		if err != nil {
-			fmt.Errorf("share %d: %w", i, err)
+			fmt.Errorf("decoding current round share %d: %w", i, err)
 		}
+		offset += tpke.DecryptionShareSize
 	}
-	return shares, nil
+	for i := range prev {
+		prev[i] = &tpke.DecryptionShare{}
+		_, err := prev[i].FromBytes(data[offset : offset+tpke.DecryptionShareSize])
+		if err != nil {
+			fmt.Errorf("decoding previous round share %d: %w", i, err)
+		}
+		offset += tpke.DecryptionShareSize
+	}
+
+	return curr, prev, nil
 }
