@@ -40,7 +40,7 @@ type TxWatchList struct {
 // Snapshot is a temporary record to save progress of a DKG round
 type Snapshot struct {
 	EpochStartHeight     uint64
-	Round                uint64 // Starts from 1
+	Round                uint64 // Starts from 1, points to the next round if initDone.
 	CurrentCNs           []common.Address
 	PendingCNs           []common.Address
 	IndexNeedRecover     []uint64
