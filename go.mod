@@ -29,7 +29,7 @@ require (
 	github.com/ethereum/go-verkle v0.2.2
 	github.com/fatih/color v1.16.0
 	github.com/ferranbt/fastssz v0.1.3
-	github.com/fjl/gencodec v0.0.0-20230517082657-f9840df7b83e
+	github.com/fjl/gencodec v0.0.0-20250117152317-bc3e1c7619d4
 	github.com/fsnotify/fsnotify v1.6.0
 	github.com/gballet/go-libpcsclite v0.0.0-20190607065134-2772fd86a8ff
 	github.com/gofrs/flock v0.8.1
