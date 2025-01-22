@@ -70,43 +70,43 @@ interface IKeyManagement {
     // get public key of addr
     function messagePubkeys(address addr) external view returns (bytes memory);
 
-    // get share msgs by height and index
+    // get share msgs by round and index
     function getShareMsgs(
-        uint height,
+        uint round,
         uint index
     ) external view returns (bytes[] memory);
 
-    // get share pvss by height and index
+    // get share pvss by round and index
     function spvsses(
-        uint height,
+        uint round,
         uint index
     ) external view returns (bytes memory);
 
-    // get reshare msgs by height and index
+    // get reshare msgs by round and index
     function getReshareMsgs(
-        uint height,
+        uint round,
         uint index
     ) external view returns (bytes[] memory);
 
-    // get reshare pvss by height and index
+    // get reshare pvss by round and index
     function rpvsses(
-        uint height,
+        uint round,
         uint index
     ) external view returns (bytes memory);
 
-    // get recover msg by height, indexSend and indexReceive
+    // get recover msg by round, indexSend and indexReceive
     function recoverMsgs(
-        uint height,
+        uint round,
         uint indexSend,
         uint indexReceive
     ) external view returns (bytes memory);
 
-    // get shared public key by height and index
+    // get shared public key by round and index
     function sharedPubs(
-        uint height,
+        uint round,
         uint index
     ) external view returns (bytes memory);
 
-    // get aggregated commitment by height
-    function aggregatedCommitments(uint height) external view returns (bytes memory);
+    // get aggregated commitment by round
+    function aggregatedCommitments(uint round) external view returns (bytes memory);
 }

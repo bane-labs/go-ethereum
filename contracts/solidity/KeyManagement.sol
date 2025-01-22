@@ -381,16 +381,16 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
     }
 
     function getShareMsgs(
-        uint height,
+        uint round,
         uint index
     ) external view override returns (bytes[] memory) {
-        return shareMsgs[height][index];
+        return shareMsgs[round][index];
     }
 
     function getReshareMsgs(
-        uint height,
+        uint round,
         uint index
     ) external view override returns (bytes[] memory) {
-        return reshareMsgs[height][index];
+        return reshareMsgs[round][index];
     }
 }
