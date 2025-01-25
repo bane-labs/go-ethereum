@@ -1837,6 +1837,11 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chain = chain
 		c.blockQueue.chain = chain
 
+		// Start DKG task dispatcher prior to sealing proposal awaiting since new
+		// block may be discovered during awaiting which may lead to DKG-related
+		// transactions submission.
+		go c.loopTaskList()
+
 		// Current head of the header chain may be above the block chain, and
 		// dBFT must always be based on the latest state data (i.e. blocks), thus,
 		// retrieve current chain header to initialize context and wait until chain
@@ -1867,7 +1872,6 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
 
 		go c.eventLoop()
-		go c.loopTaskList()
 	}
 }
 
