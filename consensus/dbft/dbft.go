@@ -1837,6 +1837,11 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chain = chain
 		c.blockQueue.chain = chain
 
+		// Start DKG task dispatcher prior to sealing proposal awaiting since new
+		// block may be discovered during awaiting which may lead to DKG-related
+		// transactions submission.
+		go c.loopTaskList()
+
 		// Current head of the header chain may be above the block chain, and
 		// dBFT must always be based on the latest state data (i.e. blocks), thus,
 		// retrieve current chain header to initialize context and wait until chain
@@ -1867,7 +1872,6 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
 
 		go c.eventLoop()
-		go c.loopTaskList()
 	}
 }
 
@@ -1924,6 +1928,19 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 			"sealing proposal index", b.NumberU64())
 		ltstHeader := c.chain.GetHeaderByNumber(b.NumberU64() - 1)
 		c.postBlock(ltstHeader, nil)
+	} else {
+		// Manually initialize DKG snapshot based on the latest block information
+		// (we're sure that state of the latest block is available by this moment,
+		// miner guarantees that). We can't do it earlier because blocks chain
+		// may be out of sync compared to headers chain, ref. 3721f549.
+		currHeader := c.chain.GetHeaderByNumber(c.lastIndex)
+		c.lock.RLock()
+		ks := c.amevKeystore
+		c.lock.RUnlock()
+		err := c.handleDKG(c.dkgSnapshot, ks, currHeader, nil, false)
+		if err != nil {
+			return fmt.Errorf("failed to initialize DKG snapshot at height %d: %w", err)
+		}
 	}
 
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
