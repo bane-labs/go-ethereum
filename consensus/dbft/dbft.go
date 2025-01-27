@@ -1947,7 +1947,7 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 			"sealing proposal index", b.NumberU64())
 		ltstHeader := c.chain.GetHeaderByNumber(b.NumberU64() - 1)
 		c.postBlock(ltstHeader, nil)
-	} else {
+	} else if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
 		// Manually initialize DKG snapshot based on the latest block information
 		// (we're sure that state of the latest block is available by this moment,
 		// miner guarantees that). We can't do it earlier because blocks chain
