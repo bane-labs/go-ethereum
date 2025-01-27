@@ -1958,7 +1958,7 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 		c.lock.RUnlock()
 		err := c.handleDKG(c.dkgSnapshot, ks, currHeader, nil, false)
 		if err != nil {
-			return fmt.Errorf("failed to initialize DKG snapshot at height %d: %w", err)
+			return fmt.Errorf("failed to initialize DKG snapshot at height %d: %w", currHeader.Number.Uint64(), err)
 		}
 	}
 
