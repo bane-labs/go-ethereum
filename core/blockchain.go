@@ -1333,9 +1333,12 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		if !bc.HasHeader(last.Hash(), last.NumberU64()) {
 			return 0, fmt.Errorf("containing header #%d [%x..] unknown", last.Number(), last.Hash().Bytes()[:4])
 		}
-
 		// Write all chain data to ancients.
-		td := bc.GetTd(first.Hash(), first.NumberU64())
+		ptd := bc.GetTd(first.ParentHash(), first.NumberU64()-1)
+		if ptd == nil {
+			return 0, consensus.ErrUnknownAncestor
+		}
+		td := new(big.Int).Add(ptd, first.Difficulty())
 		writeSize, err := rawdb.WriteAncientBlocks(bc.db, blockChain, receiptChain, td)
 		if err != nil {
 			log.Error("Error importing chain data to ancients", "err", err)
