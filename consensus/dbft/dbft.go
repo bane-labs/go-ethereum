@@ -1852,6 +1852,13 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chain = chain
 		c.blockQueue.chain = chain
 
+		// Subscribe for minted blocks prior to accessing current chain header.
+		// Sealing proposal awaiting may take some time during which new blocks may
+		// arrive via P2P, which may lead to the fact that c.last* fields and dBFT
+		// state are out-of-date comparing to the chain's state by the end of Start.
+		// Early subscription allows to ensure that no blocks can be missed by eventLoop.
+		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
+
 		// Start DKG task dispatcher prior to sealing proposal awaiting since new
 		// block may be discovered during awaiting which may lead to DKG-related
 		// transactions submission.
@@ -1882,9 +1889,6 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 			"last height", c.lastIndex,
 			"last timestamp", c.lastTimestamp)
 		c.dbft.Start(c.lastTimestamp * NsInS)
-
-		// Subscribe for minted blocks.
-		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
 
 		go c.eventLoop()
 	}
