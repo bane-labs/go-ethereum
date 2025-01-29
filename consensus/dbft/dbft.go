@@ -405,6 +405,13 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
 	if uint64(dbftBlock.Index()) <= c.lastIndex {
 		return nil
 	}
+	if dbftBlock.state == nil {
+		// We're toast, proposal was invalid (likely just outdated), the node doesn't have relevant
+		// block state, hence can't continue block processing. In good scenario (if proposal is valid but outdated)
+		// new block arrival will trigger dBFT initialization at new height, hence don't stop the node immediately.
+		log.Warn("can't process block due to missing state: proposal verification failed")
+		return nil
+	}
 
 	// Avoid copying and may safely change the block itself, as this part
 	// of code is guaranteed to be called once by dBFT.
@@ -482,6 +489,14 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 			state:               c.sealingState,
 			receipts:            c.sealingReceipts,
 		}
+	}
+
+	if pre.finalState == nil {
+		// We're toast, proposal was invalid (likely just outdated), the node doesn't have relevant
+		// block state, hence can't continue consensus. In good scenario (if proposal is valid but outdated)
+		// new block arrival will trigger dBFT initialization at new height, hence don't stop the node immediately.
+		log.Warn("can't construct block due to missing state: proposal verification failed")
+		return nil
 	}
 
 	// Manually update header's fields based on fresh state. Avoid changing
@@ -1837,6 +1852,13 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chain = chain
 		c.blockQueue.chain = chain
 
+		// Subscribe for minted blocks prior to accessing current chain header.
+		// Sealing proposal awaiting may take some time during which new blocks may
+		// arrive via P2P, which may lead to the fact that c.last* fields and dBFT
+		// state are out-of-date comparing to the chain's state by the end of Start.
+		// Early subscription allows to ensure that no blocks can be missed by eventLoop.
+		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
+
 		// Start DKG task dispatcher prior to sealing proposal awaiting since new
 		// block may be discovered during awaiting which may lead to DKG-related
 		// transactions submission.
@@ -1867,9 +1889,6 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 			"last height", c.lastIndex,
 			"last timestamp", c.lastTimestamp)
 		c.dbft.Start(c.lastTimestamp * NsInS)
-
-		// Subscribe for minted blocks.
-		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
 
 		go c.eventLoop()
 	}

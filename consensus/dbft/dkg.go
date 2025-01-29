@@ -343,6 +343,9 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 
 // loopTaskList retries every task in tx watch list
 func (c *DBFT) loopTaskList() {
+	log.Info("DKG events dispatcher started")
+	defer log.Info("DKG events dispatcher stopped")
+
 	for watchList := range c.loopTaskChan {
 		log.Info("DKG loopTaskList", "CurrentHeight", watchList.CurrentHeight, "WatchListLength", len(watchList.WatchList))
 		currentHeight := watchList.CurrentHeight
