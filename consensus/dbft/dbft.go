@@ -405,6 +405,13 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
 	if uint64(dbftBlock.Index()) <= c.lastIndex {
 		return nil
 	}
+	if dbftBlock.state == nil {
+		// We're toast, proposal was invalid (likely just outdated), the node doesn't have relevant
+		// block state, hence can't continue block processing. In good scenario (if proposal is valid but outdated)
+		// new block arrival will trigger dBFT initialization at new height, hence don't stop the node immediately.
+		log.Warn("can't process block due to missing state: proposal verification failed")
+		return nil
+	}
 
 	// Avoid copying and may safely change the block itself, as this part
 	// of code is guaranteed to be called once by dBFT.
@@ -482,6 +489,14 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 			state:               c.sealingState,
 			receipts:            c.sealingReceipts,
 		}
+	}
+
+	if pre.finalState == nil {
+		// We're toast, proposal was invalid (likely just outdated), the node doesn't have relevant
+		// block state, hence can't continue consensus. In good scenario (if proposal is valid but outdated)
+		// new block arrival will trigger dBFT initialization at new height, hence don't stop the node immediately.
+		log.Warn("can't construct block due to missing state: proposal verification failed")
+		return nil
 	}
 
 	// Manually update header's fields based on fresh state. Avoid changing
