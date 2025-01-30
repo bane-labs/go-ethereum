@@ -2,6 +2,7 @@ package antimev
 
 import (
 	"errors"
+	"fmt"
 	"math"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -66,11 +67,11 @@ func (ks *KeyStore) AggregateAndDecryptWithShare(cts []*tpke.CipherText, msg [][
 		return nil, ErrNoPubKey
 	}
 	if len(cts) != len(msg) {
-		return nil, ErrLengthMismatch
+		return nil, fmt.Errorf("%w: %d encrypted keys vs %d encrypted messages", ErrLengthMismatch, len(cts), len(msg))
 	}
-	for _, v := range inputs {
+	for i, v := range inputs {
 		if len(v) != len(cts) {
-			return nil, ErrLengthMismatch
+			return nil, fmt.Errorf("%w: validator %d: %d decryption shares vs %d encrypted keys", ErrLengthMismatch, i, len(v), len(cts))
 		}
 	}
 	// Try decrypt the aes keys, err will be nil if the provided shares are valid,

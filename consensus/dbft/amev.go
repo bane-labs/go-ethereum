@@ -3,6 +3,7 @@ package dbft
 import (
 	"bytes"
 	"crypto/aes"
+	"encoding/binary"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
@@ -20,13 +21,17 @@ var (
 	// encryptedDataPrefixLen is the length of encryptedDataPrefix.
 	encryptedDataPrefixLen = len(encryptedDataPrefix)
 
+	// encryptedDataRoundLen is the amount of bytes that encoded DKG round of transaction
+	// encryption takes in the Envelope's data byte slice (the size of Uint64).
+	encryptedDataRoundLen = 4
+
 	// minEncryptedDataSize is the minimum size of encrypted data stored in the
 	// Envelope transaction. It consists of the constant-length prefix,
 	// constant-length CipherText and variable-length encrypted message. The size of
 	// a simple gas transfer with 1 gwei (105 bytes) is taken as a reference point
 	// for evaluation of variable-length part; it is padded to be even to the AES
 	// block size as required by AES encryption rules.
-	minEncryptedDataSize = encryptedDataPrefixLen + tpke.CipherTextSize + 105 + (aes.BlockSize - 105%aes.BlockSize)
+	minEncryptedDataSize = encryptedDataPrefixLen + encryptedDataRoundLen + tpke.CipherTextSize + 105 + (aes.BlockSize - 105%aes.BlockSize)
 )
 
 // isEnvelope checks whether a transaction is an Envelope transaction. The criteria
@@ -52,6 +57,9 @@ type envelopeData struct {
 	index int
 	// prefix is a 4-bytes prefix used for Envelope's data versioning.
 	prefix []byte
+	// dkgRound is a DKG round index by the moment Envelope's data was encrypted
+	// according to the KeyManagement system contract.
+	dkgRound uint32
 	// encryptedKey is a tpke.CipherText provided by the sender of encrypted
 	// transaction.
 	encryptedKey *tpke.CipherText
@@ -62,15 +70,24 @@ type envelopeData struct {
 // decodeEnvelopeData decodes envelopeData from the provided slice. It's a no-op to
 // pass not an Envelope's data.
 func decodeEnvelopeData(buf []byte) (envelopeData, error) {
-	var key = new(tpke.CipherText)
+	var (
+		key              = new(tpke.CipherText)
+		keyOffset        = encryptedDataPrefixLen + encryptedDataRoundLen
+		cipherTextOffset = keyOffset + tpke.CipherTextSize
+	)
 	// It's guaranteed by Envelope definition that buf has a proper length.
-	_, err := key.FromBytes(buf[encryptedDataPrefixLen : encryptedDataPrefixLen+tpke.CipherTextSize])
+	_, err := key.FromBytes(buf[keyOffset:cipherTextOffset])
 	if err != nil {
 		return envelopeData{}, fmt.Errorf("failed to decode TPKE cipher text: %w", err)
 	}
+	round := binary.LittleEndian.Uint32(buf[encryptedDataPrefixLen:keyOffset])
+	if round == 0 {
+		return envelopeData{}, fmt.Errorf("invalid TPKE cipher text: invalid round %d", round)
+	}
 	return envelopeData{
 		prefix:       buf[:encryptedDataPrefixLen],
+		dkgRound:     round,
 		encryptedKey: key,
-		encryptedMsg: buf[encryptedDataPrefixLen+tpke.CipherTextSize:],
+		encryptedMsg: buf[cipherTextOffset:],
 	}, nil
 }
