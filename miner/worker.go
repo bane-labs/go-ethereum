@@ -759,7 +759,8 @@ func (w *worker) commitBlobTransaction(env *environment, tx *types.Transaction) 
 	// isn't really a better place right now. The blob gas limit is checked at block validation time
 	// and not during execution. This means core.ApplyTransaction will not return an error if the
 	// tx has too many blobs. So we have to explicitly check it here.
-	if (env.blobs+len(sc.Blobs))*params.BlobTxBlobGasPerBlob > params.MaxBlobGasPerBlock {
+	maxBlobs := eip4844.MaxBlobsPerBlock(w.chainConfig, env.header.Time)
+	if env.blobs+len(sc.Blobs) > maxBlobs {
 		return nil, errors.New("max data blobs reached")
 	}
 	receipt, err := w.applyTransaction(env, tx)
@@ -809,7 +810,7 @@ func (w *worker) commitTransactions(env *environment, plainTxs, blobTxs *transac
 		}
 		// If we don't have enough blob space for any further blob transactions,
 		// skip that list altogether
-		if !blobTxs.Empty() && env.blobs*params.BlobTxBlobGasPerBlob >= params.MaxBlobGasPerBlock {
+		if !blobTxs.Empty() && env.blobs >= eip4844.MaxBlobsPerBlock(w.chainConfig, env.header.Time) {
 			log.Trace("Not enough blob space for further blob transactions")
 			blobTxs.Clear()
 			// Fall though to pick up any plain txs
@@ -843,11 +844,19 @@ func (w *worker) commitTransactions(env *environment, plainTxs, blobTxs *transac
 			txs.Pop()
 			continue
 		}
-		if left := uint64(params.MaxBlobGasPerBlock - env.blobs*params.BlobTxBlobGasPerBlob); left < ltx.BlobGas {
-			log.Trace("Not enough blob gas left for transaction", "hash", ltx.Hash, "left", left, "needed", ltx.BlobGas)
-			txs.Pop()
-			continue
+
+		// Most of the blob gas logic here is agnostic as to if the chain supports
+		// blobs or not, however the max check panics when called on a chain without
+		// a defined schedule, so we need to verify it's safe to call.
+		if w.chainConfig.IsCancun(env.header.Number, env.header.Time) {
+			left := eip4844.MaxBlobsPerBlock(w.chainConfig, env.header.Time) - env.blobs
+			if left < int(ltx.BlobGas/params.BlobTxBlobGasPerBlob) {
+				log.Trace("Not enough blob space left for transaction", "hash", ltx.Hash, "left", left, "needed", ltx.BlobGas/params.BlobTxBlobGasPerBlob)
+				txs.Pop()
+				continue
+			}
 		}
+
 		// Transaction seems to fit, pull it up from the pool
 		tx := ltx.Resolve()
 		if tx == nil {
@@ -855,6 +864,7 @@ func (w *worker) commitTransactions(env *environment, plainTxs, blobTxs *transac
 			txs.Pop()
 			continue
 		}
+
 		// Error may be ignored here. The error has already been checked
 		// during transaction acceptance in the transaction pool.
 		from, _ := types.Sender(env.signer, tx)
@@ -994,10 +1004,7 @@ func (w *worker) prepareWork(genParams *generateParams, witness bool) (*environm
 	if w.chainConfig.IsCancun(header.Number, header.Time) {
 		var excessBlobGas uint64
 		if w.chainConfig.IsCancun(parent.Number, parent.Time) {
-			excessBlobGas = eip4844.CalcExcessBlobGas(*parent.ExcessBlobGas, *parent.BlobGasUsed)
-		} else {
-			// For the first post-fork block, both parent.data_gas_used and parent.excess_data_gas are evaluated as 0
-			excessBlobGas = eip4844.CalcExcessBlobGas(0, 0)
+			excessBlobGas = eip4844.CalcExcessBlobGas(w.chainConfig, parent)
 		}
 		header.BlobGasUsed = new(uint64)
 		header.ExcessBlobGas = &excessBlobGas
@@ -1039,7 +1046,7 @@ func (w *worker) fillTransactions(interrupt *atomic.Int32, env *environment) err
 		filter.BaseFee = uint256.MustFromBig(env.header.BaseFee)
 	}
 	if env.header.ExcessBlobGas != nil {
-		filter.BlobFee = uint256.MustFromBig(eip4844.CalcBlobFee(*env.header.ExcessBlobGas))
+		filter.BlobFee = uint256.MustFromBig(eip4844.CalcBlobFee(w.chainConfig, env.header))
 	}
 	filter.OnlyPlainTxs, filter.OnlyBlobTxs = true, false
 	pendingPlainTxs := w.eth.TxPool().Pending(filter)
