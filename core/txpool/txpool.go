@@ -358,7 +358,7 @@ func (p *TxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
 	// back the errors into the original sort order.
 	errsets := make([][]error, len(p.subpools))
 	for i := 0; i < len(p.subpools); i++ {
-		errsets[i] = p.subpools[i].Add(txsets[i], local, sync)
+		errsets[i] = p.subpools[i].Add(txsets[i], sync)
 	}
 	errs := make([]error, len(txs))
 	for i, split := range splits {
@@ -481,23 +481,6 @@ func (p *TxPool) ContentFrom(addr common.Address) ([]*types.Transaction, []*type
 		}
 	}
 	return []*types.Transaction{}, []*types.Transaction{}
-}
-
-// Locals retrieves the accounts currently considered local by the pool.
-func (p *TxPool) Locals() []common.Address {
-	// Retrieve the locals from each subpool and deduplicate them
-	locals := make(map[common.Address]struct{})
-	for _, subpool := range p.subpools {
-		for _, local := range subpool.Locals() {
-			locals[local] = struct{}{}
-		}
-	}
-	// Flatten and return the deduplicated local set
-	flat := make([]common.Address, 0, len(locals))
-	for local := range locals {
-		flat = append(flat, local)
-	}
-	return flat
 }
 
 // Status returns the known status (unknown/pending/queued) of a transaction

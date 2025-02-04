@@ -218,7 +218,8 @@ type worker struct {
 	mu       sync.RWMutex // The lock used to protect the coinbase and extra fields
 	coinbase common.Address
 	extra    []byte
-	tip      *uint256.Int // Minimum tip needed for non-local transaction to include them
+	tip      *uint256.Int     // Minimum tip needed for non-local transaction to include them
+	prio     []common.Address // A list of senders to prioritize
 
 	pendingMu    sync.RWMutex
 	pendingTasks map[common.Hash]*task
@@ -309,6 +310,13 @@ func (w *worker) etherbase() common.Address {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return w.coinbase
+}
+
+// setPrioAddresses sets a list of addresses to prioritize for transaction inclusion.
+func (w *worker) setPrioAddresses(prio []common.Address) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.prio = prio
 }
 
 func (w *worker) setGasCeil(ceil uint64) {
@@ -1036,6 +1044,7 @@ func (w *worker) prepareWork(genParams *generateParams, witness bool) (*environm
 func (w *worker) fillTransactions(interrupt *atomic.Int32, env *environment) error {
 	w.mu.RLock()
 	tip := w.tip
+	prio := w.prio
 	w.mu.RUnlock()
 
 	// Retrieve the pending transactions pre-filtered by the 1559/4844 dynamic fees
@@ -1055,31 +1064,31 @@ func (w *worker) fillTransactions(interrupt *atomic.Int32, env *environment) err
 	pendingBlobTxs := w.eth.TxPool().Pending(filter)
 
 	// Split the pending transactions into locals and remotes.
-	localPlainTxs, remotePlainTxs := make(map[common.Address][]*txpool.LazyTransaction), pendingPlainTxs
-	localBlobTxs, remoteBlobTxs := make(map[common.Address][]*txpool.LazyTransaction), pendingBlobTxs
+	prioPlainTxs, normalPlainTxs := make(map[common.Address][]*txpool.LazyTransaction), pendingPlainTxs
+	prioBlobTxs, normalBlobTxs := make(map[common.Address][]*txpool.LazyTransaction), pendingBlobTxs
 
-	for _, account := range w.eth.TxPool().Locals() {
-		if txs := remotePlainTxs[account]; len(txs) > 0 {
-			delete(remotePlainTxs, account)
-			localPlainTxs[account] = txs
+	for _, account := range prio {
+		if txs := normalPlainTxs[account]; len(txs) > 0 {
+			delete(normalPlainTxs, account)
+			prioPlainTxs[account] = txs
 		}
-		if txs := remoteBlobTxs[account]; len(txs) > 0 {
-			delete(remoteBlobTxs, account)
-			localBlobTxs[account] = txs
+		if txs := normalBlobTxs[account]; len(txs) > 0 {
+			delete(normalBlobTxs, account)
+			prioBlobTxs[account] = txs
 		}
 	}
 	// Fill the block with all available pending transactions.
-	if len(localPlainTxs) > 0 || len(localBlobTxs) > 0 {
-		plainTxs := newTransactionsByPriceAndNonce(env.signer, localPlainTxs, env.header.BaseFee)
-		blobTxs := newTransactionsByPriceAndNonce(env.signer, localBlobTxs, env.header.BaseFee)
+	if len(prioPlainTxs) > 0 || len(prioBlobTxs) > 0 {
+		plainTxs := newTransactionsByPriceAndNonce(env.signer, prioPlainTxs, env.header.BaseFee)
+		blobTxs := newTransactionsByPriceAndNonce(env.signer, prioBlobTxs, env.header.BaseFee)
 
 		if err := w.commitTransactions(env, plainTxs, blobTxs, interrupt); err != nil {
 			return err
 		}
 	}
-	if len(remotePlainTxs) > 0 || len(remoteBlobTxs) > 0 {
-		plainTxs := newTransactionsByPriceAndNonce(env.signer, remotePlainTxs, env.header.BaseFee)
-		blobTxs := newTransactionsByPriceAndNonce(env.signer, remoteBlobTxs, env.header.BaseFee)
+	if len(normalPlainTxs) > 0 || len(normalBlobTxs) > 0 {
+		plainTxs := newTransactionsByPriceAndNonce(env.signer, normalPlainTxs, env.header.BaseFee)
+		blobTxs := newTransactionsByPriceAndNonce(env.signer, normalBlobTxs, env.header.BaseFee)
 
 		if err := w.commitTransactions(env, plainTxs, blobTxs, interrupt); err != nil {
 			return err

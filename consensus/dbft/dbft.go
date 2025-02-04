@@ -926,7 +926,7 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	}
 	ethBlock := dbftBlock.ToEthBlock()
 
-	errs := c.staticPool.Add(dbftBlock.transactions, false, false)
+	errs := c.staticPool.Add(dbftBlock.transactions, false)
 	c.staticPool.ResetStatic()
 	for i, err := range errs {
 		if err != nil {
@@ -1144,7 +1144,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 						"envelope index", i,
 						"reason", reason)
 				}
-				errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
+				errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false)
 				if errs[0] != nil {
 					log.Info("Falling back to original set of transactions",
 						"envelope hash", pre.transactions[i].Hash(),
@@ -1209,7 +1209,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 					break
 				}
 			}
-			errs := c.staticPool.Add([]*types.Transaction{decryptedTx}, false, false)
+			errs := c.staticPool.Add([]*types.Transaction{decryptedTx}, false)
 			if errs[0] != nil {
 				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction has pool conflicts: %s", errs[0].Error())) {
 					continue

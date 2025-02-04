@@ -361,18 +361,11 @@ func (pool *CachePool) Pending(filter txpool.PendingFilter) map[common.Address][
 	return make(map[common.Address][]*txpool.LazyTransaction)
 }
 
-// Locals retrieves the accounts currently considered local by the pool.
-//
-// There is no notion of local accounts in the cache pool.
-func (pool *CachePool) Locals() []common.Address {
-	return []common.Address{}
-}
-
 // validateTxBasics checks whether a transaction is valid according to the consensus
 // rules, but does not check state-dependent validation such as sufficient balance.
 // This check is meant as an early check which only needs to be performed once,
 // and does not require the pool mutex to be held.
-func (pool *CachePool) validateTxBasics(tx *types.Transaction, local bool) error {
+func (pool *CachePool) validateTxBasics(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptions{
 		Config: pool.chainconfig,
 		Accept: 0 |
@@ -381,9 +374,6 @@ func (pool *CachePool) validateTxBasics(tx *types.Transaction, local bool) error
 			1<<types.DynamicFeeTxType,
 		MaxSize: txMaxSize,
 		MinTip:  pool.gasTip.Load().ToBig(),
-	}
-	if local {
-		opts.MinTip = new(big.Int)
 	}
 	if err := txpool.ValidateTransaction(tx, pool.currentHead.Load(), pool.signer, opts); err != nil {
 		return err
@@ -508,7 +498,7 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 		// Nothing was replaced, bump the queued counter
 		cachedGauge.Inc(1)
 	}
-	pool.all.Add(tx, true)
+	pool.all.Add(tx)
 	log.Trace("Pooled new executable cached transaction", "hash", hash, "from", from, "to", tx.To())
 
 	// Successful promotion, bump the heartbeat
@@ -519,27 +509,11 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 	return true, err
 }
 
-// addLocals enqueues a batch of transactions into the pool if they are valid, marking the
-// senders as local ones, ensuring they go around the local pricing constraints.
-//
-// This method is used to add transactions from the RPC API and performs synchronous pool
-// reorganization and event propagation.
-func (pool *CachePool) addLocals(txs []*types.Transaction) []error {
-	return pool.Add(txs, true, true)
-}
-
-// addLocal enqueues a single local transaction into the pool if it is valid. This is
-// a convenience wrapper around addLocals.
-func (pool *CachePool) addLocal(tx *types.Transaction) error {
-	return pool.addLocals([]*types.Transaction{tx})[0]
-}
-
-// Add enqueues a batch of transactions into the pool if they are valid. Depending
-// on the local flag, full pricing constraints will or will not be applied.
+// Add enqueues a batch of transactions into the pool if they are valid.
 //
 // If sync is set, the method will block until all internal maintenance related
 // to the add is finished. Only use this during tests for determinism!
-func (pool *CachePool) Add(txs []*types.Transaction, local, sync bool) []error {
+func (pool *CachePool) Add(txs []*types.Transaction, sync bool) []error {
 	// Filter out known ones without obtaining the pool lock or recovering signatures
 	var (
 		errs = make([]error, len(txs))
@@ -555,7 +529,7 @@ func (pool *CachePool) Add(txs []*types.Transaction, local, sync bool) []error {
 		// Exclude transactions with basic errors, e.g invalid signatures and
 		// insufficient intrinsic gas as soon as possible and cache senders
 		// in transactions before obtaining lock
-		if err := pool.validateTxBasics(tx, local); err != nil {
+		if err := pool.validateTxBasics(tx); err != nil {
 			errs[i] = err
 			log.Trace("Discarding invalid transaction", "hash", tx.Hash(), "err", err)
 			invalidCachedTxMeter.Mark(1)

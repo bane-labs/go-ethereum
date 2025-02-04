@@ -98,7 +98,7 @@ func TestCachePool(t *testing.T) {
 		}
 		txs[i] = transaction(i%pool.config.AccountSlots, gasLimit, keys[0])
 	}
-	errs := pool.addLocals(txs)
+	errs := pool.Add(txs, true)
 	for i, err := range errs {
 		switch uint64(i) / pool.config.AccountSlots {
 		case 0:
@@ -122,7 +122,7 @@ func TestCachePool(t *testing.T) {
 	for i := uint64(0); i < 3*pool.config.AccountSlots; i++ {
 		txs[i] = dynamicFeeTx(i, 100000, big.NewInt(1), big.NewInt(1), keys[1])
 	}
-	pool.addLocals(txs)
+	pool.Add(txs, true)
 	require.Equal(t, int(pool.config.AccountSlots+3*pool.config.AccountSlots), pool.all.Count())
 	tx = txs[0]
 	sender = crypto.PubkeyToAddress(keys[1].PublicKey)
@@ -148,25 +148,25 @@ func TestCachePoolInvalidTransactions(t *testing.T) {
 
 	// Intrinsic gas too low
 	testCachePoolAddBalance(pool, from, big.NewInt(1))
-	if err, want := pool.addLocal(tx), core.ErrIntrinsicGas; !errors.Is(err, want) {
+	if err, want := pool.Add([]*types.Transaction{tx}, true)[0], core.ErrIntrinsicGas; !errors.Is(err, want) {
 		t.Errorf("want %v have %v", want, err)
 	}
 
 	// Insufficient funds
 	tx = transaction(0, 100000, key)
-	if err, want := pool.addLocal(tx), core.ErrInsufficientFunds; !errors.Is(err, want) {
+	if err, want := pool.Add([]*types.Transaction{tx}, true)[0], core.ErrInsufficientFunds; !errors.Is(err, want) {
 		t.Errorf("want %v have %v", want, err)
 	}
 
 	testCachePoolSetNonce(pool, from, 1)
 	testCachePoolAddBalance(pool, from, big.NewInt(0xffffffffffffff))
 	tx = transaction(0, 100000, key)
-	if err, want := pool.addLocal(tx), core.ErrNonceTooLow; !errors.Is(err, want) {
+	if err, want := pool.Add([]*types.Transaction{tx}, true)[0], core.ErrNonceTooLow; !errors.Is(err, want) {
 		t.Errorf("want %v have %v", want, err)
 	}
 
 	testCachePoolSetNonce(pool, from, 0)
-	if err, want := pool.addLocal(tx), ErrTxPoolCached; !errors.Is(err, want) {
+	if err, want := pool.Add([]*types.Transaction{tx}, true)[0], ErrTxPoolCached; !errors.Is(err, want) {
 		t.Errorf("want %v have %v", want, err)
 	}
 }
@@ -182,7 +182,7 @@ func TestCache(t *testing.T) {
 	testCachePoolAddBalance(pool, from, big.NewInt(1000000))
 	<-pool.requestReset(nil, nil)
 
-	pool.Add([]*types.Transaction{tx}, true, true)
+	pool.Add([]*types.Transaction{tx}, true)
 	if len(pool.cached) != 1 {
 		t.Error("expected valid txs to be 1 is", len(pool.cached))
 	}
@@ -190,7 +190,7 @@ func TestCache(t *testing.T) {
 	tx = transaction(1, 100000, key)
 	from, _ = deriveSender(tx)
 	testCachePoolSetNonce(pool, from, 2)
-	pool.Add([]*types.Transaction{tx}, true, true)
+	pool.Add([]*types.Transaction{tx}, true)
 
 	if _, ok := pool.cached[from].txs.items[tx.Nonce()]; ok {
 		t.Error("expected transaction to be in tx pool")
@@ -206,7 +206,7 @@ func TestCachePoolNegativeValue(t *testing.T) {
 	tx, _ := types.SignTx(types.NewTransaction(0, common.Address{}, big.NewInt(-1), 100, big.NewInt(1), nil), types.HomesteadSigner{}, key)
 	from, _ := deriveSender(tx)
 	testCachePoolAddBalance(pool, from, big.NewInt(1))
-	if err := pool.addLocal(tx); err != txpool.ErrNegativeValue {
+	if err := pool.Add([]*types.Transaction{tx}, true)[0]; err != txpool.ErrNegativeValue {
 		t.Error("expected", txpool.ErrNegativeValue, "got", err)
 	}
 }
@@ -219,7 +219,7 @@ func TestCachePoolTipAboveFeeCap(t *testing.T) {
 
 	tx := dynamicFeeTx(0, 100, big.NewInt(1), big.NewInt(2), key)
 
-	if err := pool.addLocal(tx); err != core.ErrTipAboveFeeCap {
+	if err := pool.Add([]*types.Transaction{tx}, true)[0]; err != core.ErrTipAboveFeeCap {
 		t.Error("expected", core.ErrTipAboveFeeCap, "got", err)
 	}
 }
@@ -234,12 +234,12 @@ func TestCachePoolVeryHighValues(t *testing.T) {
 	veryBigNumber.Lsh(veryBigNumber, 300)
 
 	tx := dynamicFeeTx(0, 100, big.NewInt(1), veryBigNumber, key)
-	if err := pool.addLocal(tx); err != core.ErrTipVeryHigh {
+	if err := pool.Add([]*types.Transaction{tx}, true)[0]; err != core.ErrTipVeryHigh {
 		t.Error("expected", core.ErrTipVeryHigh, "got", err)
 	}
 
 	tx2 := dynamicFeeTx(0, 100, veryBigNumber, big.NewInt(1), key)
-	if err := pool.addLocal(tx2); err != core.ErrFeeCapVeryHigh {
+	if err := pool.Add([]*types.Transaction{tx2}, true)[0]; err != core.ErrFeeCapVeryHigh {
 		t.Error("expected", core.ErrFeeCapVeryHigh, "got", err)
 	}
 }
@@ -293,7 +293,7 @@ func TestCacheTimeLimiting(t *testing.T) {
 
 	testCachePoolAddBalance(pool, crypto.PubkeyToAddress(local.PublicKey), big.NewInt(1000000000))
 
-	if err := pool.addLocal(pricedTransaction(1, 100000, big.NewInt(1), local)); !errors.Is(err, ErrTxPoolCached) {
+	if err := pool.Add([]*types.Transaction{pricedTransaction(1, 100000, big.NewInt(1), local)}, true)[0]; !errors.Is(err, ErrTxPoolCached) {
 		t.Fatalf("failed to add local transaction: %v", err)
 	}
 
@@ -343,13 +343,13 @@ func TestCacheTimeLimiting(t *testing.T) {
 	}
 
 	// Cached gapped transactions
-	if err := pool.addLocal(pricedTransaction(3, 100000, big.NewInt(1), local)); !errors.Is(err, ErrTxPoolCached) {
+	if err := pool.Add([]*types.Transaction{pricedTransaction(3, 100000, big.NewInt(1), local)}, true)[0]; !errors.Is(err, ErrTxPoolCached) {
 		t.Fatalf("failed to add local transaction: %v", err)
 	}
 	time.Sleep(5 * evictionInterval) // A half lifetime pass
 
 	// Cached executable transactions, the life cycle should be restarted.
-	if err := pool.addLocal(pricedTransaction(2, 100000, big.NewInt(1), local)); !errors.Is(err, ErrTxPoolCached) {
+	if err := pool.Add([]*types.Transaction{pricedTransaction(2, 100000, big.NewInt(1), local)}, true)[0]; !errors.Is(err, ErrTxPoolCached) {
 		t.Fatalf("failed to add local transaction: %v", err)
 	}
 	time.Sleep(6 * evictionInterval)
@@ -401,7 +401,7 @@ func TestCachePoolCapClearsFromAll(t *testing.T) {
 		txs = append(txs, transaction(uint64(j), 100000, key))
 	}
 	// Import the batch and verify that limits have been enforced
-	pool.addLocals(txs)
+	pool.Add(txs, true)
 	if err := validateCachePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestCachePoolStatusCheck(t *testing.T) {
 	txs = append(txs, pricedTransaction(2, 100000, big.NewInt(1), keys[2]))
 
 	// Import the transaction and ensure they are correctly added
-	pool.addLocals(txs)
+	pool.Add(txs, true)
 
 	cached := pool.stats()
 	if cached != 4 {

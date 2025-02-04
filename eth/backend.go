@@ -24,6 +24,7 @@ import (
 	"math/big"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/antimev"
@@ -40,6 +41,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
+	"github.com/ethereum/go-ethereum/core/txpool/locals"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/downloader"
@@ -73,10 +75,11 @@ type Config = ethconfig.Config
 // Ethereum implements the Ethereum full node service.
 type Ethereum struct {
 	// core protocol objects
-	config     *ethconfig.Config
-	txPool     *txpool.TxPool
-	dbftSrv    *dbftproto.Service
-	blockchain *core.BlockChain
+	config         *ethconfig.Config
+	txPool         *txpool.TxPool
+	localTxTracker *locals.TxTracker
+	dbftSrv        *dbftproto.Service
+	blockchain     *core.BlockChain
 
 	handler *handler
 	discmix *enode.FairMix
@@ -267,6 +270,16 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	if !config.TxPool.NoLocals {
+		rejournal := config.TxPool.Rejournal
+		if rejournal < time.Second {
+			log.Warn("Sanitizing invalid txpool journal time", "provided", rejournal, "updated", time.Second)
+			rejournal = time.Second
+		}
+		eth.localTxTracker = locals.New(config.TxPool.Journal, rejournal, eth.blockchain.Config(), eth.txPool)
+		stack.RegisterLifecycle(eth.localTxTracker)
+	}
 	// Permit the downloader to use the trie cache allowance during fast sync
 	cacheLimit := cacheConfig.TrieCleanLimit + cacheConfig.TrieDirtyLimit + cacheConfig.SnapshotLimit
 	if eth.handler, err = newHandler(&handlerConfig{
@@ -288,6 +301,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, fmt.Errorf("custom miner Extra is not supported by dBFT")
 	}
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData, chainConfig.DBFT != nil))
+	eth.miner.SetPrioAddresses(config.TxPool.Locals)
 
 	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
 	if eth.APIBackend.allowUnprotectedTxs {
