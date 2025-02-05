@@ -133,7 +133,7 @@ func TestCachePool(t *testing.T) {
 
 func testCachePoolSetNonce(pool *CachePool, addr common.Address, nonce uint64) {
 	pool.mu.Lock()
-	pool.currentState.SetNonce(addr, nonce)
+	pool.currentState.SetNonce(addr, nonce, tracing.NonceChangeUnspecified)
 	pool.mu.Unlock()
 }
 
@@ -330,7 +330,7 @@ func TestCacheTimeLimiting(t *testing.T) {
 	}
 
 	// remove current transactions and increase nonce to prepare for a reset and cleanup
-	statedb.SetNonce(crypto.PubkeyToAddress(local.PublicKey), 2)
+	statedb.SetNonce(crypto.PubkeyToAddress(local.PublicKey), 2, tracing.NonceChangeUnspecified)
 	<-pool.requestReset(nil, nil)
 
 	// make sure cached is cleared
