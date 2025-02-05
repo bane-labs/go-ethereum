@@ -11,6 +11,9 @@ library Errors {
     // GovernanceVote Errors
     error NotMiner();
 
+    // GovReward Errors
+    error InvalidSelector();
+
     // Policy Errors
     error BlacklistExists();
     error BlacklistNotExists();

@@ -181,8 +181,8 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 	// If keystore is out-of-date, then sync shared DKG up-tp-date
 	keystoreRound := keystore.Round()
 	// If keystore has a round of future, then return an error
-	if keystoreRound >= int(snapshot.Round) {
-		return fmt.Errorf("invalid antimev keystore round index: expected %d, got %d", snapshot.Round, keystoreRound)
+	if keystoreRound > int(snapshot.Round)-1 {
+		return fmt.Errorf("invalid antimev keystore round index: expected %d, got %d", snapshot.Round-1, keystoreRound)
 	}
 	// If this round failed but keystore is still in a sharing state
 	if keystoreRound == int(snapshot.Round)-1 && currentHeight < shareStartHeight && keystore.IsSharing() {
