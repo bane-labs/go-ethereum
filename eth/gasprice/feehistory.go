@@ -102,7 +102,7 @@ func (oracle *Oracle) processBlock(ctx context.Context, bf *blockFees, percentil
 	// Fill in blob base fee and next blob base fee.
 	if excessBlobGas := bf.header.ExcessBlobGas; excessBlobGas != nil {
 		bf.results.blobBaseFee = eip4844.CalcBlobFee(config, bf.header)
-		excess := eip4844.CalcExcessBlobGas(config, bf.header, bf.header)
+		excess := eip4844.CalcExcessBlobGas(config, bf.header, bf.header.Time)
 		next := &types.Header{Number: bf.header.Number, Time: bf.header.Time, ExcessBlobGas: &excess}
 		bf.results.nextBlobBaseFee = eip4844.CalcBlobFee(config, next)
 	} else {
