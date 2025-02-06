@@ -220,77 +220,54 @@ func (ks *KeyStore) OnRecoverPeriodStart() {
 	ks.recovering = newThresholdKeyGroup(ks.size)
 }
 
-// DKGReshare generates and returns resharing messages and pvss. The input key
-// array should be ordered by DKG index, e.g. keystore will use 1 as the index
-// to generate a reshare message for messagePubKeys[0].
-func (ks *KeyStore) DKGReshare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byte, error) {
+// DKGReshare generates and returns resharing secrets and pvss.
+func (ks *KeyStore) DKGReshare() ([]*big.Int, []byte, error) {
 	if ks.shared == nil {
 		return nil, nil, ErrKeyGroupNotExists
 	}
-	if len(messagePubKeys) != ks.size {
-		return nil, nil, ErrInvalidLength
-	}
-	// Generate secret resharing messages and pvss
-	rMsgs, rPvss, err := ks.shared.reshare(messagePubKeys)
+	// Generate secret resharing secrets and pvss
+	rss, rPvss, err := ks.shared.reshare(ks.size)
 	if err != nil {
 		return nil, nil, err
 	}
 	// No data changed so no need to persist
-	return rMsgs, rPvss.Encode(), nil
+	return rss, rPvss.Encode(), nil
 }
 
-// DKGShare generates and returns sharing messages and pvss. The input key array
-// should be ordered by DKG index, e.g. keystore will use 1 as the index to
-// generate a share message for messagePubKeys[0].
-func (ks *KeyStore) DKGShare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byte, error) {
+// DKGShare generates and returns sharing secrets and pvss.
+func (ks *KeyStore) DKGShare() ([]*big.Int, []byte, error) {
 	if ks.sharing == nil {
 		return nil, nil, ErrKeyGroupNotExists
 	}
-	if len(messagePubKeys) != ks.size {
-		return nil, nil, ErrInvalidLength
-	}
-	// Generate secret sharing messages and pvss
-	sMsgs, sPvss, err := ks.sharing.prepare(ks.threshold, messagePubKeys)
-	if err != nil {
-		return nil, nil, err
-	}
-	return sMsgs, sPvss.Encode(), nil
+	// Generate sharing secrets and pvss
+	ss, sPvss := ks.sharing.prepare(ks.size, ks.threshold)
+	return ss, sPvss.Encode(), nil
 }
 
-// DKGRecover generates and returns recovering messages and pvss. The input index
-// should be a DKG index starts from 1, and the size of two inputs should be the
-// same.
-func (ks *KeyStore) DKGRecover(indexes []int, messagePubKeys []*ecies.PublicKey) ([][]byte, error) {
+// DKGRecover generates and returns recovering secrets and pvss.
+func (ks *KeyStore) DKGRecover(indexes []int) ([]*big.Int, error) {
 	if ks.shared == nil {
 		return nil, ErrKeyGroupNotExists
 	}
-	if len(indexes) != len(messagePubKeys) {
-		return nil, ErrLengthMismatch
-	}
-	if len(messagePubKeys) < 1 {
-		return nil, ErrNoNeedToRecover
-	}
-	if len(messagePubKeys) > ks.size-ks.threshold {
+	if len(indexes) > ks.size-ks.threshold {
 		return nil, ErrUnrecoverable
 	}
-	// Generate secret recovering messages
-	return ks.shared.recover(indexes, messagePubKeys)
+	// Generate recovering secrets
+	return ks.shared.recover(indexes)
 }
 
-// TryRecoverReshare tries to recover a resharing message, should be called when
-// resharing fails and receives a recover message. It returns resharing messages
-// immediately if recoverd, otherwise an error. The input key array should be
-// ordered by DKG index, e.g. keystore will use 1 as the index to generate a
-// share message for messagePubKeys[0].
-func (ks *KeyStore) TryRecoverReshare(messagePubKeys []*ecies.PublicKey) ([][]byte, []byte, error) {
+// TryRecoverReshare tries to recover a local secret, should be called when
+// resharing fails and receives a recover message. It returns resharing secrets
+// immediately if recoverd, otherwise an error.
+func (ks *KeyStore) TryRecoverReshare() ([]*big.Int, []byte, error) {
 	if ks.recovering == nil {
 		return nil, nil, ErrKeyGroupNotExists
 	}
-	msgs, pvss, err := ks.recovering.reshareRecovered(ks.threshold, messagePubKeys)
+	ss, pvss, err := ks.recovering.reshareRecovered(ks.size, ks.threshold)
 	if err != nil {
 		return nil, nil, err
 	}
-	return msgs, pvss.Encode(), nil
+	return ss, pvss.Encode(), nil
 }
 
 // RevertRound reverts all progress of current round of DKG.

@@ -7,6 +7,11 @@ import (
 	"fmt"
 	"math/big"
 
+	zkdkg "github.com/bane-labs/zk-dkg"
+	"github.com/bane-labs/zk-dkg/circuit"
+	"github.com/bane-labs/zk-dkg/helper"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/secp256k1"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
@@ -21,8 +26,16 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-// TxWatchRetry is a task to send DKG transaction
-type TxWatchRetry struct {
+const (
+	Phase1File            = "Phase1"
+	Phase2FileForOneMsg   = "Phase2_1"
+	Phase2FileForTwoMsg   = "Phase2_2"
+	Phase2FileForFourMsg  = "Phase2_4"
+	Phase2FileForSevenMsg = "Phase2_7"
+)
+
+// task is a struct to prepare and send a DKG transaction
+type task struct {
 	SendHeight       uint64
 	EndHeight        uint64
 	TxHash           *common.Hash
@@ -31,14 +44,17 @@ type TxWatchRetry struct {
 	ConfirmedSuccess bool
 }
 
-// TxWatchList is a watch task list send to loopTaskList by channel
-type TxWatchList struct {
-	WatchList     []TxWatchRetry
-	CurrentHeight uint64
+// taskList is a watch task list send to loopTransactionTaskList by channel
+type taskList []*task
+
+// append adds a new element to the task list
+func (l *taskList) append(t *task) {
+	arr := append(*l, t)
+	l = &arr
 }
 
-// Snapshot is a temporary record to save progress of a DKG round
-type Snapshot struct {
+// snapshot is a temporary record to save progress of a DKG round
+type snapshot struct {
 	EpochStartHeight     uint64
 	Round                uint64 // Starts from 1, points to the next round if initDone.
 	CurrentCNs           []common.Address
@@ -53,12 +69,12 @@ type Snapshot struct {
 }
 
 // NewSnapshot creates the new instance of DKG snapshot.
-func NewSnapshot() *Snapshot {
-	return &Snapshot{}
+func NewSnapshot() *snapshot {
+	return &snapshot{}
 }
 
 // Copy creates a copy of Snapshot.
-func (s *Snapshot) Copy() *Snapshot {
+func (s *snapshot) Copy() *snapshot {
 	cp := *s
 
 	cp.CurrentCNs = slices.Clone(s.CurrentCNs)
@@ -69,7 +85,7 @@ func (s *Snapshot) Copy() *Snapshot {
 }
 
 // init initializes snapshot with the specified startup parameters.
-func (s *Snapshot) init(api *ethapi.Backend, h *types.Header, state *state.StateDB, height uint64) error {
+func (s *snapshot) init(api *ethapi.Backend, h *types.Header, state *state.StateDB, height uint64) error {
 	s.EpochStartHeight = height
 	round, err := getRoundNumber(api, state, h)
 	if err != nil {
@@ -91,18 +107,15 @@ func (s *Snapshot) init(api *ethapi.Backend, h *types.Header, state *state.State
 }
 
 // reset resets snapshot state to default.
-func (s *Snapshot) reset() {
-	*s = Snapshot{}
+func (s *snapshot) reset() {
+	*s = snapshot{}
 }
 
 // handleDKG handles the transaction submission for DKG process.
 // It constructs and sends transaction to KeyManagement contract using amev store.
-func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *types.Header, state *state.StateDB, suspended bool) error {
+func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *types.Header, state *state.StateDB, suspended bool) error {
 	currentHeight := h.Number.Uint64()
-	watchList := &TxWatchList{
-		CurrentHeight: currentHeight,
-		WatchList:     make([]TxWatchRetry, 0),
-	}
+	taskList := (taskList)(make([]*task, 0))
 	amevAddress := keystore.Address()
 	if state == nil {
 		s, err := c.chain.StateAt(h.Root)
@@ -172,9 +185,9 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 	consensusSize := uint64(len(snapshot.CurrentCNs))
 
 	if !suspended && currentHeight >= shareStartHeight && currentHeight < targetHeight {
-		// Send watch task list to loopTaskChan when handleDKG finished
+		// Send pending task list to execution when handleDKG finished
 		defer func() {
-			c.loopTaskChan <- watchList
+			c.executeProofTaskChan <- &taskList
 		}()
 	}
 
@@ -247,7 +260,7 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 			indexOfResharing := slices.Index(snapshot.CurrentCNs, amevAddress) + 1
 			receiverMessageKeys, err := getMessagePubkeys(c.backend, snapshot.PendingCNs, state, h)
 			if indexOfResharing > 0 && snapshot.Round > 1 {
-				if err = c.taskReshare(keystore, receiverMessageKeys, currentHeight, recoverStartHeight, watchList); err != nil {
+				if err = taskList.taskReshare(keystore, receiverMessageKeys, currentHeight, recoverStartHeight); err != nil {
 					return fmt.Errorf("failed to task DKG reshare, err: %v", err)
 				}
 			}
@@ -257,7 +270,7 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 				return fmt.Errorf("failed to get message keys, err: %v", err)
 			}
 			if indexOfSharing > 0 {
-				if err = c.taskShare(keystore, receiverMessageKeys, currentHeight, recoverStartHeight, watchList); err != nil {
+				if err = taskList.taskShare(keystore, receiverMessageKeys, currentHeight, recoverStartHeight); err != nil {
 					return fmt.Errorf("failed to task DKG share, err: %v", err)
 				}
 			}
@@ -302,7 +315,7 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 									return fmt.Errorf("failed to get message keys for recovering, err: %v", err)
 								}
 							}
-							if err := c.taskRecover(keystore, snapshot.IndexNeedRecover, pubs, currentHeight, recoverCheckHeight, watchList); err != nil {
+							if err := taskList.taskRecover(keystore, snapshot.IndexNeedRecover, pubs, currentHeight, recoverCheckHeight); err != nil {
 								return fmt.Errorf("failed to task DKG recover, err: %v", err)
 							}
 						}
@@ -326,7 +339,7 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 			if err != nil {
 				return fmt.Errorf("failed to fecth message keys, err: %v", err)
 			}
-			if err := c.taskReshareRecover(keystore, receiverMessageKeys, currentHeight, targetHeight, watchList); err != nil {
+			if err := taskList.taskReshareRecover(keystore, receiverMessageKeys, currentHeight, targetHeight); err != nil {
 				return fmt.Errorf("failed to task DKG reshare recover, err: %v", err)
 			}
 		}
@@ -341,31 +354,130 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 	return nil
 }
 
-// loopTaskList retries every task in tx watch list
-func (c *DBFT) loopTaskList() {
-	log.Info("DKG events dispatcher started")
-	defer log.Info("DKG events dispatcher stopped")
+// loopExecuteProofTask executes ZK proof generation if there is a task
+func (c *DBFT) loopExecuteProofTask() {
+	log.Info("DKG proof dispatcher started")
+	defer log.Info("DKG proof dispatcher stopped")
 
-	for watchList := range c.loopTaskChan {
-		log.Info("DKG loopTaskList", "CurrentHeight", watchList.CurrentHeight, "WatchListLength", len(watchList.WatchList))
-		currentHeight := watchList.CurrentHeight
-		// append watchList from loopTaskChan to c.txWatchList
-		for i := range watchList.WatchList {
-			c.txWatchList = append(c.txWatchList, &watchList.WatchList[i])
+	for pendingList := range c.executeProofTaskChan {
+		currentHeight := (*c.backend).CurrentBlock().Number.Uint64()
+		log.Info("DKG loopExecuteProofTask", "currentHeight", currentHeight, "pendingListLength", len(*pendingList))
+		// Handle new tasks immediately but one by one
+		watchList := (taskList)(make([]*task, 0))
+		for _, task := range *pendingList {
+			switch task.Method {
+			case "share", "reshare", "reshareRecovered":
+				// Prove the encryption of seven new messages
+				ss := task.Params[0].([]*big.Int)
+				pvss := task.Params[1].([]byte)
+				pubs := task.Params[2].([]*ecies.PublicKey)
+				fis := make([]fr.Element, len(ss))
+				for i, s := range ss {
+					fis[i].SetBigInt(s)
+				}
+				if len(fis) != len(pubs) {
+					log.Error("share task array not match", "secrets", len(fis), "keys", len(pubs))
+					continue
+				}
+				// Compute necessary inputs for circuit
+				fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs := circuit.PrepareEncryptedKeyShares(pubs, fis)
+				// Compute zk proof
+				_, proof, _, err := zkdkg.ProveMultipleKeyShareEncryption(Phase1File, Phase2FileForSevenMsg, pubs, rs, bigRs, fisBytes, fisInts, bigFis, encryptedFis, nonces)
+				if err != nil {
+					log.Error("failed to prove DKG", "method", task.Method)
+					continue
+				}
+				// Update the task parameters for sending a transaction
+				msgs := encodeMessages(encryptedFis, bigRs, nonces)
+				proofData, cmts, cmtPok := helper.GetContractInput(proof)
+				// Send the transaction
+				txHash, err := sendTransactionToKeyManagement(c.txAPI, c.signer, task.Method, pvss, msgs, proofData, cmts, cmtPok)
+				if err != nil {
+					log.Error("failed to send DKG transaction", "err", err)
+				} else {
+					task.TxHash = txHash
+					log.Info("DKG transaction sent", "txHash", txHash)
+				}
+				task.Params = []interface{}{pvss, encryptedFis, proofData}
+				// Add the transation to retry list
+				watchList.append(task)
+			case "recover":
+				// Prove the encryption of old share messages and new messages, possibly 2 or 4 in total
+				indexes := task.Params[0].([]uint64)
+				ss := task.Params[1].([]*big.Int)
+				pubs := task.Params[2].([]*ecies.PublicKey)
+				fis := make([]fr.Element, len(ss))
+				for i, s := range ss {
+					fis[i].SetBigInt(s)
+				}
+				if len(fis) != len(pubs) || len(fis) != len(indexes) {
+					log.Error("recover task array not match", "indexes", len(indexes), "secrets", len(fis), "keys", len(pubs))
+					continue
+				}
+				// Compute necessary inputs for circuit
+				fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs := circuit.PrepareEncryptedKeyShares(pubs, fis)
+				// Compute zk proof
+				var phase2Path string
+				switch len(indexes) {
+				case 1:
+					phase2Path = Phase2FileForOneMsg
+				case 2:
+					phase2Path = Phase2FileForTwoMsg
+				default:
+					log.Error("unexpected amount of secrets to prove", "amount", len(indexes))
+					continue
+				}
+				_, proof, _, err := zkdkg.ProveMultipleKeyShareEncryption(Phase1File, phase2Path, pubs, rs, bigRs, fisBytes, fisInts, bigFis, encryptedFis, nonces)
+				if err != nil {
+					log.Error("failed to prove DKG", "method", task.Method)
+					continue
+				}
+				// Update the task parameters for sending a transaction
+				msgs := encodeMessages(encryptedFis, bigRs, nonces)
+				proofData, cmts, cmtPok := helper.GetContractInput(proof)
+				// Send the transaction
+				txHash, err := sendRecoverTransaction(c.txAPI, c.signer, indexes, msgs, proofData, cmts, cmtPok)
+				if err != nil {
+					log.Error("failed to send DKG transaction", "err", err)
+				} else {
+					task.TxHash = txHash
+					log.Info("DKG transaction sent", "txHash", txHash)
+				}
+				task.Params = []interface{}{indexes, encryptedFis, proofData}
+				// Add the transation to retry list
+				watchList.append(task)
+			default:
+				log.Error("unknown DKG method to prove", "method", task.Method)
+				continue
+			}
 		}
+		c.loopTransactionTaskChan <- &watchList
+	}
+}
 
-		// loop tasks in c.txWatchList
-		var retryList []*TxWatchRetry
-		if len(c.txWatchList) > 0 {
-			for _, item := range c.txWatchList {
+// loopTransactionTaskList retries every transaction task in transaction watch list
+func (c *DBFT) loopTransactionTaskList() {
+	log.Info("DKG transaction dispatcher started")
+	defer log.Info("DKG transaction dispatcher stopped")
+
+	for watchList := range c.loopTransactionTaskChan {
+		currentHeight := (*c.backend).CurrentBlock().Number.Uint64()
+		log.Info("DKG loopTransactionTaskList", "currentHeight", currentHeight, "watchListLength", len(*watchList))
+		// Append watchList from loopTransactionTaskChan to c.transactionTaskList
+		c.transactionTaskList = append(c.transactionTaskList, *watchList...)
+
+		// Loop tasks in c.transactionTaskList
+		var retryList []*task
+		if len(c.transactionTaskList) > 0 {
+			for _, item := range c.transactionTaskList {
 				if currentHeight < item.EndHeight && !item.ConfirmedSuccess {
 					needRetry := false
-					// Send failed, just resend and set txHash
+					// Send failed, just resend and set transaction hash
 					if item.TxHash == nil {
 						needRetry = true
 					}
 
-					// Send successfully, wait 3 blocks to check tx status
+					// Send successfully, wait 3 blocks to check transaction status
 					if item.TxHash != nil && currentHeight-item.SendHeight == 3 {
 						receipt, err := c.txAPI.GetTransactionReceipt(context.Background(), *item.TxHash)
 						if err != nil {
@@ -380,7 +492,7 @@ func (c *DBFT) loopTaskList() {
 
 					var err error
 					if needRetry {
-						item.TxHash, err = sendTxToKeyManagement(c.txAPI, c.signer, item.Method, item.Params...)
+						item.TxHash, err = sendTransactionToKeyManagement(c.txAPI, c.signer, item.Method, item.Params...)
 						if err != nil {
 							retryList = append(retryList, item)
 							log.Error("DKG retry sending transaction failed", "currentHeight", currentHeight, "method", item.Method, "err", err)
@@ -397,13 +509,13 @@ func (c *DBFT) loopTaskList() {
 				}
 			}
 			// Only keep retry failed and not reach max retry times
-			c.txWatchList = retryList
+			c.transactionTaskList = retryList
 		}
 	}
 }
 
 // syncLastRoundSecrets downloads DKG sharings and related PVSS, and sends to keystore
-func (c *DBFT) syncLastRoundSecrets(snap *Snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
+func (c *DBFT) syncLastRoundSecrets(snap *snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
 	for i := range snap.CurrentCNs {
 		if err := c.downloadAndReceiveShare(keystore, snap.Round-1, i+1, selfIndex, state, header); err != nil {
 			return err
@@ -418,7 +530,7 @@ func (c *DBFT) syncLastRoundSecrets(snap *Snapshot, keystore *antimev.KeyStore, 
 }
 
 // syncThisRoundSecrets downloads DKG sharings and related PVSS, and sends to keystore
-func (c *DBFT) syncThisRoundSecrets(snap *Snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
+func (c *DBFT) syncThisRoundSecrets(snap *snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
 	for i := range snap.PendingCNs {
 		if err := c.downloadAndReceiveShare(keystore, snap.Round, i+1, selfIndex, state, header); err != nil {
 			return err
@@ -470,7 +582,7 @@ func (c *DBFT) downloadAndReceiveReshare(keystore *antimev.KeyStore, round uint6
 }
 
 // syncRecoveredSecrets downloads DKG recoverings and related PVSS, and sends to keystore
-func (c *DBFT) syncRecoveredSecrets(snap *Snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
+func (c *DBFT) syncRecoveredSecrets(snap *snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
 	pvss, err := getSharePVSS(c.backend, snap.Round-1, uint64(selfIndex), state, header)
 	if err != nil {
 		return err
@@ -491,7 +603,7 @@ func (c *DBFT) syncRecoveredSecrets(snap *Snapshot, keystore *antimev.KeyStore, 
 }
 
 // syncRecoveredReshares downloads recovered DKG resharings and related PVSS, and sends to keystore
-func (c *DBFT) syncRecoveredReshares(snap *Snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
+func (c *DBFT) syncRecoveredReshares(snap *snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
 	for _, index := range snap.IndexNeedRecover {
 		// Call ReceiveSecretReshare
 		rpvss, err := getResharePVSS(c.backend, snap.Round, index, state, header)
@@ -513,87 +625,55 @@ func (c *DBFT) syncRecoveredReshares(snap *Snapshot, keystore *antimev.KeyStore,
 }
 
 // taskShare tries to send secret shares as a transaction
-func (c *DBFT) taskShare(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
-	sMsgs, sPvss, err := keystore.DKGShare(receiverMessageKeys)
+func (t *taskList) taskShare(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64) error {
+	secrets, sPvss, err := keystore.DKGShare()
 	if err != nil {
 		return err
 	}
-	// Send share tx
-	txHash, err := sendShareTx(c.txAPI, c.signer, sPvss, sMsgs)
-	txWatch := &TxWatchRetry{SendHeight: start, EndHeight: end, Method: "share", Params: []interface{}{sPvss, sMsgs}}
-	if err != nil {
-		watchList.WatchList = append(watchList.WatchList, *txWatch)
-		log.Error("failed to send share transaction", "err", err)
-	} else {
-		txWatch.TxHash = txHash
-		watchList.WatchList = append(watchList.WatchList, *txWatch)
-		log.Info("DKG share transaction sent", "txHash", txHash)
-	}
+	// Set up a new task with keystore outputs
+	proofTask := &task{SendHeight: start, EndHeight: end, Method: "share", Params: []interface{}{secrets, sPvss, receiverMessageKeys}}
+	t.append(proofTask)
 	return nil
 }
 
 // taskReshare tries to send secret reshares as a transaction
-func (c *DBFT) taskReshare(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
-	rMsgs, rPvss, err := keystore.DKGReshare(receiverMessageKeys)
+func (t *taskList) taskReshare(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64) error {
+	secrets, rPvss, err := keystore.DKGReshare()
 	if err != nil {
 		return err
 	}
-	// Send reshare tx
-	txHash, err := sendReshareTx(c.txAPI, c.signer, rPvss, rMsgs)
-	txWatch := &TxWatchRetry{SendHeight: start, EndHeight: end, Method: "reshare", Params: []interface{}{rPvss, rMsgs}}
-	if err != nil {
-		watchList.WatchList = append(watchList.WatchList, *txWatch)
-		log.Error("failed to send reshare transaction", "err", err)
-	} else {
-		txWatch.TxHash = txHash
-		watchList.WatchList = append(watchList.WatchList, *txWatch)
-		log.Info("DKG reshare transaction sent", "txHash", txHash)
-	}
+	// Set up a new task with keystore outputs
+	proofTask := &task{SendHeight: start, EndHeight: end, Method: "reshare", Params: []interface{}{secrets, rPvss, receiverMessageKeys}}
+	t.append(proofTask)
 	return nil
 }
 
 // taskRecover tries to send past secret shares as a transaction
-func (c *DBFT) taskRecover(keystore *antimev.KeyStore, indexesNeedRecover []uint64, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
+func (t *taskList) taskRecover(keystore *antimev.KeyStore, indexesNeedRecover []uint64, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64) error {
 	var idxsInt []int
 	for _, idx := range indexesNeedRecover {
 		idxsInt = append(idxsInt, int(idx))
 	}
-	msgs, err := keystore.DKGRecover(idxsInt, receiverMessageKeys)
+	secrets, err := keystore.DKGRecover(idxsInt)
 	if err != nil {
 		return err
 	}
-	// Send recover tx
-	txHash, err := sendRecoverTx(c.txAPI, c.signer, idxsInt, msgs)
-	txWatch := &TxWatchRetry{SendHeight: start, EndHeight: end, Method: "recover", Params: []interface{}{indexesNeedRecover, msgs}}
-	if err != nil {
-		watchList.WatchList = append(watchList.WatchList, *txWatch)
-		log.Error("failed to send recover transaction", "err", err)
-	} else {
-		txWatch.TxHash = txHash
-		watchList.WatchList = append(watchList.WatchList, *txWatch)
-		log.Info("DKG recover transaction sent", "txHash", txHash)
-	}
+	// Set up a new task with keystore outputs
+	proofTask := &task{SendHeight: start, EndHeight: end, Method: "recover", Params: []interface{}{indexesNeedRecover, secrets, receiverMessageKeys}}
+	t.append(proofTask)
 	return nil
 }
 
 // taskReshareRecover tries to send recovered secret reshares as a transaction
-func (c *DBFT) taskReshareRecover(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64, watchList *TxWatchList) error {
+func (t *taskList) taskReshareRecover(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, start uint64, end uint64) error {
 	// Recover the lost resharing messages
-	msgs, pvss, err := keystore.TryRecoverReshare(receiverMessageKeys)
+	secrets, pvss, err := keystore.TryRecoverReshare()
 	if err != nil {
 		return err
 	}
-	// Send reshareRecovered tx
-	txHash, err := sendReshareRecoveredTx(c.txAPI, c.signer, pvss, msgs)
-	txWatch := &TxWatchRetry{SendHeight: start, EndHeight: end, Method: "reshareRecovered", Params: []interface{}{pvss, msgs}}
-	if err != nil {
-		watchList.WatchList = append(watchList.WatchList, *txWatch)
-		log.Error("failed to send reshareRecovered transaction", "err", err)
-	} else {
-		txWatch.TxHash = txHash
-		watchList.WatchList = append(watchList.WatchList, *txWatch)
-		log.Info("DKG reshareRecovered transaction sent", "txHash", txHash)
-	}
+	// Set up a new task with keystore outputs
+	proofTask := &task{SendHeight: start, EndHeight: end, Method: "reshareRecovered", Params: []interface{}{secrets, pvss, receiverMessageKeys}}
+	t.append(proofTask)
 	return nil
 }
 
@@ -798,27 +878,15 @@ func readFromContract(res interface{}, backend *ethapi.Backend, contract common.
 	return unpackContractExecutionResult(res, result, contractAbi, method)
 }
 
-func sendReshareTx(api *ethapi.TransactionAPI, from common.Address, pvss []byte, messages [][]byte) (*common.Hash, error) {
-	return sendTxToKeyManagement(api, from, "reshare", pvss, messages)
-}
-
-func sendShareTx(api *ethapi.TransactionAPI, from common.Address, pvss []byte, messages [][]byte) (*common.Hash, error) {
-	return sendTxToKeyManagement(api, from, "share", pvss, messages)
-}
-
-func sendReshareRecoveredTx(api *ethapi.TransactionAPI, from common.Address, pvss []byte, messages [][]byte) (*common.Hash, error) {
-	return sendTxToKeyManagement(api, from, "reshareRecovered", pvss, messages)
-}
-
-func sendRecoverTx(api *ethapi.TransactionAPI, from common.Address, idxs []int, messages [][]byte) (*common.Hash, error) {
+func sendRecoverTransaction(api *ethapi.TransactionAPI, from common.Address, idxs []uint64, messages [][]byte, proof [8]*big.Int, cmts []*big.Int, cmtPok [2]*big.Int) (*common.Hash, error) {
 	var idxsBigInt []*big.Int
 	for _, idx := range idxs {
 		idxsBigInt = append(idxsBigInt, big.NewInt(int64(idx)))
 	}
-	return sendTxToKeyManagement(api, from, "recover", idxsBigInt, messages)
+	return sendTransactionToKeyManagement(api, from, "recover", idxsBigInt, messages, proof, cmts, cmtPok)
 }
 
-func sendTxToKeyManagement(api *ethapi.TransactionAPI, signer common.Address, method string, args ...interface{}) (*common.Hash, error) {
+func sendTransactionToKeyManagement(api *ethapi.TransactionAPI, signer common.Address, method string, args ...interface{}) (*common.Hash, error) {
 	if api == nil {
 		return nil, errors.New("eth transaction API is not initialized, DKG can't function properly")
 	}
@@ -835,7 +903,17 @@ func sendTxToKeyManagement(api *ethapi.TransactionAPI, signer common.Address, me
 			Data: &msgData})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to send tx with consensus node, to %s data: '%s': %v", systemcontracts.KeyManagementProxyHash, hex.EncodeToString(data), err)
+		return nil, fmt.Errorf("failed to send transaction with consensus node, to %s data: '%s': %v", systemcontracts.KeyManagementProxyHash, hex.EncodeToString(data), err)
 	}
 	return &txHash, nil
+}
+
+func encodeMessages(encryptedFis [][]byte, bigRs []secp256k1.G1Affine, nonces [][]byte) [][]byte {
+	result := make([][]byte, 0)
+	for i := range encryptedFis {
+		bigRBytes := bigRs[i].RawBytes()
+		prefix := append(bigRBytes[:], nonces[i]...)
+		result = append(result, append(prefix, encryptedFis[i]...))
+	}
+	return result
 }

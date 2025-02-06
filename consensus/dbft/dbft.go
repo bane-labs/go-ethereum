@@ -224,9 +224,10 @@ type DBFT struct {
 	fakeDiff bool // Skip difficulty verifications
 
 	// The fields for dkg
-	dkgSnapshot  *Snapshot
-	txWatchList  []*TxWatchRetry
-	loopTaskChan chan *TxWatchList
+	dkgSnapshot             *snapshot
+	transactionTaskList     []*task
+	executeProofTaskChan    chan *taskList
+	loopTransactionTaskChan chan *taskList
 }
 
 // config represents Engine configuration.
@@ -281,8 +282,9 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 
-		dkgSnapshot:  NewSnapshot(),
-		loopTaskChan: make(chan *TxWatchList),
+		dkgSnapshot:             NewSnapshot(),
+		executeProofTaskChan:    make(chan *taskList, 2),
+		loopTransactionTaskChan: make(chan *taskList, 2),
 	}
 
 	var err error
@@ -1976,7 +1978,8 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		// Start DKG task dispatcher prior to sealing proposal awaiting since new
 		// block may be discovered during awaiting which may lead to DKG-related
 		// transactions submission.
-		go c.loopTaskList()
+		go c.loopExecuteProofTask()
+		go c.loopTransactionTaskList()
 
 		// Current head of the header chain may be above the block chain, and
 		// dBFT must always be based on the latest state data (i.e. blocks), thus,
@@ -2283,7 +2286,8 @@ drainLoop:
 	close(c.messages)
 	close(c.txs)
 	close(c.chainHeadEvents)
-	close(c.loopTaskChan)
+	close(c.executeProofTaskChan)
+	close(c.loopTransactionTaskChan)
 	close(c.finished)
 	log.Info("dBFT event loop finished")
 }

@@ -44,9 +44,9 @@ func TestTPKE(t *testing.T) {
 	for i := 0; i < size; i++ {
 		// No reshare to handle
 		kss[i].OnSharePeriodStart()
-		msgs, pvss, err := kss[i].DKGShare(pubs)
+		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
-		contract.shareMsgs[i] = msgs
+		contract.shareMsgs[i] = encryptShareMessages(pubs, ss)
 		contract.sharePVSSes[i] = pvss
 	}
 	// Send secret sharing messages
@@ -236,9 +236,9 @@ func TestBenchmark(t *testing.T) {
 	for i := 0; i < size; i++ {
 		// No reshare to handle
 		kss[i].OnSharePeriodStart()
-		msgs, pvss, err := kss[i].DKGShare(pubs)
+		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
-		contract.shareMsgs[i] = msgs
+		contract.shareMsgs[i] = encryptShareMessages(pubs, ss)
 		contract.sharePVSSes[i] = pvss
 	}
 	// Send secret sharing messages
