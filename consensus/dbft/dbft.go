@@ -1260,7 +1260,7 @@ func (c *DBFT) newPreBlockFromContext(sealingProposal *types.Header) *PreBlock {
 	// called by dBFT library to properly initialize PreBlock's transactions.
 	res := &PreBlock{
 		header:                 h,
-		dkgRound:               uint32(c.dkgSnapshot.Round),
+		dkgRound:               uint32(c.dkgSnapshot.Round - 1),
 		enforceECDSASignatures: c.config.enforceECDSASignatures,
 	}
 	// Withdrawals are temporary empty if Shanghai is passed.
