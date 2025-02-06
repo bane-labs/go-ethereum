@@ -140,7 +140,7 @@ func TestGenerateEncryptedTx(t *testing.T) {
 		kss[i] = NewKeyStore(filepath.Join("..", "privnet", "seven", fmt.Sprintf("node%d", i+1), "antimev-keystore"))
 		require.NoError(t, kss[i].Load(accounts[i+1].pwd))
 	}
-	tx := buildTransferFromPriv1(t)
+	tx := buildTransferFromPriv0(t)
 	// Encrypt transaction.
 	buf := bytes.NewBuffer(nil)
 	require.NoError(t, tx.EncodeRLP(buf))
@@ -176,12 +176,12 @@ func TestGenerateEncryptedTx(t *testing.T) {
 	require.True(t, bytes.Equal(results[0], msg), hex.EncodeToString(results[0]), hex.EncodeToString(msg))
 }
 
-// buildTransferFromPriv1 returns a signed transaction that transfers 1 wei from
-// node1 to node1 with nonce 0.
-func buildTransferFromPriv1(t *testing.T) *types.Transaction {
-	ks := keystore.NewKeyStore(filepath.Join("..", "privnet", "seven", "node1", "keystore"), keystore.StandardScryptN, keystore.StandardScryptP)
+// buildTransferFromPriv0 returns a signed transaction that transfers 1 wei from
+// node0 to node0 with nonce 0.
+func buildTransferFromPriv0(t *testing.T) *types.Transaction {
+	ks := keystore.NewKeyStore(filepath.Join("..", "privnet", "seven", "node0", "keystore"), keystore.StandardScryptN, keystore.StandardScryptP)
 	acc := ks.Accounts()[0]
-	require.NoError(t, ks.Unlock(acc, accounts[1].pwd))
+	require.NoError(t, ks.Unlock(acc, accounts[0].pwd))
 
 	// These variables are taken based on experience of previously generated transfer
 	// transactions for privnet. This transaction has nonce set to 0, hence it's valid
