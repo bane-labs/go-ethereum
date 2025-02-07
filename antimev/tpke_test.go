@@ -81,7 +81,7 @@ func TestTPKE(t *testing.T) {
 	}
 
 	// Generate an example envelope for privnet verification
-	var envelopeData = []byte{0xff, 0xff, 0xff, 0xff}
+	var envelopeData = EncryptedDataPrefix
 	envelopeData = append(envelopeData, encryptedKey.ToBytes()...)
 	envelopeData = append(envelopeData, encryptedMsg...)
 	t.Logf("encryptedKey: %s\nencryptedMsg: %s\nenvelopeData: 0x%s", hex.EncodeToString(encryptedKey.ToBytes()), hex.EncodeToString(encryptedMsg), hex.EncodeToString(envelopeData))
@@ -142,9 +142,8 @@ func TestGenerateEncryptedTx(t *testing.T) {
 	}
 	tx := buildTransferFromPriv0(t)
 	// Encrypt transaction.
-	buf := bytes.NewBuffer(nil)
-	require.NoError(t, tx.EncodeRLP(buf))
-	msg := buf.Bytes()
+	msg, err := tx.MarshalBinary()
+	require.NoError(t, err)
 	encryptedKey, encryptedMsg, err := kss[0].Encrypt(msg)
 	require.NoError(t, err)
 	// Verify ciphertext.
@@ -152,11 +151,8 @@ func TestGenerateEncryptedTx(t *testing.T) {
 		t.Fatalf("invalid ciphertext")
 	}
 	// Generate envelope.
-	var envelopeData = []byte{
-		0xff, 0xff, 0xff, 0xff, // version
-		0, 0, 0, 0, // epoch
-	}
-	binary.LittleEndian.PutUint32(envelopeData[4:8], epoch)
+	var envelopeData = EncryptedDataPrefix
+	envelopeData = binary.LittleEndian.AppendUint32(envelopeData, epoch)
 	envelopeData = append(envelopeData, encryptedKey.ToBytes()...)
 	envelopeData = append(envelopeData, encryptedMsg...)
 	t.Logf("encryptedKey: %s\nencryptedMsg: %s\nenvelopeData: 0x%s\nencrypted tx hash: %s\n",

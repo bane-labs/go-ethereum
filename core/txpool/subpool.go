@@ -165,4 +165,7 @@ type SubPool interface {
 	// Status returns the known status (unknown/pending/queued) of a transaction
 	// identified by their hashes.
 	Status(hash common.Hash) TxStatus
+
+	// GetEncryptedTransaction returns the encrypted transaction cached in tx pool.
+	GetEncryptedTransaction(nonce uint64, sender common.Address) *types.Transaction
 }

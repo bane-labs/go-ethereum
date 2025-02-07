@@ -403,6 +403,16 @@ func (p *TxPool) Nonce(addr common.Address) uint64 {
 	return nonce
 }
 
+// GetEncryptedTransaction returns the encrypted transaction cached in tx pool.
+func (p *TxPool) GetEncryptedTransaction(nonce uint64, sender common.Address) *types.Transaction {
+	for _, subpool := range p.subpools {
+		if tx := subpool.GetEncryptedTransaction(nonce, sender); tx != nil {
+			return tx
+		}
+	}
+	return nil
+}
+
 // Stats retrieves the current pool stats, namely the number of pending and the
 // number of queued (non-executable) transactions.
 func (p *TxPool) Stats() (int, int) {

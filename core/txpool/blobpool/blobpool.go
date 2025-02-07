@@ -1610,6 +1610,11 @@ func (p *BlobPool) Nonce(addr common.Address) uint64 {
 	return p.state.GetNonce(addr)
 }
 
+// GetEncryptedTransaction returns the encrypted transaction cached in tx pool, so we just return nil here.
+func (pool *BlobPool) GetEncryptedTransaction(nonce uint64, sender common.Address) *types.Transaction {
+	return nil
+}
+
 // Stats retrieves the current pool stats, namely the number of pending and the
 // number of queued (non-executable) transactions.
 func (p *BlobPool) Stats() (int, int) {

@@ -308,6 +308,10 @@ func (b *EthAPIBackend) GetPoolTransaction(hash common.Hash) *types.Transaction 
 	return b.eth.txPool.Get(hash)
 }
 
+func (b *EthAPIBackend) GetEncryptedTransaction(nonce uint64, sender common.Address) *types.Transaction {
+	return b.eth.txPool.GetEncryptedTransaction(nonce, sender)
+}
+
 // GetTransaction retrieves the lookup along with the transaction itself associate
 // with the given transaction hash.
 //
