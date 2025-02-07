@@ -108,14 +108,12 @@ var PrecompiledContractsNeoXDKG = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x09}): &blake2F{},
 	common.BytesToAddress([]byte{0x0a}): &kzgPointEvaluation{}, // Include Cancun-level precompile to be compatible with Cancun BLS precompile addresses.
 	common.BytesToAddress([]byte{0x0b}): &bls12381G1Add{},
-	common.BytesToAddress([]byte{0x0c}): &bls12381G1Mul{},
-	common.BytesToAddress([]byte{0x0d}): &bls12381G1MultiExp{},
-	common.BytesToAddress([]byte{0x0e}): &bls12381G2Add{},
-	common.BytesToAddress([]byte{0x0f}): &bls12381G2Mul{},
-	common.BytesToAddress([]byte{0x10}): &bls12381G2MultiExp{},
-	common.BytesToAddress([]byte{0x11}): &bls12381Pairing{},
-	common.BytesToAddress([]byte{0x12}): &bls12381MapG1{},
-	common.BytesToAddress([]byte{0x13}): &bls12381MapG2{},
+	common.BytesToAddress([]byte{0x0c}): &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{0x0d}): &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0e}): &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{0x0f}): &bls12381Pairing{},
+	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
 }
 
 // PrecompiledContractsCancun contains the default set of pre-compiled Ethereum
@@ -132,14 +130,12 @@ var PrecompiledContractsCancun = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{9}):    &blake2F{},
 	common.BytesToAddress([]byte{0x0a}): &kzgPointEvaluation{},
 	common.BytesToAddress([]byte{0x0b}): &bls12381G1Add{},
-	common.BytesToAddress([]byte{0x0c}): &bls12381G1Mul{},
-	common.BytesToAddress([]byte{0x0d}): &bls12381G1MultiExp{},
-	common.BytesToAddress([]byte{0x0e}): &bls12381G2Add{},
-	common.BytesToAddress([]byte{0x0f}): &bls12381G2Mul{},
-	common.BytesToAddress([]byte{0x10}): &bls12381G2MultiExp{},
-	common.BytesToAddress([]byte{0x11}): &bls12381Pairing{},
-	common.BytesToAddress([]byte{0x12}): &bls12381MapG1{},
-	common.BytesToAddress([]byte{0x13}): &bls12381MapG2{},
+	common.BytesToAddress([]byte{0x0c}): &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{0x0d}): &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0e}): &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{0x0f}): &bls12381Pairing{},
+	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
 }
 
 // PrecompiledContractsBLS contains the set of pre-compiled Ethereum
@@ -781,10 +777,10 @@ func (c *bls12381G1MultiExp) RequiredGas(input []byte) uint64 {
 	}
 	// Lookup discount value for G1 point, scalar value pair length
 	var discount uint64
-	if dLen := len(params.Bls12381MultiExpDiscountTable); k < dLen {
-		discount = params.Bls12381MultiExpDiscountTable[k-1]
+	if dLen := len(params.Bls12381G1MultiExpDiscountTable); k < dLen {
+		discount = params.Bls12381G1MultiExpDiscountTable[k-1]
 	} else {
-		discount = params.Bls12381MultiExpDiscountTable[dLen-1]
+		discount = params.Bls12381G1MultiExpDiscountTable[dLen-1]
 	}
 	// Calculate gas and return the result
 	return (uint64(k) * params.Bls12381G1MulGas * discount) / 1000
@@ -912,10 +908,10 @@ func (c *bls12381G2MultiExp) RequiredGas(input []byte) uint64 {
 	}
 	// Lookup discount value for G2 point, scalar value pair length
 	var discount uint64
-	if dLen := len(params.Bls12381MultiExpDiscountTable); k < dLen {
-		discount = params.Bls12381MultiExpDiscountTable[k-1]
+	if dLen := len(params.Bls12381G2MultiExpDiscountTable); k < dLen {
+		discount = params.Bls12381G2MultiExpDiscountTable[k-1]
 	} else {
-		discount = params.Bls12381MultiExpDiscountTable[dLen-1]
+		discount = params.Bls12381G2MultiExpDiscountTable[dLen-1]
 	}
 	// Calculate gas and return the result
 	return (uint64(k) * params.Bls12381G2MulGas * discount) / 1000
