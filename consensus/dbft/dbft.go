@@ -90,6 +90,11 @@ const (
 	// blocks to effectivaly verify dBFT payloads travelling through the network and
 	// properly initialize dBFT at the latest height.
 	validatorsCacheCap = 3
+	// crossEpochDecryptionStartRound is the number of DKG round (as denoted in KeyManagement
+	// system contract) starting from which continuous cross-epoch Envelopes decryption is supported.
+	// First DKG round setups sharing key, second DKG round setups resharing key, hence resharing
+	// key may be used for decryption starting from the third round.
+	crossEpochDecryptionStartRound = 3
 )
 
 // Various error messages to mark blocks invalid. These should be private to
@@ -405,6 +410,13 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
 	if uint64(dbftBlock.Index()) <= c.lastIndex {
 		return nil
 	}
+	if dbftBlock.state == nil {
+		// We're toast, proposal was invalid (likely just outdated), the node doesn't have relevant
+		// block state, hence can't continue block processing. In good scenario (if proposal is valid but outdated)
+		// new block arrival will trigger dBFT initialization at new height, hence don't stop the node immediately.
+		log.Warn("can't process block due to missing state: proposal verification failed")
+		return nil
+	}
 
 	// Avoid copying and may safely change the block itself, as this part
 	// of code is guaranteed to be called once by dBFT.
@@ -484,12 +496,21 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 		}
 	}
 
+	if pre.finalState == nil {
+		// We're toast, proposal was invalid (likely just outdated), the node doesn't have relevant
+		// block state, hence can't continue consensus. In good scenario (if proposal is valid but outdated)
+		// new block arrival will trigger dBFT initialization at new height, hence don't stop the node immediately.
+		log.Warn("can't construct block due to missing state: proposal verification failed")
+		return nil
+	}
+
 	// Manually update header's fields based on fresh state. Avoid changing
 	// the original PreBlock.
 	finalBlock := &PreBlock{
 		header:                 pre.header,
 		transactions:           pre.finalTransactions,
 		withdrawals:            pre.withdrawals,
+		dkgRound:               pre.dkgRound,
 		enforceECDSASignatures: c.config.enforceECDSASignatures,
 	}
 	ethBlock := finalBlock.ToEthBlock()
@@ -957,39 +978,91 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 	if len(pre.envelopesData) == 0 {
 		pre.finalTransactions = pre.transactions
 	} else {
-		shares := make(map[int][]*tpke.DecryptionShare)
+		var (
+			encryptedKeysCurr = make([]*tpke.CipherText, 0, len(pre.envelopesData))
+			encryptedKeysPrev []*tpke.CipherText
+			encryptedMsgsCurr = make([][]byte, 0, len(pre.envelopesData))
+			encryptedMsgsPrev [][]byte
+			currSharesCnt     int
+			prevSharesCnt     int
+		)
+		for _, d := range pre.envelopesData {
+			if d.dkgRound == pre.dkgRound {
+				encryptedKeysCurr = append(encryptedKeysCurr, d.encryptedKey)
+				encryptedMsgsCurr = append(encryptedMsgsCurr, d.encryptedMsg)
+				currSharesCnt++
+			} else {
+				encryptedKeysPrev = append(encryptedKeysPrev, d.encryptedKey)
+				encryptedMsgsPrev = append(encryptedMsgsPrev, d.encryptedMsg)
+				prevSharesCnt++
+			}
+		}
+
+		var (
+			sharesCurr = make(map[int][]*tpke.DecryptionShare, ctx.M())
+			sharesPrev = make(map[int][]*tpke.DecryptionShare)
+			blockNum   = pre.header.Number.Uint64() - 1
+		)
 		for _, preC := range ctx.PreCommitPayloads {
 			if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
-				blockNum := pre.header.Number.Uint64() - 1
 				dkgIndex, err := c.getDKGIndex(int(preC.ValidatorIndex()), blockNum)
 				if err != nil {
 					return fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", int(preC.ValidatorIndex()), blockNum)
 				}
-				// Indexes in shares map must use dkg index.
-				shares[dkgIndex] = preC.GetPreCommit().(*preCommit).Shares()
+				curr, prev := preC.GetPreCommit().(*preCommit).Shares()
+				if len(curr) == currSharesCnt {
+					// Indexes in shares map must use DKG index.
+					sharesCurr[dkgIndex] = curr
+				} else {
+					log.Error("number of shares for the current round mismatch",
+						"round", pre.dkgRound,
+						"validator", preC.ValidatorIndex(),
+						"validator DKG index", dkgIndex,
+						"expected", currSharesCnt,
+						"actual", len(curr))
+				}
+				if len(prev) == prevSharesCnt {
+					// Indexes in shares map must use DKG index.
+					sharesPrev[dkgIndex] = prev
+				} else {
+					log.Error("number of shares for the previous round mismatch",
+						"round", pre.dkgRound-1,
+						"validator", preC.ValidatorIndex(),
+						"validator DKG index", dkgIndex,
+						"expected", prevSharesCnt,
+						"actual", len(prev))
+				}
 			}
 		}
-		var (
-			encryptedKeys = make([]*tpke.CipherText, len(pre.envelopesData))
-			encryptedMsgs = make([][]byte, len(pre.envelopesData))
-		)
-		for i := range pre.envelopesData {
-			encryptedKeys[i] = pre.envelopesData[i].encryptedKey
-			encryptedMsgs[i] = pre.envelopesData[i].encryptedMsg
-		}
+
 		c.lock.RLock()
 		ks := c.amevKeystore
 		c.lock.RUnlock()
-
-		decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeys, encryptedMsgs, shares)
+		decryptedTxsBytes, err := ks.AggregateAndDecryptWithShare(encryptedKeysCurr, encryptedMsgsCurr, sharesCurr)
 		if err != nil {
 			// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
-			return fmt.Errorf("failed to decrypt Encrypted transactions, not enough valid shares: %w", err)
+			return fmt.Errorf("failed to decrypt Encrypted transactions for the current DKG round %d, not enough valid shares: %w", pre.dkgRound, err)
+		}
+		var decryptedTxsBytesPrev [][]byte
+		if pre.dkgRound >= crossEpochDecryptionStartRound {
+			decryptedTxsBytesPrev, err = ks.AggregateAndDecryptWithReshare(encryptedKeysPrev, encryptedMsgsPrev, sharesPrev)
+			if err != nil {
+				// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
+				return fmt.Errorf("failed to decrypt Encrypted transactions for the previous DKG round %d, not enough valid shares: %w", pre.dkgRound-1, err)
+			}
 		}
 
-		if len(decryptedTxsBytes) != len(pre.envelopesData) {
+		// Merge two slices of decrypted transactions into a single slice preserving original Envelopes order.
+		if len(decryptedTxsBytes)+len(decryptedTxsBytesPrev) != len(pre.envelopesData) {
 			// Some shares are invalid, valid shares isn't enough to decrypt, wait for more shares to be collected.
-			return fmt.Errorf("invalid number of Decrypted transactions: expected %d, actual %d", len(pre.envelopesData), len(decryptedTxsBytes))
+			return fmt.Errorf("invalid number of Decrypted transactions: expected %d, actual %d", len(pre.envelopesData), len(decryptedTxsBytes)+len(decryptedTxsBytesPrev))
+		}
+		var prevI int
+		for i, d := range pre.envelopesData {
+			if d.dkgRound != pre.dkgRound {
+				decryptedTxsBytes = slices.Insert(decryptedTxsBytes, i, decryptedTxsBytesPrev[prevI])
+				prevI++
+			}
 		}
 
 		var (
@@ -1083,7 +1156,8 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 		header:                 pre.header,
 		transactions:           pre.finalTransactions,
 		withdrawals:            pre.withdrawals,
-		enforceECDSASignatures: c.config.enforceECDSASignatures,
+		dkgRound:               pre.dkgRound,
+		enforceECDSASignatures: pre.enforceECDSASignatures,
 	}
 	ethBlock := finalBlock.ToEthBlock()
 	state, receipts, _, gasUsed, err := c.chain.ProcessState(ethBlock, nil)
@@ -1186,6 +1260,7 @@ func (c *DBFT) newPreBlockFromContext(sealingProposal *types.Header) *PreBlock {
 	// called by dBFT library to properly initialize PreBlock's transactions.
 	res := &PreBlock{
 		header:                 h,
+		dkgRound:               uint32(c.dkgSnapshot.Round - 1),
 		enforceECDSASignatures: c.config.enforceECDSASignatures,
 	}
 	// Withdrawals are temporary empty if Shanghai is passed.
@@ -1837,6 +1912,18 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		c.chain = chain
 		c.blockQueue.chain = chain
 
+		// Subscribe for minted blocks prior to accessing current chain header.
+		// Sealing proposal awaiting may take some time during which new blocks may
+		// arrive via P2P, which may lead to the fact that c.last* fields and dBFT
+		// state are out-of-date comparing to the chain's state by the end of Start.
+		// Early subscription allows to ensure that no blocks can be missed by eventLoop.
+		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
+
+		// Start DKG task dispatcher prior to sealing proposal awaiting since new
+		// block may be discovered during awaiting which may lead to DKG-related
+		// transactions submission.
+		go c.loopTaskList()
+
 		// Current head of the header chain may be above the block chain, and
 		// dBFT must always be based on the latest state data (i.e. blocks), thus,
 		// retrieve current chain header to initialize context and wait until chain
@@ -1863,11 +1950,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 			"last timestamp", c.lastTimestamp)
 		c.dbft.Start(c.lastTimestamp * NsInS)
 
-		// Subscribe for minted blocks.
-		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
-
 		go c.eventLoop()
-		go c.loopTaskList()
 	}
 }
 
@@ -1924,6 +2007,19 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 			"sealing proposal index", b.NumberU64())
 		ltstHeader := c.chain.GetHeaderByNumber(b.NumberU64() - 1)
 		c.postBlock(ltstHeader, nil)
+	} else if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
+		// Manually initialize DKG snapshot based on the latest block information
+		// (we're sure that state of the latest block is available by this moment,
+		// miner guarantees that). We can't do it earlier because blocks chain
+		// may be out of sync compared to headers chain, ref. 3721f549.
+		currHeader := c.chain.GetHeaderByNumber(c.lastIndex)
+		c.lock.RLock()
+		ks := c.amevKeystore
+		c.lock.RUnlock()
+		err := c.handleDKG(c.dkgSnapshot, ks, currHeader, nil, false)
+		if err != nil {
+			return fmt.Errorf("failed to initialize DKG snapshot at height %d: %w", currHeader.Number.Uint64(), err)
+		}
 	}
 
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {

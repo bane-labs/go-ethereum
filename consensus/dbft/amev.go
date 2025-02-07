@@ -1,6 +1,7 @@
 package dbft
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/antimev"
@@ -15,6 +16,9 @@ type envelopeData struct {
 	index int
 	// prefix is a 4-bytes prefix used for Envelope's data versioning.
 	prefix []byte
+	// dkgRound is a DKG round index by the moment Envelope's data was encrypted
+	// according to the KeyManagement system contract.
+	dkgRound uint32
 	// encryptedKey is a tpke.CipherText provided by the sender of encrypted
 	// transaction.
 	encryptedKey *tpke.CipherText
@@ -25,16 +29,24 @@ type envelopeData struct {
 // decodeEnvelopeData decodes envelopeData from the provided slice. It's a no-op to
 // pass not an Envelope's data.
 func decodeEnvelopeData(buf []byte) (envelopeData, error) {
-	encryptedDataPrefixLen := len(antimev.EncryptedDataPrefix)
-	var key = new(tpke.CipherText)
+	var (
+		key              = new(tpke.CipherText)
+		keyOffset        = antimev.EncryptedDataPrefixLen + antimev.EncryptedDataRoundLen
+		cipherTextOffset = keyOffset + tpke.CipherTextSize
+	)
 	// It's guaranteed by Envelope definition that buf has a proper length.
-	_, err := key.FromBytes(buf[encryptedDataPrefixLen : encryptedDataPrefixLen+tpke.CipherTextSize])
+	_, err := key.FromBytes(buf[keyOffset:cipherTextOffset])
 	if err != nil {
 		return envelopeData{}, fmt.Errorf("failed to decode TPKE cipher text: %w", err)
 	}
+	round := binary.LittleEndian.Uint32(buf[antimev.EncryptedDataPrefixLen:keyOffset])
+	if round == 0 {
+		return envelopeData{}, fmt.Errorf("invalid TPKE cipher text: invalid round %d", round)
+	}
 	return envelopeData{
-		prefix:       buf[:encryptedDataPrefixLen],
+		prefix:       buf[:antimev.EncryptedDataPrefixLen],
+		dkgRound:     round,
 		encryptedKey: key,
-		encryptedMsg: buf[encryptedDataPrefixLen+tpke.CipherTextSize:],
+		encryptedMsg: buf[cipherTextOffset:],
 	}, nil
 }

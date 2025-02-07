@@ -10,11 +10,18 @@ import (
 )
 
 var (
-	// encryptedDataPrefix is the prefix of Envelope transaction's data. It's used to
+	// EncryptedDataPrefix is the prefix of Envelope transaction's data. It's used to
 	// distinguish simple transactions that have GovernanceRewardProxy contract as a
 	// receiver from Envelope transactions carrying encrypted information inside. In
 	// future this prefix may be used for encrypted content versioning.
 	EncryptedDataPrefix = []byte{0xff, 0xff, 0xff, 0xff}
+
+	// EncryptedDataPrefixLen is the length of EncryptedDataPrefix.
+	EncryptedDataPrefixLen = len(EncryptedDataPrefix)
+
+	// EncryptedDataRoundLen is the amount of bytes that encoded DKG round of transaction
+	// encryption takes in the Envelope's data byte slice (the size of Uint64).
+	EncryptedDataRoundLen = 4
 
 	// minEncryptedDataSize is the minimum size of encrypted data stored in the
 	// Envelope transaction. It consists of the constant-length prefix,
@@ -22,7 +29,7 @@ var (
 	// a simple gas transfer with 1 gwei (105 bytes) is taken as a reference point
 	// for evaluation of variable-length part; it is padded to be even to the AES
 	// block size as required by AES encryption rules.
-	minEncryptedDataSize = len(EncryptedDataPrefix) + tpke.CipherTextSize + 105 + (aes.BlockSize - 105%aes.BlockSize)
+	minEncryptedDataSize = EncryptedDataPrefixLen + EncryptedDataRoundLen + tpke.CipherTextSize + 105 + (aes.BlockSize - 105%aes.BlockSize)
 )
 
 // isEnvelope checks whether a transaction is an Envelope transaction. The criteria

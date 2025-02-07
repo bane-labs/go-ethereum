@@ -2,6 +2,7 @@ package antimev
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -128,13 +129,16 @@ func TestInitKeyStores(t *testing.T) {
 
 // TestGenerateEncryptedTx generates an encrypted transaction using 7-nodes
 func TestGenerateEncryptedTx(t *testing.T) {
+	// epoch is an epoch of Envelope data encryption. The resulting encrypted transaction can be
+	// decrypted only during this or next epoch.
+	const epoch = 1
 	require.Equal(t, 7, size, "refactor test if different number of CNs is needed")
 
 	// Retrieve and decrypt the set of anti-MEV key storages.
 	kss := make([]*KeyStore, size)
 	for i := range kss {
 		kss[i] = NewKeyStore(filepath.Join("..", "privnet", "seven", fmt.Sprintf("node%d", i+1), "antimev-keystore"))
-		require.NoError(t, kss[i].Load(accounts[i].pwd))
+		require.NoError(t, kss[i].Load(accounts[i+1].pwd))
 	}
 	tx := buildTransferFromPriv0(t)
 	// Encrypt transaction.
@@ -148,6 +152,7 @@ func TestGenerateEncryptedTx(t *testing.T) {
 	}
 	// Generate envelope.
 	var envelopeData = EncryptedDataPrefix
+	envelopeData = binary.LittleEndian.AppendUint32(envelopeData, epoch)
 	envelopeData = append(envelopeData, encryptedKey.ToBytes()...)
 	envelopeData = append(envelopeData, encryptedMsg...)
 	t.Logf("encryptedKey: %s\nencryptedMsg: %s\nenvelopeData: 0x%s\nencrypted tx hash: %s\n",
@@ -168,9 +173,9 @@ func TestGenerateEncryptedTx(t *testing.T) {
 }
 
 // buildTransferFromPriv0 returns a signed transaction that transfers 1 wei from
-// node1 to node1 with nonce 0.
+// node0 to node0 with nonce 0.
 func buildTransferFromPriv0(t *testing.T) *types.Transaction {
-	ks := keystore.NewKeyStore(filepath.Join("..", "privnet", "seven", "node1", "keystore"), keystore.StandardScryptN, keystore.StandardScryptP)
+	ks := keystore.NewKeyStore(filepath.Join("..", "privnet", "seven", "node0", "keystore"), keystore.StandardScryptN, keystore.StandardScryptP)
 	acc := ks.Accounts()[0]
 	require.NoError(t, ks.Unlock(acc, accounts[0].pwd))
 

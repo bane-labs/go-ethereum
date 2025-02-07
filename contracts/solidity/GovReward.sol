@@ -13,6 +13,12 @@ contract GovReward is IGovReward, GovProxyUpgradeable {
 
     receive() external payable {}
 
+    fallback() external payable {
+        if (msg.sig != bytes4(0xffffffff)) {
+            revert Errors.InvalidSelector();
+        }
+    }
+
     modifier onlyGov() {
         if (msg.sender != GOV) revert Errors.NotGovernance();
         _;
