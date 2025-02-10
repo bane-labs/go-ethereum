@@ -93,8 +93,8 @@ const (
 	// crossEpochDecryptionStartRound is the number of DKG round (as denoted in KeyManagement
 	// system contract) starting from which continuous cross-epoch Envelopes decryption is supported.
 	// First DKG round setups sharing key, second DKG round setups resharing key, hence resharing
-	// key may be used for decryption starting from the third round.
-	crossEpochDecryptionStartRound = 3
+	// key may be used for decryption starting from the second round.
+	crossEpochDecryptionStartRound = 2
 )
 
 // Various error messages to mark blocks invalid. These should be private to
