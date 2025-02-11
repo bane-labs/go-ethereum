@@ -7,6 +7,7 @@ interface IPolicy {
     event SetMinGasTipCap(uint256 gasTipCap);
     event SetBaseFee(uint256 baseFee);
     event SetCandidateLimit(uint256 candidateLimit);
+    event SetEnvelopeFee(uint256 envelopeFee);
 
     // add an address to blacklist policy
     function addBlackList(address _addr) external;

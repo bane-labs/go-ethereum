@@ -24,6 +24,7 @@ const (
 const blackListSlotIndex = 1
 const minGasTipCapSlotIndex = 2
 const baseFeeSlotIndex = 3
+const envelopeFeeSlotIndex = 5
 
 // A set of genesis contract hashes.
 var (
@@ -94,4 +95,10 @@ func GetBaseFeeStateHash() common.Hash {
 // in policy contract with an address, for reading corresponding values from statedb.
 func GetBlackListStateHash(addr common.Address) common.Hash {
 	return crypto.Keccak256Hash(common.LeftPadBytes(addr.Bytes(), 32), common.LeftPadBytes([]byte{blackListSlotIndex}, 32))
+}
+
+// GetEnvelopeFeeStateHash computes and returns the storage key of envelopeFee
+// in policy contract, for reading corresponding values from statedb.
+func GetEnvelopeFeeStateHash() common.Hash {
+	return common.BytesToHash([]byte{envelopeFeeSlotIndex})
 }

@@ -328,7 +328,8 @@ func (st *StateTransition) preCheck() error {
 			// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough.
 			if st.evm.ChainConfig().DBFT != nil {
 				var minGasTipCap = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
-				if cmath.BigMin(msg.GasTipCap, new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee)).Cmp(minGasTipCap) < 0 {
+				effectiveGasTip := cmath.BigMin(msg.GasTipCap, new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee))
+				if effectiveGasTip.Cmp(minGasTipCap) < 0 {
 					return fmt.Errorf("%w: address %v, gasTipCap %v, gasFeeCap %v, policy minGasTipCap %v, baseFee %v ", ErrUnderpriced,
 						msg.From.Hex(), msg.GasTipCap, msg.GasFeeCap, minGasTipCap, st.evm.Context.BaseFee)
 				}

@@ -20,6 +20,7 @@ library Errors {
     error InvalidMinGasTipCap();
     error InvalidBaseFee();
     error InvalidCandidateLimit();
+    error InvalidEnvelopeFee();
 
     // Governance Errors
     error SideCallNotAllowed();
