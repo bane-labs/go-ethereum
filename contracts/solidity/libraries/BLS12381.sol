@@ -49,25 +49,10 @@ library BLS12381 {
     function g1Mul(
         bytes memory point, // g1 point, 128 bytes
         uint256 scalar // big int, 32 bytes
-    ) internal view returns (bytes memory c) {
+    ) internal view returns (bytes memory) {
         bytes memory input = abi.encodePacked(point, scalar);
         require(input.length == 160, "_g1Mul malformed input");
-        bool success;
-        c = new bytes(128);
-        assembly {
-            success := staticcall(
-                gas(),
-                0x0c,
-                add(input, 0x20),
-                160,
-                add(c, 0x20),
-                128
-            )
-            switch success
-            case 0 {
-                invalid()
-            }
-        }
+        return g1MultiExp(input);
     }
 
     function g1MultiExp(
@@ -79,7 +64,7 @@ library BLS12381 {
         assembly {
             success := staticcall(
                 gas(),
-                0x0d,
+                0x0c,
                 add(input, 0x20),
                 mload(input),
                 add(c, 0x20),
@@ -101,7 +86,7 @@ library BLS12381 {
         assembly {
             success := staticcall(
                 gas(),
-                0x11,
+                0x0f,
                 add(input, 0x20),
                 mload(input),
                 add(res, 0x20),
