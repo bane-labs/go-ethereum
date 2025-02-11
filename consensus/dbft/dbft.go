@@ -879,10 +879,9 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 
 	// Cache processing result for further usage in case if there's no envelopes
 	// in the block or fallback signing scheme is used.
-	pre := b.(*PreBlock)
-	pre.finalState = state
-	pre.finalReceipts = receipts
-	pre.finalGASUsed = gasUsed
+	dbftBlock.finalState = state
+	dbftBlock.finalReceipts = receipts
+	dbftBlock.finalGASUsed = gasUsed
 
 	return true
 }
