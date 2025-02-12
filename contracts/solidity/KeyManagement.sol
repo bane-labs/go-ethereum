@@ -205,24 +205,27 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
                 _dropAndSetToLatestRound(targetHeight);
             }
         }
-        // return if the round key exists
-        uint round = roundNumber + 1;
-        if (aggregatedCommitments[round].length > 0) return;
+        uint periodDuration = IGovernance(GOV).sharePeriodDuration();
+        if (block.number >= targetHeight - periodDuration) {
+            // return if the round key exists
+            uint round = roundNumber + 1;
+            if (aggregatedCommitments[round].length > 0) return;
 
-        // check reshare and share, compute global key
-        uint n = IGovernance(GOV).consensusSize();
-        if (reshareMsgs[round][1].length < n && round > 1) return;
-        if (shareMsgs[round][1].length < n) return;
-        bytes memory output = sharedPubs[round][1];
-        for (uint i = 2; i <= n; i++) {
-            if (reshareMsgs[round][i].length < n && round > 1) return;
-            if (shareMsgs[round][i].length < n) return;
-            output = BLS12381.g1Add(output, sharedPubs[round][i]);
+            // check reshare and share, compute global key
+            uint n = IGovernance(GOV).consensusSize();
+            if (reshareMsgs[round][1].length < n && round > 1) return;
+            if (shareMsgs[round][1].length < n) return;
+            bytes memory output = sharedPubs[round][1];
+            for (uint i = 2; i <= n; i++) {
+                if (reshareMsgs[round][i].length < n && round > 1) return;
+                if (shareMsgs[round][i].length < n) return;
+                output = BLS12381.g1Add(output, sharedPubs[round][i]);
+            }
+
+            // record global key
+            // NOTE: this not the direct key for keystore encryption, should use pk = aggregatedCommitment * scaler
+            aggregatedCommitments[round] = output;
         }
-
-        // record global key
-        // NOTE: this not the direct key for keystore encryption, should use pk = aggregatedCommitment * scaler
-        aggregatedCommitments[round] = output;
     }
 
     function isRoundNumberIncreased(
