@@ -1232,6 +1232,12 @@ func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transa
 	if envelopeFrom != decryptedFrom {
 		return fmt.Errorf("decryptedTx from mismatch: decryptedFrom %v, envelopeFrom %v", decryptedFrom, envelopeFrom)
 	}
+	if decryptedTx.Type() == types.BlobTxType {
+		return fmt.Errorf("%w: decryptedTx is a blob transaction", types.ErrInvalidTxType)
+	}
+	if decryptedTx.Gas() > envelope.Gas() {
+		return fmt.Errorf("decryptedTx required gas more than envelope")
+	}
 	return nil
 }
 
