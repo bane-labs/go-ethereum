@@ -858,6 +858,7 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	ethBlock := dbftBlock.ToEthBlock()
 
 	localPool := c.newLocalPool(parent)
+	defer localPool.CloseSilently()
 	errs := localPool.Add(dbftBlock.transactions, false, false)
 	for i, err := range errs {
 		if err != nil {
@@ -879,10 +880,9 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 
 	// Cache processing result for further usage in case if there's no envelopes
 	// in the block or fallback signing scheme is used.
-	pre := b.(*PreBlock)
-	pre.finalState = state
-	pre.finalReceipts = receipts
-	pre.finalGASUsed = gasUsed
+	dbftBlock.finalState = state
+	dbftBlock.finalReceipts = receipts
+	dbftBlock.finalGASUsed = gasUsed
 
 	return true
 }
@@ -1094,6 +1094,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 				return true
 			}
 		)
+		defer localPool.CloseSilently()
 		for i := range pre.transactions {
 			var isEnvelope = j < len(pre.envelopesData) && pre.envelopesData[j].index == i
 			if !isEnvelope || // pre.transactions[i] is not an envelope, use it as-is.

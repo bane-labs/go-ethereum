@@ -475,8 +475,9 @@ func (pool *LegacyPool) loop() {
 	}
 }
 
-// Close terminates the transaction pool.
-func (pool *LegacyPool) Close() error {
+// CloseSilently is the same as Close(), but doesn't log. Intended to be used
+// for short-lived verification pools (not the main node tx pool).
+func (pool *LegacyPool) CloseSilently() {
 	// Terminate the pool reorger and return
 	close(pool.reorgShutdownCh)
 	pool.wg.Wait()
@@ -484,6 +485,11 @@ func (pool *LegacyPool) Close() error {
 	if pool.journal != nil {
 		pool.journal.close()
 	}
+}
+
+// Close terminates the transaction pool.
+func (pool *LegacyPool) Close() error {
+	pool.CloseSilently()
 	log.Info("Transaction pool stopped")
 	return nil
 }
