@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/aes"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
@@ -23,13 +24,17 @@ var (
 	// encryption takes in the Envelope's data byte slice (the size of Uint64).
 	EncryptedDataRoundLen = 4
 
+	// EncryptedDataHashLen is the amount of bytes that represents the hash of an
+	// encrypted transaction.
+	EncryptedDataHashLen = common.HashLength
+
 	// minEncryptedDataSize is the minimum size of encrypted data stored in the
 	// Envelope transaction. It consists of the constant-length prefix,
 	// constant-length CipherText and variable-length encrypted message. The size of
 	// a simple gas transfer with 1 gwei (105 bytes) is taken as a reference point
 	// for evaluation of variable-length part; it is padded to be even to the AES
 	// block size as required by AES encryption rules.
-	minEncryptedDataSize = EncryptedDataPrefixLen + EncryptedDataRoundLen + tpke.CipherTextSize + 105 + (aes.BlockSize - 105%aes.BlockSize)
+	minEncryptedDataSize = EncryptedDataPrefixLen + EncryptedDataRoundLen + EncryptedDataHashLen + tpke.CipherTextSize + 105 + (aes.BlockSize - 105%aes.BlockSize)
 )
 
 // isEnvelope checks whether a transaction is an Envelope transaction. The criteria

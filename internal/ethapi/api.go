@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/accounts/scwallet"
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/lru"
@@ -1889,7 +1890,14 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	} else {
 		log.Info("Submitted transaction", "hash", tx.Hash().Hex(), "from", from, "nonce", tx.Nonce(), "recipient", tx.To(), "value", tx.Value())
 	}
-	return tx.Hash(), nil
+
+	// If the transaction is an antimev envelope, then return the declared transaction hash instead of its own.
+	if antimev.IsEnvelope(tx) {
+		hashOffSet := antimev.EncryptedDataPrefixLen + antimev.EncryptedDataRoundLen
+		return common.Hash(tx.Data()[hashOffSet : hashOffSet+antimev.EncryptedDataHashLen]), nil
+	} else {
+		return tx.Hash(), nil
+	}
 }
 
 // SendTransaction creates a transaction for the given argument, sign it and submit it to the

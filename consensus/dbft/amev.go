@@ -31,7 +31,7 @@ type envelopeData struct {
 func decodeEnvelopeData(buf []byte) (envelopeData, error) {
 	var (
 		key              = new(tpke.CipherText)
-		keyOffset        = antimev.EncryptedDataPrefixLen + antimev.EncryptedDataRoundLen
+		keyOffset        = antimev.EncryptedDataPrefixLen + antimev.EncryptedDataRoundLen + antimev.EncryptedDataHashLen
 		cipherTextOffset = keyOffset + tpke.CipherTextSize
 	)
 	// It's guaranteed by Envelope definition that buf has a proper length.
