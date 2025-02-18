@@ -63,6 +63,7 @@ import (
 	"github.com/nspcc-dev/dbft"
 	"github.com/nspcc-dev/dbft/timer"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/crypto/sha3"
 	"golang.org/x/exp/slices"
 )
@@ -234,6 +235,7 @@ type config struct {
 	dkgEnablingHeight      int64
 	antiMEVEnablingHeight  int64
 	enforceECDSASignatures bool
+	logLevel               *zap.AtomicLevel
 }
 
 // New creates a DBFT proof-of-authority consensus engine with the initial
@@ -284,10 +286,11 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	}
 
 	var err error
-	logger, err := zap.NewDevelopment()
+	logger, logLevel, err := buildLogger()
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize dBFT logger: %w", err)
 	}
+	c.config.logLevel = logLevel
 	dbftCfg := []func(*dbft.Config[common.Hash]){
 		dbft.WithTimer[common.Hash](timer.New()),
 		dbft.WithLogger[common.Hash](logger),
@@ -331,6 +334,23 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	}
 
 	return c, nil
+}
+
+// buildLogger builds zap logger for dbft library events logging with Info level
+// used as a default.
+func buildLogger() (*zap.Logger, *zap.AtomicLevel, error) {
+	cc := zap.NewProductionConfig()
+	cc.DisableCaller = true
+	cc.DisableStacktrace = true
+	cc.EncoderConfig.EncodeDuration = zapcore.StringDurationEncoder
+	cc.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+	cc.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	cc.Encoding = "console"
+	cc.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
+	cc.Sampling = nil
+
+	log, err := cc.Build()
+	return log, &cc.Level, err
 }
 
 // getKeyPairCb is a dbft library setting callback.
@@ -1354,6 +1374,20 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 func (c *DBFT) WithEthAPIBackend(b ethapi.Backend) {
 	c.backend = &b
 	c.txAPI = ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))
+}
+
+// WithLogLevel updates dBFT logger log level to the provided one if specified.
+func (c *DBFT) WithLogLevel(logLevel string) error {
+	if len(logLevel) == 0 {
+		return nil
+	}
+
+	level, err := zapcore.ParseLevel(logLevel)
+	if err != nil {
+		return fmt.Errorf("unexpected dBFT log level %s: %w", logLevel, err)
+	}
+	c.config.logLevel.SetLevel(level)
+	return nil
 }
 
 // EnforceECDSASignatures enforces ECDSA multisignature block signing scheme.

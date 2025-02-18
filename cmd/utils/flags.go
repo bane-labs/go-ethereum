@@ -587,6 +587,11 @@ var (
 		Usage:    "Disables db compaction after import",
 		Category: flags.LoggingCategory,
 	}
+	DBFTLogLevelFlag = &cli.StringFlag{
+		Name:     "dbft.loglevel",
+		Usage:    `Logging level to use for dBFT consensus engine events. The following values are supported: "debug", "info" (default), "warn", "error", "dpanic", "panic", "fatal"`,
+		Category: flags.LoggingCategory,
+	}
 
 	// MISC settings
 	SyncTargetFlag = &cli.StringFlag{
@@ -1741,6 +1746,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(AntiMEVEnforceECDSABlockSignatureSchemeFlag.Name) {
 		cfg.AntiMEVEnforceECDSABlockSignatureScheme = ctx.Bool(AntiMEVEnforceECDSABlockSignatureSchemeFlag.Name)
+	}
+	if ctx.IsSet(DBFTLogLevelFlag.Name) {
+		cfg.DBFTLogLevel = ctx.String(DBFTLogLevelFlag.Name)
 	}
 	if !ctx.Bool(SnapshotFlag.Name) || cfg.SnapshotCache == 0 {
 		// If snap-sync is requested, this flag is also required
