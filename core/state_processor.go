@@ -247,7 +247,7 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, evm *vm.EVM) {
 	}
 	evm.SetTxContext(NewEVMTxContext(msg))
 	evm.StateDB.AddAddressToAccessList(params.BeaconRootsAddress)
-	_, _, _ = evm.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
+	_, _, _ = evm.Call(msg.From, *msg.To, msg.Data, 30_000_000, common.U2560)
 	evm.StateDB.Finalise(true)
 }
 
@@ -271,7 +271,7 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 	}
 	evm.SetTxContext(NewEVMTxContext(msg))
 	evm.StateDB.AddAddressToAccessList(params.HistoryStorageAddress)
-	_, _, err := evm.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
+	_, _, err := evm.Call(msg.From, *msg.To, msg.Data, 30_000_000, common.U2560)
 	if err != nil {
 		panic(err)
 	}
@@ -310,7 +310,7 @@ func processRequestsSystemCall(requests *[][]byte, evm *vm.EVM, requestType byte
 	}
 	evm.SetTxContext(NewEVMTxContext(msg))
 	evm.StateDB.AddAddressToAccessList(addr)
-	ret, _, _ := evm.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
+	ret, _, _ := evm.Call(msg.From, *msg.To, msg.Data, 30_000_000, common.U2560)
 	evm.StateDB.Finalise(true)
 	if len(ret) == 0 {
 		return // skip empty output
@@ -412,7 +412,7 @@ func applyLocalSystemCall(to common.Address, data []byte, evm *vm.EVM) error {
 	}
 	evm.SetTxContext(NewEVMTxContext(msg))
 	evm.StateDB.AddAddressToAccessList(to)
-	_, _, err := evm.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
+	_, _, err := evm.Call(msg.From, *msg.To, msg.Data, 30_000_000, common.U2560)
 	if err != nil {
 		return fmt.Errorf("onPersist call failed: %w", err)
 	}
