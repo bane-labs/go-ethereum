@@ -462,7 +462,9 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
 		return fmt.Errorf("failed to construct block witness: %w", err)
 	}
 	dbftBlock.header.Extra = append(dbftBlock.header.Extra, witness...) // Extra version isn't changed, validators addresses and signatures are added.
+	// TODO: here snapshot usage is impossible since PutBlock modifies&finalize state.
 	state := dbftBlock.state.Copy()
+	defer state.Dispose()
 	res := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
 
 	// Firstly, notify chain about new block.
@@ -2730,7 +2732,9 @@ func (c *DBFT) getGlobalPublicKey(h *types.Header, s *state.StateDB) (*tpke.Publ
 	keystore := c.amevKeystore.Copy()
 	c.lock.RUnlock()
 
-	err := c.handleDKG(snapshot, keystore, h, s.Copy(), true)
+	cp := s.Copy()
+	defer cp.Dispose()
+	err := c.handleDKG(snapshot, keystore, h, cp, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to handle DKG at %d: %w", h.Number.Uint64(), err)
 	}
@@ -2752,7 +2756,13 @@ func (c *DBFT) getGlobalPublicKey(h *types.Header, s *state.StateDB) (*tpke.Publ
 func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) (common.Hash, common.Hash) {
 	var multisig, threshold common.Hash
 
-	nextVals, err := c.getValidatorsSorted(nil, s.Copy(), h)
+	// TODO: consider using snapshots instead of the full state copy, it must save us plenty of resources:
+	// id := cp.Snapshot()
+	// ...
+	// cp.RevertToSnapshot(id)
+	cp := s.Copy()
+	defer cp.Dispose()
+	nextVals, err := c.getValidatorsSorted(nil, cp, h)
 	if err != nil {
 		log.Crit("Failed to compute next block validators",
 			"err", err)

@@ -866,6 +866,14 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 	s.clearJournalAndRefund()
 }
 
+func (s *StateDB) Dispose() {
+	// TODO: consider reusing Finalise before prefetchers disposal
+	if s.prefetcher != nil {
+		s.prefetcher.close()
+		s.prefetcher = nil
+	}
+}
+
 // IntermediateRoot computes the current root hash of the state trie.
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
