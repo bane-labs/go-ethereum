@@ -1211,7 +1211,7 @@ func (c *DBFT) newLocalPool(parent *types.Header) *legacypool.LegacyPool {
 	return p
 }
 
-// ValidateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
+// validateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
 func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transaction, envelope *types.Transaction) error {
 	// Make sure the transaction is signed properly and has the same sender and nonce with envelope
 	if decryptedTx.Nonce() != envelope.Nonce() {
