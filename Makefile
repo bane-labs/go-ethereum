@@ -107,6 +107,7 @@ define run_node
 		--metrics \
 		--nat $(NAT_POLICY) \
 		--netrestrict $(RESTRICTED_NETWORK) \
+		--dbft.loglevel debug \
 		$(7) >  $(1)/$(2)/geth_node.log 2>&1 &
 endef
 
