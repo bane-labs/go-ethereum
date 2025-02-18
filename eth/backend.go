@@ -300,6 +300,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		bft.WithTxPool(eth.TxPool())
 		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
 		bft.WithMux(eth.EventMux())
+		err := bft.WithLogLevel(config.DBFTLogLevel)
+		if err != nil {
+			return nil, err
+		}
 		if config.AntiMEVEnforceECDSABlockSignatureScheme {
 			bft.EnforceECDSASignatures()
 		}

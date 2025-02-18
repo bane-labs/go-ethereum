@@ -131,6 +131,7 @@ var (
 		utils.AntiMEVKeyStoreFlag,
 		utils.AntiMEVEnforceECDSABlockSignatureSchemeFlag,
 		utils.AntiMEVPasswordFlag,
+		utils.DBFTLogLevelFlag,
 		utils.NATFlag,
 		utils.NoDiscoverFlag,
 		utils.DiscoveryV4Flag,

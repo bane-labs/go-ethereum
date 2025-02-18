@@ -165,6 +165,11 @@ type Config struct {
 	// AntiMEVEnforceECDSABlockSignatureScheme enables ECDSA multisignatures for
 	// block signing instead of threshold-based.
 	AntiMEVEnforceECDSABlockSignatureScheme bool `toml:",omitempty"`
+
+	// DBFTLogLevel is a dBFT engine log level. The following values are allowed:
+	// "debug", "info", "warn", "error", "dpanic", "panic", "fatal". If not specified,
+	// "info" is used.
+	DBFTLogLevel string `toml:",omitempty"`
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain config.
