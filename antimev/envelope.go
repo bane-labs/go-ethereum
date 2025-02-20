@@ -37,7 +37,7 @@ var (
 	minEncryptedDataSize = EncryptedDataPrefixLen + EncryptedDataRoundLen + EncryptedDataHashLen + tpke.CipherTextSize + 105 + (aes.BlockSize - 105%aes.BlockSize)
 )
 
-// isEnvelope checks whether a transaction is an Envelope transaction. The criteria
+// IsEnvelope checks whether a transaction is an Envelope transaction. The criteria
 // include receiver's address, data prefix and data length check.
 func IsEnvelope(tx *types.Transaction) bool {
 	if tx.To() == nil || *(tx.To()) != systemcontracts.GovernanceRewardProxyHash {
@@ -50,4 +50,11 @@ func IsEnvelope(tx *types.Transaction) bool {
 	}
 
 	return true
+}
+
+// GetEncryptedHash returns the hash of inner encrypted transaction specified in an
+// unencrypted part of Envelope data. Passing non-Envelope as an argument is a no-op.
+func GetEncryptedHash(envelope *types.Transaction) common.Hash {
+	hashOffset := EncryptedDataPrefixLen + EncryptedDataRoundLen
+	return common.Hash(envelope.Data()[hashOffset : hashOffset+EncryptedDataHashLen])
 }
