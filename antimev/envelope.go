@@ -51,3 +51,10 @@ func IsEnvelope(tx *types.Transaction) bool {
 
 	return true
 }
+
+// GetEncryptedHash returns the hash of inner encrypted transaction specified in an
+// unencrypted part of Envelope data. Passing non-Envelope as an argument is a no-op.
+func GetEncryptedHash(envelope *types.Transaction) common.Hash {
+	hashOffset := EncryptedDataPrefixLen + EncryptedDataRoundLen
+	return common.Hash(envelope.Data()[hashOffset : hashOffset+EncryptedDataHashLen])
+}

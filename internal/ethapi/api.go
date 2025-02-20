@@ -1893,8 +1893,7 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 
 	// If the transaction is an antimev envelope, then return the declared transaction hash instead of its own.
 	if antimev.IsEnvelope(tx) {
-		hashOffSet := antimev.EncryptedDataPrefixLen + antimev.EncryptedDataRoundLen
-		return common.Hash(tx.Data()[hashOffSet : hashOffSet+antimev.EncryptedDataHashLen]), nil
+		return antimev.GetEncryptedHash(tx), nil
 	} else {
 		return tx.Hash(), nil
 	}

@@ -1257,6 +1257,12 @@ func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transa
 		return fmt.Errorf("decryptedTx from mismatch: decryptedFrom %v, envelopeFrom %v", decryptedFrom, envelopeFrom)
 	}
 
+	// Ensure decrypted hash matches the one specified in an unencrypted part of Envelope data.
+	expectedH := antimev.GetEncryptedHash(envelope)
+	if decryptedTx.Hash().Cmp(expectedH) != 0 {
+		return fmt.Errorf("decryptedTx hash mismatch: expected %s, got %s", expectedH, decryptedTx.Hash())
+	}
+
 	return nil
 }
 
