@@ -1237,11 +1237,14 @@ func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transa
 	if decryptedTx.Nonce() != envelope.Nonce() {
 		return fmt.Errorf("decryptedTx nonce mismatch: decryptedNonce %v, envelopeNonce %v", decryptedTx.Nonce(), envelope.Nonce())
 	}
+
 	// Ensure the gasprice is high enough to replace the envelope transaction
 	baseFee := head.BaseFee
 	if decryptedTx.EffectiveGasTipCmp(envelope, baseFee) < 0 {
 		return fmt.Errorf("decryptedTx underpriced: EffectiveGasTip needed %v, EffectiveGasTip permitted %v", envelope.EffectiveGasTipValue(baseFee), decryptedTx.EffectiveGasTipValue(baseFee))
 	}
+
+	// Ensure envelope sender matches decrypted sender.
 	envelopeFrom, err := types.Sender(c.signerConfig, envelope)
 	if err != nil {
 		return fmt.Errorf("%w: failed to retrieve envelope sender: %w", txpool.ErrInvalidSender, err)
@@ -1253,6 +1256,7 @@ func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transa
 	if envelopeFrom != decryptedFrom {
 		return fmt.Errorf("decryptedTx from mismatch: decryptedFrom %v, envelopeFrom %v", decryptedFrom, envelopeFrom)
 	}
+
 	return nil
 }
 
