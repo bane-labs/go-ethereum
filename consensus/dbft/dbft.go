@@ -2732,9 +2732,9 @@ func (c *DBFT) getGlobalPublicKey(h *types.Header, s *state.StateDB) (*tpke.Publ
 	keystore := c.amevKeystore.Copy()
 	c.lock.RUnlock()
 
-	cp := s.Copy()
-	defer cp.Dispose()
-	err := c.handleDKG(snapshot, keystore, h, cp, true)
+	id := s.Snapshot()
+	defer s.RevertToSnapshot(id)
+	err := c.handleDKG(snapshot, keystore, h, s, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to handle DKG at %d: %w", h.Number.Uint64(), err)
 	}
@@ -2760,9 +2760,9 @@ func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) (common.Hash,
 	// id := cp.Snapshot()
 	// ...
 	// cp.RevertToSnapshot(id)
-	cp := s.Copy()
-	defer cp.Dispose()
-	nextVals, err := c.getValidatorsSorted(nil, cp, h)
+	id := s.Snapshot()
+	defer s.RevertToSnapshot(id)
+	nextVals, err := c.getValidatorsSorted(nil, s, h)
 	if err != nil {
 		log.Crit("Failed to compute next block validators",
 			"err", err)

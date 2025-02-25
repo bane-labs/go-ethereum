@@ -867,7 +867,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 }
 
 func (s *StateDB) Dispose() {
-	// TODO: consider reusing Finalise before prefetchers disposal
+	s.Finalise(true)
 	if s.prefetcher != nil {
 		s.prefetcher.close()
 		s.prefetcher = nil
