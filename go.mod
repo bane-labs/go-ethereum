@@ -68,6 +68,7 @@ require (
 	github.com/urfave/cli/v2 v2.27.5
 	github.com/wealdtech/go-eth2-wallet-encryptor-keystorev4 v1.4.1
 	go.uber.org/automaxprocs v1.5.2
+	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.39.0
 	golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476
