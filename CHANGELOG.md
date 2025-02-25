@@ -2,6 +2,80 @@
 
 This document outlines major changes between releases.
 
+## 0.3.0 "Elation" (27 Feb 2025)
+
+This version introduces support for two major features: anti-MEV encrypted transactions
+processing and threshold BLS block signatures. Two new forks are implemented to provide these
+features: `NeoXDKG` enables new system KeyManagement contract that allows consensus nodes
+to participate in the DKG process, and `NeoXAMEV` that enables encrypted transactions processing
+at the consensus level and BLS threshold block signatures which solves the frequent chain reorg
+problem.
+
+Please, follow carefully the notes to upgrade your node from v0.2.2 to v0.3.0:
+1. Download new binary and new genesis configuration file
+   (`go-ethereum/config/genesis_mainnet.json` or `go-ethereum/config/genesis_testnet.json`)
+   from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. Don't remove DB. Reinitialize DB using new binary and new configuration file for the
+   corresponding network with the following command:
+   ```
+   ./geth init --datadir ./node-datadir ./config/genesis.json
+   ```
+5. If you're running a consensus node, ensure this step is executed in a safe environment.
+   Generate anti-MEV keystore for your consensus node with new binary using the following
+   command:
+   ```
+   ./geth --datadir ./node-datadir antimev init <address>
+   ```
+     - `<address>` is the address of your consensus node that is used to participate in the
+       consensus process, it can be found in the consensus node wallet.
+   You will be prompted for a password. Ensure that you remember the password.
+6. Adjust your node's runner script:
+   * For consensus nodes only: add a password for anti-MEV keystore using
+     `--antimev.password ./password.txt` flag.
+   * Optional: if you'd like to change the dBFT log level from default (`info`), specify it
+     via `--dbft.loglevel debug` flag.
+7. Start the node.
+
+New features:
+ * anti-MEV keystore support for the node and CLI and related TPKE cryptography
+   implementation (#301, #326, #332, #371, #392, #394)
+ * new KeyManagement system contract (#312, #332, #398)
+ * anti-MEV enabled dBFT consensus support (#287)
+ * NeoXDKG fork that enables KeyManagement system contract operations, BLS
+   precompiles and MCOPY opcode (#328, #332, #402, #409)
+ * NeoXAMEV fork that enables anti-MEV logic, encrypted transactions processing for
+   consensus engine and threshold block signatures (#321, #347, #358, #384, #383,
+   #385, #391, #393, #389, #392, #416, #418, #421)
+
+Behaviour changes:
+ * NeoXBurn fork is removed (#328)
+ * OnPersist system script execution now includes KeyManagement system contract call
+   (#330)
+ * reduce block acceptance interval to 5 seconds (#369)
+ * Governance system contract voting lock is removed, logic distribution scheme is
+   adjusted to be seamless (#349)
+
+Improvements:
+ * enhanced transactions verification logic in consensus engine (#339)
+ * Governance contract updates required for DKG setup (#337)
+ * watch-only consensus nodes are added to privnet (#359)
+ * maintain processed block state in consensus engine of every consensus node (#360)
+ * possibility of fallback from threshold block signature to multisignature (#366,
+   #390)
+ * stabilize block generation time (#396)
+ * make GovernanceReward contract accept Envelope transfers (#400)
+ * ability to customize dBFT log messages level (#419)
+ * anti-MEV transactions policies (#413, #422)
+
+Bugs fixed:
+ * extensible payload senders are not properly verified (#319)
+ * watch-only consensus node is able so send consensus messages (#351)
+ * unexpected timeout for system contract calls (#379)
+ * new blocks are not tracked during sealing proposal awaiting (#404)
+ * RecoveryMessage encoding format incompatibility (#425)
+
 ## 0.2.2 "Disjunction" (21 Aug 2024)
 
 Another v0.2.0 compatible version of Neo X node that includes Geth update to v1.13.15
