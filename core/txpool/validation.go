@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core"
@@ -215,8 +216,13 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough
 	var minGasTipCap = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
 	var baseFee = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash()).Big()
+	// Apply policy envelope fee check
+	if antimev.IsEnvelope(tx) {
+		var envelopeFee = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetEnvelopeFeeStateHash()).Big()
+		minGasTipCap.Add(minGasTipCap, envelopeFee)
+	}
 	if math.BigMin(tx.GasTipCap(), new(big.Int).Sub(tx.GasFeeCap(), baseFee)).Cmp(minGasTipCap) < 0 {
-		return fmt.Errorf("%w: policy minGasTipCap needed %v, baseFee needed %v, gasTipCap %v, gasFeeCap %v ",
+		return fmt.Errorf("%w: policy minGasTipCap (including Envelope fee for Envelopes) needed %v, baseFee needed %v, gasTipCap %v, gasFeeCap %v ",
 			ErrUnderpriced, minGasTipCap, baseFee, tx.GasTipCap(), tx.GasFeeCap())
 	}
 	// Apply policy blacklist
