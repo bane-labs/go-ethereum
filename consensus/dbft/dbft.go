@@ -2100,7 +2100,7 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 			"number", c.lastIndex,
 			"old hash", c.lastBlockHash,
 			"new hash", b.ParentHash(),
-			"seal hash", c.lastBlockSealHash)
+			"seal hash", hex.EncodeToString(c.lastBlockSealHash))
 		c.lastBlockHash = b.ParentHash()
 		c.lastBlockExtra = parent.Extra
 	}
