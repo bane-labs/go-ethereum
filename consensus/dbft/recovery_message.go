@@ -32,11 +32,11 @@ type (
 	// recoveryMessageAux is an auxiliary structure for recoveryMessage RLP encoding.
 	recoveryMessageAux struct {
 		PreparationPayloads []*preparationCompact
-		PreCommitPayloads   []*preCommitCompact
 		CommitPayloads      []*commitCompact
 		ChangeViewPayloads  []*changeViewCompact
-		PreparationHashExt  *common.Hash `rlp:"optional"`
-		PrepareRequest      *message     `rlp:"optional"`
+		PreparationHashExt  *common.Hash        `rlp:"optional"`
+		PrepareRequest      *message            `rlp:"optional"`
+		PreCommitPayloads   []*preCommitCompact `rlp:"optional"`
 	}
 
 	changeViewCompact struct {
