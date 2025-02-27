@@ -31,7 +31,7 @@ type envelopeData struct {
 func decodeEnvelopeData(buf []byte) (envelopeData, error) {
 	var (
 		key              = new(tpke.CipherText)
-		keyOffset        = antimev.EncryptedDataPrefixLen + antimev.EncryptedDataRoundLen + antimev.EncryptedDataHashLen
+		keyOffset        = antimev.EncryptedDataPrefixLen + antimev.EncryptedDataRoundLen + antimev.EncryptedDataGasLen + antimev.EncryptedDataHashLen
 		cipherTextOffset = keyOffset + tpke.CipherTextSize
 	)
 	// It's guaranteed by Envelope definition that buf has a proper length.
@@ -39,7 +39,7 @@ func decodeEnvelopeData(buf []byte) (envelopeData, error) {
 	if err != nil {
 		return envelopeData{}, fmt.Errorf("failed to decode TPKE cipher text: %w", err)
 	}
-	round := binary.LittleEndian.Uint32(buf[antimev.EncryptedDataPrefixLen:keyOffset])
+	round := binary.BigEndian.Uint32(buf[antimev.EncryptedDataPrefixLen:keyOffset])
 	if round == 0 {
 		return envelopeData{}, fmt.Errorf("invalid TPKE cipher text: invalid round %d", round)
 	}

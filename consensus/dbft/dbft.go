@@ -1142,7 +1142,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 					break
 				}
 			}
-			err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i])
+			err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i], pre.finalReceipts[i])
 			if err != nil {
 				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction verification failed: %s", err)) {
 					continue
@@ -1232,7 +1232,7 @@ func (c *DBFT) newLocalPool(parent *types.Header) *legacypool.LegacyPool {
 }
 
 // validateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
-func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transaction, envelope *types.Transaction) error {
+func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transaction, envelope *types.Transaction, envelopeReceipt *types.Receipt) error {
 	// Make sure the transaction is signed properly and has the same sender and nonce with envelope
 	if decryptedTx.Nonce() != envelope.Nonce() {
 		return fmt.Errorf("decryptedTx nonce mismatch: decryptedNonce %v, envelopeNonce %v", decryptedTx.Nonce(), envelope.Nonce())
@@ -1261,6 +1261,15 @@ func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transa
 	expectedH := antimev.GetEncryptedHash(envelope)
 	if decryptedTx.Hash().Cmp(expectedH) != 0 {
 		return fmt.Errorf("decryptedTx hash mismatch: expected %s, got %s", expectedH, decryptedTx.Hash())
+	}
+	// Ensure decrypted gas limit is the same as the envelope declared
+	expectedG := antimev.GetEncryptedGas(envelope)
+	if decryptedTx.Gas() != uint64(expectedG) {
+		return fmt.Errorf("decryptedTx gas limit mismatch: expected %v, got %v", expectedG, decryptedTx.Gas())
+	}
+	// Ensure decrypted gas limit has been allocated by Envelope
+	if decryptedTx.Gas() > envelopeReceipt.GasUsed {
+		return fmt.Errorf("decryptedTx gas limit not allocated: needed %v, got %v", decryptedTx.Gas(), envelopeReceipt.GasUsed)
 	}
 
 	return nil
