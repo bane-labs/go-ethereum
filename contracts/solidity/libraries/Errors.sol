@@ -13,6 +13,8 @@ library Errors {
 
     // GovReward Errors
     error InvalidSelector();
+    error InvalidGasLimit();
+    error UnexpectedGasBurn();
 
     // Policy Errors
     error BlacklistExists();
