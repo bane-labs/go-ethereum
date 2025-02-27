@@ -17,6 +17,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     uint256 public minGasTipCap;
     uint256 public baseFee;
     uint256 internal candidateLimit;
+    uint256 public envelopeFee;
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
@@ -129,5 +130,22 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
         uint256 limit = candidateLimit;
         if (limit > 0) return limit;
         else return DEFAULT_CANDIDATE_LIMIT;
+    }
+
+    function setEnvelopeFee(
+        uint256 _fee
+    )
+        external
+        needVote(
+            bytes32(
+                // keccak256("setEnvelopeFee")
+                0xab26bca1cb5d7b0a97ee434cabffdf1efbc3073c1645a8ed4d1732335c51df49
+            ),
+            keccak256(abi.encode(_fee))
+        )
+    {
+        if (_fee <= 0) revert Errors.InvalidEnvelopeFee();
+        envelopeFee = _fee;
+        emit SetEnvelopeFee(_fee);
     }
 }

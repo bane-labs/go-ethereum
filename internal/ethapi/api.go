@@ -95,6 +95,15 @@ func (s *EthereumAPI) MaxPriorityFeePerGas(ctx context.Context) (*hexutil.Big, e
 	return (*hexutil.Big)(tipcap), err
 }
 
+// EnvelopeFee returns a suggestion for an extra gas tip cap for envelope transactions.
+func (s *EthereumAPI) EnvelopeFee(ctx context.Context) (*hexutil.Big, error) {
+	fee, err := s.b.EnvelopeFee(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return (*hexutil.Big)(fee), err
+}
+
 type feeHistoryResult struct {
 	OldestBlock  *hexutil.Big     `json:"oldestBlock"`
 	Reward       [][]*hexutil.Big `json:"reward,omitempty"`

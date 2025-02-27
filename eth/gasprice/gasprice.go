@@ -72,6 +72,7 @@ type Oracle struct {
 	lastPrice        *big.Int
 	lastBaseFee      *big.Int // lastBaseFee contains next BaseFee value calculated based on the lastHead block.
 	lastMinGasTipCap *big.Int // lastMinGasTipCap contains next MinGasTipCap value calculated based on the lastHead block.
+	lastEnvelopeFee  *big.Int // lastEnvelopeFee contains next EnvelopeFee value calculated based on the lastHead block.
 	maxPrice         *big.Int
 	ignorePrice      *big.Int
 	cacheLock        sync.RWMutex
@@ -161,6 +162,40 @@ func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, *big.Int, er
 	return price, minGasTipCap, err
 }
 
+// EnvelopeFee returns an extra tip cap so that newly created envelope transactions
+// can have a very high chance to be included in the following blocks.
+func (oracle *Oracle) EnvelopeFee(ctx context.Context) (*big.Int, error) {
+	head, _ := oracle.backend.HeaderByNumber(ctx, rpc.LatestBlockNumber)
+	headHash := head.Hash()
+
+	// If the latest envelope fee is still available, return it.
+	oracle.cacheLock.RLock()
+	lastHead, lastEnvelopeFee := oracle.lastHead, oracle.lastEnvelopeFee
+	oracle.cacheLock.RUnlock()
+	if headHash == lastHead {
+		return new(big.Int).Set(lastEnvelopeFee), nil
+	}
+	oracle.fetchLock.Lock()
+	defer oracle.fetchLock.Unlock()
+
+	// Try checking the cache again, maybe the last fetch fetched what we need.
+	oracle.cacheLock.RLock()
+	lastHead, lastPrice, lastEnvelopeFee := oracle.lastHead, oracle.lastPrice, oracle.lastEnvelopeFee
+	oracle.cacheLock.RUnlock()
+	if headHash == lastHead {
+		return new(big.Int).Set(lastEnvelopeFee), nil
+	}
+
+	// It's a new head, then update.
+	err := oracle.updateCache(ctx, head, lastPrice)
+	if err != nil {
+		return new(big.Int).Set(lastEnvelopeFee), err
+	}
+	oracle.cacheLock.RLock()
+	defer oracle.cacheLock.RUnlock()
+	return new(big.Int).Set(oracle.lastEnvelopeFee), nil
+}
+
 // suggestTipCapInternal return GAS price, BaseFee and minGasTipCap for the specified block.
 // It updates the cache for the specified block height if needed. Zero BaseFee is returned if
 // London is not active yet.
@@ -184,12 +219,35 @@ func (oracle *Oracle) suggestTipCapInternal(ctx context.Context, head *types.Hea
 	if headHash == lastHead {
 		return new(big.Int).Set(lastPrice), new(big.Int).Set(lastBaseFee), new(big.Int).Set(lastMinGasTipCap), nil
 	}
+
+	// It's a new head, then update.
+	err := oracle.updateCache(ctx, head, lastPrice)
+	if err != nil {
+		return new(big.Int).Set(lastPrice), new(big.Int).Set(lastBaseFee), new(big.Int).Set(lastMinGasTipCap), err
+	}
+	oracle.cacheLock.RLock()
+	defer oracle.cacheLock.RUnlock()
+	return new(big.Int).Set(oracle.lastPrice), new(big.Int).Set(oracle.lastBaseFee), new(big.Int).Set(oracle.lastMinGasTipCap), nil
+}
+
+type results struct {
+	values []*big.Int
+	err    error
+}
+
+// updateCache updates the cache for the specified block height.
+func (oracle *Oracle) updateCache(ctx context.Context, head *types.Header, lastPrice *big.Int) error {
+	headHash := head.Hash()
 	var (
-		sent, exp int
-		number    = head.Number.Uint64()
-		result    = make(chan results, oracle.checkBlocks)
-		quit      = make(chan struct{})
-		results   []*big.Int
+		state            *state.StateDB
+		sent, exp        int
+		number           = head.Number.Uint64()
+		result           = make(chan results, oracle.checkBlocks)
+		quit             = make(chan struct{})
+		results          []*big.Int
+		lastBaseFee      *big.Int
+		lastMinGasTipCap *big.Int
+		lastEnvelopeFee  *big.Int
 	)
 	for sent < oracle.checkBlocks && number > 0 {
 		go oracle.getBlockValues(ctx, number, sampleNumber, oracle.ignorePrice, result, quit)
@@ -201,7 +259,7 @@ func (oracle *Oracle) suggestTipCapInternal(ctx context.Context, head *types.Hea
 		res := <-result
 		if res.err != nil {
 			close(quit)
-			return new(big.Int).Set(lastPrice), new(big.Int).Set(lastBaseFee), new(big.Int).Set(lastMinGasTipCap), res.err
+			return res.err
 		}
 		exp--
 		// Nothing returned. There are two special cases here:
@@ -231,9 +289,10 @@ func (oracle *Oracle) suggestTipCapInternal(ctx context.Context, head *types.Hea
 		price = new(big.Int).Set(oracle.maxPrice)
 	}
 	if cfg := oracle.backend.ChainConfig(); cfg.IsLondon(head.Number) {
-		state, _, err := oracle.backend.StateAndHeaderByNumber(ctx, rpc.BlockNumber(head.Number.Uint64()))
+		var err error
+		state, _, err = oracle.backend.StateAndHeaderByNumber(ctx, rpc.BlockNumber(head.Number.Uint64()))
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to get state at %d to calculate base fee: %w", head.Number.Uint64(), err)
+			return fmt.Errorf("failed to get state at %d to calculate base fee: %w", head.Number.Uint64(), err)
 		}
 		lastBaseFee = eip1559.CalcBaseFeeDBFT(cfg, head, state)
 		if cfg.DBFT != nil {
@@ -245,19 +304,31 @@ func (oracle *Oracle) suggestTipCapInternal(ctx context.Context, head *types.Hea
 		lastBaseFee = new(big.Int)
 		lastMinGasTipCap = new(big.Int)
 	}
+	if cfg := oracle.backend.ChainConfig(); cfg.IsNeoXAMEV(head.Number) {
+		if cfg.DBFT != nil {
+			if state == nil {
+				var err error
+				state, _, err = oracle.backend.StateAndHeaderByNumber(ctx, rpc.BlockNumber(head.Number.Uint64()))
+				if err != nil {
+					return fmt.Errorf("failed to get state at %d to get envelope fee: %w", head.Number.Uint64(), err)
+				}
+			}
+			lastEnvelopeFee = state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetEnvelopeFeeStateHash()).Big()
+		} else {
+			lastEnvelopeFee = new(big.Int)
+		}
+	} else {
+		lastEnvelopeFee = new(big.Int)
+	}
 	oracle.cacheLock.Lock()
 	oracle.lastHead = headHash
 	oracle.lastPrice = price
 	oracle.lastBaseFee = lastBaseFee
 	oracle.lastMinGasTipCap = lastMinGasTipCap
+	oracle.lastEnvelopeFee = lastEnvelopeFee
 	oracle.cacheLock.Unlock()
 
-	return new(big.Int).Set(price), new(big.Int).Set(lastBaseFee), new(big.Int).Set(lastMinGasTipCap), nil
-}
-
-type results struct {
-	values []*big.Int
-	err    error
+	return nil
 }
 
 // getBlockValues calculates the lowest transaction gas price in a given block

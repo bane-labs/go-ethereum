@@ -21,6 +21,7 @@ import (
 	"math"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	cmath "github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
@@ -328,9 +329,13 @@ func (st *StateTransition) preCheck() error {
 			// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough.
 			if st.evm.ChainConfig().DBFT != nil {
 				var minGasTipCap = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
+				if antimev.IsEnvelopeToAddress(msg.To) && antimev.IsEnvelopeData(msg.Data) {
+					var envelopeFee = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetEnvelopeFeeStateHash()).Big()
+					minGasTipCap.Add(minGasTipCap, envelopeFee)
+				}
 				if cmath.BigMin(msg.GasTipCap, new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee)).Cmp(minGasTipCap) < 0 {
-					return fmt.Errorf("%w: address %v, gasTipCap %v, gasFeeCap %v, policy minGasTipCap %v, baseFee %v ", ErrUnderpriced,
-						msg.From.Hex(), msg.GasTipCap, msg.GasFeeCap, minGasTipCap, st.evm.Context.BaseFee)
+					return fmt.Errorf("%w: address %v, gasTipCap %v, gasFeeCap %v, policy minGasTipCap (including Envelope fee for Envelopes) %v, baseFee %v ",
+						ErrUnderpriced, msg.From.Hex(), msg.GasTipCap, msg.GasFeeCap, minGasTipCap, st.evm.Context.BaseFee)
 				}
 			}
 		}

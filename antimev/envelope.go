@@ -40,15 +40,24 @@ var (
 // IsEnvelope checks whether a transaction is an Envelope transaction. The criteria
 // include receiver's address, data prefix and data length check.
 func IsEnvelope(tx *types.Transaction) bool {
-	if tx.To() == nil || *(tx.To()) != systemcontracts.GovernanceRewardProxyHash {
+	return IsEnvelopeToAddress(tx.To()) && IsEnvelopeData(tx.Data())
+}
+
+// IsEnvelopeToAddress checks whether an address pointer has the expected value for
+// Envelope To address.
+func IsEnvelopeToAddress(addr *common.Address) bool {
+	if addr == nil || *addr != systemcontracts.GovernanceRewardProxyHash {
 		return false
 	}
+	return true
+}
 
-	data := tx.Data()
+// IsEnvelopeData checks whether the input data bytes has the expected prefix for
+// Envelope specification.
+func IsEnvelopeData(data []byte) bool {
 	if len(data) < minEncryptedDataSize || !bytes.HasPrefix(data, EncryptedDataPrefix) {
 		return false
 	}
-
 	return true
 }
 
