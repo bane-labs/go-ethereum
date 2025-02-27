@@ -2,6 +2,7 @@
 pragma solidity ^0.8.25;
 
 import {Errors} from "./libraries/Errors.sol";
+import {Bytes} from "./libraries/Bytes.sol";
 import {IGovReward} from "./interfaces/IGovReward.sol";
 import {IGovernance} from "./interfaces/IGovernance.sol";
 import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
@@ -16,6 +17,17 @@ contract GovReward is IGovReward, GovProxyUpgradeable {
     fallback() external payable {
         if (msg.sig != bytes4(0xffffffff)) {
             revert Errors.InvalidSelector();
+        }
+        // burn required gas amount internally
+        uint32 requiredSpace = Bytes.decodeUint32(msg.data[8:12]);
+        if (requiredSpace < 21000) {
+            revert Errors.InvalidGasLimit();
+        }
+        (bool success, bytes memory data) = address(this).staticcall{
+            gas: requiredSpace - 21000
+        }(abi.encodeWithSelector(this._wasteGas.selector));
+        if (success || data.length > 0) {
+            revert Errors.UnexpectedGasBurn();
         }
     }
 
@@ -57,5 +69,9 @@ contract GovReward is IGovReward, GovProxyUpgradeable {
     function _safeTransferETH(address to, uint value) internal {
         (bool success, ) = to.call{value: value}(new bytes(0));
         if (!success) revert Errors.TransferFailed();
+    }
+
+    function _wasteGas() external pure {
+        while (true) {}
     }
 }

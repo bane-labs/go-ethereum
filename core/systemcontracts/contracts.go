@@ -25,6 +25,8 @@ const blackListSlotIndex = 1
 const minGasTipCapSlotIndex = 2
 const baseFeeSlotIndex = 3
 const envelopeFeeSlotIndex = 5
+const maxEnvelopesPerBlockSlotIndex = 6
+const maxEnvelopeGasLimitSlotIndex = 7
 
 // A set of genesis contract hashes.
 var (
@@ -101,4 +103,18 @@ func GetBlackListStateHash(addr common.Address) common.Hash {
 // in policy contract, for reading corresponding values from statedb.
 func GetEnvelopeFeeStateHash() common.Hash {
 	return common.BytesToHash([]byte{envelopeFeeSlotIndex})
+}
+
+// GetMaxEnvelopesPerBlockStateHash computes and returns the storage key
+// of maxEnvelopesPerBlock in policy contract, for reading corresponding
+// values from statedb.
+func GetMaxEnvelopesPerBlockStateHash() common.Hash {
+	return common.BytesToHash([]byte{maxEnvelopesPerBlockSlotIndex})
+}
+
+// GetMaxEnvelopeGasLimitStateHash computes and returns the storage key
+// of maxEnvelopeGasLimit in policy contract, for reading corresponding
+// values from statedb.
+func GetMaxEnvelopeGasLimitStateHash() common.Hash {
+	return common.BytesToHash([]byte{maxEnvelopeGasLimitSlotIndex})
 }

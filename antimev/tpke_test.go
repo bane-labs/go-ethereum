@@ -82,7 +82,8 @@ func TestTPKE(t *testing.T) {
 
 	// Generate an example envelope for privnet verification
 	var envelopeData = EncryptedDataPrefix
-	envelopeData = binary.LittleEndian.AppendUint32(envelopeData, 0)
+	envelopeData = binary.BigEndian.AppendUint32(envelopeData, 0)
+	envelopeData = binary.BigEndian.AppendUint32(envelopeData, 0)
 	envelopeData = append(envelopeData, common.MaxHash[:]...)
 	envelopeData = append(envelopeData, encryptedKey.ToBytes()...)
 	envelopeData = append(envelopeData, encryptedMsg...)
@@ -154,7 +155,8 @@ func TestGenerateEncryptedTx(t *testing.T) {
 	}
 	// Generate envelope.
 	var envelopeData = EncryptedDataPrefix
-	envelopeData = binary.LittleEndian.AppendUint32(envelopeData, epoch)
+	envelopeData = binary.BigEndian.AppendUint32(envelopeData, epoch)
+	envelopeData = binary.BigEndian.AppendUint32(envelopeData, uint32(tx.Gas()))
 	envelopeData = append(envelopeData, tx.Hash().Bytes()...)
 	envelopeData = append(envelopeData, encryptedKey.ToBytes()...)
 	envelopeData = append(envelopeData, encryptedMsg...)

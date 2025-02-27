@@ -330,6 +330,11 @@ func (st *StateTransition) preCheck() error {
 			if st.evm.ChainConfig().DBFT != nil {
 				var minGasTipCap = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
 				if antimev.IsEnvelopeToAddress(msg.To) && antimev.IsEnvelopeData(msg.Data) {
+					var envelopeGasLimit = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMaxEnvelopeGasLimitStateHash()).Big()
+					if new(big.Int).SetUint64(msg.GasLimit).Cmp(envelopeGasLimit) > 0 {
+						return fmt.Errorf("%w: address %v, gasLimit %v, policy maxEnvelopeGasLimit %v, ", ErrGasLimitReached, msg.From.Hex(), msg.GasLimit,
+							envelopeGasLimit)
+					}
 					var envelopeFee = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetEnvelopeFeeStateHash()).Big()
 					minGasTipCap.Add(minGasTipCap, envelopeFee)
 				}

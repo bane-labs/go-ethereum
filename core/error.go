@@ -59,6 +59,10 @@ var (
 	// by a transaction is higher than what's left in the block.
 	ErrGasLimitReached = errors.New("gas limit reached")
 
+	// ErrEnvelopeNumberLimitReached is returned if the number of envelope transactions
+	// in the block has reached the limit and is going to break the limit.
+	ErrEnvelopeNumberLimitReached = errors.New("envelope number limit reached")
+
 	// ErrInsufficientFundsForTransfer is returned if the transaction sender doesn't
 	// have enough funds for transfer(topmost call only).
 	ErrInsufficientFundsForTransfer = errors.New("insufficient funds for transfer")

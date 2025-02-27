@@ -3,6 +3,7 @@ package antimev
 import (
 	"bytes"
 	"crypto/aes"
+	"encoding/binary"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
@@ -21,8 +22,12 @@ var (
 	EncryptedDataPrefixLen = len(EncryptedDataPrefix)
 
 	// EncryptedDataRoundLen is the amount of bytes that encoded DKG round of transaction
-	// encryption takes in the Envelope's data byte slice (the size of Uint64).
+	// encryption takes in the Envelope's data byte slice (the size of Uint32).
 	EncryptedDataRoundLen = 4
+
+	// EncryptedDataGasLen is the amount of bytes that encoded gas space to reserve for
+	// the decrypted transaction in the block (the size of Uint32).
+	EncryptedDataGasLen = 4
 
 	// EncryptedDataHashLen is the amount of bytes that represents the hash of an
 	// encrypted transaction.
@@ -34,7 +39,7 @@ var (
 	// a simple gas transfer with 1 gwei (105 bytes) is taken as a reference point
 	// for evaluation of variable-length part; it is padded to be even to the AES
 	// block size as required by AES encryption rules.
-	minEncryptedDataSize = EncryptedDataPrefixLen + EncryptedDataRoundLen + EncryptedDataHashLen + tpke.CipherTextSize + 105 + (aes.BlockSize - 105%aes.BlockSize)
+	minEncryptedDataSize = EncryptedDataPrefixLen + EncryptedDataRoundLen + EncryptedDataGasLen + EncryptedDataHashLen + tpke.CipherTextSize + 105 + (aes.BlockSize - 105%aes.BlockSize)
 )
 
 // IsEnvelope checks whether a transaction is an Envelope transaction. The criteria
@@ -64,6 +69,13 @@ func IsEnvelopeData(data []byte) bool {
 // GetEncryptedHash returns the hash of inner encrypted transaction specified in an
 // unencrypted part of Envelope data. Passing non-Envelope as an argument is a no-op.
 func GetEncryptedHash(envelope *types.Transaction) common.Hash {
-	hashOffset := EncryptedDataPrefixLen + EncryptedDataRoundLen
+	hashOffset := EncryptedDataPrefixLen + EncryptedDataRoundLen + EncryptedDataGasLen
 	return common.Hash(envelope.Data()[hashOffset : hashOffset+EncryptedDataHashLen])
+}
+
+// GetEncryptedGas returns the gas limit of inner encrypted transaction specified in an
+// unencrypted part of Envelope data. Passing non-Envelope as an argument is a no-op.
+func GetEncryptedGas(envelope *types.Transaction) uint32 {
+	gasOffset := EncryptedDataPrefixLen + EncryptedDataRoundLen
+	return binary.BigEndian.Uint32(envelope.Data()[gasOffset : gasOffset+EncryptedDataGasLen])
 }

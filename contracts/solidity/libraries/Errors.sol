@@ -13,6 +13,8 @@ library Errors {
 
     // GovReward Errors
     error InvalidSelector();
+    error InvalidGasLimit();
+    error UnexpectedGasBurn();
 
     // Policy Errors
     error BlacklistExists();
@@ -21,6 +23,8 @@ library Errors {
     error InvalidBaseFee();
     error InvalidCandidateLimit();
     error InvalidEnvelopeFee();
+    error InvalidMaxEnvelopesPerBlock();
+    error InvalidMaxEnvelopeGasLimit();
 
     // Governance Errors
     error SideCallNotAllowed();

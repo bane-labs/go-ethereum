@@ -18,6 +18,8 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     uint256 public baseFee;
     uint256 internal candidateLimit;
     uint256 public envelopeFee;
+    uint256 public maxEnvelopesPerBlock;
+    uint256 public maxEnvelopeGasLimit;
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
@@ -37,6 +39,15 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
             // Must not be called through delegatecall
             revert UUPSUnauthorizedCallContext();
         }
+    }
+
+    // Only for Policy upgrading for the new Envelope transactions
+    function setInitialEnvelopeLimits(
+        uint256 _maxEnvelopesPerBlock,
+        uint256 _maxEnvelopeGasLimit
+    ) external onlyAdmin {
+        maxEnvelopesPerBlock = _maxEnvelopesPerBlock;
+        maxEnvelopeGasLimit = _maxEnvelopeGasLimit;
     }
 
     function addBlackList(
@@ -147,5 +158,39 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
         if (_fee <= 0) revert Errors.InvalidEnvelopeFee();
         envelopeFee = _fee;
         emit SetEnvelopeFee(_fee);
+    }
+
+    function setMaxEnvelopesPerBlock(
+        uint256 _number
+    )
+        external
+        needVote(
+            bytes32(
+                // keccak256("setMaxEnvelopesPerBlock")
+                0x468ff90b65b7330769fd5fa1950650ac15948bbbaaff84f86b3c11a5dc7842d1
+            ),
+            keccak256(abi.encode(_number))
+        )
+    {
+        if (_number <= 0) revert Errors.InvalidMaxEnvelopesPerBlock();
+        maxEnvelopesPerBlock = _number;
+        emit SetMaxEnvelopesPerBlock(_number);
+    }
+
+    function setMaxEnvelopeGasLimit(
+        uint256 _gaslimit
+    )
+        external
+        needVote(
+            bytes32(
+                // keccak256("setMaxEnvelopeGasLimit")
+                0xf48e9af07262cd1c77a4209ac59848c8bf3f8ec29817678aa7f1b67dd990501c
+            ),
+            keccak256(abi.encode(_gaslimit))
+        )
+    {
+        if (_gaslimit < 21000) revert Errors.InvalidMaxEnvelopeGasLimit();
+        maxEnvelopeGasLimit = _gaslimit;
+        emit SetMaxEnvelopeGasLimit(_gaslimit);
     }
 }
