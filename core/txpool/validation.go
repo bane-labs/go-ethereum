@@ -216,8 +216,13 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	// For LegacyTx, GasFeeCap and GasPrice are equal, so checking GasTipCap and GasFeeCap is enough
 	var minGasTipCap = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMinGasTipCapStateHash()).Big()
 	var baseFee = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBaseFeeStateHash()).Big()
-	// Apply policy envelope fee check
+	// Apply policy envelope check
 	if antimev.IsEnvelope(tx) {
+		var envelopeGasLimit = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMaxEnvelopeGasLimitStateHash()).Big()
+		if new(big.Int).SetUint64(tx.Gas()).Cmp(envelopeGasLimit) > 0 {
+			return fmt.Errorf("%w: policy maxEnvelopeGasLimit allowed %v, gas %v", ErrGasLimit, envelopeGasLimit, tx.Gas())
+		}
+		// Add envelope fee on top of minGasTipCap check
 		var envelopeFee = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetEnvelopeFeeStateHash()).Big()
 		minGasTipCap.Add(minGasTipCap, envelopeFee)
 	}
