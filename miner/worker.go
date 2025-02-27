@@ -24,12 +24,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -86,6 +88,7 @@ type environment struct {
 	signer   types.Signer
 	state    *state.StateDB // apply state changes here
 	tcount   int            // tx count in cycle
+	ecount   int            // envelope tx count in cycle
 	gasPool  *core.GasPool  // available gas used to pack transactions
 	coinbase common.Address
 
@@ -102,6 +105,7 @@ func (env *environment) copy() *environment {
 		signer:   env.signer,
 		state:    env.state.Copy(),
 		tcount:   env.tcount,
+		ecount:   env.ecount,
 		coinbase: env.coinbase,
 		header:   types.CopyHeader(env.header),
 		receipts: copyReceipts(env.receipts),
@@ -744,6 +748,7 @@ func (w *worker) makeEnv(parent *types.Header, header *types.Header, coinbase co
 	}
 	// Keep track of transactions which return errors so they can be removed
 	env.tcount = 0
+	env.ecount = 0
 	return env, nil
 }
 
@@ -891,6 +896,17 @@ func (w *worker) commitTransactions(env *environment, plainTxs, blobTxs *transac
 			log.Trace("Ignoring replay protected transaction", "hash", ltx.Hash, "eip155", w.chainConfig.EIP155Block)
 			txs.Pop()
 			continue
+		}
+		// Check whether the tx is an Envelope. If it is an Envelope and
+		// policy doesn't allow any more Envelopes in this block, ignore.
+		if w.chainConfig.IsNeoXAMEV(env.header.Number) && antimev.IsEnvelope(tx) {
+			envelopNumberLimit := env.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMaxEnvelopesPerBlockStateHash()).Big()
+			if new(big.Int).SetUint64(uint64(env.ecount)).Cmp(envelopNumberLimit) >= 0 {
+				log.Trace("Ignoring envelope transaction more than limit", "hash", ltx.Hash, "limit", envelopNumberLimit)
+				txs.Pop()
+				continue
+			}
+			env.ecount++
 		}
 		// Start executing the transaction
 		env.state.SetTxContext(tx.Hash(), env.tcount)

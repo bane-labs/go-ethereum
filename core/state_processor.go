@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
@@ -60,22 +61,24 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 // transactions failed to execute due to insufficient gas it will return an error.
 func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (types.Receipts, []*types.Log, uint64, error) {
 	var (
-		receipts    types.Receipts
-		usedGas     = new(uint64)
-		header      = block.Header()
-		blockHash   = block.Hash()
-		blockNumber = block.Number()
-		allLogs     []*types.Log
-		gp          = new(GasPool).AddGas(block.GasLimit())
+		receipts      types.Receipts
+		usedGas       = new(uint64)
+		envelopeCount = uint64(0)
+		header        = block.Header()
+		blockHash     = block.Hash()
+		blockNumber   = block.Number()
+		allLogs       []*types.Log
+		gp            = new(GasPool).AddGas(block.GasLimit())
 	)
 	// Mutate the block and state according to any hard-fork specs
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(statedb)
 	}
 	var (
-		context = NewEVMBlockContext(header, p.bc, nil)
-		vmenv   = vm.NewEVM(context, vm.TxContext{}, statedb, p.config, cfg)
-		signer  = types.MakeSigner(p.config, header.Number, header.Time)
+		context             = NewEVMBlockContext(header, p.bc, nil)
+		vmenv               = vm.NewEVM(context, vm.TxContext{}, statedb, p.config, cfg)
+		signer              = types.MakeSigner(p.config, header.Number, header.Time)
+		envelopeNumberLimit = statedb.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMaxEnvelopesPerBlockStateHash()).Big().Uint64()
 	)
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
 		ProcessBeaconBlockRoot(*beaconRoot, vmenv, statedb)
@@ -88,6 +91,14 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	}
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
+		// Check against envelope number policy
+		if p.bc.chainConfig.IsNeoXAMEV(blockNumber) && antimev.IsEnvelope(tx) {
+			if envelopeCount >= envelopeNumberLimit {
+				return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w, envelope limit %v", i, tx.Hash().Hex(),
+					ErrEnvelopeNumberLimitReached, envelopeNumberLimit)
+			}
+			envelopeCount++
+		}
 		msg, err := TransactionToMessage(tx, signer, header.BaseFee)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
