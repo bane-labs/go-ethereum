@@ -314,6 +314,9 @@ func (b *backendMock) setFork(fork string) error {
 func (b *backendMock) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
 	return big.NewInt(42), nil
 }
+func (b *backendMock) EnvelopeFee(ctx context.Context) (*big.Int, error) {
+	return big.NewInt(42), nil
+}
 func (b *backendMock) CurrentHeader() *types.Header     { return b.current }
 func (b *backendMock) ChainConfig() *params.ChainConfig { return b.config }
 
