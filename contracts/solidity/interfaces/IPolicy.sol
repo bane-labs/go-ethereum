@@ -8,6 +8,8 @@ interface IPolicy {
     event SetBaseFee(uint256 baseFee);
     event SetCandidateLimit(uint256 candidateLimit);
     event SetEnvelopeFee(uint256 envelopeFee);
+    event SetMaxEnvelopesPerBlock(uint256 maxEnvelopesPerBlock);
+    event SetMaxEnvelopeGasLimit(uint256 setMaxEnvelopeGasLimit);
 
     // add an address to blacklist policy
     function addBlackList(address _addr) external;
@@ -35,4 +37,16 @@ interface IPolicy {
 
     // return the value of candidate limit policy
     function getCandidateLimit() external view returns (uint256);
+
+    // set the maximum number of envelope transactions to be packed in each block
+    function setMaxEnvelopesPerBlock(uint256 _number) external;
+
+    // get the value of envelope transaction number policy
+    function maxEnvelopesPerBlock() external view returns (uint256);
+
+    // set the maximum value of envelope transaction gas limit
+    function setMaxEnvelopeGasLimit(uint256 _gaslimit) external;
+
+    // get the value of envelope transaction gas limit policy
+    function maxEnvelopeGasLimit() external view returns (uint256);
 }

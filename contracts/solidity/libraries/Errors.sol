@@ -23,6 +23,8 @@ library Errors {
     error InvalidBaseFee();
     error InvalidCandidateLimit();
     error InvalidEnvelopeFee();
+    error InvalidMaxEnvelopesPerBlock();
+    error InvalidMaxEnvelopeGasLimit();
 
     // Governance Errors
     error SideCallNotAllowed();
