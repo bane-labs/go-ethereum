@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -379,6 +380,14 @@ func (b *EthAPIBackend) SuggestGasTipCap(ctx context.Context) (*big.Int, error) 
 
 func (b *EthAPIBackend) EnvelopeFee(ctx context.Context) (*big.Int, error) {
 	return b.gpo.EnvelopeFee(ctx)
+}
+
+func (b *EthAPIBackend) MaxEnvelopeGas(ctx context.Context) (*big.Int, error) {
+	stateDb, err := b.eth.blockchain.State()
+	if err != nil {
+		return nil, err
+	}
+	return stateDb.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMaxEnvelopeGasLimitStateHash()).Big(), nil
 }
 
 func (b *EthAPIBackend) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (firstBlock *big.Int, reward [][]*big.Int, baseFee []*big.Int, gasUsedRatio []float64, err error) {

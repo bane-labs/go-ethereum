@@ -317,6 +317,9 @@ func (b *backendMock) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
 func (b *backendMock) EnvelopeFee(ctx context.Context) (*big.Int, error) {
 	return big.NewInt(42), nil
 }
+func (b *backendMock) MaxEnvelopeGas(ctx context.Context) (*big.Int, error) {
+	return big.NewInt(42), nil
+}
 func (b *backendMock) CurrentHeader() *types.Header     { return b.current }
 func (b *backendMock) ChainConfig() *params.ChainConfig { return b.config }
 

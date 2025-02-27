@@ -515,6 +515,24 @@ func testStatusFunctions(t *testing.T, client *rpc.Client) {
 		t.Fatalf("unexpected gas tip cap: %v", gasTipCap)
 	}
 
+	// EnvelopeFee
+	envelopeFee, err := ec.EnvelopeFee(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if envelopeFee.Cmp(big.NewInt(0)) != 0 {
+		t.Fatalf("unexpected envelope fee: %v", envelopeFee)
+	}
+
+	// MaxEnvelopeGas
+	maxEnvelopeGas, err := ec.MaxEnvelopeGas(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if maxEnvelopeGas.Cmp(big.NewInt(0)) != 0 {
+		t.Fatalf("unexpected max envelope gas: %v", maxEnvelopeGas)
+	}
+
 	// FeeHistory
 	history, err := ec.FeeHistory(context.Background(), 1, big.NewInt(2), []float64{95, 99})
 	if err != nil {

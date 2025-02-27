@@ -104,6 +104,15 @@ func (s *EthereumAPI) EnvelopeFee(ctx context.Context) (*hexutil.Big, error) {
 	return (*hexutil.Big)(fee), err
 }
 
+// MaxEnvelopeGas returns the maximum envelope gas limit allowed by policy
+func (s *EthereumAPI) MaxEnvelopeGas(ctx context.Context) (*hexutil.Big, error) {
+	maxGas, err := s.b.MaxEnvelopeGas(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return (*hexutil.Big)(maxGas), err
+}
+
 type feeHistoryResult struct {
 	OldestBlock  *hexutil.Big     `json:"oldestBlock"`
 	Reward       [][]*hexutil.Big `json:"reward,omitempty"`
