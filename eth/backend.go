@@ -450,7 +450,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Set up local beacon client
 	eth.internalRPC = stack.Attach()
-	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.EventMux(), eth.feeRecipient, eth.shouldPreserve)
+	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.eventMux, eth.feeRecipient, eth.shouldPreserve)
 	eth.handler.connectBeacon(eth.beacon)
 	if bft != nil {
 		// Connect BFT to beacon protocol
@@ -662,7 +662,6 @@ func (s *Ethereum) BlockChain() *core.BlockChain       { return s.blockchain }
 func (s *Ethereum) FileSystem() *core.FileSystem       { return s.filesystem }
 func (s *Ethereum) TxPool() *txpool.TxPool             { return s.txPool }
 func (s *Ethereum) BlobTxPool() *blobpool.BlobPool     { return s.blobTxPool }
-func (s *Ethereum) EventMux() *event.TypeMux           { return s.eventMux }
 func (s *Ethereum) Engine() consensus.Engine           { return s.engine }
 func (s *Ethereum) ChainDb() ethdb.Database            { return s.chainDb }
 func (s *Ethereum) IsListening() bool                  { return true } // Always listening
