@@ -220,7 +220,18 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	if antimev.IsEnvelope(tx) {
 		var envelopeGasLimit = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMaxEnvelopeGasLimitStateHash()).Big()
 		if new(big.Int).SetUint64(tx.Gas()).Cmp(envelopeGasLimit) > 0 {
-			return fmt.Errorf("%w: policy maxEnvelopeGasLimit allowed %v, gas %v", ErrGasLimit, envelopeGasLimit, tx.Gas())
+			return fmt.Errorf("%w: policy maxEnvelopeGasLimit allowed %v, gas %v", ErrEnvelopeGasLimit, envelopeGasLimit, tx.Gas())
+		}
+		// Assuming that encrypted transaction is at least a simple transfer, its gas limit
+		// must be enough to cover simple transfer execution.
+		encryptedGasLimit := antimev.GetEncryptedGas(tx.Data())
+		if encryptedGasLimit < antimev.MinEncryptedGasLimit {
+			return fmt.Errorf("invalid encrypted transaction gas limit: required at least %v, got %v", antimev.MinEncryptedGasLimit, encryptedGasLimit)
+		}
+		// The gas limit of Envelope transaction should be enough to cover encrypted transaction
+		// execution.
+		if tx.Gas() < uint64(encryptedGasLimit) {
+			return fmt.Errorf("%w: at least %d is required for encrypted transaction execution, have %d", ErrEnvelopeGasLimit, encryptedGasLimit, tx.Gas())
 		}
 		// Add envelope fee on top of minGasTipCap check
 		var envelopeFee = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetEnvelopeFeeStateHash()).Big()
