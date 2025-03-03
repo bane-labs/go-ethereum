@@ -149,6 +149,9 @@ The current Neo X Policy maintains following parameters. All these policies are 
 |Minimum Transaction Tip Cap|`minGasTipCap`|Force transaction senders to pay a minimum tip to Neo X Governance|
 |Base Fee|`baseFee`|Burn a fixed part of transaction fees instead of following EIP-1559's dynamic evaluation|
 |Candidate Limit|`candidateLimit`|Limit the number of candidates in Governance registration and election|
+|Envelope Fee|`envelopeFee`|Force envelope transaction senders to pay an extra tip to Neo X Governance|
+|Maximum Envelopes Per Block|`maxEnvelopesPerBlock`|Limit the number of envelope transactions in each block|
+|Maximum Envelope Gas Limit|`maxEnvelopeGasLimit`|Limit the gas consumption of each envelope transaction|
 
 Since all the policy setters adopt the `needVote` modifier, any policy change requires more than 1/2 of the current Neo X consensus nodes votes to be collected.
 
