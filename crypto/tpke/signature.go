@@ -86,7 +86,7 @@ func (s *SignatureShare) Bytes() []byte {
 }
 
 // AggregateSigShares tries to aggregate SignatureShare to a BLS signature.
-// This method takes a slice of [SignatureShare] and a matrix for Feldman.
+// This method takes a slice of [SignatureShare] and a matrix for Vandermonde.
 // The size of [SignatureShare] slice should be equal to len(message).
 // Each row of the input matrix should be [1, i, i^2, ..., i^(threshold-1)], where i
 // is the dkg key index. The message amount should be larger than threshold,
@@ -96,7 +96,7 @@ func AggregateSigShares(matrix [][]int, shares []*SignatureShare, scaler int) (*
 		return nil, ErrTPKELengthMismatch
 	}
 	// Be aware of the integer overflow when the size and threshold grow big
-	d, coeff := Feldman(matrix)
+	d, coeff := Vandermonde(matrix)
 	d = scaler / d
 	// Compute d1
 	denominator := big.NewInt(int64(abs(d)))

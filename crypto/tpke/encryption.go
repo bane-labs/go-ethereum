@@ -124,7 +124,7 @@ type workerResult struct {
 }
 
 // AggregateAndDecrypt tries to aggregate DecryptionShares and decrypts CipherTexts with verification
-// This method takes a batch of ordered CipherTexts, DecryptionShares and a matrix for Feldman
+// This method takes a batch of ordered CipherTexts, DecryptionShares and a matrix for Vandermonde
 // The size of DecryptionShare array should be len(message)*len(ciphertext)
 // Each row of the input matrix should be [1, i, i^2, ..., i^(threshold-1)], i is the dkg key index
 // The message amount should be larger than threshold, otherwise the result will be wrong
@@ -139,7 +139,7 @@ func AggregateAndDecrypt(cts []*CipherText, matrix [][]int, shares [][]*Decrypti
 	}
 
 	// Be aware of the integer overflow when the size and threshold of tpke grow big
-	d, coeff := Feldman(matrix)
+	d, coeff := Vandermonde(matrix)
 	d = scaler / d
 	results := make([]*bls12381.G1Affine, len(cts))
 	// Compute M=C-d1/d

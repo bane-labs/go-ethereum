@@ -207,7 +207,7 @@ func polyAdd(p1 []*big.Int, p2 []*big.Int) []*big.Int {
 	}
 }
 
-func Feldman(matrix [][]int) (int, []int) {
+func Vandermonde(matrix [][]int) (int, []int) {
 	// Compute D, D1
 	d, coeff := determinant(matrix, len(matrix))
 	g := d
