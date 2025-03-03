@@ -34,7 +34,7 @@ func getScaler(size int, threshold int) int {
 // searchDLCM tries to find a minimum value of scaler for the given matrix.
 func searchDLCM(matrix [][]int, l, pos, offset, size, threshold int) int {
 	if pos == threshold {
-		d, coeff := tpke.Feldman(matrix)
+		d, coeff := tpke.Vandermonde(matrix)
 		g := d
 		for i := 0; i < len(coeff); i++ {
 			g = gcd(g, coeff[i])
