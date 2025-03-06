@@ -1263,7 +1263,7 @@ func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transa
 		return fmt.Errorf("decryptedTx hash mismatch: expected %s, got %s", expectedH, decryptedTx.Hash())
 	}
 	// Ensure decrypted gas limit is the same as the envelope declared
-	expectedG := antimev.GetEncryptedGas(envelope)
+	expectedG := antimev.GetEncryptedGas(envelope.Data())
 	if decryptedTx.Gas() != uint64(expectedG) {
 		return fmt.Errorf("decryptedTx gas limit mismatch: expected %v, got %v", expectedG, decryptedTx.Gas())
 	}

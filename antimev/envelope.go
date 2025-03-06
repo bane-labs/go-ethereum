@@ -9,7 +9,13 @@ import (
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
+	"github.com/ethereum/go-ethereum/params"
 )
+
+// MinEncryptedGasLimit is the minimum required gas limit for encrypted transaction.
+// It is set to be equal to a simple transfer execution cost since it is assumed that
+// minimum valid encrypted transaction structure is a simple transfer.
+const MinEncryptedGasLimit = uint32(params.TxGas)
 
 var (
 	// EncryptedDataPrefix is the prefix of Envelope transaction's data. It's used to
@@ -75,7 +81,7 @@ func GetEncryptedHash(envelope *types.Transaction) common.Hash {
 
 // GetEncryptedGas returns the gas limit of inner encrypted transaction specified in an
 // unencrypted part of Envelope data. Passing non-Envelope as an argument is a no-op.
-func GetEncryptedGas(envelope *types.Transaction) uint32 {
+func GetEncryptedGas(envelopeData []byte) uint32 {
 	gasOffset := EncryptedDataPrefixLen + EncryptedDataRoundLen
-	return binary.BigEndian.Uint32(envelope.Data()[gasOffset : gasOffset+EncryptedDataGasLen])
+	return binary.BigEndian.Uint32(envelopeData[gasOffset : gasOffset+EncryptedDataGasLen])
 }

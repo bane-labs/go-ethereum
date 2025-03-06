@@ -45,6 +45,10 @@ var (
 	// maximum allowance of the current block.
 	ErrGasLimit = errors.New("exceeds block gas limit")
 
+	// ErrEnvelopeGasLimit is returned if an Envelope transaction's requested gas limit
+	// doesn't satisfy verification criteria.
+	ErrEnvelopeGasLimit = errors.New("invalid Envelope gas limit")
+
 	// ErrNegativeValue is a sanity error to ensure no one is able to specify a
 	// transaction with a negative value.
 	ErrNegativeValue = errors.New("negative value")

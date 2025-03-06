@@ -335,6 +335,16 @@ func (st *StateTransition) preCheck() error {
 						return fmt.Errorf("%w: address %v, gasLimit %v, policy maxEnvelopeGasLimit %v, ", ErrGasLimitReached, msg.From.Hex(), msg.GasLimit,
 							envelopeGasLimit)
 					}
+					// Check that encrypted transaction gas limit satisfies the minimum required gas limit.
+					encryptedGasLimit := antimev.GetEncryptedGas(msg.Data)
+					if encryptedGasLimit < antimev.MinEncryptedGasLimit {
+						return fmt.Errorf("invalid encrypted transaction gas limit: required at least %v, got %v", antimev.MinEncryptedGasLimit, encryptedGasLimit)
+					}
+					// The gas limit of Envelope transaction should be enough to cover encrypted transaction
+					// execution.
+					if msg.GasLimit < uint64(encryptedGasLimit) {
+						return fmt.Errorf("invalid envelope gas limit: at least %d is required for encrypted transaction execution, have %d", encryptedGasLimit, msg.GasLimit)
+					}
 					var envelopeFee = st.state.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetEnvelopeFeeStateHash()).Big()
 					minGasTipCap.Add(minGasTipCap, envelopeFee)
 				}
