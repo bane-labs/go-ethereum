@@ -69,7 +69,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
             revert Errors.SideCallNotAllowed();
         if (tx.origin != candidate) revert Errors.OnlyEOA();
         if (pubkey.length != 65) revert Errors.InvalidMessageKey();
-        messagePubkeys[msg.sender] = pubkey;
+        messagePubkeys[candidate] = pubkey;
     }
 
     function reshare(bytes calldata pvss, bytes[] calldata messages) external {

@@ -6,8 +6,9 @@ import {IGovernance} from "../interfaces/IGovernance.sol";
 contract MockContract {
     function call_registerCandidate(
         IGovernance governanceAddr,
-        uint shareRate
+        uint shareRate,
+        bytes calldata pubkey
     ) public payable {
-        governanceAddr.registerCandidate{value: msg.value}(shareRate);
+        governanceAddr.registerCandidate{value: msg.value}(shareRate, pubkey);
     }
 }

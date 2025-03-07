@@ -11,7 +11,10 @@ interface IGovernance {
     event Persist(address[] validators);
 
     // register to be a candidate with gas
-    function registerCandidate(uint shareRate) external payable;
+    function registerCandidate(
+        uint shareRate,
+        bytes calldata pubkey
+    ) external payable;
 
     // exit candidates and wait for withdraw
     function exitCandidate() external;
