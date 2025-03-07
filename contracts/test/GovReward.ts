@@ -2,7 +2,6 @@ import { ethers } from "hardhat";
 import { expect } from "chai";
 
 const REWARD_PROXY = "0x1212000000000000000000000000000000000003";
-const REWARD_IMP = "0x1212100000000000000000000000000000000003";
 
 describe("GovReward", function () {
     let Reward: any;

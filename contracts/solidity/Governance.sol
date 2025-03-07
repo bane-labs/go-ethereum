@@ -126,7 +126,10 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         return candidateList.values();
     }
 
-    function registerCandidate(uint shareRate) external payable {
+    function registerCandidate(
+        uint shareRate,
+        bytes calldata pubkey
+    ) external payable {
         if (tx.origin != msg.sender) revert Errors.OnlyEOA();
         if (msg.value != registerFee) revert Errors.InsufficientValue();
         if (shareRate > 1000) revert Errors.InvalidShareRate();
@@ -140,6 +143,9 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         // record share rate and balance
         shareRateOf[msg.sender] = shareRate;
         candidateBalanceOf[msg.sender] = msg.value;
+
+        // register message key
+        IKeyManagement(KEY_MANAGEMENT).registerMessageKey(msg.sender, pubkey);
     }
 
     function exitCandidate() external {
