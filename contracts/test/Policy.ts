@@ -11,6 +11,7 @@ const POLICY_PROXY = "0x1212000000000000000000000000000000000002";
 const POLICY_IMP = "0x1212100000000000000000000000000000000002";
 const REWARD_PROXY = "0x1212000000000000000000000000000000000003";
 const REWARD_IMP = "0x1212100000000000000000000000000000000003";
+const KEYMANAGEMENT_PROXY = "0x1212000000000000000000000000000000000008";
 const SYS_CALL = "0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE";
 
 // CONFIG
@@ -34,6 +35,9 @@ const MIN_GAS_TIP_CAP = ethers.parseUnits("1", "gwei");
 const BASE_FEE = ethers.parseUnits("1", "gwei");
 const CANDIDATE_LIMIT = 2000;
 
+// MOCK PUBKEYS
+const PUBKEY = "0x04a8c8762d32477f5bd0ccff58d35a7b7ace2fbbd0c0d61874bd405bc0af415690d16f585bcec5f51d1fdddfd0d4543cb0a9d40f0447b62a7c4b1a0f24c45ccb01";
+
 describe("Policy", function () {
 
     let Policy: any, Governance: any;
@@ -50,6 +54,7 @@ describe("Policy", function () {
         const governance_deploy = await ethers.deployContract("Governance");
         const reward_deploy = await ethers.deployContract("GovReward");
         const policy_deploy = await ethers.deployContract("Policy");
+        const keymanagement_deploy = await ethers.deployContract("KeyManagement");
 
         // Copy Bytecode to native address
         const governance_code = await ethers.provider.send("eth_getCode", [governance_deploy.target]);
@@ -60,6 +65,9 @@ describe("Policy", function () {
 
         const policy_code = await ethers.provider.send("eth_getCode", [policy_deploy.target]);
         await ethers.provider.send("hardhat_setCode", [POLICY_PROXY, policy_code]);
+
+        const keymanagement_code = await ethers.provider.send("eth_getCode", [keymanagement_deploy.target]);
+        await ethers.provider.send("hardhat_setCode", [KEYMANAGEMENT_PROXY, keymanagement_code]);
 
         const governance_contract = require("../artifacts/solidity/Governance.sol/Governance.json");
         Governance = new ethers.Contract(GOV_PROXY, governance_contract.abi, signers[0]);
@@ -151,7 +159,7 @@ describe("Policy", function () {
         });
 
         it("Should deactivate governance if is a candidate", async function () {
-            await Governance.connect(signers[7]).registerCandidate(500, { value: REGISTER_FEE });
+            await Governance.connect(signers[7]).registerCandidate(500, PUBKEY, { value: REGISTER_FEE });
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).addBlackList(signers[7])
@@ -204,7 +212,7 @@ describe("Policy", function () {
         });
 
         it("Should activate governance if is a candidate", async function () {
-            await Governance.connect(signers[7]).registerCandidate(500, { value: REGISTER_FEE });
+            await Governance.connect(signers[7]).registerCandidate(500, PUBKEY, { value: REGISTER_FEE });
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).addBlackList(signers[7])
