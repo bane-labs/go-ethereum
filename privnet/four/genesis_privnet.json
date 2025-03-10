@@ -18,7 +18,7 @@
     "neoXDKGBlock": 5,
     "neoXAMEVBlock": 35,
     "dbft": {
-      "period": 5,
+      "period": 1,
       "standbyValidators": [
         "0x74f4effb0b538baec703346b03b6d9292f53a4cd",
         "0x910ad1641b7125eff746accdca1f11148b22f472",

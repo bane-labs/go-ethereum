@@ -23,54 +23,63 @@ NODE0_PORT = 30305
 NODE0_AUTH_PORT = 8551
 NODE0_HTTP_PORT = 8561
 NODE0_WS_PORT = 8571
+NODE0_METRICS_PORT = 8581
 
 NODE1 = node1
 NODE1_PORT = 30306
 NODE1_AUTH_PORT = 8552
 NODE1_HTTP_PORT = 8562
 NODE1_WS_PORT = 8572
+NODE1_METRICS_PORT = 8582
 
 NODE2 = node2
 NODE2_PORT = 30307
 NODE2_AUTH_PORT = 8553
 NODE2_HTTP_PORT = 8563
 NODE2_WS_PORT = 8573
+NODE2_METRICS_PORT = 8583
 
 NODE3 = node3
 NODE3_PORT = 30308
 NODE3_AUTH_PORT = 8554
 NODE3_HTTP_PORT = 8564
 NODE3_WS_PORT = 8574
+NODE3_METRICS_PORT = 8584
 
 NODE4 = node4
 NODE4_PORT = 30309
 NODE4_AUTH_PORT = 8555
 NODE4_HTTP_PORT = 8565
 NODE4_WS_PORT = 8575
+NODE4_METRICS_PORT = 8585
 
 NODE5 = node5
 NODE5_PORT = 30310
 NODE5_AUTH_PORT = 8556
 NODE5_HTTP_PORT = 8566
 NODE5_WS_PORT = 8576
+NODE5_METRICS_PORT = 8586
 
 NODE6 = node6
 NODE6_PORT = 30311
 NODE6_AUTH_PORT = 8557
 NODE6_HTTP_PORT = 8567
 NODE6_WS_PORT = 8577
+NODE6_METRICS_PORT = 8587
 
 NODE7 = node7
 NODE7_PORT = 30312
 NODE7_AUTH_PORT = 8558
 NODE7_HTTP_PORT = 8568
 NODE7_WS_PORT = 8578
+NODE7_METRICS_PORT = 8588
 
 NODE8 = node8
 NODE8_PORT = 30313
 NODE8_AUTH_PORT = 8559
 NODE8_HTTP_PORT = 8569
 NODE8_WS_PORT = 8579
+NODE8_METRICS_PORT = 8589
 
 PASSWORD_LEN = 32
 GENESIS_WORK_JSON = genesis_privnet.json
@@ -85,7 +94,7 @@ define run_bootnode
 endef
 
 define run_miner_node
-	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)" --antimev.password=$(1)/$(7)/password.txt)
+	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)" --antimev.password=$(1)/$(7)/password.txt,$(8))
 endef
 
 define run_node
@@ -105,6 +114,9 @@ define run_node
 		--allow-insecure-unlock \
 		--password $(1)/$(2)/password.txt \
 		--metrics \
+		--pprof \
+		--pprof.addr 127.0.0.1 \
+		--pprof.port $(8) \
 		--nat $(NAT_POLICY) \
 		--netrestrict $(RESTRICTED_NETWORK) \
 		--dbft.loglevel debug \
@@ -242,34 +254,34 @@ $(SEVEN_DIR)/$(NODE8)/geth:
 privnet_start: $(SINGLE_DIR)/$(NODE0)/geth $(SINGLE_DIR)/$(NODE1)/geth $(SINGLE_DIR)/$(NODE2)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode,$(SINGLE_DIR))
-	$(call run_miner_node,$(SINGLE_DIR),$(NODE0),$(NODE0_PORT),$(NODE0_AUTH_PORT),$(NODE0_HTTP_PORT),$(NODE0_WS_PORT),$(NODE0))
-	$(call run_miner_node,$(SINGLE_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_AUTH_PORT),$(NODE1_HTTP_PORT),$(NODE1_WS_PORT),$(NODE1))
-	$(call run_node,$(SINGLE_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_AUTH_PORT),$(NODE2_HTTP_PORT),$(NODE2_WS_PORT))
+	$(call run_miner_node,$(SINGLE_DIR),$(NODE0),$(NODE0_PORT),$(NODE0_AUTH_PORT),$(NODE0_HTTP_PORT),$(NODE0_WS_PORT),$(NODE0),$(NODE0_METRICS_PORT))
+	$(call run_miner_node,$(SINGLE_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_AUTH_PORT),$(NODE1_HTTP_PORT),$(NODE1_WS_PORT),$(NODE1),$(NODE1_METRICS_PORT))
+	$(call run_node,$(SINGLE_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_AUTH_PORT),$(NODE2_HTTP_PORT),$(NODE2_WS_PORT),$(NODE2_METRICS_PORT))
 	@echo "OK! Check logs in $(SINGLE_DIR)/<node_dir>/geth_node.log"
 
 privnet_start_four: $(FOUR_DIR)/$(NODE0)/geth $(FOUR_DIR)/$(NODE1)/geth $(FOUR_DIR)/$(NODE2)/geth $(FOUR_DIR)/$(NODE3)/geth $(FOUR_DIR)/$(NODE4)/geth $(FOUR_DIR)/$(NODE5)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode,$(FOUR_DIR))
-	$(call run_miner_node,$(FOUR_DIR),$(NODE0),$(NODE0_PORT),$(NODE0_AUTH_PORT),$(NODE0_HTTP_PORT),$(NODE0_WS_PORT),$(NODE0))
-	$(call run_miner_node,$(FOUR_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_AUTH_PORT),$(NODE1_HTTP_PORT),$(NODE1_WS_PORT),$(NODE1))
-	$(call run_miner_node,$(FOUR_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_AUTH_PORT),$(NODE2_HTTP_PORT),$(NODE2_WS_PORT),$(NODE2))
-	$(call run_miner_node,$(FOUR_DIR),$(NODE3),$(NODE3_PORT),$(NODE3_AUTH_PORT),$(NODE3_HTTP_PORT),$(NODE3_WS_PORT),$(NODE3))
-	$(call run_miner_node,$(FOUR_DIR),$(NODE4),$(NODE4_PORT),$(NODE4_AUTH_PORT),$(NODE4_HTTP_PORT),$(NODE4_WS_PORT),$(NODE4))
-	$(call run_node,$(FOUR_DIR),$(NODE5),$(NODE5_PORT),$(NODE5_AUTH_PORT),$(NODE5_HTTP_PORT),$(NODE5_WS_PORT))
+	$(call run_miner_node,$(FOUR_DIR),$(NODE0),$(NODE0_PORT),$(NODE0_AUTH_PORT),$(NODE0_HTTP_PORT),$(NODE0_WS_PORT),$(NODE0),$(NODE0_METRICS_PORT))
+	$(call run_miner_node,$(FOUR_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_AUTH_PORT),$(NODE1_HTTP_PORT),$(NODE1_WS_PORT),$(NODE1),$(NODE1_METRICS_PORT))
+	$(call run_miner_node,$(FOUR_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_AUTH_PORT),$(NODE2_HTTP_PORT),$(NODE2_WS_PORT),$(NODE2),$(NODE2_METRICS_PORT))
+	$(call run_miner_node,$(FOUR_DIR),$(NODE3),$(NODE3_PORT),$(NODE3_AUTH_PORT),$(NODE3_HTTP_PORT),$(NODE3_WS_PORT),$(NODE3),$(NODE3_METRICS_PORT))
+	$(call run_miner_node,$(FOUR_DIR),$(NODE4),$(NODE4_PORT),$(NODE4_AUTH_PORT),$(NODE4_HTTP_PORT),$(NODE4_WS_PORT),$(NODE4),$(NODE4_METRICS_PORT))
+	$(call run_node,$(FOUR_DIR),$(NODE5),$(NODE5_PORT),$(NODE5_AUTH_PORT),$(NODE5_HTTP_PORT),$(NODE5_WS_PORT),$(NODE5_METRICS_PORT))
 	@echo "OK! Check logs in $(FOUR_DIR)/<node_dir>/geth_node.log"
 
 privnet_start_seven: $(SEVEN_DIR)/$(NODE0)/geth $(SEVEN_DIR)/$(NODE1)/geth $(SEVEN_DIR)/$(NODE2)/geth $(SEVEN_DIR)/$(NODE3)/geth $(SEVEN_DIR)/$(NODE4)/geth $(SEVEN_DIR)/$(NODE5)/geth $(SEVEN_DIR)/$(NODE6)/geth $(SEVEN_DIR)/$(NODE7)/geth $(SEVEN_DIR)/$(NODE8)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode,$(SEVEN_DIR))
-	$(call run_miner_node,$(SEVEN_DIR),$(NODE0),$(NODE0_PORT),$(NODE0_AUTH_PORT),$(NODE0_HTTP_PORT),$(NODE0_WS_PORT),$(NODE0))
-	$(call run_miner_node,$(SEVEN_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_AUTH_PORT),$(NODE1_HTTP_PORT),$(NODE1_WS_PORT),$(NODE1))
-	$(call run_miner_node,$(SEVEN_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_AUTH_PORT),$(NODE2_HTTP_PORT),$(NODE2_WS_PORT),$(NODE2))
-	$(call run_miner_node,$(SEVEN_DIR),$(NODE3),$(NODE3_PORT),$(NODE3_AUTH_PORT),$(NODE3_HTTP_PORT),$(NODE3_WS_PORT),$(NODE3))
-	$(call run_miner_node,$(SEVEN_DIR),$(NODE4),$(NODE4_PORT),$(NODE4_AUTH_PORT),$(NODE4_HTTP_PORT),$(NODE4_WS_PORT),$(NODE4))
-	$(call run_miner_node,$(SEVEN_DIR),$(NODE5),$(NODE5_PORT),$(NODE5_AUTH_PORT),$(NODE5_HTTP_PORT),$(NODE5_WS_PORT),$(NODE5))
-	$(call run_miner_node,$(SEVEN_DIR),$(NODE6),$(NODE6_PORT),$(NODE6_AUTH_PORT),$(NODE6_HTTP_PORT),$(NODE6_WS_PORT),$(NODE6))
-	$(call run_miner_node,$(SEVEN_DIR),$(NODE7),$(NODE7_PORT),$(NODE7_AUTH_PORT),$(NODE7_HTTP_PORT),$(NODE7_WS_PORT),$(NODE7))
-	$(call run_node,$(SEVEN_DIR),$(NODE8),$(NODE8_PORT),$(NODE8_AUTH_PORT),$(NODE8_HTTP_PORT),$(NODE8_WS_PORT))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE0),$(NODE0_PORT),$(NODE0_AUTH_PORT),$(NODE0_HTTP_PORT),$(NODE0_WS_PORT),$(NODE0),$(NODE0_METRICS_PORT))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_AUTH_PORT),$(NODE1_HTTP_PORT),$(NODE1_WS_PORT),$(NODE1),$(NODE1_METRICS_PORT))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_AUTH_PORT),$(NODE2_HTTP_PORT),$(NODE2_WS_PORT),$(NODE2),$(NODE2_METRICS_PORT))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE3),$(NODE3_PORT),$(NODE3_AUTH_PORT),$(NODE3_HTTP_PORT),$(NODE3_WS_PORT),$(NODE3),$(NODE3_METRICS_PORT))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE4),$(NODE4_PORT),$(NODE4_AUTH_PORT),$(NODE4_HTTP_PORT),$(NODE4_WS_PORT),$(NODE4),$(NODE4_METRICS_PORT))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE5),$(NODE5_PORT),$(NODE5_AUTH_PORT),$(NODE5_HTTP_PORT),$(NODE5_WS_PORT),$(NODE5),$(NODE5_METRICS_PORT))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE6),$(NODE6_PORT),$(NODE6_AUTH_PORT),$(NODE6_HTTP_PORT),$(NODE6_WS_PORT),$(NODE6),$(NODE6_METRICS_PORT))
+	$(call run_miner_node,$(SEVEN_DIR),$(NODE7),$(NODE7_PORT),$(NODE7_AUTH_PORT),$(NODE7_HTTP_PORT),$(NODE7_WS_PORT),$(NODE7),$(NODE7_METRICS_PORT))
+	$(call run_node,$(SEVEN_DIR),$(NODE8),$(NODE8_PORT),$(NODE8_AUTH_PORT),$(NODE8_HTTP_PORT),$(NODE8_WS_PORT),$(NODE8_METRICS_PORT))
 	@echo "OK! Check logs in $(SEVEN_DIR)/<node_dir>/geth_node.log"
 
 #? help: Get more info on make commands.
