@@ -2,6 +2,37 @@
 
 This document outlines major changes between releases.
 
+## 0.3.1 "Zonation" (11 Mar 2025)
+
+This patch-release introduces `NeoXDKG` fork on Testnet and contains a couple of minor
+improvements compatible with v0.3.0 version.
+
+Please, follow the notes to upgrade your node from v0.3.0 to v0.3.1:
+1. Download new binary and new genesis configuration file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. Don't remove DB. Reinitialize DB using new binary and new configuration file for the
+   corresponding network with the following command:
+   ```
+   ./geth init --datadir ./node-datadir ./config/genesis.json
+   ```
+5. If you're running a consensus node, ensure that `--antimev.password` flag is provided
+   to the node's runner script and the node has access to its anti-MEV keystore. Also, 
+   ensure that you've registered your node's anti-MEV public key in the KeyManagement
+   contract.
+6. Start the node.
+
+Behaviour changes:
+ * `NeoXDKG` fork is enabled at height `1990080` of Testnet (#434)
+
+Improvements:
+ * anti-MEV related documentation upgrade (#430)
+ * anti-MEV public key is required to register new candidate via Governance contract (#433)
+
+Bugs fixed:
+ * encrypted transaction fee wasn't checked at the consensus/state DB level (#431)
+ * Governance contract wasn't allow to register a candidate (#433)
+
 ## 0.3.0 "Elation" (27 Feb 2025)
 
 This version introduces support for two major features: anti-MEV encrypted transactions
