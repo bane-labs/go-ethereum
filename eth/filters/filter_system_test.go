@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"math/big"
-	"math/rand"
 	"reflect"
 	"runtime"
 	"testing"
@@ -29,7 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/bloombits"
+	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -42,7 +41,7 @@ import (
 
 type testBackend struct {
 	db                  ethdb.Database
-	sections            uint64
+	fm                  *filtermaps.FilterMaps
 	txFeed              event.Feed
 	logsFeed            event.Feed
 	rmLogsFeed          event.Feed
@@ -61,8 +60,26 @@ func (b *testBackend) CurrentHeader() *types.Header {
 	return hdr
 }
 
+func (b *testBackend) CurrentBlock() *types.Header {
+	return b.CurrentHeader()
+}
+
 func (b *testBackend) ChainDb() ethdb.Database {
 	return b.db
+}
+
+func (b *testBackend) GetCanonicalHash(number uint64) common.Hash {
+	return rawdb.ReadCanonicalHash(b.db, number)
+}
+
+func (b *testBackend) GetHeader(hash common.Hash, number uint64) *types.Header {
+	hdr, _ := b.HeaderByHash(context.Background(), hash)
+	return hdr
+}
+
+func (b *testBackend) GetReceiptsByHash(hash common.Hash) types.Receipts {
+	r, _ := b.GetReceipts(context.Background(), hash)
+	return r
 }
 
 func (b *testBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumber) (*types.Header, error) {
@@ -143,35 +160,26 @@ func (b *testBackend) SubscribeFinalizedHeaderEvent(ch chan<- core.FinalizedHead
 	return b.finalizedHeaderFeed.Subscribe(ch)
 }
 
-func (b *testBackend) BloomStatus() (uint64, uint64) {
-	return params.BloomBitsBlocks, b.sections
+func (b *testBackend) NewMatcherBackend() filtermaps.MatcherBackend {
+	return b.fm.NewMatcherBackend()
 }
 
-func (b *testBackend) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
-	requests := make(chan chan *bloombits.Retrieval)
+func (b *testBackend) startFilterMaps(history uint64, disabled bool, params filtermaps.Params) {
+	head := b.CurrentBlock()
+	chainView := filtermaps.NewChainView(b, head.Number.Uint64(), head.Hash())
+	config := filtermaps.Config{
+		History:        history,
+		Disabled:       disabled,
+		ExportFileName: "",
+	}
+	b.fm = filtermaps.NewFilterMaps(b.db, chainView, 0, 0, params, config)
+	b.fm.Start()
+	b.fm.WaitIdle()
+}
 
-	go session.Multiplex(16, 0, requests)
-	go func() {
-		for {
-			// Wait for a service request or a shutdown
-			select {
-			case <-ctx.Done():
-				return
-
-			case request := <-requests:
-				task := <-request
-
-				task.Bitsets = make([][]byte, len(task.Sections))
-				for i, section := range task.Sections {
-					if rand.Int()%4 != 0 { // Handle occasional missing deliveries
-						head := rawdb.ReadCanonicalHash(b.db, (section+1)*params.BloomBitsBlocks-1)
-						task.Bitsets[i], _ = rawdb.ReadBloomBits(b.db, task.Bit, section, head)
-					}
-				}
-				request <- task
-			}
-		}
-	}()
+func (b *testBackend) stopFilterMaps() {
+	b.fm.Stop()
+	b.fm = nil
 }
 
 func (b *testBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
@@ -184,7 +192,7 @@ func (b *testBackend) setPending(block *types.Block, receipts types.Receipts) {
 	b.pendingReceipts = receipts
 }
 
-func newTestFilterSystem(t testing.TB, db ethdb.Database, cfg Config) (*testBackend, *FilterSystem) {
+func newTestFilterSystem(db ethdb.Database, cfg Config) (*testBackend, *FilterSystem) {
 	backend := &testBackend{db: db}
 	sys := NewFilterSystem(backend, cfg)
 	return backend, sys
@@ -200,7 +208,7 @@ func TestBlockSubscription(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{})
+		backend, sys = newTestFilterSystem(db, Config{})
 		api          = NewFilterAPI(sys)
 		genesis      = &core.Genesis{
 			Config:  params.TestChainConfig,
@@ -255,7 +263,7 @@ func TestPendingTxFilter(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{})
+		backend, sys = newTestFilterSystem(db, Config{})
 		api          = NewFilterAPI(sys)
 
 		transactions = []*types.Transaction{
@@ -311,7 +319,7 @@ func TestPendingTxFilterFullTx(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{})
+		backend, sys = newTestFilterSystem(db, Config{})
 		api          = NewFilterAPI(sys)
 
 		transactions = []*types.Transaction{
@@ -367,7 +375,7 @@ func TestPendingTxFilterFullTx(t *testing.T) {
 func TestLogFilterCreation(t *testing.T) {
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(t, db, Config{})
+		_, sys = newTestFilterSystem(db, Config{})
 		api    = NewFilterAPI(sys)
 
 		testCases = []struct {
@@ -414,7 +422,7 @@ func TestInvalidLogFilterCreation(t *testing.T) {
 
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(t, db, Config{})
+		_, sys = newTestFilterSystem(db, Config{})
 		api    = NewFilterAPI(sys)
 	)
 
@@ -440,7 +448,7 @@ func TestInvalidGetLogsRequest(t *testing.T) {
 
 	var (
 		db        = rawdb.NewMemoryDatabase()
-		_, sys    = newTestFilterSystem(t, db, Config{})
+		_, sys    = newTestFilterSystem(db, Config{})
 		api       = NewFilterAPI(sys)
 		blockHash = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
 	)
@@ -466,7 +474,7 @@ func TestInvalidGetRangeLogsRequest(t *testing.T) {
 
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(t, db, Config{})
+		_, sys = newTestFilterSystem(db, Config{})
 		api    = NewFilterAPI(sys)
 	)
 
@@ -481,7 +489,7 @@ func TestLogFilter(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{})
+		backend, sys = newTestFilterSystem(db, Config{})
 		api          = NewFilterAPI(sys)
 
 		firstAddr      = common.HexToAddress("0x1111111111111111111111111111111111111111")
@@ -586,7 +594,7 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{Timeout: timeout})
+		backend, sys = newTestFilterSystem(db, Config{Timeout: timeout})
 		api          = NewFilterAPI(sys)
 		done         = make(chan struct{})
 	)
@@ -610,7 +618,7 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 	// Create a bunch of filters that will
 	// timeout either in 100ms or 200ms
 	subs := make([]*Subscription, 20)
-	for i := 0; i < len(subs); i++ {
+	for i := range subs {
 		fid := api.NewPendingTransactionFilter(nil)
 		api.filtersMu.Lock()
 		f, ok := api.filters[fid]
