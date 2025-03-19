@@ -609,6 +609,13 @@ func (pool *CachePool) Get(hash common.Hash) *types.Transaction {
 	return nil
 }
 
+// GetRLP returns a RLP-encoded transaction if it is contained in the pool.
+//
+// For the cache pool, this method will return nothing for now.
+func (pool *CachePool) GetRLP(hash common.Hash) []byte {
+	return nil
+}
+
 // GetBlobs is not supported by the cache pool, it is just here to
 // implement the txpool.SubPool interface.
 func (pool *CachePool) GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg4844.Proof) {
