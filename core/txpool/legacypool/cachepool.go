@@ -403,40 +403,6 @@ func (pool *CachePool) validateTx(tx *types.Transaction) error {
 	if err := txpool.ValidateTransactionWithState(tx, pool.signer, opts); err != nil {
 		return err
 	}
-	return pool.validateAuth(tx)
-}
-
-// validateAuth verifies that the transaction complies with code authorization
-// restrictions brought by SetCode transaction type.
-func (pool *CachePool) validateAuth(tx *types.Transaction) error {
-	from, _ := types.Sender(pool.signer, tx) // validated
-
-	// Allow at most one in-flight tx for delegated accounts or those with a
-	// pending authorization.
-	if pool.currentState.GetCodeHash(from) != types.EmptyCodeHash || len(pool.all.auths[from]) != 0 {
-		var (
-			count  int
-			exists bool
-		)
-		cached := pool.cached[from]
-		if cached != nil {
-			count += cached.Len()
-			exists = cached.Contains(tx.Nonce())
-		}
-		// Replace the existing in-flight transaction for delegated accounts
-		// are still supported
-		if count >= 1 && !exists {
-			return ErrInflightTxLimitReached
-		}
-	}
-	// Authorities cannot conflict with any cached transactions.
-	if auths := tx.SetCodeAuthorities(); len(auths) > 0 {
-		for _, auth := range auths {
-			if pool.cached[auth] != nil {
-				return ErrAuthorityReserved
-			}
-		}
-	}
 	return nil
 }
 
