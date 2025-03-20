@@ -2,6 +2,18 @@
 
 This document outlines major changes between releases.
 
+## 0.3.2 "Ionization" (20 Mar 2025)
+
+This is an urgent patch-release fixing a panic happened on primary CN during decrypted
+transaction verification. This version is compatible with v0.3.1 and does not require
+DB resync or configuration update on upgrade.
+
+Behaviour changes:
+* `NeoXAMEV` fork is enabled at height `2088000` of Testnet (#437)
+
+Bugs fixed:
+* decrypted transaction can't be verified at primary node due to panic (#439)
+
 ## 0.3.1 "Zonation" (11 Mar 2025)
 
 This patch-release introduces `NeoXDKG` fork on Testnet and contains a couple of minor
