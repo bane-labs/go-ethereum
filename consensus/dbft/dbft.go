@@ -1115,6 +1115,15 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			}
 		)
 		defer localPool.CloseSilently()
+
+		// If we're backup, then pre.finalReceipts are filled in during PreBlock verification;
+		// if we're primary, then reuse receipts got after PrepareRequest construction since
+		// PreBlock verification code is not executed by block proposer.
+		var receipts = pre.finalReceipts
+		if ctx.IsPrimary() && pre.finalState == nil {
+			receipts = c.sealingReceipts
+		}
+
 		for i := range pre.transactions {
 			var isEnvelope = j < len(pre.envelopesData) && pre.envelopesData[j].index == i
 			if !isEnvelope || // pre.transactions[i] is not an envelope, use it as-is.
@@ -1142,7 +1151,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 					break
 				}
 			}
-			err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i], pre.finalReceipts[i])
+			err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i], receipts[i])
 			if err != nil {
 				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction verification failed: %s", err)) {
 					continue
