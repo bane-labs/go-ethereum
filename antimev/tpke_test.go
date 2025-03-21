@@ -2,6 +2,7 @@ package antimev
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -12,12 +13,15 @@ import (
 	"time"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	coreaccounts "github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,10 +136,21 @@ func TestInitKeyStores(t *testing.T) {
 
 // TestGenerateEncryptedTx generates an encrypted transaction using 7-nodes
 func TestGenerateEncryptedTx(t *testing.T) {
-	// epoch is an epoch of Envelope data encryption. The resulting encrypted transaction can be
-	// decrypted only during this or next epoch.
-	const epoch = 1
+	const (
+		skip = true
+		send = false
+		// rpc1 is an RPC endpoint address of privnet's CN1.
+		rpc1 = "http://localhost:8562"
+	)
+	if skip {
+		t.Skip()
+	}
 	require.Equal(t, 7, size, "refactor test if different number of CNs is needed")
+
+	// Unlock priv0 account (watch-only CN) to sign both Envelope and encrypted transaction.
+	ks := keystore.NewKeyStore(filepath.Join("..", "privnet", "seven", "node0", "keystore"), keystore.StandardScryptN, keystore.StandardScryptP)
+	acc := ks.Accounts()[0]
+	require.NoError(t, ks.Unlock(acc, accounts[0].pwd))
 
 	// Retrieve and decrypt the set of anti-MEV key storages.
 	kss := make([]*KeyStore, size)
@@ -143,7 +158,7 @@ func TestGenerateEncryptedTx(t *testing.T) {
 		kss[i] = NewKeyStore(filepath.Join("..", "privnet", "seven", fmt.Sprintf("node%d", i+1), "antimev-keystore"))
 		require.NoError(t, kss[i].Load(accounts[i+1].pwd))
 	}
-	tx := buildTransferFromPriv0(t)
+	tx := buildTransferFromPriv0(t, ks, acc)
 	// Encrypt transaction.
 	msg, err := tx.MarshalBinary()
 	require.NoError(t, err)
@@ -155,7 +170,8 @@ func TestGenerateEncryptedTx(t *testing.T) {
 	}
 	// Generate envelope.
 	var envelopeData = EncryptedDataPrefix
-	envelopeData = binary.BigEndian.AppendUint32(envelopeData, epoch)
+	// The resulting encrypted transaction can be decrypted only during this or next epoch.
+	envelopeData = binary.BigEndian.AppendUint32(envelopeData, uint32(kss[0].Round()))
 	envelopeData = binary.BigEndian.AppendUint32(envelopeData, uint32(tx.Gas()))
 	envelopeData = append(envelopeData, tx.Hash().Bytes()...)
 	envelopeData = append(envelopeData, encryptedKey.ToBytes()...)
@@ -175,15 +191,17 @@ func TestGenerateEncryptedTx(t *testing.T) {
 	require.Equal(t, 1, len(results))
 	require.NotNil(t, results[0])
 	require.True(t, bytes.Equal(results[0], msg), hex.EncodeToString(results[0]), hex.EncodeToString(msg))
+
+	// Construct and send Envelope to the RPC node.
+	e := buildEnvelopeFromPriv0(t, ks, acc, envelopeData)
+	client, err := ethclient.Dial(rpc1)
+	require.NoError(t, err)
+	require.NoError(t, client.SendTransaction(context.Background(), e))
 }
 
 // buildTransferFromPriv0 returns a signed transaction that transfers 1 wei from
 // node0 to node0 with nonce 0.
-func buildTransferFromPriv0(t *testing.T) *types.Transaction {
-	ks := keystore.NewKeyStore(filepath.Join("..", "privnet", "seven", "node0", "keystore"), keystore.StandardScryptN, keystore.StandardScryptP)
-	acc := ks.Accounts()[0]
-	require.NoError(t, ks.Unlock(acc, accounts[0].pwd))
-
+func buildTransferFromPriv0(t *testing.T, ks *keystore.KeyStore, acc coreaccounts.Account) *types.Transaction {
 	// These variables are taken based on experience of previously generated transfer
 	// transactions for privnet. This transaction has nonce set to 0, hence it's valid
 	// only if it's the first accepted transaction for Priv0.
@@ -203,7 +221,34 @@ func buildTransferFromPriv0(t *testing.T) *types.Transaction {
 		Value:    value,
 		Data:     nil,
 	})
-	res, err := ks.SignTx(acc, tx, big.NewInt(magic))
+	res, err := ks.SignTx(acc, tx, big.NewInt(int64(magic)))
+	require.NoError(t, err)
+
+	return res
+}
+
+// buildEnvelopeFromPriv0 returns a signed Envelope transaction with the specified data.
+func buildEnvelopeFromPriv0(t *testing.T, ks *keystore.KeyStore, acc coreaccounts.Account, data []byte) *types.Transaction {
+	// These variables are taken based on experience of previously generated transfer
+	// transactions for privnet. This transaction has nonce set to 0, hence it's valid
+	// only if it's the first accepted transaction for Priv0.
+	var (
+		to       = systemcontracts.GovernanceRewardProxyHash // transfer to Governance Reward as required by Envelope verification rules
+		nonce    = uint64(0)                                 // same nonce as for Inner transaction
+		gasPrice = big.NewInt(400_0000_0000)                 // based on (*ethclient.Client).SuggestGasPrice
+		gasLimit = uint64(3_1000)                            // higher than required by inner transaciton
+		value    = big.NewInt(1)                             // 1 wei
+	)
+
+	tx := types.NewTx(&types.LegacyTx{
+		To:       &to,
+		Nonce:    nonce,
+		GasPrice: gasPrice,
+		Gas:      gasLimit,
+		Value:    value,
+		Data:     data,
+	})
+	res, err := ks.SignTx(acc, tx, big.NewInt(int64(magic)))
 	require.NoError(t, err)
 
 	return res
