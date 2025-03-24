@@ -46,11 +46,22 @@ describe("Governance", function () {
         // Reset blockchain state
         await ethers.provider.send("hardhat_reset")
 
+        // Deploy libraries need link
+        const verifier1 = await ethers.deployContract("OneMessageVerifier");
+        const verifier2 = await ethers.deployContract("TwoMessageVerifier");
+        const verifier3 = await ethers.deployContract("SevenMessageVerifier");
+
         // Deploy Governance contract
         const governance_deploy = await ethers.deployContract("Governance");
         const reward_deploy = await ethers.deployContract("GovReward");
         const policy_deploy = await ethers.deployContract("Policy");
-        const keymanagement_deploy = await ethers.deployContract("KeyManagement");
+        const keymanagement_deploy = await ethers.deployContract("KeyManagement", {
+            libraries: {
+                OneMessageVerifier: verifier1.target,
+                TwoMessageVerifier: verifier2.target,
+                SevenMessageVerifier: verifier3.target,
+            }
+        });
 
         // Copy Bytecode to native address
         const governance_code = await ethers.provider.send("eth_getCode", [governance_deploy.target]);
