@@ -1454,7 +1454,7 @@ func recoverSignerAddress(nonce hexutil.Uint64, signature hexutil.Bytes) (*commo
 		v += 27 // Adjust V to match Ethereum's EIP-155 signature convention
 	}
 	signature = append(r, append(s, v-27)...)
-	recoveredPubkey, err := crypto.SigToPub(accounts.TextHash([]byte(fmt.Sprintf("%d", nonce))), signature)
+	recoveredPubkey, err := crypto.SigToPub(accounts.TextHash(fmt.Appendf(nil, "%d", nonce)), signature)
 	if err != nil || recoveredPubkey == nil {
 		return nil, fmt.Errorf("signature verification failed: %v", err)
 	}
