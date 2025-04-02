@@ -87,8 +87,9 @@ type blobTxMeta struct {
 	hash    common.Hash   // Transaction hash to maintain the lookup table
 	vhashes []common.Hash // Blob versioned hashes to maintain the lookup table
 
-	id   uint64 // Storage ID in the pool's persistent store
-	size uint32 // Byte size in the pool's persistent store
+	id          uint64 // Storage ID in the pool's persistent store
+	storageSize uint32 // Byte size in the pool's persistent store
+	size        uint64 // RLP-encoded size of transaction including the attached blob
 
 	nonce      uint64       // Needed to prioritize inclusion order within an account
 	costCap    *uint256.Int // Needed to validate cumulative balance sufficiency
@@ -108,19 +109,20 @@ type blobTxMeta struct {
 
 // newBlobTxMeta retrieves the indexed metadata fields from a blob transaction
 // and assembles a helper struct to track in memory.
-func newBlobTxMeta(id uint64, size uint32, tx *types.Transaction) *blobTxMeta {
+func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transaction) *blobTxMeta {
 	meta := &blobTxMeta{
-		hash:       tx.Hash(),
-		vhashes:    tx.BlobHashes(),
-		id:         id,
-		size:       size,
-		nonce:      tx.Nonce(),
-		costCap:    uint256.MustFromBig(tx.Cost()),
-		execTipCap: uint256.MustFromBig(tx.GasTipCap()),
-		execFeeCap: uint256.MustFromBig(tx.GasFeeCap()),
-		blobFeeCap: uint256.MustFromBig(tx.BlobGasFeeCap()),
-		execGas:    tx.Gas(),
-		blobGas:    tx.BlobGas(),
+		hash:        tx.Hash(),
+		vhashes:     tx.BlobHashes(),
+		id:          id,
+		storageSize: storageSize,
+		size:        size,
+		nonce:       tx.Nonce(),
+		costCap:     uint256.MustFromBig(tx.Cost()),
+		execTipCap:  uint256.MustFromBig(tx.GasTipCap()),
+		execFeeCap:  uint256.MustFromBig(tx.GasFeeCap()),
+		blobFeeCap:  uint256.MustFromBig(tx.BlobGasFeeCap()),
+		execGas:     tx.Gas(),
+		blobGas:     tx.BlobGas(),
 	}
 	meta.basefeeJumps = dynamicFeeJumps(meta.execFeeCap)
 	meta.blobfeeJumps = dynamicFeeJumps(meta.blobFeeCap)
@@ -489,7 +491,7 @@ func (p *BlobPool) parseTransaction(id uint64, size uint32, blob []byte) error {
 		return errors.New("missing blob sidecar")
 	}
 
-	meta := newBlobTxMeta(id, size, tx)
+	meta := newBlobTxMeta(id, tx.Size(), size, tx)
 	if p.lookup.exists(meta.hash) {
 		// This path is only possible after a crash, where deleted items are not
 		// removed via the normal shutdown-startup procedure and thus may get
@@ -516,7 +518,7 @@ func (p *BlobPool) parseTransaction(id uint64, size uint32, blob []byte) error {
 	p.spent[sender] = new(uint256.Int).Add(p.spent[sender], meta.costCap)
 
 	p.lookup.track(meta)
-	p.stored += uint64(meta.size)
+	p.stored += uint64(meta.storageSize)
 	return nil
 }
 
@@ -548,7 +550,7 @@ func (p *BlobPool) recheck(addr common.Address, inclusions map[common.Hash]uint6
 			ids = append(ids, txs[i].id)
 			nonces = append(nonces, txs[i].nonce)
 
-			p.stored -= uint64(txs[i].size)
+			p.stored -= uint64(txs[i].storageSize)
 			p.lookup.untrack(txs[i])
 
 			// Included transactions blobs need to be moved to the limbo
@@ -589,7 +591,7 @@ func (p *BlobPool) recheck(addr common.Address, inclusions map[common.Hash]uint6
 			nonces = append(nonces, txs[0].nonce)
 
 			p.spent[addr] = new(uint256.Int).Sub(p.spent[addr], txs[0].costCap)
-			p.stored -= uint64(txs[0].size)
+			p.stored -= uint64(txs[0].storageSize)
 			p.lookup.untrack(txs[0])
 
 			// Included transactions blobs need to be moved to the limbo
@@ -645,7 +647,7 @@ func (p *BlobPool) recheck(addr common.Address, inclusions map[common.Hash]uint6
 			dropRepeatedMeter.Mark(1)
 
 			p.spent[addr] = new(uint256.Int).Sub(p.spent[addr], txs[i].costCap)
-			p.stored -= uint64(txs[i].size)
+			p.stored -= uint64(txs[i].storageSize)
 			p.lookup.untrack(txs[i])
 
 			if err := p.store.Delete(id); err != nil {
@@ -667,7 +669,7 @@ func (p *BlobPool) recheck(addr common.Address, inclusions map[common.Hash]uint6
 			nonces = append(nonces, txs[j].nonce)
 
 			p.spent[addr] = new(uint256.Int).Sub(p.spent[addr], txs[j].costCap)
-			p.stored -= uint64(txs[j].size)
+			p.stored -= uint64(txs[j].storageSize)
 			p.lookup.untrack(txs[j])
 		}
 		txs = txs[:i]
@@ -705,7 +707,7 @@ func (p *BlobPool) recheck(addr common.Address, inclusions map[common.Hash]uint6
 			nonces = append(nonces, last.nonce)
 
 			p.spent[addr] = new(uint256.Int).Sub(p.spent[addr], last.costCap)
-			p.stored -= uint64(last.size)
+			p.stored -= uint64(last.storageSize)
 			p.lookup.untrack(last)
 		}
 		if len(txs) == 0 {
@@ -745,7 +747,7 @@ func (p *BlobPool) recheck(addr common.Address, inclusions map[common.Hash]uint6
 			nonces = append(nonces, last.nonce)
 
 			p.spent[addr] = new(uint256.Int).Sub(p.spent[addr], last.costCap)
-			p.stored -= uint64(last.size)
+			p.stored -= uint64(last.storageSize)
 			p.lookup.untrack(last)
 		}
 		p.index[addr] = txs
@@ -1011,7 +1013,7 @@ func (p *BlobPool) reinject(addr common.Address, txhash common.Hash) error {
 	}
 
 	// Update the indices and metrics
-	meta := newBlobTxMeta(id, p.store.Size(id), tx)
+	meta := newBlobTxMeta(id, tx.Size(), p.store.Size(id), tx)
 	if _, ok := p.index[addr]; !ok {
 		if err := p.reserve(addr, true); err != nil {
 			log.Warn("Failed to reserve account for blob pool", "tx", tx.Hash(), "from", addr, "err", err)
@@ -1025,7 +1027,7 @@ func (p *BlobPool) reinject(addr common.Address, txhash common.Hash) error {
 		p.spent[addr] = new(uint256.Int).Add(p.spent[addr], meta.costCap)
 	}
 	p.lookup.track(meta)
-	p.stored += uint64(meta.size)
+	p.stored += uint64(meta.storageSize)
 	return nil
 }
 
@@ -1050,7 +1052,7 @@ func (p *BlobPool) SetGasTip(tip *big.Int) {
 						nonces = []uint64{tx.nonce}
 					)
 					p.spent[addr] = new(uint256.Int).Sub(p.spent[addr], txs[i].costCap)
-					p.stored -= uint64(tx.size)
+					p.stored -= uint64(tx.storageSize)
 					p.lookup.untrack(tx)
 					txs[i] = nil
 
@@ -1060,7 +1062,7 @@ func (p *BlobPool) SetGasTip(tip *big.Int) {
 						nonces = append(nonces, tx.nonce)
 
 						p.spent[addr] = new(uint256.Int).Sub(p.spent[addr], tx.costCap)
-						p.stored -= uint64(tx.size)
+						p.stored -= uint64(tx.storageSize)
 						p.lookup.untrack(tx)
 						txs[i+1+j] = nil
 					}
@@ -1245,6 +1247,25 @@ func (p *BlobPool) GetRLP(hash common.Hash) []byte {
 	return p.getRLP(hash)
 }
 
+// GetMetadata returns the transaction type and transaction size with the
+// given transaction hash.
+//
+// The size refers the length of the 'rlp encoding' of a blob transaction
+// including the attached blobs.
+func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	size, ok := p.lookup.sizeOfTx(hash)
+	if !ok {
+		return nil
+	}
+	return &txpool.TxMetadata{
+		Type: types.BlobTxType,
+		Size: size,
+	}
+}
+
 // GetBlobs returns a number of blobs are proofs for the given versioned hashes.
 // This is a utility method for the engine API, enabling consensus clients to
 // retrieve blobs from the pools directly instead of the network.
@@ -1384,7 +1405,7 @@ func (p *BlobPool) add(tx *types.Transaction) (err error) {
 	if err != nil {
 		return err
 	}
-	meta := newBlobTxMeta(id, p.store.Size(id), tx)
+	meta := newBlobTxMeta(id, tx.Size(), p.store.Size(id), tx)
 
 	var (
 		next   = p.state.GetNonce(from)
@@ -1412,7 +1433,7 @@ func (p *BlobPool) add(tx *types.Transaction) (err error) {
 
 		p.lookup.untrack(prev)
 		p.lookup.track(meta)
-		p.stored += uint64(meta.size) - uint64(prev.size)
+		p.stored += uint64(meta.storageSize) - uint64(prev.storageSize)
 	} else {
 		// Transaction extends previously scheduled ones
 		p.index[from] = append(p.index[from], meta)
@@ -1422,7 +1443,7 @@ func (p *BlobPool) add(tx *types.Transaction) (err error) {
 		}
 		p.spent[from] = new(uint256.Int).Add(p.spent[from], meta.costCap)
 		p.lookup.track(meta)
-		p.stored += uint64(meta.size)
+		p.stored += uint64(meta.storageSize)
 	}
 	// Recompute the rolling eviction fields. In case of a replacement, this will
 	// recompute all subsequent fields. In case of an append, this will only do
@@ -1509,7 +1530,7 @@ func (p *BlobPool) drop() {
 		p.index[from] = txs
 		p.spent[from] = new(uint256.Int).Sub(p.spent[from], drop.costCap)
 	}
-	p.stored -= uint64(drop.size)
+	p.stored -= uint64(drop.storageSize)
 	p.lookup.untrack(drop)
 
 	// Remove the transaction from the pool's eviction heap:

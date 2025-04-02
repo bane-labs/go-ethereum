@@ -582,6 +582,14 @@ func (pool *CachePool) GetRLP(hash common.Hash) []byte {
 	return nil
 }
 
+// GetMetadata returns the transaction type and transaction size with the
+// given transaction hash.
+//
+// For the cache pool, this method will return nothing for now.
+func (pool *CachePool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
+	return nil
+}
+
 // GetBlobs is not supported by the cache pool, it is just here to
 // implement the txpool.SubPool interface.
 func (pool *CachePool) GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg4844.Proof) {
