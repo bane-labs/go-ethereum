@@ -245,8 +245,9 @@ func readList(filename string) ([]string, error) {
 }
 
 // ImportHistory imports Era1 files containing historical block information,
-// starting from genesis.
-func ImportHistory(chain *core.BlockChain, db ethdb.Database, dir string, network string) error {
+// starting from genesis. The assumption is held that the provided chain
+// segment in Era1 file should all be canonical and verified.
+func ImportHistory(chain *core.BlockChain, dir string, network string) error {
 	if chain.CurrentSnapBlock().Number.BitLen() != 0 {
 		return errors.New("history import only supported when starting from genesis")
 	}
@@ -265,7 +266,6 @@ func ImportHistory(chain *core.BlockChain, db ethdb.Database, dir string, networ
 		start    = time.Now()
 		reported = time.Now()
 		imported = 0
-		forker   = core.NewForkChoice(chain, nil)
 		h        = sha256.New()
 		buf      = bytes.NewBuffer(nil)
 	)
@@ -307,11 +307,6 @@ func ImportHistory(chain *core.BlockChain, db ethdb.Database, dir string, networ
 				receipts, err := it.Receipts()
 				if err != nil {
 					return fmt.Errorf("error reading receipts %d: %w", it.Number(), err)
-				}
-				if status, err := chain.HeaderChain().InsertHeaderChain([]*types.Header{block.Header()}, start, forker); err != nil {
-					return fmt.Errorf("error inserting header %d: %w", it.Number(), err)
-				} else if status != core.CanonStatTy {
-					return fmt.Errorf("error inserting header %d, not canon: %v", it.Number(), status)
 				}
 				if _, err := chain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{receipts}, 2^64-1); err != nil {
 					return fmt.Errorf("error inserting body %d: %w", it.Number(), err)

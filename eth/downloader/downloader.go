@@ -626,7 +626,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 
 		fetchers = append(fetchers, func() error { return d.processSnapSyncContent() })
 	} else if mode == FullSync {
-		fetchers = append(fetchers, func() error { return d.processFullSyncContent(ttd, beaconMode) })
+		fetchers = append(fetchers, func() error { return d.processFullSyncContent() })
 	}
 	return d.spawnSync(fetchers)
 }
@@ -1310,46 +1310,11 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 
 				// In case of header only syncing, validate the chunk immediately
 				if mode == SnapSync {
-					// Although the received headers might be all valid, a legacy
-					// PoW/PoA sync must not accept post-merge headers. Make sure
-					// that any transition is rejected at this point.
-					var (
-						rejected []*types.Header
-						td       *big.Int
-					)
-					if !beaconMode && ttd != nil {
-						td = d.blockchain.GetTd(chunkHeaders[0].ParentHash, chunkHeaders[0].Number.Uint64()-1)
-						if td == nil {
-							// This should never really happen, but handle gracefully for now
-							log.Error("Failed to retrieve parent header TD", "number", chunkHeaders[0].Number.Uint64()-1, "hash", chunkHeaders[0].ParentHash)
-							return fmt.Errorf("%w: parent TD missing", errInvalidChain)
-						}
-						for i, header := range chunkHeaders {
-							td = new(big.Int).Add(td, header.Difficulty)
-							if td.Cmp(ttd) >= 0 {
-								// Terminal total difficulty reached, allow the last header in
-								if new(big.Int).Sub(td, header.Difficulty).Cmp(ttd) < 0 {
-									chunkHeaders, rejected = chunkHeaders[:i+1], chunkHeaders[i+1:]
-									if len(rejected) > 0 {
-										// Make a nicer user log as to the first TD truly rejected
-										td = new(big.Int).Add(td, rejected[0].Difficulty)
-									}
-								} else {
-									chunkHeaders, rejected = chunkHeaders[:i], chunkHeaders[i:]
-								}
-								break
-							}
-						}
-					}
 					if len(chunkHeaders) > 0 {
 						if n, err := d.blockchain.InsertHeaderChain(chunkHeaders); err != nil {
 							log.Warn("Invalid header encountered", "number", chunkHeaders[n].Number, "hash", chunkHashes[n], "parent", chunkHeaders[n].ParentHash, "err", err)
 							return fmt.Errorf("%w: %v", errInvalidChain, err)
 						}
-					}
-					if len(rejected) != 0 {
-						log.Info("Legacy sync reached merge threshold", "number", rejected[0].Number, "hash", rejected[0].Hash(), "td", td, "ttd", ttd)
-						return ErrMergeTransition
 					}
 				}
 				// If we've reached the allowed number of pending headers, stall a bit
@@ -1363,7 +1328,7 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 				}
 				// Otherwise insert the headers for content retrieval
 				inserts := d.queue.Schedule(chunkHeaders, chunkHashes, origin)
-				if len(inserts) != len(chunkHeaders) {
+				if inserts != len(chunkHeaders) {
 					return fmt.Errorf("%w: stale headers", errBadPeer)
 				}
 
@@ -1390,7 +1355,7 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 }
 
 // processFullSyncContent takes fetch results from the queue and imports them into the chain.
-func (d *Downloader) processFullSyncContent(ttd *big.Int, beaconMode bool) error {
+func (d *Downloader) processFullSyncContent() error {
 	for {
 		results := d.queue.Results(true)
 		if len(results) == 0 {
@@ -1399,43 +1364,8 @@ func (d *Downloader) processFullSyncContent(ttd *big.Int, beaconMode bool) error
 		if d.chainInsertHook != nil {
 			d.chainInsertHook(results)
 		}
-		// Although the received blocks might be all valid, a legacy PoW/PoA sync
-		// must not accept post-merge blocks. Make sure that pre-merge blocks are
-		// imported, but post-merge ones are rejected.
-		var (
-			rejected []*fetchResult
-			td       *big.Int
-		)
-		if !beaconMode && ttd != nil {
-			td = d.blockchain.GetTd(results[0].Header.ParentHash, results[0].Header.Number.Uint64()-1)
-			if td == nil {
-				// This should never really happen, but handle gracefully for now
-				log.Error("Failed to retrieve parent block TD", "number", results[0].Header.Number.Uint64()-1, "hash", results[0].Header.ParentHash)
-				return fmt.Errorf("%w: parent TD missing", errInvalidChain)
-			}
-			for i, result := range results {
-				td = new(big.Int).Add(td, result.Header.Difficulty)
-				if td.Cmp(ttd) >= 0 {
-					// Terminal total difficulty reached, allow the last block in
-					if new(big.Int).Sub(td, result.Header.Difficulty).Cmp(ttd) < 0 {
-						results, rejected = results[:i+1], results[i+1:]
-						if len(rejected) > 0 {
-							// Make a nicer user log as to the first TD truly rejected
-							td = new(big.Int).Add(td, rejected[0].Header.Difficulty)
-						}
-					} else {
-						results, rejected = results[:i], results[i:]
-					}
-					break
-				}
-			}
-		}
 		if err := d.importBlockResults(results); err != nil {
 			return err
-		}
-		if len(rejected) != 0 {
-			log.Info("Legacy sync reached merge threshold", "number", rejected[0].Header.Number, "hash", rejected[0].Header.Hash(), "td", td, "ttd", ttd)
-			return ErrMergeTransition
 		}
 	}
 }

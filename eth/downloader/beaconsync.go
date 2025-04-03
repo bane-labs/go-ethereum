@@ -272,8 +272,7 @@ func (d *Downloader) findBeaconAncestor() (uint64, error) {
 // fetchBeaconHeaders feeds skeleton headers to the downloader queue for scheduling
 // until sync errors or is finished.
 func (d *Downloader) fetchBeaconHeaders(from uint64) error {
-	var head *types.Header
-	_, tail, _, err := d.skeleton.Bounds()
+	head, tail, _, err := d.skeleton.Bounds()
 	if err != nil {
 		return err
 	}

@@ -72,7 +72,7 @@ type fetchResult struct {
 	Withdrawals  types.Withdrawals
 }
 
-func newFetchResult(header *types.Header, fastSync bool) *fetchResult {
+func newFetchResult(header *types.Header, snapSync bool) *fetchResult {
 	item := &fetchResult{
 		Header: header,
 	}
@@ -81,7 +81,7 @@ func newFetchResult(header *types.Header, fastSync bool) *fetchResult {
 	} else if header.WithdrawalsHash != nil {
 		item.Withdrawals = make(types.Withdrawals, 0)
 	}
-	if fastSync && !header.EmptyReceipts() {
+	if snapSync && !header.EmptyReceipts() {
 		item.pending.Store(item.pending.Load() | (1 << receiptType))
 	}
 	return item
@@ -301,12 +301,12 @@ func (q *queue) RetrieveHeaders() ([]*types.Header, []common.Hash, int) {
 
 // Schedule adds a set of headers for the download queue for scheduling, returning
 // the new headers encountered.
-func (q *queue) Schedule(headers []*types.Header, hashes []common.Hash, from uint64) []*types.Header {
+func (q *queue) Schedule(headers []*types.Header, hashes []common.Hash, from uint64) int {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
 	// Insert all the headers prioritised by the contained block number
-	inserts := make([]*types.Header, 0, len(headers))
+	var inserts int
 	for i, header := range headers {
 		// Make sure chain order is honoured and preserved throughout
 		hash := hashes[i]
@@ -336,7 +336,7 @@ func (q *queue) Schedule(headers []*types.Header, hashes []common.Hash, from uin
 				q.receiptTaskQueue.Push(header, -int64(header.Number.Uint64()))
 			}
 		}
-		inserts = append(inserts, header)
+		inserts++
 		q.headerHead = hash
 		from++
 	}
@@ -389,7 +389,7 @@ func (q *queue) Results(block bool) []*fetchResult {
 		q.resultSize = common.StorageSize(blockCacheSizeWeight)*size +
 			(1-common.StorageSize(blockCacheSizeWeight))*q.resultSize
 	}
-	// Using the newly calibrated resultsize, figure out the new throttle limit
+	// Using the newly calibrated result size, figure out the new throttle limit
 	// on the result cache
 	throttleThreshold := uint64((common.StorageSize(blockCacheMemory) + q.resultSize - 1) / q.resultSize)
 	throttleThreshold = q.resultCache.SetThrottleThreshold(throttleThreshold)
