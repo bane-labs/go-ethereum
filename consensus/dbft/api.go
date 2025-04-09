@@ -28,20 +28,28 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-const (
-	// defaultStatisticsPeriod is the default number of blocks to be taken into
+// StatisticsConfig is the configuration for dBFT statistics calculation.
+type StatisticsConfig struct {
+	// DefaultStatisticsPeriod is the default number of blocks to be taken into
 	// account during dBFT statistics calculation.
-	defaultStatisticsPeriod = uint64(64)
-	// maxStatisticsPeriod is the maximum number of blocks to be taken into
+	DefaultStatisticsPeriod uint64
+	// MaxStatisticsPeriod is the maximum number of blocks to be taken into
 	// account during dBFT statistics calculation.
-	maxStatisticsPeriod = uint64(1000)
-)
+	MaxStatisticsPeriod uint64
+}
+
+// DefaultStatistics is the default dBFT statistics calculation configuration.
+var DefaultStatistics = StatisticsConfig{
+	DefaultStatisticsPeriod: 64,
+	MaxStatisticsPeriod:     1000,
+}
 
 // API is a user facing RPC API to allow retrieve some information from the DBFT
 // consensus engine.
 type API struct {
-	chain consensus.ChainHeaderReader
-	bft   *DBFT
+	chain  consensus.ChainHeaderReader
+	bft    *DBFT
+	config StatisticsConfig
 }
 
 // GetSigners retrieves the list of authorized signers at the specified block.
@@ -119,16 +127,16 @@ type status struct {
 // - the percentage of in-turn blocks.
 func (api *API) Status(n *uint64) (*status, error) {
 	var (
-		numBlocks = defaultStatisticsPeriod
+		numBlocks = api.config.DefaultStatisticsPeriod
 		header    = api.chain.CurrentHeader()
 		diff      = uint64(0)
 		optimals  = 0
 	)
 	if n != nil {
-		if *n <= maxStatisticsPeriod {
+		if *n <= api.config.MaxStatisticsPeriod {
 			numBlocks = *n
 		} else {
-			numBlocks = maxStatisticsPeriod
+			numBlocks = api.config.MaxStatisticsPeriod
 		}
 	}
 	var (
