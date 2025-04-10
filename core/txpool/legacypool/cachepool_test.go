@@ -41,7 +41,7 @@ func setupCachePoolWithConfig(config *params.ChainConfig) (*CachePool, *ecdsa.Pr
 
 	key, _ := crypto.GenerateKey()
 	pool := NewCache(testCachePoolConfig, blockchain)
-	if err := pool.Init(1, blockchain.CurrentBlock(), makeAddressReserver()); err != nil {
+	if err := pool.Init(1, blockchain.CurrentBlock(), newReserver()); err != nil {
 		panic(err)
 	}
 	// wait for the pool to initialize
@@ -78,7 +78,7 @@ func TestCachePool(t *testing.T) {
 
 	config := testCachePoolConfig
 	pool := NewCache(config, blockchain)
-	pool.Init(1, blockchain.CurrentBlock(), makeAddressReserver())
+	pool.Init(1, blockchain.CurrentBlock(), newReserver())
 	defer pool.Close()
 
 	// Create a number of test accounts and fund them (last one will be the local)
@@ -286,7 +286,7 @@ func TestCacheTimeLimiting(t *testing.T) {
 	config.Lifetime = time.Second
 
 	pool := NewCache(config, blockchain)
-	pool.Init(1, blockchain.CurrentBlock(), makeAddressReserver())
+	pool.Init(1, blockchain.CurrentBlock(), newReserver())
 	defer pool.Close()
 
 	local, _ := crypto.GenerateKey()
@@ -388,7 +388,7 @@ func TestCachePoolCapClearsFromAll(t *testing.T) {
 	config.GlobalSlots = 8
 
 	pool := NewCache(config, blockchain)
-	pool.Init(1, blockchain.CurrentBlock(), makeAddressReserver())
+	pool.Init(1, blockchain.CurrentBlock(), newReserver())
 	defer pool.Close()
 
 	// Create a number of test accounts and fund them
@@ -417,7 +417,7 @@ func TestCachePoolStatusCheck(t *testing.T) {
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
 	pool := NewCache(testCachePoolConfig, blockchain)
-	pool.Init(1, blockchain.CurrentBlock(), makeAddressReserver())
+	pool.Init(1, blockchain.CurrentBlock(), newReserver())
 	defer pool.Close()
 
 	// Create the test accounts to check various transaction statuses with

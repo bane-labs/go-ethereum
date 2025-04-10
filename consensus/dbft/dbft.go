@@ -1290,7 +1290,7 @@ func newStaticPool(chain ChainHeaderReader) *legacypool.LegacyPool {
 
 // initStaticPool initializes the static pool with the provided parent header.
 func (c *DBFT) initStaticPool(parent *types.Header, state *state.StateDB) error {
-	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, state, func(addr common.Address, reserve bool) error { return nil }, false)
+	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, state, &txpool.EmptyReservationHandle{}, false)
 }
 
 // validateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.

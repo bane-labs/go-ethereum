@@ -104,10 +104,9 @@ type CachePool struct {
 	currentHead  atomic.Pointer[types.Header] // Current head of the blockchain
 	currentState *state.StateDB               // Current state in the blockchain head
 
-	reserve txpool.AddressReserver       // Address reserver to ensure exclusivity across subpools
-	cached  map[common.Address]*list     // All currently cached transactions
-	beats   map[common.Address]time.Time // Last heartbeat from each known account
-	all     *lookup                      // All transactions to allow lookups
+	cached map[common.Address]*list     // All currently cached transactions
+	beats  map[common.Address]time.Time // Last heartbeat from each known account
+	all    *lookup                      // All transactions to allow lookups
 
 	reqResetCh      chan *txpoolResetRequest
 	reorgDoneCh     chan chan struct{}
@@ -174,10 +173,7 @@ func (pool *CachePool) FilterAdd(tx *types.Transaction, local bool) bool {
 // Init sets the gas price needed to keep a transaction in the pool and the chain
 // head to allow balance / nonce checks. The internal goroutines will be spun up
 // and the pool deemed operational afterwards.
-func (pool *CachePool) Init(gasTip uint64, head *types.Header, reserve txpool.AddressReserver) error {
-	// No need for address reserver processing.
-	pool.reserve = func(addr common.Address, reserve bool) error { return nil }
-
+func (pool *CachePool) Init(gasTip uint64, head *types.Header, _ txpool.Reserver) error {
 	// Set the basic pool parameters
 	pool.gasTip.Store(uint256.NewInt(gasTip))
 
@@ -427,29 +423,6 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 	// already validated by this point
 	from, _ := types.Sender(pool.signer, tx)
 
-	// If the address is not yet known, request exclusivity to track the account
-	// only by this subpool until all transactions are evicted
-	var (
-		_, hasCached = pool.cached[from]
-	)
-	if !hasCached {
-		if err := pool.reserve(from, true); err != nil {
-			return false, err
-		}
-		defer func() {
-			// If the transaction is rejected by some post-validation check, remove
-			// the lock on the reservation set.
-			//
-			// Note, `err` here is the named error return, which will be initialized
-			// by a return statement before running deferred methods. Take care with
-			// removing or subscoping err as it will break this clause.
-			//
-			// This error "ErrTxPoolCached" indicates successful caching, so it needs to be excluded.
-			if err != nil && !errors.Is(err, ErrTxPoolCached) {
-				pool.reserve(from, false)
-			}
-		}()
-	}
 	// If the cache pool is full, discard underpriced transactions
 	if uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots {
 		// We're about to replace a transaction. The reorg does a more thorough
@@ -620,19 +593,6 @@ func (pool *CachePool) removeTx(hash common.Hash, outofbound bool, unreserve boo
 	}
 	addr, _ := types.Sender(pool.signer, tx) // already validated during insertion
 
-	// If after deletion there are no more transactions belonging to this account,
-	// relinquish the address reservation. It's a bit convoluted do this, via a
-	// defer, but it's safer vs. the many return pathways.
-	if unreserve {
-		defer func() {
-			var (
-				_, hasCached = pool.cached[addr]
-			)
-			if !hasCached {
-				pool.reserve(addr, false)
-			}
-		}()
-	}
 	// Remove it from the list of known transactions
 	pool.all.Remove(hash)
 	// Remove the transaction from the cached lists and reset the account nonce
@@ -867,7 +827,6 @@ func (pool *CachePool) demoteUnexecutables() {
 		if list.Empty() {
 			delete(pool.cached, addr)
 			delete(pool.beats, addr)
-			pool.reserve(addr, false)
 		}
 	}
 }
