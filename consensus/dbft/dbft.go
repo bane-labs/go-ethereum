@@ -246,7 +246,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 		DBFTConfig:            chainCfg.DBFT,
 		dkgEnablingHeight:     -1,
 		antiMEVEnablingHeight: -1,
-		statisticsConfig:      statisticsCfg,
+		statisticsConfig:      DefaultStatistics,
 	}
 	if cfg.SecondsPerBlock == 0 {
 		return nil, errors.New("zero-period dBFT chain is not supported")
@@ -254,8 +254,17 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 	if cfg.Coinbase == (common.Address{}) {
 		return nil, errors.New("empty dBFT Coinbase is not allowed, need to specify mining rewards receiver")
 	}
-	if cfg.statisticsConfig.MaxStatisticsPeriod < cfg.statisticsConfig.DefaultStatisticsPeriod {
-		return nil, fmt.Errorf("max statistics period %d is less than default %d", cfg.statisticsConfig.MaxStatisticsPeriod, cfg.statisticsConfig.DefaultStatisticsPeriod)
+	if statisticsCfg != (StatisticsConfig{}) {
+		if statisticsCfg.DefaultStatisticsPeriod > 0 {
+			cfg.statisticsConfig.DefaultStatisticsPeriod = statisticsCfg.DefaultStatisticsPeriod
+		}
+		if statisticsCfg.MaxStatisticsPeriod > 0 {
+			cfg.statisticsConfig.MaxStatisticsPeriod = statisticsCfg.MaxStatisticsPeriod
+		}
+
+		if cfg.statisticsConfig.MaxStatisticsPeriod < cfg.statisticsConfig.DefaultStatisticsPeriod {
+			return nil, fmt.Errorf("max statistics period %d is less than default %d", cfg.statisticsConfig.MaxStatisticsPeriod, cfg.statisticsConfig.DefaultStatisticsPeriod)
+		}
 	}
 	// Set any missing consensus parameters to their defaults
 	bftCfg := *cfg.DBFTConfig
