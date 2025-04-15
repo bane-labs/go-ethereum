@@ -23,6 +23,9 @@ const (
 	// ExtraV1 is the 1-st version of block's Extra. Extra of this version includes global
 	// TPKE public key followed by aggregated validators' threshold signature.
 	ExtraV1 ExtraVersion = 0x01
+	// ExtraV1Fix is the fix of the 1-st version of block's Extra. Extra of this version
+	// includes global TPKE public key followed by a fixed V1 threshold signature.
+	ExtraV1Fix ExtraVersion = 0x02
 )
 
 // ExtraV1SignatureScheme is a scheme of block signature (ECDSA multisignature or
@@ -90,7 +93,7 @@ func (e Extra) ECDSASigners(n int) ([]common.Address, [][]byte, error) {
 	switch e.Version() {
 	case ExtraV0:
 		buf = e[HashableExtraV0Len:]
-	case ExtraV1:
+	case ExtraV1, ExtraV1Fix:
 		buf = e[HashableExtraV1Len:]
 	default:
 		return nil, nil, fmt.Errorf("%w: %d", ErrUnexpectedExtraVersion, e.Version())
@@ -124,8 +127,8 @@ func (e Extra) ECDSASigners(n int) ([]common.Address, [][]byte, error) {
 // ThresholdSigners returns global public key and threshold signature.
 func (e Extra) ThresholdSigners() (*tpke.PublicKey, *tpke.Signature, error) {
 	// Sanity check.
-	if v := e.Version(); v != ExtraV1 {
-		return nil, nil, fmt.Errorf("%w: expected %d, got %d", ErrUnexpectedExtraVersion, ExtraV1, v)
+	if v := e.Version(); v != ExtraV1 && v != ExtraV1Fix {
+		return nil, nil, fmt.Errorf("%w: expected %d or %d, got %d", ErrUnexpectedExtraVersion, ExtraV1, ExtraV1Fix, v)
 	}
 	if ss := e.SignatureScheme(); ss != ExtraV1ThresholdScheme {
 		return nil, nil, fmt.Errorf("%w: expected %d, got %d", ErrUnexpectedBlockSignatureScheme, ExtraV1ThresholdScheme, ss)

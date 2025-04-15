@@ -108,7 +108,7 @@ func (b *Block) Verify(pub dbft.PublicKey, sign []byte) error {
 		if pub.(*PublicKey).Account != ecrypto.PubkeyBytesToAddress(pubkey) {
 			return errors.New("invalid block signature")
 		}
-	case dbftutil.ExtraV1:
+	case dbftutil.ExtraV1, dbftutil.ExtraV1Fix:
 		switch ss := extra.SignatureScheme(); ss {
 		case dbftutil.ExtraV1ECDSAScheme:
 			sealHash := HonestSealHashV0(b.header)

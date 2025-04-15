@@ -72,7 +72,6 @@ func (sk *PrivateKey) SignShare(msg []byte) *SignatureShare {
 	// S=H(msg)*sk
 	g2Hash, _ := bls12381.HashToG2(msg, Domain)
 	sig := new(bls12381.G2Affine).ScalarMultiplication(&g2Hash, sk.fr)
-	sig.Neg(sig)
 	return &SignatureShare{
 		pg2: sig,
 	}

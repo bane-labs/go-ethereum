@@ -57,6 +57,11 @@ func (s *Signature) Bytes() []byte {
 	return b[:]
 }
 
+// Neg sets the negative point value to a Signature
+func (s *Signature) Neg() {
+	s.pg2.Neg(s.pg2)
+}
+
 // SignatureShare is a BLS12-381 point used for BLS aggregation. In its essence it's
 // the same type as Signature.
 type SignatureShare struct {
@@ -83,6 +88,11 @@ func NewSignatureShareFromBytes(b []byte) (*SignatureShare, error) {
 func (s *SignatureShare) Bytes() []byte {
 	b := s.pg2.Bytes()
 	return b[:]
+}
+
+// Neg sets the negative point value to a SignatureShare
+func (s *SignatureShare) Neg() {
+	s.pg2.Neg(s.pg2)
 }
 
 // AggregateSigShares tries to aggregate SignatureShare to a BLS signature.
