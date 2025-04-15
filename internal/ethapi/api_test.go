@@ -642,8 +642,8 @@ func (b testBackend) NewMatcherBackend() filtermaps.MatcherBackend {
 }
 
 func (b testBackend) HistoryPruningCutoff() uint64 {
-	cutoff, _ := b.chain.HistoryPruningCutoff()
-	return cutoff
+	bn, _ := b.chain.HistoryPruningCutoff()
+	return bn
 }
 
 func TestEstimateGas(t *testing.T) {
