@@ -272,6 +272,27 @@ privnet_start_seven: $(SEVEN_DIR)/$(NODE0)/geth $(SEVEN_DIR)/$(NODE1)/geth $(SEV
 	$(call run_node,$(SEVEN_DIR),$(NODE8),$(NODE8_PORT),$(NODE8_AUTH_PORT),$(NODE8_HTTP_PORT),$(NODE8_WS_PORT))
 	@echo "OK! Check logs in $(SEVEN_DIR)/<node_dir>/geth_node.log"
 
+docker_privnet_start:
+	docker compose -f .docker/docker-compose.yml up -d
+
+docker_privnet_stop:
+	docker compose -f .docker/docker-compose.yml down
+
+docker_privnet_start_four:
+	docker compose -f .docker/docker-compose-four.yml up -d
+
+docker_privnet_stop_four:
+	docker compose -f .docker/docker-compose-four.yml down
+
+docker_privnet_start_seven:
+	docker compose -f .docker/docker-compose-seven.yml up -d
+
+docker_privnet_stop_seven:
+	docker compose -f .docker/docker-compose-seven.yml down
+
+docker_clean_node_img:
+	docker rmi neox_node
+
 #? help: Get more info on make commands.
 help: Makefile
 	@echo " Choose a command run in go-ethereum:"
