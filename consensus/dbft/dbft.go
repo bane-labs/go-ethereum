@@ -236,21 +236,35 @@ type config struct {
 	antiMEVEnablingHeight  int64
 	enforceECDSASignatures bool
 	logLevel               *zap.AtomicLevel
+	statisticsConfig       StatisticsConfig
 }
 
 // New creates a DBFT proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
+func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg StatisticsConfig) (*DBFT, error) {
 	cfg := &config{
 		DBFTConfig:            chainCfg.DBFT,
 		dkgEnablingHeight:     -1,
 		antiMEVEnablingHeight: -1,
+		statisticsConfig:      DefaultStatistics,
 	}
 	if cfg.SecondsPerBlock == 0 {
 		return nil, errors.New("zero-period dBFT chain is not supported")
 	}
 	if cfg.Coinbase == (common.Address{}) {
 		return nil, errors.New("empty dBFT Coinbase is not allowed, need to specify mining rewards receiver")
+	}
+	if statisticsCfg != (StatisticsConfig{}) {
+		if statisticsCfg.DefaultStatisticsPeriod > 0 {
+			cfg.statisticsConfig.DefaultStatisticsPeriod = statisticsCfg.DefaultStatisticsPeriod
+		}
+		if statisticsCfg.MaxStatisticsPeriod > 0 {
+			cfg.statisticsConfig.MaxStatisticsPeriod = statisticsCfg.MaxStatisticsPeriod
+		}
+
+		if cfg.statisticsConfig.MaxStatisticsPeriod < cfg.statisticsConfig.DefaultStatisticsPeriod {
+			return nil, fmt.Errorf("max statistics period %d is less than default %d", cfg.statisticsConfig.MaxStatisticsPeriod, cfg.statisticsConfig.DefaultStatisticsPeriod)
+		}
 	}
 	// Set any missing consensus parameters to their defaults
 	bftCfg := *cfg.DBFTConfig
@@ -2645,7 +2659,7 @@ func (c *DBFT) Close() error {
 func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	return []rpc.API{{
 		Namespace: "dbft",
-		Service:   &API{chain: chain, bft: c},
+		Service:   &API{chain: chain, bft: c, config: c.config.statisticsConfig},
 	}}
 }
 
