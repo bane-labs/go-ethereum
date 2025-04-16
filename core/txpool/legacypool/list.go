@@ -443,6 +443,9 @@ func (l *list) Remove(tx *types.Transaction) (bool, types.Transactions) {
 	if txInList == nil {
 		return false, nil
 	}
+	if txInList.Hash().Cmp(tx.Hash()) != 0 {
+		return false, nil
+	}
 	if removed := l.txs.Remove(nonce); !removed {
 		return false, nil
 	}
