@@ -43,7 +43,7 @@ func decodePointG1(in []byte) (*bls12381.G1Affine, error) {
 		return nil, err
 	}
 	elem := bls12381.G1Affine{X: x, Y: y}
-	if !elem.IsOnCurve() {
+	if !elem.IsOnCurve() || !elem.IsInSubGroup() {
 		return nil, ErrTPKEG1Decoding
 	}
 
@@ -73,7 +73,7 @@ func decodePointG2(in []byte) (*bls12381.G2Affine, error) {
 	}
 
 	p := bls12381.G2Affine{X: bls12381.E2{A0: x0, A1: x1}, Y: bls12381.E2{A0: y0, A1: y1}}
-	if !p.IsOnCurve() {
+	if !p.IsOnCurve() || !p.IsInSubGroup() {
 		return nil, ErrTPKEG2Decoding
 	}
 	return &p, err
