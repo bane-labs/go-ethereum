@@ -14,6 +14,8 @@ while `node2` serves as a simple RPC node.
 Here are the instructions for running a private Ethereum network (privnet)
 based on the specifications mentioned above:
 
+### Setup with Local
+
 1. Build `geth` and other necessary binaries:
    ```
    $ cd go-ethereum
@@ -300,12 +302,72 @@ based on the specifications mentioned above:
    network ID and etc.). So that it's possible to start a fresh privnet with the
    same network settings, accounts and genesis block.
 
+### Setup with Docker
+
+We currently need to pass a Github token in to compile correctly, replace the `GITHUB_TOKEN` environment variable in the `.docker/.env` file.
+
+1. Ensure that ports 30305, 30306, and 30307 are not in use on your 
+   localhost (127.0.0.1). Also, ensure that RPC ports 8552 and 8553 are 
+   not being used.
+
+2. Start the private network by running `make docker_privnet_start`. This command, if
+   running from scratch, first builds the Docker image, initializes the database for each node with genesis block
+   inside it based on the [pre-configured initialization files](#reinitialize-privnet).
+   If running with an existing database, no initialization is being performed.
+   This command further runs the privnet with the described configuration.
+
+   Now you can view the logs by using the following commands:
+   ```
+   docker logs -f --tail=10 miner0
+   docker logs -f --tail=10 miner1
+   docker logs -f --tail=10 node0
+   ```
+3. To stop the private network, use the command `make docker_privnet_stop`. This command
+   kills the running privnet processes (node1, node2 and bootnode) and *does not*
+   affect the database or network settings. So that it's possible to start the
+   same network with the existing database using `make docker_privnet_start` afterward.
+
+4. To remove the existing privnet database, use the command `make privnet_clean`.
+   It removes the database files located in the `privnet` directory and *does not*
+   affect the network settings files (accounts, passwords, genesis settings,
+   network ID and etc.). So that it's possible to start a fresh privnet with the
+   same network settings, accounts and genesis block.
+
+5. To remove the existing docker image, use the command `make docker_clean_node_img`.
+
+If you encounter the following error while building the image, 
+```
+=> [bootnode stage-1 2/3] RUN apk add --no-cache ca-certificates:
+=> => fetch https://dl-cdn.alpinelinux.org/alpine/v3.21/main/x86_64/APKINDEX.tar.gz
+=> => WARNING: Ignoring https://dl-cdn.alpinelinux.org/alpine/v3.21/main: temporary error (try again later)
+=> => fetch https://dl-cdn.alpinelinux.org/alpine/v3.21/community/x86_64/APKINDEX.tar.gz
+=> => WARNING: Ignoring https://dl-cdn.alpinelinux.org/alpine/v3.21/community: temporary error (try again later)
+=> => ERROR: unable to select packages:
+=> =>   ca-certificates (no such package):
+=> =>     required by: world[ca-certificates]
+```
+you can try to build it manually.
+```
+docker build --build-arg=GITHUB_TOKEN=YOUR_PERSONAL_TOKEN
+ --network=host -f Dockerfile.alltools -t neox_node .
+```
+
 ## Commands in JavaScript console
 
 While privnet is started, it is now possible to attach a Javascript console 
 to either node to query the network properties:
+
+### Run with Local
+
 ```
 ./build/bin/geth attach privnet/single/node1/geth.ipc
+```
+
+### Run with Docker
+
+```
+docker exec -it miner1 sh
+geth attach /privnet/single/node1/geth.ipc
 ```
 Once the Javascript console is running, check that the node is connected 
 to one other peer. It should be equal 1.
@@ -354,9 +416,21 @@ change these configuration files from run to run to keep the privnet as stable
 as possible in development environment.
 
 There are several configurations of privnet:
+
+### Setup with Local
+
 1. Single consensus (AKA miner) node + one watch-only consensus node + one non-miner RPC node. Can be run with `make privnet_start` and stopped with `make privnet_stop`.
 2. Four consensus nodes + one watch-only consensus node + one PPC node. Can be run with `make privnet_start_four` and stopped with `make privnet_stop`.
 3. Seven consensus nodes + one watch-only consensus node + one RPC node. Can be run with `make privnet_start_seven` and stopped with `make privnet_stop`.
 
 Node's databases, accounts and logs can be found in the setup-specific path, i.e. `./privnet/single/node[0,1,2]` for single-node consensus setup,
+`./privnet/four/node[0-5]` for four-nodes consensus setup and `./privnet/seven/node[0-8]` for seven-node consensus setup.
+
+### Setup with Docker
+
+1. Single consensus (AKA miner) node + one watch-only consensus node + one non-miner RPC node. Can be run with `make docker_privnet_start` and stopped with `make docker_privnet_stop`.
+2. Four consensus nodes + one watch-only consensus node + one PPC node. Can be run with `make docker_privnet_start_four` and stopped with `make docker_privnet_stop_four`.
+3. Seven consensus nodes + one watch-only consensus node + one RPC node. Can be run with `make docker_privnet_start_seven` and stopped with `make docker_privnet_stop_seven`.
+
+Node's databases, accounts can be found in the setup-specific path, i.e. `./privnet/single/node[0,1,2]` for single-node consensus setup,
 `./privnet/four/node[0-5]` for four-nodes consensus setup and `./privnet/seven/node[0-8]` for seven-node consensus setup.
