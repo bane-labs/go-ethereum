@@ -160,6 +160,11 @@ func (b *testBackend) SubscribeFinalizedHeaderEvent(ch chan<- core.FinalizedHead
 	return b.finalizedHeaderFeed.Subscribe(ch)
 }
 
+func (b *testBackend) CurrentView() *filtermaps.ChainView {
+	head := b.CurrentBlock()
+	return filtermaps.NewChainView(b, head.Number.Uint64(), head.Hash())
+}
+
 func (b *testBackend) NewMatcherBackend() filtermaps.MatcherBackend {
 	return b.fm.NewMatcherBackend()
 }
