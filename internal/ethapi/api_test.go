@@ -600,7 +600,7 @@ func (b testBackend) GetPoolTransaction(txHash common.Hash) *types.Transaction {
 func (b testBackend) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
 	return 0, nil
 }
-func (b testBackend) GetEncryptedTransaction(nonce uint64, sender common.Address) *types.Transaction {
+func (b testBackend) GetCachedTransaction(nonce uint64, sender common.Address) *types.Transaction {
 	return nil
 }
 func (b testBackend) Stats() (pending int, queued int) { panic("implement me") }

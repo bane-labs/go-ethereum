@@ -166,6 +166,6 @@ type SubPool interface {
 	// identified by their hashes.
 	Status(hash common.Hash) TxStatus
 
-	// GetEncryptedTransaction returns the encrypted transaction cached in tx pool.
-	GetEncryptedTransaction(nonce uint64, sender common.Address) *types.Transaction
+	// GetCachedTransaction returns the encrypted transaction cached in tx pool.
+	GetCachedTransaction(nonce uint64, sender common.Address) *types.Transaction
 }

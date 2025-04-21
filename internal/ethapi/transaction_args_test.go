@@ -391,7 +391,7 @@ func (b *backendMock) GetPoolTransaction(txHash common.Hash) *types.Transaction 
 func (b *backendMock) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
 	return 0, nil
 }
-func (b *backendMock) GetEncryptedTransaction(nonce uint64, sender common.Address) *types.Transaction {
+func (b *backendMock) GetCachedTransaction(nonce uint64, sender common.Address) *types.Transaction {
 	return nil
 }
 func (b *backendMock) Stats() (pending int, queued int) { return 0, 0 }

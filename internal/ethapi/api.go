@@ -1786,13 +1786,13 @@ func recoverSignerAddress(nonce hexutil.Uint64, signature hexutil.Bytes) (*commo
 	return &recoveredAddress, nil
 }
 
-// GetEncryptedTransaction will get the encrypted transaction from txpool.
-func (s *TransactionAPI) GetEncryptedTransaction(ctx context.Context, Nonce hexutil.Uint64, signature hexutil.Bytes) (hexutil.Bytes, error) {
+// GetCachedTransaction will get the encrypted transaction from txpool.
+func (s *TransactionAPI) GetCachedTransaction(ctx context.Context, Nonce hexutil.Uint64, signature hexutil.Bytes) (hexutil.Bytes, error) {
 	sender, err := recoverSignerAddress(Nonce, signature)
 	if err != nil {
 		return nil, err
 	}
-	if tx := s.b.GetEncryptedTransaction(uint64(Nonce), *sender); tx != nil {
+	if tx := s.b.GetCachedTransaction(uint64(Nonce), *sender); tx != nil {
 		return tx.MarshalBinary()
 	}
 	return nil, nil
