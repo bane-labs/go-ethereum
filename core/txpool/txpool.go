@@ -403,10 +403,10 @@ func (p *TxPool) Nonce(addr common.Address) uint64 {
 	return nonce
 }
 
-// GetEncryptedTransaction returns the encrypted transaction cached in tx pool.
-func (p *TxPool) GetEncryptedTransaction(nonce uint64, sender common.Address) *types.Transaction {
+// GetCachedTransaction returns the encrypted transaction cached in tx pool.
+func (p *TxPool) GetCachedTransaction(nonce uint64, sender common.Address) *types.Transaction {
 	for _, subpool := range p.subpools {
-		if tx := subpool.GetEncryptedTransaction(nonce, sender); tx != nil {
+		if tx := subpool.GetCachedTransaction(nonce, sender); tx != nil {
 			return tx
 		}
 	}

@@ -68,9 +68,9 @@ var (
 	// ErrTxPoolOverflow is returned if the transaction pool is full and can't accept
 	// another remote transaction.
 	ErrTxPoolOverflow = errors.New("txpool is full")
-	// ErrTxPoolEncCached is returned if the transaction is cached in encrypted list successfully.
+	// ErrTxPoolCached is returned if the transaction is cached in cached list successfully.
 	// We use an error return here because we don't want the nonce to change after the tx is cached.
-	ErrTxPoolEncCached = errors.New("encrypted transaction cached")
+	ErrTxPoolCached = errors.New("transaction cached")
 )
 
 var (
@@ -86,11 +86,11 @@ var (
 	pendingRateLimitMeter = metrics.NewRegisteredMeter("txpool/pending/ratelimit", nil) // Dropped due to rate limiting
 	pendingNofundsMeter   = metrics.NewRegisteredMeter("txpool/pending/nofunds", nil)   // Dropped due to out-of-funds\
 
-	// Metrics for the encrypted pool
-	encryptedReplaceMeter   = metrics.NewRegisteredMeter("txpool/encrypted/replace", nil)
-	encryptedRateLimitMeter = metrics.NewRegisteredMeter("txpool/encrypted/ratelimit", nil) // Dropped due to rate limiting
-	encryptedNofundsMeter   = metrics.NewRegisteredMeter("txpool/encrypted/nofunds", nil)   // Dropped due to out-of-funds
-	encryptedEvictionMeter  = metrics.NewRegisteredMeter("txpool/encrypted/eviction", nil)
+	// Metrics for the cached pool
+	cachedReplaceMeter   = metrics.NewRegisteredMeter("txpool/cached/replace", nil)
+	cachedRateLimitMeter = metrics.NewRegisteredMeter("txpool/cached/ratelimit", nil) // Dropped due to rate limiting
+	cachedNofundsMeter   = metrics.NewRegisteredMeter("txpool/cached/nofunds", nil)   // Dropped due to out-of-funds
+	cachedEvictionMeter  = metrics.NewRegisteredMeter("txpool/cached/eviction", nil)
 
 	// Metrics for the queued pool
 	queuedDiscardMeter   = metrics.NewRegisteredMeter("txpool/queued/discard", nil)
@@ -115,11 +115,11 @@ var (
 	// that this number is pretty low, since txpool reorgs happen very frequently.
 	dropBetweenReorgHistogram = metrics.NewRegisteredHistogram("txpool/dropbetweenreorg", nil, metrics.NewExpDecaySample(1028, 0.015))
 
-	pendingGauge   = metrics.NewRegisteredGauge("txpool/pending", nil)
-	queuedGauge    = metrics.NewRegisteredGauge("txpool/queued", nil)
-	localGauge     = metrics.NewRegisteredGauge("txpool/local", nil)
-	slotsGauge     = metrics.NewRegisteredGauge("txpool/slots", nil)
-	encryptedGauge = metrics.NewRegisteredGauge("txpool/encrypted", nil)
+	pendingGauge = metrics.NewRegisteredGauge("txpool/pending", nil)
+	queuedGauge  = metrics.NewRegisteredGauge("txpool/queued", nil)
+	localGauge   = metrics.NewRegisteredGauge("txpool/local", nil)
+	slotsGauge   = metrics.NewRegisteredGauge("txpool/slots", nil)
+	cachedGauge  = metrics.NewRegisteredGauge("txpool/cached", nil)
 
 	reheapTimer = metrics.NewRegisteredTimer("txpool/reheap", nil)
 )
@@ -249,13 +249,13 @@ type LegacyPool struct {
 	locals  *accountSet // Set of local transaction to exempt from eviction rules
 	journal *journal    // Journal of local transaction to back up to disk
 
-	reserve   txpool.AddressReserver       // Address reserver to ensure exclusivity across subpools
-	pending   map[common.Address]*list     // All currently processable transactions
-	encrypted map[common.Address]*list     // All currently processable encrypted transactions
-	queue     map[common.Address]*list     // Queued but non-processable transactions
-	beats     map[common.Address]time.Time // Last heartbeat from each known account
-	all       *lookup                      // All transactions to allow lookups
-	priced    *pricedList                  // All transactions sorted by price
+	reserve txpool.AddressReserver       // Address reserver to ensure exclusivity across subpools
+	pending map[common.Address]*list     // All currently processable transactions
+	cached  map[common.Address]*list     // All currently cached transactions
+	queue   map[common.Address]*list     // Queued but non-processable transactions
+	beats   map[common.Address]time.Time // Last heartbeat from each known account
+	all     *lookup                      // All transactions to allow lookups
+	priced  *pricedList                  // All transactions sorted by price
 
 	reqResetCh      chan *txpoolResetRequest
 	reqPromoteCh    chan *accountSet
@@ -285,7 +285,7 @@ func New(config Config, chain BlockChain) *LegacyPool {
 		chainconfig:     chain.Config(),
 		signer:          types.LatestSigner(chain.Config()),
 		pending:         make(map[common.Address]*list),
-		encrypted:       make(map[common.Address]*list),
+		cached:          make(map[common.Address]*list),
 		queue:           make(map[common.Address]*list),
 		beats:           make(map[common.Address]time.Time),
 		all:             newLookup(),
@@ -421,14 +421,14 @@ func (pool *LegacyPool) loop() {
 					queuedEvictionMeter.Mark(int64(len(list)))
 				}
 			}
-			for addr := range pool.encrypted {
-				// Any encrypted old enough should be removed
+			for addr := range pool.cached {
+				// Any cached old enough should be removed
 				if time.Since(pool.beats[addr]) > pool.config.Lifetime {
-					list := pool.encrypted[addr].Flatten()
+					list := pool.cached[addr].Flatten()
 					for _, tx := range list {
 						pool.removeTx(tx.Hash(), true, true)
 					}
-					encryptedEvictionMeter.Mark(int64(len(list)))
+					cachedEvictionMeter.Mark(int64(len(list)))
 				}
 			}
 			pool.mu.Unlock()
@@ -549,12 +549,12 @@ func (pool *LegacyPool) Nonce(addr common.Address) uint64 {
 	return pool.pendingNonces.get(addr)
 }
 
-// GetEncryptedTransaction returns the encrypted transaction cached in tx pool.
-func (pool *LegacyPool) GetEncryptedTransaction(nonce uint64, sender common.Address) *types.Transaction {
+// GetCachedTransaction returns the cached transaction cached in tx pool.
+func (pool *LegacyPool) GetCachedTransaction(nonce uint64, sender common.Address) *types.Transaction {
 	pool.mu.RLock()
 	defer pool.mu.RUnlock()
 
-	list := pool.encrypted[sender]
+	list := pool.cached[sender]
 	if list == nil {
 		return nil
 	}
@@ -792,11 +792,11 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 	// If the address is not yet known, request exclusivity to track the account
 	// only by this subpool until all transactions are evicted
 	var (
-		_, hasPending   = pool.pending[from]
-		_, hasQueued    = pool.queue[from]
-		_, hasEncrypted = pool.encrypted[from]
+		_, hasPending = pool.pending[from]
+		_, hasQueued  = pool.queue[from]
+		_, hasCached  = pool.cached[from]
 	)
-	if !hasPending && !hasQueued && !hasEncrypted {
+	if !hasPending && !hasQueued && !hasCached {
 		if err := pool.reserve(from, true); err != nil {
 			return false, err
 		}
@@ -884,11 +884,11 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 			return false, fmt.Errorf("%w: next nonce %v, tx nonce %v", core.ErrNonceTooHigh, pendingNonce, tx.Nonce())
 		}
 
-		// Try to insert the transaction into the encrypted queue, we always use new tx if nonce is the same
-		if pool.encrypted[from] == nil {
-			pool.encrypted[from] = newList(true)
+		// Try to insert the transaction into the cached queue, we always use new tx if nonce is the same
+		if pool.cached[from] == nil {
+			pool.cached[from] = newList(true)
 		}
-		list := pool.encrypted[from]
+		list := pool.cached[from]
 
 		// Nonce already pending, we always use new tx
 		inserted, old := list.Replace(tx)
@@ -899,11 +899,11 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 		if old != nil {
 			pool.all.Remove(old.Hash())
 			pool.priced.Removed(1)
-			encryptedReplaceMeter.Mark(1)
+			cachedReplaceMeter.Mark(1)
 		}
 		pool.all.Add(tx, isLocal)
 		pool.priced.Put(tx, isLocal)
-		log.Trace("Pooled new executable encrypted transaction", "hash", hash, "from", from, "to", tx.To())
+		log.Trace("Pooled new executable cached transaction", "hash", hash, "from", from, "to", tx.To())
 
 		// Successful promotion, bump the heartbeat
 		pool.beats[from] = time.Now()
@@ -918,7 +918,7 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 			localGauge.Inc(1)
 		}
 
-		err := ErrTxPoolEncCached
+		err := ErrTxPoolCached
 		log.Info(err.Error(), "txHash", hash, "sender", from, "nonce", tx.Nonce())
 		return inserted, err
 	}
@@ -1272,11 +1272,11 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 	if unreserve {
 		defer func() {
 			var (
-				_, hasPending   = pool.pending[addr]
-				_, hasQueued    = pool.queue[addr]
-				_, hasEncrypted = pool.encrypted[addr]
+				_, hasPending = pool.pending[addr]
+				_, hasQueued  = pool.queue[addr]
+				_, hasCached  = pool.cached[addr]
 			)
-			if !hasPending && !hasQueued && !hasEncrypted {
+			if !hasPending && !hasQueued && !hasCached {
 				pool.reserve(addr, false)
 			}
 		}()
@@ -1316,23 +1316,23 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 		}
 		if future.Empty() {
 			delete(pool.queue, addr)
-			if pool.encrypted[addr] == nil || pool.encrypted[addr].Empty() {
+			if pool.cached[addr] == nil || pool.cached[addr].Empty() {
 				delete(pool.beats, addr)
 			}
 		}
 	}
-	// Remove the transaction from the encrypted lists
-	if encrypted := pool.encrypted[addr]; encrypted != nil {
-		if removed, invalids := encrypted.Remove(tx); removed {
-			// If no more encrypted transactions are left, remove the list
-			if encrypted.Empty() {
-				delete(pool.encrypted, addr)
+	// Remove the transaction from the cached lists
+	if cached := pool.cached[addr]; cached != nil {
+		if removed, invalids := cached.Remove(tx); removed {
+			// If no more cached transactions are left, remove the list
+			if cached.Empty() {
+				delete(pool.cached, addr)
 				if pool.queue[addr] == nil || pool.queue[addr].Empty() {
 					delete(pool.beats, addr)
 				}
 			}
-			// Reduce the encrypted counter
-			encryptedGauge.Dec(int64(1 + len(invalids)))
+			// Reduce the cached counter
+			cachedGauge.Dec(int64(1 + len(invalids)))
 			return 1 + len(invalids)
 		}
 	}
@@ -1497,10 +1497,10 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		}
 		pool.pendingNonces.setAll(nonces)
 	}
-	// Ensure pool.queue, pool.pending and pool.encrypted sizes stay within the configured limits.
+	// Ensure pool.queue, pool.pending and pool.cached sizes stay within the configured limits.
 	pool.truncatePending()
 	pool.truncateQueue()
-	pool.truncateEncrypted()
+	pool.truncateCached()
 
 	dropBetweenReorgHistogram.Update(int64(pool.changesSinceReorg))
 	pool.changesSinceReorg = 0 // Reset change counter
@@ -1684,11 +1684,11 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 		if list.Empty() {
 			delete(pool.queue, addr)
 			_, hasPending := pool.pending[addr]
-			_, hasEncrypted := pool.encrypted[addr]
-			if !hasEncrypted {
+			_, hasCached := pool.cached[addr]
+			if !hasCached {
 				delete(pool.beats, addr)
 			}
-			if !hasPending && !hasEncrypted {
+			if !hasPending && !hasCached {
 				pool.reserve(addr, false)
 			}
 		}
@@ -1828,19 +1828,19 @@ func (pool *LegacyPool) truncateQueue() {
 	}
 }
 
-// truncateEncrypted drops the oldest transactions in the encrypted if the pool is above the global slot limit.
-func (pool *LegacyPool) truncateEncrypted() {
+// truncateCached drops the oldest transactions in the cached if the pool is above the global slot limit.
+func (pool *LegacyPool) truncateCached() {
 	count := uint64(0)
-	for _, list := range pool.encrypted {
+	for _, list := range pool.cached {
 		count += uint64(list.Len())
 	}
 	if count <= pool.config.GlobalSlots {
 		return
 	}
 
-	// Sort all accounts with encrypted transactions by heartbeat
-	addresses := make(addressesByHeartbeat, 0, len(pool.encrypted))
-	for addr := range pool.encrypted {
+	// Sort all accounts with cached transactions by heartbeat
+	addresses := make(addressesByHeartbeat, 0, len(pool.cached))
+	for addr := range pool.cached {
 		addresses = append(addresses, addressByHeartbeat{addr, pool.beats[addr]})
 	}
 	sort.Sort(sort.Reverse(addresses))
@@ -1848,7 +1848,7 @@ func (pool *LegacyPool) truncateEncrypted() {
 	// Drop transactions until the total is below the limit
 	for drop := count - pool.config.GlobalSlots; drop > 0 && len(addresses) > 0; {
 		addr := addresses[len(addresses)-1]
-		list := pool.encrypted[addr.address]
+		list := pool.cached[addr.address]
 		addresses = addresses[:len(addresses)-1]
 		// Drop all transactions if they are less than the overflow
 		if size := uint64(list.Len()); size <= drop {
@@ -1856,7 +1856,7 @@ func (pool *LegacyPool) truncateEncrypted() {
 				pool.removeTx(tx.Hash(), true, true)
 			}
 			drop -= size
-			encryptedRateLimitMeter.Mark(int64(size))
+			cachedRateLimitMeter.Mark(int64(size))
 			continue
 		}
 		// Otherwise drop only last few transactions
@@ -1864,7 +1864,7 @@ func (pool *LegacyPool) truncateEncrypted() {
 		for i := len(txs) - 1; i >= 0 && drop > 0; i-- {
 			pool.removeTx(txs[i].Hash(), true, true)
 			drop--
-			encryptedRateLimitMeter.Mark(1)
+			cachedRateLimitMeter.Mark(1)
 		}
 	}
 }
@@ -1925,15 +1925,15 @@ func (pool *LegacyPool) demoteUnexecutables() {
 		if list.Empty() {
 			delete(pool.pending, addr)
 			_, hasQueued := pool.queue[addr]
-			_, hasEncrypted := pool.encrypted[addr]
-			if !hasQueued && !hasEncrypted {
+			_, hasCached := pool.cached[addr]
+			if !hasQueued && !hasCached {
 				pool.reserve(addr, false)
 			}
 		}
 	}
 
-	// remove non-executable transactions from encrypted pool
-	for addr, list := range pool.encrypted {
+	// remove non-executable transactions from cached pool
+	for addr, list := range pool.cached {
 		nonce := pool.pendingNonces.get(addr)
 
 		// Drop all transactions that are deemed too old (less than pending nonce)
@@ -1941,7 +1941,7 @@ func (pool *LegacyPool) demoteUnexecutables() {
 		for _, tx := range olds {
 			hash := tx.Hash()
 			pool.all.Remove(hash)
-			log.Trace("Removed old encrypted transaction", "hash", hash)
+			log.Trace("Removed old cached transaction", "hash", hash)
 		}
 		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
 		balance := pool.currentState.GetBalance(addr)
@@ -1951,17 +1951,17 @@ func (pool *LegacyPool) demoteUnexecutables() {
 		drops, invalids := list.Filter(balance, gasLimit)
 		for _, tx := range drops {
 			hash := tx.Hash()
-			log.Trace("Removed unpayable encrypted transaction", "hash", hash)
+			log.Trace("Removed unpayable cached transaction", "hash", hash)
 			pool.all.Remove(hash)
 		}
-		encryptedNofundsMeter.Mark(int64(len(drops)))
+		cachedNofundsMeter.Mark(int64(len(drops)))
 
 		for _, tx := range invalids {
 			hash := tx.Hash()
-			log.Trace("Removed future encrypted transaction", "hash", hash)
+			log.Trace("Removed future cached transaction", "hash", hash)
 			pool.all.Remove(hash)
 		}
-		encryptedGauge.Dec(int64(len(olds) + len(drops) + len(invalids)))
+		cachedGauge.Dec(int64(len(olds) + len(drops) + len(invalids)))
 		if pool.locals.contains(addr) {
 			localGauge.Dec(int64(len(olds) + len(drops) + len(invalids)))
 		}
@@ -1970,14 +1970,14 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			gapped := list.Cap(0)
 			for _, tx := range gapped {
 				hash := tx.Hash()
-				log.Error("Removed future encrypted transaction", "hash", hash)
+				log.Error("Removed future cached transaction", "hash", hash)
 				pool.all.Remove(hash)
 			}
-			encryptedGauge.Dec(int64(len(gapped)))
+			cachedGauge.Dec(int64(len(gapped)))
 		}
-		// Delete the entire encrypted entry if it became empty.
+		// Delete the entire cached entry if it became empty.
 		if list.Empty() {
-			delete(pool.encrypted, addr)
+			delete(pool.cached, addr)
 			_, hasQueued := pool.queue[addr]
 			_, hasPending := pool.pending[addr]
 			if !hasQueued && !hasPending {

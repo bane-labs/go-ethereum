@@ -2562,7 +2562,7 @@ func TestSignatureCache(t *testing.T) {
 	}
 	errs := pool.addLocals(txs)
 	for _, err := range errs {
-		require.Error(t, err, ErrTxPoolEncCached)
+		require.Error(t, err, ErrTxPoolCached)
 	}
 
 	// Check that we only cache processable transaction from account keys[0]
@@ -2570,7 +2570,7 @@ func TestSignatureCache(t *testing.T) {
 	// check we repalce the transaction of index 0 with index 2*pool.config.AccountQueue
 	tx := txs[2*pool.config.AccountQueue]
 	sender := crypto.PubkeyToAddress(keys[0].PublicKey)
-	tx1 := pool.GetEncryptedTransaction(tx.Nonce(), sender)
+	tx1 := pool.GetCachedTransaction(tx.Nonce(), sender)
 	require.NotNil(t, tx1)
 	require.Equal(t, tx.Hash(), tx1.Hash())
 
@@ -2582,7 +2582,7 @@ func TestSignatureCache(t *testing.T) {
 	require.Equal(t, 2, pool.all.Count())
 	tx = txs[0]
 	sender = crypto.PubkeyToAddress(keys[1].PublicKey)
-	tx2 := pool.GetEncryptedTransaction(tx.Nonce(), sender)
+	tx2 := pool.GetCachedTransaction(tx.Nonce(), sender)
 	require.NotNil(t, tx2)
 	require.Equal(t, tx.Hash(), tx2.Hash())
 }

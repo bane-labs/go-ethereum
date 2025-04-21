@@ -104,9 +104,9 @@ Here is an example of the `data` field of an Envelope transaction.
 To send a secret transaction wrapped with an Envelope, we recommend the following steps which should be compatible with most of popular wallets (e.g. Metamask).
 
 1. Construct a secret transaction;
-2. Request the wallet to sign this transaction and send it to nodes configured with `--txpool.signaturecache`;
+2. Request the wallet to sign this transaction and send it to nodes configured with `--txpool.amevcache`;
 3. Request the wallet to sign the `nonce` of the secret transaction as a message;
-4. Use this signature to fetch the signed transaction through `eth_getEncryptedTransaction`;
+4. Use this signature to fetch the signed transaction through `eth_getCachedTransaction`;
 5. Encrypt the signed transaction with Neo X TPKE;
 6. Construct an Envelope transaction with the encrypted data and send it through wallet with the same `nonce`.
 
@@ -130,7 +130,7 @@ It has to be mentioned that there are both gas limit and number limit for Envelo
 
 There are several new and useful RPC APIs for Envelope construction.
 
-1. `eth_getEncryptedTransaction` returns the cached and signed secret transactions. It requires a valid sender signature in parameters, and only works on nodes configured with `--txpool.signaturecache`;
+1. `eth_getCachedTransaction` returns the cached and signed secret transactions. It requires a valid sender signature in parameters, and only works on nodes configured with `--txpool.amevcache`;
 2. `eth_envelopeFee` returns the minimum additional `gastip`/`gasprice` that anti-mev transactions should pay for the service;
 3. `eth_maxEnvelopeGasLimit` returns the maximum `gaslimit` that an Envelope can declare for itself.
 

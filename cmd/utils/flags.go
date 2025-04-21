@@ -358,9 +358,9 @@ var (
 		Value:    ethconfig.Defaults.TxPool.ReannounceRemotes,
 		Category: flags.TxPoolCategory,
 	}
-	TxPoolSignatureCacheFlag = &cli.BoolFlag{
-		Name:     "txpool.signaturecache",
-		Usage:    "Whether the transaction pool only caches transaction signatures. If this setting is applied, all transactions sent to this node will not be public, only the signatures will be cached. ",
+	TxPoolAMEVCacheFlag = &cli.BoolFlag{
+		Name:     "txpool.amevcache",
+		Usage:    "Whether to cache every transaction into a private pool except Envelopes",
 		Category: flags.TxPoolCategory,
 	}
 
@@ -1553,8 +1553,8 @@ func setTxPool(ctx *cli.Context, cfg *legacypool.Config) {
 	if ctx.IsSet(TxPoolReannounceRemotesFlag.Name) {
 		cfg.ReannounceRemotes = ctx.Bool(TxPoolReannounceRemotesFlag.Name)
 	}
-	if ctx.IsSet(TxPoolSignatureCacheFlag.Name) {
-		cfg.SignaturesCache = ctx.Bool(TxPoolSignatureCacheFlag.Name)
+	if ctx.IsSet(TxPoolAMEVCacheFlag.Name) {
+		cfg.SignaturesCache = ctx.Bool(TxPoolAMEVCacheFlag.Name)
 	}
 }
 
