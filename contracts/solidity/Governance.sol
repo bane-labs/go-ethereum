@@ -66,7 +66,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     mapping(address => uint) public voterGasPerVote;
     // voter=>height, deprecated
     mapping(address => uint) public voteHeight;
-    // candidate=>height=>number
+    // candidate=>height=>number, deprecated
     mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
     // blacklisted candidate amount
     uint public blacklistedCandidates;
@@ -278,11 +278,6 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         currentEpochStartHeight = block.number;
         address[] memory candidates = candidateList.values();
         uint length = candidates.length;
-        for (uint i = 0; i < length; i++) {
-            epochStartGasPerVote[candidates[i]][
-                block.number / epochDuration
-            ] = candidateGasPerVote[candidates[i]];
-        }
 
         // compute and update consensus
         if (length < consensusSize || totalVotes < voteTargetAmount) {
@@ -298,6 +293,23 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         if (msg.sender != SYS_CALL) revert Errors.SideCallNotAllowed();
         // only settle validator reward if there is no epoch change
         IGovReward(GOV_REWARD).withdraw();
+
+        // set pending consensus as running, and update tag values
+        if (block.number >= nextEpochStartHeight()) {
+            currentEpochStartHeight = block.number;
+            // check if key generation succeeds, keep the same members if not
+            if (
+                IKeyManagement(KEY_MANAGEMENT).isRoundNumberIncreased(
+                    currentEpochStartHeight,
+                    currentEpochStartHeight - epochDuration
+                )
+            ) {
+                currentConsensus = pendingConsensus;
+            }
+            // reset pending value and start a new epoch
+            delete pendingConsensus;
+            emit Persist(currentConsensus);
+        }
         if (
             block.number <
             nextEpochStartHeight() - 2 * sharePeriodDuration
@@ -315,27 +327,6 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
             }
             emit Persist(pendingConsensus);
         }
-        if (block.number < nextEpochStartHeight()) return;
-
-        // set pending consensus as running, and update tag values
-        currentEpochStartHeight = block.number;
-        for (uint i = 0; i < length; i++) {
-            epochStartGasPerVote[candidates[i]][
-                block.number / epochDuration
-            ] = candidateGasPerVote[candidates[i]];
-        }
-        // check if key generation succeeds, keep the same members if not
-        if (
-            IKeyManagement(KEY_MANAGEMENT).isRoundNumberIncreased(
-                currentEpochStartHeight,
-                currentEpochStartHeight - epochDuration
-            )
-        ) {
-            currentConsensus = pendingConsensus;
-        }
-        // reset pending value and start a new epoch
-        delete pendingConsensus;
-        emit Persist(currentConsensus);
     }
 
     function activateCandidate(address candidate) external {
