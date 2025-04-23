@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -219,6 +220,8 @@ type DBFT struct {
 	backend         *ethapi.Backend
 	txAPI           *ethapi.TransactionAPI
 	validatorsCache *lru.Cache[uint64, []common.Address]
+	// dkgIndexCache is a cache for storing the index array of the ordered validators
+	dkgIndexCache *lru.Cache[uint64, []int]
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
@@ -294,6 +297,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 		finished: make(chan struct{}),
 
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
+		dkgIndexCache:   lru.NewCache[uint64, []int](validatorsCacheCap),
 
 		dkgSnapshot:  NewSnapshot(),
 		loopTaskChan: make(chan *TxWatchList),
@@ -2744,20 +2748,27 @@ func (c *DBFT) getValidators(blockNum *uint64, state *state.StateDB, header *typ
 
 // getDKGIndex returns validator dkg index (original validator index +1) by validatorIndex (ordered validator index).
 func (c *DBFT) getDKGIndex(validatorIndex int, blockNum uint64) (int, error) {
-	originValidators, err := c.getValidators(&blockNum, nil, nil)
-	if err != nil {
-		return -1, err
+	indices, ok := c.dkgIndexCache.Get(blockNum)
+	if !ok {
+		originValidators, err := c.getValidators(&blockNum, nil, nil)
+		if err != nil {
+			return -1, err
+		}
+
+		indices = make([]int, len(originValidators))
+		for i := range indices {
+			indices[i] = i
+		}
+		sort.Slice(indices, func(i, j int) bool {
+			return originValidators[indices[i]].Cmp(originValidators[indices[j]]) < 0
+		})
+		_ = c.dkgIndexCache.Add(blockNum, indices)
 	}
-	if validatorIndex < 0 || validatorIndex >= len(originValidators) {
-		return -1, fmt.Errorf("invalid validator index: validators count is %d, requested %d", len(originValidators), validatorIndex)
+
+	if validatorIndex < 0 || validatorIndex >= len(indices) {
+		return -1, fmt.Errorf("invalid validator index: validators count is %d, requested %d", len(indices), validatorIndex)
 	}
-	orderedValidators := slices.Clone(originValidators)
-	slices.SortFunc(orderedValidators, common.Address.Cmp)
-	addr := orderedValidators[validatorIndex]
-	dkgIndex := slices.Index(originValidators, addr) + 1
-	if dkgIndex == 0 {
-		panic("invalid sort")
-	}
+	dkgIndex := indices[validatorIndex] + 1
 	return dkgIndex, nil
 }
 
