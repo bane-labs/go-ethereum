@@ -2218,7 +2218,7 @@ events:
 				log.Warn("Failed to handle chain block",
 					"index", b.Block.NumberU64(),
 					"err", err.Error())
-				break events
+				go c.Close()
 			}
 		case err := <-c.chainHeadSub.Err():
 			// System has stopped.
@@ -2227,7 +2227,7 @@ events:
 				log.Info("Block subscriptions error",
 					"error", err.Error())
 			}
-			break events
+			go c.Close()
 		case ev := <-dlEventCh:
 			if ev == nil {
 				// Unsubscription done, stop listening.
@@ -2242,7 +2242,7 @@ events:
 					log.Warn("Failed to handle latest chain block",
 						"index", latest.Number.Uint64(),
 						"err", err.Error())
-					break events
+					go c.Close()
 				}
 
 			case downloader.DoneEvent:
@@ -2255,7 +2255,7 @@ events:
 					log.Warn("Failed to handle latest chain block",
 						"index", latest.Number.Uint64(),
 						"err", err.Error())
-					break events
+					go c.Close()
 				}
 			}
 		}
@@ -2276,7 +2276,8 @@ events:
 				log.Warn("Failed to handle latest chain block",
 					"index", latestBlock.Block.NumberU64(),
 					"err", err.Error())
-				break events
+				go c.Close()
+				continue
 			}
 		}
 		newView := c.dbft.ViewNumber
@@ -2289,7 +2290,8 @@ events:
 				log.Warn("Failed to fetch latest sealing proposal",
 					"index", c.dbft.Context.BlockIndex,
 					"err", err.Error())
-				break events
+				go c.Close()
+				continue
 			}
 			log.Info("Start dBFT process for updated sealing work",
 				"index", c.dbft.Context.BlockIndex,
@@ -2338,7 +2340,10 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 		return nil
 	}
 
-	c.messages <- *p
+	select {
+	case <-c.quit:
+	case c.messages <- *p:
+	}
 	return nil
 }
 
@@ -2363,7 +2368,11 @@ func (c *DBFT) OnTransaction(txs []*types.Transaction) {
 		for _, tx := range txs {
 			_, found := slices.BinarySearchFunc(cbList.([]common.Hash), tx.Hash(), common.Hash.Cmp)
 			if found {
-				c.txs <- tx
+				select {
+				case <-c.quit:
+					return
+				case c.txs <- tx:
+				}
 			}
 		}
 	}

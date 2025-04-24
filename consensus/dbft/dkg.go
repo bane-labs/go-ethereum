@@ -174,7 +174,10 @@ func (c *DBFT) handleDKG(snapshot *Snapshot, keystore *antimev.KeyStore, h *type
 	if !suspended && currentHeight >= shareStartHeight && currentHeight < targetHeight {
 		// Send watch task list to loopTaskChan when handleDKG finished
 		defer func() {
-			c.loopTaskChan <- watchList
+			select {
+			case <-c.quit:
+			case c.loopTaskChan <- watchList:
+			}
 		}()
 	}
 
@@ -346,58 +349,63 @@ func (c *DBFT) loopTaskList() {
 	log.Info("DKG events dispatcher started")
 	defer log.Info("DKG events dispatcher stopped")
 
-	for watchList := range c.loopTaskChan {
-		log.Info("DKG loopTaskList", "CurrentHeight", watchList.CurrentHeight, "WatchListLength", len(watchList.WatchList))
-		currentHeight := watchList.CurrentHeight
-		// append watchList from loopTaskChan to c.txWatchList
-		for i := range watchList.WatchList {
-			c.txWatchList = append(c.txWatchList, &watchList.WatchList[i])
-		}
+	for {
+		select {
+		case <-c.quit:
+			return
+		case watchList := <-c.loopTaskChan:
+			log.Info("DKG loopTaskList", "CurrentHeight", watchList.CurrentHeight, "WatchListLength", len(watchList.WatchList))
+			currentHeight := watchList.CurrentHeight
+			// append watchList from loopTaskChan to c.txWatchList
+			for i := range watchList.WatchList {
+				c.txWatchList = append(c.txWatchList, &watchList.WatchList[i])
+			}
 
-		// loop tasks in c.txWatchList
-		var retryList []*TxWatchRetry
-		if len(c.txWatchList) > 0 {
-			for _, item := range c.txWatchList {
-				if currentHeight < item.EndHeight && !item.ConfirmedSuccess {
-					needRetry := false
-					// Send failed, just resend and set txHash
-					if item.TxHash == nil {
-						needRetry = true
-					}
-
-					// Send successfully, wait 3 blocks to check tx status
-					if item.TxHash != nil && currentHeight-item.SendHeight == 3 {
-						receipt, err := c.txAPI.GetTransactionReceipt(context.Background(), *item.TxHash)
-						if err != nil {
+			// loop tasks in c.txWatchList
+			var retryList []*TxWatchRetry
+			if len(c.txWatchList) > 0 {
+				for _, item := range c.txWatchList {
+					if currentHeight < item.EndHeight && !item.ConfirmedSuccess {
+						needRetry := false
+						// Send failed, just resend and set txHash
+						if item.TxHash == nil {
 							needRetry = true
-							log.Error("DKG get transaction receipt failed", "err", err, "txHash", item.TxHash)
 						}
-						if receipt["status"] != types.ReceiptStatusSuccessful {
-							needRetry = true
-							log.Error("DKG get transaction receipt status error", "txHash", item.TxHash, "status", receipt["status"])
-						}
-					}
 
-					var err error
-					if needRetry {
-						item.TxHash, err = sendTxToKeyManagement(c.txAPI, c.signer, item.Method, item.Params...)
-						if err != nil {
-							retryList = append(retryList, item)
-							log.Error("DKG retry sending transaction failed", "currentHeight", currentHeight, "method", item.Method, "err", err)
-							continue
+						// Send successfully, wait 3 blocks to check tx status
+						if item.TxHash != nil && currentHeight-item.SendHeight == 3 {
+							receipt, err := c.txAPI.GetTransactionReceipt(context.Background(), *item.TxHash)
+							if err != nil {
+								needRetry = true
+								log.Error("DKG get transaction receipt failed", "err", err, "txHash", item.TxHash)
+							}
+							if receipt["status"] != types.ReceiptStatusSuccessful {
+								needRetry = true
+								log.Error("DKG get transaction receipt status error", "txHash", item.TxHash, "status", receipt["status"])
+							}
+						}
+
+						var err error
+						if needRetry {
+							item.TxHash, err = sendTxToKeyManagement(c.txAPI, c.signer, item.Method, item.Params...)
+							if err != nil {
+								retryList = append(retryList, item)
+								log.Error("DKG retry sending transaction failed", "currentHeight", currentHeight, "method", item.Method, "err", err)
+								continue
+							} else {
+								item.SendHeight = currentHeight
+								retryList = append(retryList, item)
+								log.Info("DKG retry transaction sent", "method", item.Method, "txHash", item.TxHash)
+							}
 						} else {
-							item.SendHeight = currentHeight
-							retryList = append(retryList, item)
-							log.Info("DKG retry transaction sent", "method", item.Method, "txHash", item.TxHash)
+							item.ConfirmedSuccess = true
+							log.Info("DKG get transaction receipt successfully", "method", item.Method, "txHash", item.TxHash)
 						}
-					} else {
-						item.ConfirmedSuccess = true
-						log.Info("DKG get transaction receipt successfully", "method", item.Method, "txHash", item.TxHash)
 					}
 				}
+				// Only keep retry failed and not reach max retry times
+				c.txWatchList = retryList
 			}
-			// Only keep retry failed and not reach max retry times
-			c.txWatchList = retryList
 		}
 	}
 }
