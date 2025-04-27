@@ -111,23 +111,28 @@ func (pk *PublicKey) Encrypt(msg *bls12381.G1Affine) *CipherText {
 }
 
 // VerifySigShare verifies a signature in form of a single signature.
-func (pk *PublicKey) VerifySigShare(msg []byte, sig *SignatureShare) bool {
-	return pk.VerifySig(msg, (*Signature)(sig))
+func (pk *PublicKey) VerifySigShare(msg []byte, sig *SignatureShare, isNegatedResult bool) bool {
+	return pk.VerifySig(msg, (*Signature)(sig), isNegatedResult)
 }
 
 // VerifySig verifies a signature with corresponding message.
-func (pk *PublicKey) VerifySig(msg []byte, sig *Signature) bool {
+func (pk *PublicKey) VerifySig(msg []byte, sig *Signature, isNegatedResult bool) bool {
 	g2Hash, _ := bls12381.HashToG2(msg, Domain)
 
-	return pk.Verify(&g2Hash, sig) == nil
+	return pk.Verify(&g2Hash, sig, isNegatedResult) == nil
 }
 
 // Verify verifies provided signature against the corresponding message hash.
-func (pk *PublicKey) Verify(hash *bls12381.G2Affine, sig *Signature) error {
+func (pk *PublicKey) Verify(hash *bls12381.G2Affine, sig *Signature, isNegatedResult bool) error {
 	_, _, g1, _ := bls12381.Generators()
 
-	// e(pk,g2Hash)=e(g1,-sig)
-	ok, err := bls12381.PairingCheck([]bls12381.G1Affine{*pk.pg1, g1}, []bls12381.G2Affine{*hash, *sig.pg2})
+	// e(pk,g2Hash)=e(g1,sig)
+	g1.Neg(&g1)
+	pg2 := sig.pg2
+	if isNegatedResult {
+		pg2 = sig.Neg().pg2
+	}
+	ok, err := bls12381.PairingCheck([]bls12381.G1Affine{*pk.pg1, g1}, []bls12381.G2Affine{*hash, *pg2})
 	if err != nil {
 		return fmt.Errorf("invalid signature: %w", err)
 	}

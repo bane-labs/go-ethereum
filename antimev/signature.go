@@ -13,27 +13,27 @@ var (
 )
 
 // SignShare tries to sign a message with local private key.
-func (ks *KeyStore) SignShare(msg []byte) (*tpke.SignatureShare, error) {
+func (ks *KeyStore) SignShare(msg []byte, negateResult bool) (*tpke.SignatureShare, error) {
 	if ks.shared == nil || ks.shared.localPrvKey == nil {
 		return nil, ErrNoPrvKey
 	}
-	return ks.shared.localPrvKey.SignShare(msg), nil
+	return ks.shared.localPrvKey.SignShare(msg, negateResult), nil
 }
 
 // AggregateAndVerifySig tries to aggregate signature shares and returns
 // the final signature if the verification passes. The key of inputs is
 // dkg index which starts from 1, when the array index of a member in the
 // key group starts from 0.
-func (ks *KeyStore) AggregateAndVerifySig(msg []byte, inputs map[int]*tpke.SignatureShare) (*tpke.Signature, error) {
+func (ks *KeyStore) AggregateAndVerifySig(msg []byte, inputs map[int]*tpke.SignatureShare, isNegatedResult bool) (*tpke.Signature, error) {
 	if ks.shared == nil {
 		return nil, ErrNoPubKey
 	}
-	return ks.shared.aggregateAndVerifySig(msg, inputs, ks.threshold, ks.scaler)
+	return ks.shared.aggregateAndVerifySig(msg, inputs, ks.threshold, ks.scaler, isNegatedResult)
 }
 
 // aggregateAndVerifySig tries to aggregate signature shares and returns
 // the final signature if the verification passes.
-func (tkg *thresholdKeyGroup) aggregateAndVerifySig(msg []byte, inputs map[int]*tpke.SignatureShare, threshold int, scaler int) (*tpke.Signature, error) {
+func (tkg *thresholdKeyGroup) aggregateAndVerifySig(msg []byte, inputs map[int]*tpke.SignatureShare, threshold int, scaler int, isNegatedResult bool) (*tpke.Signature, error) {
 	if len(inputs) < threshold {
 		return nil, ErrSigShareNotEnough
 	}
@@ -67,7 +67,7 @@ func (tkg *thresholdKeyGroup) aggregateAndVerifySig(msg []byte, inputs map[int]*
 		}
 		sig, err := tpke.AggregateSigShares(m, s, scaler)
 		// Verify if the aggregation is valid
-		if err == nil && tkg.globalPubKey.VerifySig(msg, sig) {
+		if err == nil && tkg.globalPubKey.VerifySig(msg, sig, isNegatedResult) {
 			return sig, nil
 		}
 	}

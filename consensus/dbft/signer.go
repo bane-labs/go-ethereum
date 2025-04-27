@@ -35,12 +35,12 @@ func (s *Signer) signBlock(extra dbftutil.Extra, blockRLP []byte) ([]byte, error
 	switch v := extra.Version(); v {
 	case dbftutil.ExtraV0:
 		return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, blockRLP)
-	case dbftutil.ExtraV1:
+	case dbftutil.ExtraV1, dbftutil.ExtraV2:
 		switch ss := extra.SignatureScheme(); ss {
 		case dbftutil.ExtraV1ECDSAScheme:
 			return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, blockRLP)
 		case dbftutil.ExtraV1ThresholdScheme:
-			share, err := s.AmevKeystore.SignShare(blockRLP)
+			share, err := s.AmevKeystore.SignShare(blockRLP, v == dbftutil.ExtraV1)
 			if err != nil {
 				return nil, fmt.Errorf("failed to sign share: %w", err)
 			}

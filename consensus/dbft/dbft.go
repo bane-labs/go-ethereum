@@ -738,7 +738,7 @@ func (c *DBFT) verifyCommitCb(p dbft.ConsensusPayload[common.Hash]) error {
 	switch v {
 	case dbftutil.ExtraV0:
 		expectedLen = crypto.SignatureLength
-	case dbftutil.ExtraV1:
+	case dbftutil.ExtraV1, dbftutil.ExtraV2:
 		if c.config.enforceECDSASignatures || (!isAMEV && c.chain.Config().IsNeoXAMEV(new(big.Int).Add(h, bigOne))) {
 			expectedLen = crypto.SignatureLength
 		} else {
@@ -783,7 +783,7 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 	// A separate check for post-NeoXAMEV block signing scheme since it depends
 	// on runtime node configuration.
 	extra := dbftutil.Extra(req.SealingProposal.Extra)
-	if c.chain.Config().IsNeoXAMEV(req.SealingProposal.Number) && extra.Version() == dbftutil.ExtraV1 {
+	if c.chain.Config().IsNeoXAMEV(req.SealingProposal.Number) && (extra.Version() == dbftutil.ExtraV1 || extra.Version() == dbftutil.ExtraV2) {
 		var expected = dbftutil.ExtraV1ThresholdScheme
 		if c.config.enforceECDSASignatures {
 			expected = dbftutil.ExtraV1ECDSAScheme
@@ -1349,7 +1349,7 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 	switch v := dbftutil.Extra(block.header.Extra).Version(); v {
 	case dbftutil.ExtraV0:
 		return res, nil
-	case dbftutil.ExtraV1:
+	case dbftutil.ExtraV1, dbftutil.ExtraV2:
 		// Enforce multisignature-based signing scheme for NeoXAMEV-1 height or if
 		// enforcing configured.
 		cfg := c.chain.Config()
@@ -1385,7 +1385,7 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 		c.lock.RLock()
 		ks := c.amevKeystore
 		c.lock.RUnlock()
-		sig, err := ks.AggregateAndVerifySig(msg, shares)
+		sig, err := ks.AggregateAndVerifySig(msg, shares, v == dbftutil.ExtraV1)
 		if err != nil {
 			return nil, fmt.Errorf("failed to aggregate signature: %w", err)
 		}
@@ -1620,12 +1620,17 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	var (
 		cfg           = chain.Config()
 		isAMEV        = cfg.IsNeoXAMEV(header.Number)
+		isEthSig      = cfg.IsNeoXEthSig(header.Number)
 		isV1Extra     = isAMEV || cfg.IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne))
+		isV2Extra     = isEthSig || cfg.IsNeoXEthSig(new(big.Int).Add(header.Number, bigOne))
 		expectedExtra = dbftutil.ExtraV0
 		extra         = dbftutil.Extra(header.Extra)
 	)
 	if isV1Extra {
 		expectedExtra = dbftutil.ExtraV1
+	}
+	if isV2Extra {
+		expectedExtra = dbftutil.ExtraV2
 	}
 	if v := extra.Version(); v != expectedExtra {
 		return fmt.Errorf("%w: expected %d, got %d", dbftutil.ErrUnexpectedExtraVersion, expectedExtra, v)
@@ -1633,7 +1638,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 
 	// Check that extra-data contains hashable part filled.
 	var expectedHashableExtraLen = dbftutil.HashableExtraV0Len
-	if isV1Extra {
+	if isV1Extra || isV2Extra {
 		expectedHashableExtraLen = dbftutil.HashableExtraV1Len
 	}
 	if len(header.Extra) < expectedHashableExtraLen {
@@ -1646,7 +1651,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 			m        = crypto.GetBFTHonestNodeCount(n)
 			expected int
 		)
-		if isV1Extra {
+		if isV1Extra || isV2Extra {
 			if !isAMEV && extra.SignatureScheme() != dbftutil.ExtraV1ECDSAScheme {
 				return fmt.Errorf("%w for pre-NeoXAMEV block: expected %d, got %d", dbftutil.ErrUnexpectedBlockSignatureScheme, dbftutil.ExtraV1ECDSAScheme, extra.SignatureScheme())
 			}
@@ -1825,7 +1830,7 @@ func (c *DBFT) verifyExtra(sealHashBytes []byte, extra dbftutil.Extra, parentNex
 			return fmt.Errorf("%w: %s", errUnauthorizedSigner, err)
 		}
 		return nil
-	case dbftutil.ExtraV1:
+	case dbftutil.ExtraV1, dbftutil.ExtraV2:
 		switch ss := extra.SignatureScheme(); ss {
 		case dbftutil.ExtraV1ECDSAScheme:
 			vals, sigs, err := extra.ECDSASigners(len(c.config.StandByValidators))
@@ -1839,7 +1844,7 @@ func (c *DBFT) verifyExtra(sealHashBytes []byte, extra dbftutil.Extra, parentNex
 			switch pv := parentExtra.Version(); pv {
 			case dbftutil.ExtraV0:
 				expected = parentNextConsensus
-			case dbftutil.ExtraV1:
+			case dbftutil.ExtraV1, dbftutil.ExtraV2:
 				var offset = dbftutil.ExtraVersionLen + dbftutil.ExtraV1SignatureSchemeLen
 				expected.SetBytes(parentExtra[offset : offset+common.HashLength])
 			default:
@@ -1869,8 +1874,7 @@ func (c *DBFT) verifyExtra(sealHashBytes []byte, extra dbftutil.Extra, parentNex
 			if err != nil {
 				return fmt.Errorf("seal hash is not a G2 point on BLS12-381: %w", err)
 			}
-
-			return pub.Verify(hash, sig)
+			return pub.Verify(hash, sig, v == dbftutil.ExtraV1)
 		default:
 			return fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedBlockSignatureScheme, ss)
 		}
@@ -1895,6 +1899,12 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	// Header's Extra (validators addresses / global TPKE pub and validators
 	// signatures) are treated as changeable and are not filled in during Prepare.
 	if chain.Config().IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne)) {
+		var extraVersion dbftutil.ExtraVersion
+		if chain.Config().IsNeoXEthSig(new(big.Int).Add(header.Number, bigOne)) {
+			extraVersion = dbftutil.ExtraV2
+		} else {
+			extraVersion = dbftutil.ExtraV1
+		}
 		var sigScheme dbftutil.ExtraV1SignatureScheme
 		// Enforce multisignature block signing if we're not at NeoXAMEV yet.
 		if c.config.enforceECDSASignatures || !chain.Config().IsNeoXAMEV(header.Number) {
@@ -1902,7 +1912,7 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 		} else {
 			sigScheme = dbftutil.ExtraV1ThresholdScheme
 		}
-		header.Extra = []byte{byte(dbftutil.ExtraV1), byte(sigScheme)}
+		header.Extra = []byte{byte(extraVersion), byte(sigScheme)}
 	} else {
 		header.Extra = []byte{byte(dbftutil.ExtraV0)}
 	}
@@ -2325,6 +2335,9 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 }
 
 func (c *DBFT) getBlockExtraVersion(height *big.Int) dbftutil.ExtraVersion {
+	if c.chain.Config().IsNeoXEthSig(height) || c.chain.Config().IsNeoXEthSig(new(big.Int).Add(height, bigOne)) {
+		return dbftutil.ExtraV2
+	}
 	if c.chain.Config().IsNeoXAMEV(height) || c.chain.Config().IsNeoXAMEV(new(big.Int).Add(height, bigOne)) {
 		return dbftutil.ExtraV1
 	}
@@ -2542,7 +2555,7 @@ func honestSealHash(header *types.Header) ([]byte, error) {
 	switch v := extra.Version(); v {
 	case dbftutil.ExtraV0:
 		sealHash = HonestSealHashV0(header).Bytes()
-	case dbftutil.ExtraV1:
+	case dbftutil.ExtraV1, dbftutil.ExtraV2:
 		switch ss := extra.SignatureScheme(); ss {
 		case dbftutil.ExtraV1ECDSAScheme:
 			sealHash = HonestSealHashV0(header).Bytes()
@@ -2594,7 +2607,7 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 	switch v := dbftutil.Extra(header.Extra).Version(); v {
 	case dbftutil.ExtraV0:
 		hashableExtraLen = dbftutil.HashableExtraV0Len
-	case dbftutil.ExtraV1:
+	case dbftutil.ExtraV1, dbftutil.ExtraV2:
 		hashableExtraLen = dbftutil.HashableExtraV1Len
 	default:
 		panic(fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, v)) // a dangerous program bug

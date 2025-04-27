@@ -23,21 +23,25 @@ const (
 	// ExtraV1 is the 1-st version of block's Extra. Extra of this version includes global
 	// TPKE public key followed by aggregated validators' threshold signature.
 	ExtraV1 ExtraVersion = 0x01
+	// ExtraV2 is the 2-nd version of block's Extra. Extra of this version includes global
+	// TPKE public key followed by aggregated validators' threshold signature compatible
+	// with Ethereum CL.
+	ExtraV2 ExtraVersion = 0x02
 )
 
 // ExtraV1SignatureScheme is a scheme of block signature (ECDSA multisignature or
-// threshold signature) that is used for ExtraV1 extra.
+// threshold signature) that is used for ExtraV1 and ExtraV2 extra.
 type ExtraV1SignatureScheme byte
 
 const (
 	// ExtraV1SignatureSchemeLen is the length of block signing scheme version for
-	// ExtraV1 extra.
+	// ExtraV1 and ExtraV2 extra.
 	ExtraV1SignatureSchemeLen = 1
 	// ExtraV1ECDSAScheme denotes fallback ECDSA multisignature block signing scheme
-	// for ExtraV1 extra.
+	// for ExtraV1 and ExtraV2 extra.
 	ExtraV1ECDSAScheme ExtraV1SignatureScheme = 0x00
 	// ExtraV1ThresholdScheme denotes primary threshold signature block signing scheme
-	// for ExtraV1 extra.
+	// for ExtraV1 and ExtraV2 extra.
 	ExtraV1ThresholdScheme ExtraV1SignatureScheme = 0x01
 )
 
@@ -48,7 +52,7 @@ const (
 	// ExtraV0 extra version.
 	HashableExtraV0Len = ExtraVersionLen
 	// HashableExtraV1Len is the length of hashable part of block extra data for
-	// ExtraV1 extra version.
+	// ExtraV1 and ExtraV2 extra version.
 	HashableExtraV1Len = ExtraVersionLen + ExtraV1SignatureSchemeLen + common.HashLength // signing version byte + fallback NextConsensus address
 )
 
@@ -74,8 +78,8 @@ func (e Extra) Version() ExtraVersion {
 	return ExtraVersion(e[0])
 }
 
-// SignatureScheme returns version of block signature for ExtraV1. It's no-op to apply
-// this method to non-V1 extra.
+// SignatureScheme returns version of block signature for ExtraV1 and ExtraV2. It's no-op
+// to apply this method to V0 extra.
 func (e Extra) SignatureScheme() ExtraV1SignatureScheme {
 	return ExtraV1SignatureScheme(e[1])
 }
@@ -90,7 +94,7 @@ func (e Extra) ECDSASigners(n int) ([]common.Address, [][]byte, error) {
 	switch e.Version() {
 	case ExtraV0:
 		buf = e[HashableExtraV0Len:]
-	case ExtraV1:
+	case ExtraV1, ExtraV2:
 		buf = e[HashableExtraV1Len:]
 	default:
 		return nil, nil, fmt.Errorf("%w: %d", ErrUnexpectedExtraVersion, e.Version())
@@ -124,8 +128,8 @@ func (e Extra) ECDSASigners(n int) ([]common.Address, [][]byte, error) {
 // ThresholdSigners returns global public key and threshold signature.
 func (e Extra) ThresholdSigners() (*tpke.PublicKey, *tpke.Signature, error) {
 	// Sanity check.
-	if v := e.Version(); v != ExtraV1 {
-		return nil, nil, fmt.Errorf("%w: expected %d, got %d", ErrUnexpectedExtraVersion, ExtraV1, v)
+	if v := e.Version(); v != ExtraV1 && v != ExtraV2 {
+		return nil, nil, fmt.Errorf("%w: expected %d or %d, got %d", ErrUnexpectedExtraVersion, ExtraV1, ExtraV2, v)
 	}
 	if ss := e.SignatureScheme(); ss != ExtraV1ThresholdScheme {
 		return nil, nil, fmt.Errorf("%w: expected %d, got %d", ErrUnexpectedBlockSignatureScheme, ExtraV1ThresholdScheme, ss)
