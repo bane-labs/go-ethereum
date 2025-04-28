@@ -44,10 +44,17 @@ func (s *Signer) signBlock(extra dbftutil.Extra, blockRLP []byte) ([]byte, error
 			if err != nil {
 				return nil, fmt.Errorf("failed to sign share: %w", err)
 			}
+			share.Neg()
 			return share.Bytes(), nil
 		default:
 			return nil, fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedBlockSignatureScheme, ss)
 		}
+	case dbftutil.ExtraV2:
+		share, err := s.AmevKeystore.SignShare(blockRLP)
+		if err != nil {
+			return nil, fmt.Errorf("failed to sign share: %w", err)
+		}
+		return share.Bytes(), nil
 	default:
 		return nil, fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, v)
 	}

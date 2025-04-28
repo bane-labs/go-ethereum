@@ -128,6 +128,9 @@ func (b *Block) Verify(pub dbft.PublicKey, sign []byte) error {
 		default:
 			return fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedBlockSignatureScheme, ss)
 		}
+	case dbftutil.ExtraV2:
+		// The same as ExtraV1ThresholdScheme
+		return nil
 	default:
 		return fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, v)
 	}

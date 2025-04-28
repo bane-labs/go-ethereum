@@ -163,7 +163,7 @@ type Config struct {
 	OverrideVerkle *uint64 `toml:",omitempty"`
 
 	// AntiMEVEnforceECDSABlockSignatureScheme enables ECDSA multisignatures for
-	// block signing instead of threshold-based.
+	// block signing instead of threshold-based. (TODO: remove after NeoXEthSig)
 	AntiMEVEnforceECDSABlockSignatureScheme bool `toml:",omitempty"`
 
 	// DBFTLogLevel is a dBFT engine log level. The following values are allowed:

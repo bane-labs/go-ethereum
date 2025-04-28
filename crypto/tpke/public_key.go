@@ -126,7 +126,8 @@ func (pk *PublicKey) VerifySig(msg []byte, sig *Signature) bool {
 func (pk *PublicKey) Verify(hash *bls12381.G2Affine, sig *Signature) error {
 	_, _, g1, _ := bls12381.Generators()
 
-	// e(pk,g2Hash)=e(g1,-sig)
+	// e(pk,g2Hash)=e(g1,sig)
+	g1.Neg(&g1)
 	ok, err := bls12381.PairingCheck([]bls12381.G1Affine{*pk.pg1, g1}, []bls12381.G2Affine{*hash, *sig.pg2})
 	if err != nil {
 		return fmt.Errorf("invalid signature: %w", err)

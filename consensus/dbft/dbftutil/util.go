@@ -23,6 +23,9 @@ const (
 	// ExtraV1 is the 1-st version of block's Extra. Extra of this version includes global
 	// TPKE public key followed by aggregated validators' threshold signature.
 	ExtraV1 ExtraVersion = 0x01
+	// ExtraV2 is the 2-nd version of block's Extra. Extra of this version includes global
+	// TPKE public key followed by aggregated validators' threshold signature
+	ExtraV2 ExtraVersion = 0x02
 )
 
 // ExtraV1SignatureScheme is a scheme of block signature (ECDSA multisignature or
@@ -50,6 +53,9 @@ const (
 	// HashableExtraV1Len is the length of hashable part of block extra data for
 	// ExtraV1 extra version.
 	HashableExtraV1Len = ExtraVersionLen + ExtraV1SignatureSchemeLen + common.HashLength // signing version byte + fallback NextConsensus address
+	// HashableExtraV2Len is the length of hashable part of block extra data for
+	// ExtraV2 extra version.
+	HashableExtraV2Len = ExtraVersionLen
 )
 
 var (
@@ -124,17 +130,24 @@ func (e Extra) ECDSASigners(n int) ([]common.Address, [][]byte, error) {
 // ThresholdSigners returns global public key and threshold signature.
 func (e Extra) ThresholdSigners() (*tpke.PublicKey, *tpke.Signature, error) {
 	// Sanity check.
-	if v := e.Version(); v != ExtraV1 {
-		return nil, nil, fmt.Errorf("%w: expected %d, got %d", ErrUnexpectedExtraVersion, ExtraV1, v)
+	var pubOffset int
+	switch e.Version() {
+	case ExtraV1:
+		if len(e) != HashableExtraV1Len+tpke.PublicKeyLen+tpke.SignatureLen {
+			return nil, nil, fmt.Errorf("%w: %d", ErrUnexpectedExtraLen, len(e))
+		}
+		if ss := e.SignatureScheme(); ss != ExtraV1ThresholdScheme {
+			return nil, nil, fmt.Errorf("%w: expected %d, got %d", ErrUnexpectedBlockSignatureScheme, ExtraV1ThresholdScheme, ss)
+		}
+		pubOffset = HashableExtraV1Len
+	case ExtraV2:
+		if len(e) != HashableExtraV2Len+tpke.PublicKeyLen+tpke.SignatureLen {
+			return nil, nil, fmt.Errorf("%w: %d", ErrUnexpectedExtraLen, len(e))
+		}
+		pubOffset = HashableExtraV2Len
+	default:
+		return nil, nil, fmt.Errorf("%w: %d", ErrUnexpectedExtraVersion, e.Version())
 	}
-	if ss := e.SignatureScheme(); ss != ExtraV1ThresholdScheme {
-		return nil, nil, fmt.Errorf("%w: expected %d, got %d", ErrUnexpectedBlockSignatureScheme, ExtraV1ThresholdScheme, ss)
-	}
-
-	if len(e) != HashableExtraV1Len+tpke.PublicKeyLen+tpke.SignatureLen {
-		return nil, nil, fmt.Errorf("%w: %d", ErrUnexpectedExtraLen, len(e))
-	}
-	pubOffset := HashableExtraV1Len
 	// Recover global public key and threshold signature.
 	pub, err := tpke.NewPublicKeyFromBytes(e[pubOffset : pubOffset+tpke.PublicKeyLen])
 	if err != nil {
