@@ -1237,8 +1237,8 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 
 // newLocalPool returns an initialized instance of LegacyPool with default config
 // except that locals are prohibited and journal is not stored.
-func (c *DBFT) newLocalPool(parent *types.Header) *legacypool.LegacyPool {
-	p := legacypool.New(legacypool.Config{
+func (c *DBFT) newLocalPool(parent *types.Header) *legacypool.SimpleLegacyPool {
+	p := legacypool.NewSimple(legacypool.Config{
 		Locals:                  nil,
 		NoLocals:                true,
 		Journal:                 "",
