@@ -68,12 +68,14 @@ func (sk *PrivateKey) DecryptShare(ct *CipherText) *DecryptionShare {
 }
 
 // SignShare returns a signature share for input message
-func (sk *PrivateKey) SignShare(msg []byte) *SignatureShare {
+func (sk *PrivateKey) SignShare(msg []byte, negateResult bool) *SignatureShare {
 	// S=H(msg)*sk
 	g2Hash, _ := bls12381.HashToG2(msg, Domain)
-	sig := new(bls12381.G2Affine).ScalarMultiplication(&g2Hash, sk.fr)
-	sig.Neg(sig)
-	return &SignatureShare{
-		pg2: sig,
+	sig := &SignatureShare{
+		pg2: new(bls12381.G2Affine).ScalarMultiplication(&g2Hash, sk.fr),
 	}
+	if negateResult {
+		return sig.Neg()
+	}
+	return sig
 }

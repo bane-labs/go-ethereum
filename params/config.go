@@ -348,12 +348,13 @@ type ChainConfig struct {
 
 	// Fork scheduling was switched from blocks to timestamps here
 
-	ShanghaiTime  *uint64  `json:"shanghaiTime,omitempty"`  // Shanghai switch time (nil = no fork, 0 = already on shanghai)
-	NeoXDKGBlock  *big.Int `json:"NeoXDKGBlock,omitempty"`  // Block-based switch to DKG related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
-	NeoXAMEVBlock *big.Int `json:"neoXAMEVBlock,omitempty"` // Block-based switch to anti-MEV related logic for dBFT (nil = no fork, 0 = already activated)
-	CancunTime    *uint64  `json:"cancunTime,omitempty"`    // Cancun switch time (nil = no fork, 0 = already on cancun)
-	PragueTime    *uint64  `json:"pragueTime,omitempty"`    // Prague switch time (nil = no fork, 0 = already on prague)
-	VerkleTime    *uint64  `json:"verkleTime,omitempty"`    // Verkle switch time (nil = no fork, 0 = already on verkle)
+	ShanghaiTime    *uint64  `json:"shanghaiTime,omitempty"`    // Shanghai switch time (nil = no fork, 0 = already on shanghai)
+	NeoXDKGBlock    *big.Int `json:"neoXDKGBlock,omitempty"`    // Block-based switch to DKG related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
+	NeoXAMEVBlock   *big.Int `json:"neoXAMEVBlock,omitempty"`   // Block-based switch to anti-MEV related logic for dBFT (nil = no fork, 0 = already activated)
+	NeoXEthSigBlock *big.Int `json:"neoXEthSigBlock,omitempty"` // Block-based switch to fix block signature from NeoXAMEVBlock (nil = no fork, 0 = already activated)
+	CancunTime      *uint64  `json:"cancunTime,omitempty"`      // Cancun switch time (nil = no fork, 0 = already on cancun)
+	PragueTime      *uint64  `json:"pragueTime,omitempty"`      // Prague switch time (nil = no fork, 0 = already on prague)
+	VerkleTime      *uint64  `json:"verkleTime,omitempty"`      // Verkle switch time (nil = no fork, 0 = already on verkle)
 
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
@@ -489,6 +490,9 @@ func (c *ChainConfig) Description() string {
 	if c.NeoXAMEVBlock != nil {
 		banner += fmt.Sprintf(" - NeoXAMEV:                    #%-8v\n", c.NeoXAMEVBlock)
 	}
+	if c.NeoXEthSigBlock != nil {
+		banner += fmt.Sprintf(" - NeoXEthSig:           	   #%-8v\n", c.NeoXEthSigBlock)
+	}
 	if c.CancunTime != nil {
 		banner += fmt.Sprintf(" - Cancun:                      @%-10v (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/cancun.md)\n", *c.CancunTime)
 	}
@@ -596,6 +600,11 @@ func (c *ChainConfig) IsNeoXAMEV(num *big.Int) bool {
 	return c.IsLondon(num) && isBlockForked(c.NeoXAMEVBlock, num)
 }
 
+// IsNeoXEthSig returns whether num is either equal to the NeoXEthSig fork block or greater.
+func (c *ChainConfig) IsNeoXEthSig(num *big.Int) bool {
+	return c.IsLondon(num) && isBlockForked(c.NeoXEthSigBlock, num)
+}
+
 // IsCancun returns whether num is either equal to the Cancun fork time or greater.
 func (c *ChainConfig) IsCancun(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.CancunTime, time)
@@ -663,8 +672,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "grayGlacierBlock", block: c.GrayGlacierBlock, optional: true},
 		{name: "mergeNetsplitBlock", block: c.MergeNetsplitBlock, optional: true},
 		{name: "shanghaiTime", timestamp: c.ShanghaiTime},
-		{name: "neoXAMEVDKG", block: c.NeoXDKGBlock, optional: true},
+		{name: "neoXDKGBlock", block: c.NeoXDKGBlock, optional: true},
 		{name: "neoXAMEVBlock", block: c.NeoXAMEVBlock, optional: true},
+		{name: "neoXEthSigBlock", block: c.NeoXEthSigBlock, optional: true},
 		{name: "cancunTime", timestamp: c.CancunTime, optional: true},
 		{name: "pragueTime", timestamp: c.PragueTime, optional: true},
 		{name: "verkleTime", timestamp: c.VerkleTime, optional: true},
@@ -766,10 +776,13 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 		return newTimestampCompatError("Shanghai fork timestamp", c.ShanghaiTime, newcfg.ShanghaiTime)
 	}
 	if isForkBlockIncompatible(c.NeoXDKGBlock, newcfg.NeoXDKGBlock, headNumber) {
-		return newBlockCompatError("NeoXAMEV fork block", c.NeoXDKGBlock, newcfg.NeoXDKGBlock)
+		return newBlockCompatError("NeoXDKG fork block", c.NeoXDKGBlock, newcfg.NeoXDKGBlock)
 	}
 	if isForkBlockIncompatible(c.NeoXAMEVBlock, newcfg.NeoXAMEVBlock, headNumber) {
 		return newBlockCompatError("NeoXAMEV fork block", c.NeoXAMEVBlock, newcfg.NeoXAMEVBlock)
+	}
+	if isForkBlockIncompatible(c.NeoXEthSigBlock, newcfg.NeoXEthSigBlock, headNumber) {
+		return newBlockCompatError("NeoXEthSig fork block", c.NeoXEthSigBlock, newcfg.NeoXEthSigBlock)
 	}
 	if isForkTimestampIncompatible(c.CancunTime, newcfg.CancunTime, headTimestamp) {
 		return newTimestampCompatError("Cancun fork timestamp", c.CancunTime, newcfg.CancunTime)
