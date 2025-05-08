@@ -403,13 +403,8 @@ func (p *TxPool) Nonce(addr common.Address) uint64 {
 	return nonce
 }
 
-// GetCachedTransaction returns the encrypted transaction cached in tx pool.
+// GetCachedTransaction returns the transaction cached in amev cache pool.
 func (p *TxPool) GetCachedTransaction(nonce uint64, sender common.Address) *types.Transaction {
-	for _, subpool := range p.subpools {
-		if tx := subpool.GetCachedTransaction(nonce, sender); tx != nil {
-			return tx
-		}
-	}
 	return nil
 }
 

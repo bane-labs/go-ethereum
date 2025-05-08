@@ -19,7 +19,6 @@ package legacypool
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"math/big"
 	"sort"
@@ -27,7 +26,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
@@ -35,7 +33,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -68,9 +65,6 @@ var (
 	// ErrTxPoolOverflow is returned if the transaction pool is full and can't accept
 	// another remote transaction.
 	ErrTxPoolOverflow = errors.New("txpool is full")
-	// ErrTxPoolCached is returned if the transaction is cached in cached list successfully.
-	// We use an error return here because we don't want the nonce to change after the tx is cached.
-	ErrTxPoolCached = errors.New("transaction cached")
 )
 
 var (
@@ -85,12 +79,6 @@ var (
 	pendingReplaceMeter   = metrics.NewRegisteredMeter("txpool/pending/replace", nil)
 	pendingRateLimitMeter = metrics.NewRegisteredMeter("txpool/pending/ratelimit", nil) // Dropped due to rate limiting
 	pendingNofundsMeter   = metrics.NewRegisteredMeter("txpool/pending/nofunds", nil)   // Dropped due to out-of-funds\
-
-	// Metrics for the cached pool
-	cachedReplaceMeter   = metrics.NewRegisteredMeter("txpool/cached/replace", nil)
-	cachedRateLimitMeter = metrics.NewRegisteredMeter("txpool/cached/ratelimit", nil) // Dropped due to rate limiting
-	cachedNofundsMeter   = metrics.NewRegisteredMeter("txpool/cached/nofunds", nil)   // Dropped due to out-of-funds
-	cachedEvictionMeter  = metrics.NewRegisteredMeter("txpool/cached/eviction", nil)
 
 	// Metrics for the queued pool
 	queuedDiscardMeter   = metrics.NewRegisteredMeter("txpool/queued/discard", nil)
@@ -119,7 +107,6 @@ var (
 	queuedGauge  = metrics.NewRegisteredGauge("txpool/queued", nil)
 	localGauge   = metrics.NewRegisteredGauge("txpool/local", nil)
 	slotsGauge   = metrics.NewRegisteredGauge("txpool/slots", nil)
-	cachedGauge  = metrics.NewRegisteredGauge("txpool/cached", nil)
 
 	reheapTimer = metrics.NewRegisteredTimer("txpool/reheap", nil)
 )
@@ -159,8 +146,6 @@ type Config struct {
 
 	ReannounceTimeThreshold time.Duration // Threshold for announcing pending transactions again
 	ReannounceRemotes       bool          // Whether reannounce remote transactions or not
-
-	SignaturesCache bool // Whether tx pool just cache transaction signatures
 }
 
 // DefaultConfig contains the default configurations for the transaction pool.
@@ -251,7 +236,6 @@ type LegacyPool struct {
 
 	reserve txpool.AddressReserver       // Address reserver to ensure exclusivity across subpools
 	pending map[common.Address]*list     // All currently processable transactions
-	cached  map[common.Address]*list     // All currently cached transactions
 	queue   map[common.Address]*list     // Queued but non-processable transactions
 	beats   map[common.Address]time.Time // Last heartbeat from each known account
 	all     *lookup                      // All transactions to allow lookups
@@ -456,16 +440,6 @@ func (pool *LegacyPool) loop() {
 					queuedEvictionMeter.Mark(int64(len(list)))
 				}
 			}
-			for addr := range pool.cached {
-				// Any cached old enough should be removed
-				if time.Since(pool.beats[addr]) > pool.config.Lifetime {
-					list := pool.cached[addr].Flatten()
-					for _, tx := range list {
-						pool.removeTx(tx.Hash(), true, true)
-					}
-					cachedEvictionMeter.Mark(int64(len(list)))
-				}
-			}
 			pool.mu.Unlock()
 
 		// Handle local transaction journal rotation
@@ -579,16 +553,9 @@ func (pool *LegacyPool) Nonce(addr common.Address) uint64 {
 	return pool.pendingNonces.get(addr)
 }
 
-// GetCachedTransaction returns the cached transaction cached in tx pool.
+// GetCachedTransaction returns the transaction cached in amev pool, so we just return nil here.
 func (pool *LegacyPool) GetCachedTransaction(nonce uint64, sender common.Address) *types.Transaction {
-	pool.mu.RLock()
-	defer pool.mu.RUnlock()
-
-	list := pool.cached[sender]
-	if list == nil {
-		return nil
-	}
-	return list.txs.items[nonce]
+	return nil
 }
 
 // Stats retrieves the current pool stats, namely the number of pending and the
@@ -824,9 +791,8 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 	var (
 		_, hasPending = pool.pending[from]
 		_, hasQueued  = pool.queue[from]
-		_, hasCached  = pool.cached[from]
 	)
-	if !hasPending && !hasQueued && !hasCached {
+	if !hasPending && !hasQueued {
 		if err := pool.reserve(from, true); err != nil {
 			return false, err
 		}
@@ -843,7 +809,7 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 		}()
 	}
 	// If the transaction pool is full, discard underpriced transactions
-	if uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots+pool.config.GlobalSlots+pool.config.GlobalQueue {
+	if uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots+pool.config.GlobalQueue {
 		// If the new transaction is underpriced, don't accept it
 		if !isLocal && pool.priced.Underpriced(tx) {
 			log.Trace("Discarding underpriced transaction", "hash", hash, "gasTipCap", tx.GasTipCap(), "gasFeeCap", tx.GasFeeCap())
@@ -863,7 +829,7 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 		// New transaction is better than our worse ones, make room for it.
 		// If it's a local transaction, forcibly discard all available transactions.
 		// Otherwise if we can't make enough room for new one, abort the operation.
-		drop, success := pool.priced.Discard(pool.all.Slots()-int(pool.config.GlobalSlots+pool.config.GlobalSlots+pool.config.GlobalQueue)+numSlots(tx), isLocal)
+		drop, success := pool.priced.Discard(pool.all.Slots()-int(pool.config.GlobalSlots+pool.config.GlobalQueue)+numSlots(tx), isLocal)
 
 		// Special case, we still can't make the room for the new remote one.
 		if !isLocal && !success {
@@ -902,55 +868,6 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 
 			pool.changesSinceReorg += dropped
 		}
-	}
-
-	// If signaturescache config is true and from local, then just cache the tx and return an special error for signature cache
-	if pool.config.SignaturesCache && local && !antimev.IsEnvelope(tx) {
-		// Check tx ready to process based pending list. The transaction's nonce should be equal to the pending nonce
-		pendingNonce := pool.pendingNonces.get(from)
-		if tx.Nonce() < pendingNonce {
-			return false, fmt.Errorf("%w: next nonce %v, tx nonce %v", core.ErrNonceTooLow, pendingNonce, tx.Nonce())
-		} else if tx.Nonce() > pendingNonce {
-			return false, fmt.Errorf("%w: next nonce %v, tx nonce %v", core.ErrNonceTooHigh, pendingNonce, tx.Nonce())
-		}
-
-		// Try to insert the transaction into the cached queue, we always use new tx if nonce is the same
-		if pool.cached[from] == nil {
-			pool.cached[from] = newList(true)
-		}
-		list := pool.cached[from]
-
-		// Nonce already pending, we always use new tx
-		inserted, old := list.Replace(tx)
-		if !inserted {
-			return false, txpool.ErrReplaceUnderpriced
-		}
-		// New transaction is better, replace old one
-		if old != nil {
-			pool.all.Remove(old.Hash())
-			pool.priced.Removed(1)
-			cachedReplaceMeter.Mark(1)
-		}
-		pool.all.Add(tx, isLocal)
-		pool.priced.Put(tx, isLocal)
-		log.Trace("Pooled new executable cached transaction", "hash", hash, "from", from, "to", tx.To())
-
-		// Successful promotion, bump the heartbeat
-		pool.beats[from] = time.Now()
-
-		// Mark local addresses and journal local transactions
-		if local && !pool.locals.contains(from) {
-			log.Info("Setting new local account", "address", from)
-			pool.locals.add(from)
-			pool.priced.Removed(pool.all.RemoteToLocals(pool.locals)) // Migrate the remotes if it's marked as local first time.
-		}
-		if isLocal {
-			localGauge.Inc(1)
-		}
-
-		err := ErrTxPoolCached
-		log.Info(err.Error(), "txHash", hash, "sender", from, "nonce", tx.Nonce())
-		return inserted, err
 	}
 
 	// Try to replace an existing transaction in the pending pool
@@ -995,22 +912,6 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 
 	log.Trace("Pooled new future transaction", "hash", hash, "from", from, "to", tx.To())
 	return replaced, nil
-}
-
-func getTxSignature(tx *types.Transaction) []byte {
-	V, R, S := tx.RawSignatureValues()
-	// encode the signature in uncompressed format
-	r, s := R.Bytes(), S.Bytes()
-	sig := make([]byte, crypto.SignatureLength)
-	copy(sig[32-len(r):32], r)
-	copy(sig[64-len(s):64], s)
-	// for legacy type, before EIP155: V = V +27, after EIP 155: V = V + 27 + 8 + 2*chianId
-	if tx.Type() == types.LegacyTxType {
-		V = V.Sub(V, big.NewInt(27)).Mod(V, common.Big2)
-	}
-
-	sig[64] = byte(V.Uint64())
-	return sig
 }
 
 // isGapped reports whether the given transaction is immediately executable.
@@ -1308,9 +1209,8 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 			var (
 				_, hasPending = pool.pending[addr]
 				_, hasQueued  = pool.queue[addr]
-				_, hasCached  = pool.cached[addr]
 			)
-			if !hasPending && !hasQueued && !hasCached {
+			if !hasPending && !hasQueued {
 				pool.reserve(addr, false)
 			}
 		}()
@@ -1350,24 +1250,7 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 		}
 		if future.Empty() {
 			delete(pool.queue, addr)
-			if pool.cached[addr] == nil || pool.cached[addr].Empty() {
-				delete(pool.beats, addr)
-			}
-		}
-	}
-	// Remove the transaction from the cached lists
-	if cached := pool.cached[addr]; cached != nil {
-		if removed, invalids := cached.Remove(tx); removed {
-			// If no more cached transactions are left, remove the list
-			if cached.Empty() {
-				delete(pool.cached, addr)
-				if pool.queue[addr] == nil || pool.queue[addr].Empty() {
-					delete(pool.beats, addr)
-				}
-			}
-			// Reduce the cached counter
-			cachedGauge.Dec(int64(1 + len(invalids)))
-			return 1 + len(invalids)
+			delete(pool.beats, addr)
 		}
 	}
 	return 0
@@ -1531,10 +1414,9 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		}
 		pool.pendingNonces.setAll(nonces)
 	}
-	// Ensure pool.queue, pool.pending and pool.cached sizes stay within the configured limits.
+	// Ensure pool.queue and pool.pending sizes stay within the configured limits.
 	pool.truncatePending()
 	pool.truncateQueue()
-	pool.truncateCached()
 
 	dropBetweenReorgHistogram.Update(int64(pool.changesSinceReorg))
 	pool.changesSinceReorg = 0 // Reset change counter
@@ -1717,12 +1599,8 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 		// Delete the entire queue entry if it became empty.
 		if list.Empty() {
 			delete(pool.queue, addr)
-			_, hasPending := pool.pending[addr]
-			_, hasCached := pool.cached[addr]
-			if !hasCached {
-				delete(pool.beats, addr)
-			}
-			if !hasPending && !hasCached {
+			delete(pool.beats, addr)
+			if _, ok := pool.pending[addr]; !ok {
 				pool.reserve(addr, false)
 			}
 		}
@@ -1862,47 +1740,6 @@ func (pool *LegacyPool) truncateQueue() {
 	}
 }
 
-// truncateCached drops the oldest transactions in the cached if the pool is above the global slot limit.
-func (pool *LegacyPool) truncateCached() {
-	count := uint64(0)
-	for _, list := range pool.cached {
-		count += uint64(list.Len())
-	}
-	if count <= pool.config.GlobalSlots {
-		return
-	}
-
-	// Sort all accounts with cached transactions by heartbeat
-	addresses := make(addressesByHeartbeat, 0, len(pool.cached))
-	for addr := range pool.cached {
-		addresses = append(addresses, addressByHeartbeat{addr, pool.beats[addr]})
-	}
-	sort.Sort(sort.Reverse(addresses))
-
-	// Drop transactions until the total is below the limit
-	for drop := count - pool.config.GlobalSlots; drop > 0 && len(addresses) > 0; {
-		addr := addresses[len(addresses)-1]
-		list := pool.cached[addr.address]
-		addresses = addresses[:len(addresses)-1]
-		// Drop all transactions if they are less than the overflow
-		if size := uint64(list.Len()); size <= drop {
-			for _, tx := range list.Flatten() {
-				pool.removeTx(tx.Hash(), true, true)
-			}
-			drop -= size
-			cachedRateLimitMeter.Mark(int64(size))
-			continue
-		}
-		// Otherwise drop only last few transactions
-		txs := list.Flatten()
-		for i := len(txs) - 1; i >= 0 && drop > 0; i-- {
-			pool.removeTx(txs[i].Hash(), true, true)
-			drop--
-			cachedRateLimitMeter.Mark(1)
-		}
-	}
-}
-
 // demoteUnexecutables removes invalid and processed transactions from the pools
 // executable/pending queue and any subsequent transactions that become unexecutable
 // are moved back into the future queue.
@@ -1958,63 +1795,7 @@ func (pool *LegacyPool) demoteUnexecutables() {
 		// Delete the entire pending entry if it became empty.
 		if list.Empty() {
 			delete(pool.pending, addr)
-			_, hasQueued := pool.queue[addr]
-			_, hasCached := pool.cached[addr]
-			if !hasQueued && !hasCached {
-				pool.reserve(addr, false)
-			}
-		}
-	}
-
-	// remove non-executable transactions from cached pool
-	for addr, list := range pool.cached {
-		nonce := pool.pendingNonces.get(addr)
-
-		// Drop all transactions that are deemed too old (less than pending nonce)
-		olds := list.Forward(nonce)
-		for _, tx := range olds {
-			hash := tx.Hash()
-			pool.all.Remove(hash)
-			log.Trace("Removed old cached transaction", "hash", hash)
-		}
-		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
-		balance := pool.currentState.GetBalance(addr)
-		if pool.pending[addr] != nil {
-			balance = balance.Sub(balance, pool.pending[addr].totalcost)
-		}
-		drops, invalids := list.Filter(balance, gasLimit)
-		for _, tx := range drops {
-			hash := tx.Hash()
-			log.Trace("Removed unpayable cached transaction", "hash", hash)
-			pool.all.Remove(hash)
-		}
-		cachedNofundsMeter.Mark(int64(len(drops)))
-
-		for _, tx := range invalids {
-			hash := tx.Hash()
-			log.Trace("Removed future cached transaction", "hash", hash)
-			pool.all.Remove(hash)
-		}
-		cachedGauge.Dec(int64(len(olds) + len(drops) + len(invalids)))
-		if pool.locals.contains(addr) {
-			localGauge.Dec(int64(len(olds) + len(drops) + len(invalids)))
-		}
-		// If there's a gap in front, alert (should never happen) and remove all transactions
-		if list.Len() > 0 && list.txs.Get(nonce) == nil {
-			gapped := list.Cap(0)
-			for _, tx := range gapped {
-				hash := tx.Hash()
-				log.Error("Removed future cached transaction", "hash", hash)
-				pool.all.Remove(hash)
-			}
-			cachedGauge.Dec(int64(len(gapped)))
-		}
-		// Delete the entire cached entry if it became empty.
-		if list.Empty() {
-			delete(pool.cached, addr)
-			_, hasQueued := pool.queue[addr]
-			_, hasPending := pool.pending[addr]
-			if !hasQueued && !hasPending {
+			if _, ok := pool.queue[addr]; !ok {
 				pool.reserve(addr, false)
 			}
 		}

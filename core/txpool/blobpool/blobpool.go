@@ -1610,7 +1610,7 @@ func (p *BlobPool) Nonce(addr common.Address) uint64 {
 	return p.state.GetNonce(addr)
 }
 
-// GetCachedTransaction returns the encrypted transaction cached in tx pool, so we just return nil here.
+// GetCachedTransaction returns the transaction cached in amev pool, so we just return nil here.
 func (pool *BlobPool) GetCachedTransaction(nonce uint64, sender common.Address) *types.Transaction {
 	return nil
 }

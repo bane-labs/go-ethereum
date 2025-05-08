@@ -40,7 +40,6 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
-	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -2529,62 +2528,6 @@ func TestSlotCount(t *testing.T) {
 	if slots := numSlots(bigTx); slots != 11 {
 		t.Fatalf("big transactions slot count mismatch: have %d want %d", slots, 11)
 	}
-}
-
-// Test the signature cache
-func TestSignatureCache(t *testing.T) {
-	t.Parallel()
-
-	// init pool
-	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
-
-	config := testTxPoolConfig
-	// enable signature cache
-	config.SignaturesCache = true
-	config.AccountQueue = 64
-	pool := New(config, blockchain)
-	pool.Init(testTxPoolConfig.PriceLimit, blockchain.CurrentBlock(), makeAddressReserver())
-	defer pool.Close()
-
-	// Create a number of test accounts and fund them (last one will be the local)
-	keys := make([]*ecdsa.PrivateKey, 2)
-	for i := 0; i < len(keys); i++ {
-		keys[i], _ = crypto.GenerateKey()
-		testAddBalance(pool, crypto.PubkeyToAddress(keys[i].PublicKey), big.NewInt(1000000))
-		fmt.Println(crypto.PubkeyToAddress(keys[i].PublicKey))
-	}
-
-	// Generate a batch of transactions from the local account and import them
-	txs := make([]*types.Transaction, 3*pool.config.AccountQueue)
-	for i := uint64(0); i < 3*pool.config.AccountQueue; i++ {
-		txs[i] = transaction(i%pool.config.AccountQueue, 100000, keys[0])
-	}
-	errs := pool.addLocals(txs)
-	for _, err := range errs {
-		require.Error(t, err, ErrTxPoolCached)
-	}
-
-	// Check that we only cache processable transaction from account keys[0]
-	require.Equal(t, 1, pool.all.Count())
-	// check we repalce the transaction of index 0 with index 2*pool.config.AccountQueue
-	tx := txs[2*pool.config.AccountQueue]
-	sender := crypto.PubkeyToAddress(keys[0].PublicKey)
-	tx1 := pool.GetCachedTransaction(tx.Nonce(), sender)
-	require.NotNil(t, tx1)
-	require.Equal(t, tx.Hash(), tx1.Hash())
-
-	// use an other account and dynamicFeeTx, we should cache total 2 signatures
-	for i := uint64(0); i < 3*pool.config.AccountQueue; i++ {
-		txs[i] = dynamicFeeTx(i, 100000, big.NewInt(1), big.NewInt(1), keys[1])
-	}
-	pool.addLocals(txs)
-	require.Equal(t, 2, pool.all.Count())
-	tx = txs[0]
-	sender = crypto.PubkeyToAddress(keys[1].PublicKey)
-	tx2 := pool.GetCachedTransaction(tx.Nonce(), sender)
-	require.NotNil(t, tx2)
-	require.Equal(t, tx.Hash(), tx2.Hash())
 }
 
 // Benchmarks the speed of validating the contents of the pending queue of the
