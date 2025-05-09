@@ -146,6 +146,7 @@ type Config struct {
 
 	ReannounceTimeThreshold time.Duration // Threshold for announcing pending transactions again
 	ReannounceRemotes       bool          // Whether reannounce remote transactions or not
+	AMEVCache               bool          // Whether to use AMEV cache or not
 }
 
 // DefaultConfig contains the default configurations for the transaction pool.
@@ -367,7 +368,6 @@ func (pool *LegacyPool) ResetStatic() {
 // setEmptyLists sets all transaction records of the pool to empty.
 func (pool *LegacyPool) setEmptyLists() {
 	pool.pending = make(map[common.Address]*list)
-	pool.cached = make(map[common.Address]*list)
 	pool.queue = make(map[common.Address]*list)
 	pool.beats = make(map[common.Address]time.Time)
 	pool.all = newLookup()

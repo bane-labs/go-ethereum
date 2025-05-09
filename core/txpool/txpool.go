@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -38,6 +39,9 @@ const (
 	TxStatusQueued
 	TxStatusPending
 	TxStatusIncluded
+
+	// Numbers less than 64 are reserved for geth official use.
+	TxStatusCached = 64
 )
 
 var (
@@ -324,6 +328,10 @@ func (p *TxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
 
 		// Try to find a subpool that accepts the transaction
 		for j, subpool := range p.subpools {
+			// If the transaction is local, then the cache pool condition judgment is required.
+			if !local && reflect.TypeOf(subpool).Name() == "CachePool" {
+				continue
+			}
 			if subpool.Filter(tx) {
 				txsets[j] = append(txsets[j], tx)
 				splits[i] = j
@@ -369,9 +377,11 @@ func (p *TxPool) Pending(filter PendingFilter) map[common.Address][]*LazyTransac
 // SubscribeTransactions registers a subscription for new transaction events,
 // supporting feeding only newly seen or also resurrected transactions.
 func (p *TxPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {
-	subs := make([]event.Subscription, len(p.subpools))
-	for i, subpool := range p.subpools {
-		subs[i] = subpool.SubscribeTransactions(ch, reorgs)
+	subs := []event.Subscription{}
+	for _, subpool := range p.subpools {
+		if sub := subpool.SubscribeTransactions(ch, reorgs); sub != nil {
+			subs = append(subs, sub)
+		}
 	}
 	return p.subs.Track(event.JoinSubscriptions(subs...))
 }
@@ -405,6 +415,11 @@ func (p *TxPool) Nonce(addr common.Address) uint64 {
 
 // GetCachedTransaction returns the transaction cached in amev cache pool.
 func (p *TxPool) GetCachedTransaction(nonce uint64, sender common.Address) *types.Transaction {
+	for _, subpool := range p.subpools {
+		if tx := subpool.GetCachedTransaction(nonce, sender); tx != nil {
+			return tx
+		}
+	}
 	return nil
 }
 
