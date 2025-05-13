@@ -2240,7 +2240,7 @@ events:
 		oldView := c.dbft.ViewNumber
 		select {
 		case <-c.quit:
-			log.Info("shutting down dBFT event loop")
+			log.Info("Shutting down dBFT event loop")
 			break events
 		case <-c.dbft.Timer.C():
 			h, v := c.dbft.Timer.Height(), c.dbft.Timer.View()
@@ -2279,7 +2279,7 @@ events:
 			c.handleChainBlock(b.Block.Header(), true)
 		case err := <-c.chainHeadSub.Err():
 			// System has stopped.
-			log.Info("Stopping dBFT service since block subscriptions are stopped")
+			log.Info("Stopping dBFT event loop since block subscriptions are stopped")
 			if err != nil {
 				log.Info("Block subscriptions error",
 					"error", err.Error())
@@ -2359,7 +2359,7 @@ drainLoop:
 	close(c.executeProofTaskChan)
 	close(c.loopWatchTaskChan)
 	close(c.eventLoopToCloseCh)
-	log.Info("dBFT event loop finished")
+	log.Info("dBFT event loop stopped")
 }
 
 // OnPayload handles Payload receive.
