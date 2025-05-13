@@ -2364,8 +2364,8 @@ drainLoop:
 
 // OnPayload handles Payload receive.
 func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
-	if c.dbft == nil || !c.dbftStarted.Load() {
-		log.Debug("Skip dBFT payload handling: dbft is inactive or not started yet", "hash", cp.Hash())
+	if c.dbft == nil || !c.eventLoopRunning.Load() {
+		log.Debug("Skip dBFT payload handling: dBFT event loop is inactive or not started yet", "hash", cp.Hash())
 		return nil
 	}
 	if c.syncing.Load() {
