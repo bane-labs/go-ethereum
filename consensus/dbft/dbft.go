@@ -2159,9 +2159,8 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 		select {
 		case <-c.quit:
 			return errShutdown
-		default:
+		case <-time.After(time.Second):
 		}
-		time.Sleep(time.Second)
 	}
 
 	// And then retrieve proposal and check it.
