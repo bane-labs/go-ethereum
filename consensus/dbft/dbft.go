@@ -217,8 +217,11 @@ type DBFT struct {
 	// irrespectively of the chain's height.
 	signerConfig types.Signer
 
-	quit               chan struct{}
-	eventLoopToCloseCh chan struct{}
+	// Channels used for graceful engine shutdown.
+	quit                     chan struct{}
+	eventLoopToCloseCh       chan struct{}
+	dkgTaskExecutorToCloseCh chan struct{}
+	dkgTaskWatcherToCloseCh  chan struct{}
 
 	// various native contract APIs that dBFT uses.
 	backend         *ethapi.Backend
@@ -235,10 +238,9 @@ type DBFT struct {
 	fakeDiff bool // Skip difficulty verifications
 
 	// The fields for dkg
-	dkgSnapshot          *snapshot
-	executeProofTaskChan chan *taskList
-	loopWatchTaskChan    chan struct{}
-	appendWatchTaskChan  chan *taskList
+	dkgSnapshot       *snapshot
+	dkgTaskExecutorCh chan *taskList
+	dkgTaskWatcherCh  chan *taskList
 }
 
 // config represents Engine configuration.
@@ -313,16 +315,17 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
 		signerConfig:    types.LatestSigner(chainCfg),
 
-		quit:               make(chan struct{}),
-		eventLoopToCloseCh: make(chan struct{}),
+		quit:                     make(chan struct{}),
+		eventLoopToCloseCh:       make(chan struct{}),
+		dkgTaskExecutorToCloseCh: make(chan struct{}),
+		dkgTaskWatcherToCloseCh:  make(chan struct{}),
 
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 		dkgIndexCache:   lru.NewCache[uint64, []int](validatorsCacheCap),
 
-		dkgSnapshot:          NewSnapshot(),
-		executeProofTaskChan: make(chan *taskList, 2), // The maximum number of task lists per epoch is 3
-		loopWatchTaskChan:    make(chan struct{}),
-		appendWatchTaskChan:  make(chan *taskList, 2),
+		dkgSnapshot:       NewSnapshot(),
+		dkgTaskExecutorCh: make(chan *taskList, 2), // The maximum number of task lists per epoch is 3
+		dkgTaskWatcherCh:  make(chan *taskList, 2),
 	}
 
 	var err error
@@ -2062,8 +2065,8 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		// Start DKG task dispatcher prior to sealing proposal awaiting since new
 		// block may be discovered during awaiting which may lead to DKG-related
 		// transactions submission.
-		go c.loopExecuteProofTask()
-		go c.loopWatchTaskList()
+		go c.dkgTaskExecutor()
+		go c.dkgTaskWatcher()
 
 		// Current head of the header chain may be above the block chain, and
 		// dBFT must always be based on the latest state data (i.e. blocks), thus,
@@ -2355,8 +2358,6 @@ drainLoop:
 	close(c.messages)
 	close(c.txs)
 	close(c.chainHeadEvents)
-	close(c.executeProofTaskChan)
-	close(c.loopWatchTaskChan)
 	close(c.eventLoopToCloseCh)
 	log.Info("dBFT event loop stopped")
 }
@@ -2703,6 +2704,8 @@ func (c *DBFT) Close() error {
 		if c.eventLoopRunning.Load() {
 			<-c.eventLoopToCloseCh
 		}
+		<-c.dkgTaskExecutorToCloseCh
+		<-c.dkgTaskWatcherToCloseCh
 	}
 	log.Info("dBFT engine stopped")
 	return nil
