@@ -174,7 +174,7 @@ type DBFT struct {
 
 	dbft             *dbft.DBFT[common.Hash]
 	dbftStarted      atomic.Bool
-	eventLoopStarted atomic.Bool
+	eventLoopRunning atomic.Bool
 	blockQueue       *blockQueue
 
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
@@ -217,8 +217,8 @@ type DBFT struct {
 	// irrespectively of the chain's height.
 	signerConfig types.Signer
 
-	quit     chan struct{}
-	finished chan struct{}
+	quit               chan struct{}
+	eventLoopToCloseCh chan struct{}
 
 	// various native contract APIs that dBFT uses.
 	backend         *ethapi.Backend
@@ -313,8 +313,8 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
 		signerConfig:    types.LatestSigner(chainCfg),
 
-		quit:     make(chan struct{}),
-		finished: make(chan struct{}),
+		quit:               make(chan struct{}),
+		eventLoopToCloseCh: make(chan struct{}),
 
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 		dkgIndexCache:   lru.NewCache[uint64, []int](validatorsCacheCap),
@@ -2223,7 +2223,7 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 }
 
 func (c *DBFT) eventLoop() {
-	c.eventLoopStarted.Store(true)
+	c.eventLoopRunning.Store(true)
 	log.Info("dBFT event loop started")
 
 	// Track of the downloader events to be in sync with miner's status since miner's
@@ -2342,6 +2342,7 @@ events:
 	if !downloaderEvents.Closed() {
 		downloaderEvents.Unsubscribe()
 	}
+	c.eventLoopRunning.Store(false)
 drainLoop:
 	for {
 		select {
@@ -2357,7 +2358,7 @@ drainLoop:
 	close(c.chainHeadEvents)
 	close(c.executeProofTaskChan)
 	close(c.loopWatchTaskChan)
-	close(c.finished)
+	close(c.eventLoopToCloseCh)
 	log.Info("dBFT event loop finished")
 }
 
@@ -2700,8 +2701,8 @@ func (c *DBFT) Close() error {
 	if c.dbftStarted.CompareAndSwap(true, false) {
 		log.Info("Shutting down dBFT engine")
 		close(c.quit)
-		if c.eventLoopStarted.CompareAndSwap(true, false) {
-			<-c.finished
+		if c.eventLoopRunning.Load() {
+			<-c.eventLoopToCloseCh
 		}
 	}
 	log.Info("dBFT engine stopped")
