@@ -26,11 +26,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
@@ -302,6 +304,23 @@ func (pool *LegacyPool) Filter(tx *types.Transaction) bool {
 	default:
 		return false
 	}
+}
+
+// FilterAdd returns whether the given transaction can be consumed by the legacy
+// pool, specifically, whether it is a Legacy, AccessList or Dynamic transaction.
+//
+// If you know whether this transaction is local or not, it is recommended to
+// use this method for filtering. Currently, it is being used in the txpool.Add
+// method.
+func (pool *LegacyPool) FilterAdd(tx *types.Transaction, local bool) bool {
+	res := pool.Filter(tx)
+	if res && pool.config.AMEVCache && local {
+		// Check if the transaction is an envelope transaction
+		if !antimev.IsEnvelope(tx) && tx.To().Cmp(systemcontracts.KeyManagementProxyHash) != 0 {
+			res = false
+		}
+	}
+	return res
 }
 
 // Init sets the gas price needed to keep a transaction in the pool and the chain

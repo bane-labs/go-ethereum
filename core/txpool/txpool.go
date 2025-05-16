@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"reflect"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -328,11 +327,7 @@ func (p *TxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
 
 		// Try to find a subpool that accepts the transaction
 		for j, subpool := range p.subpools {
-			// If the transaction is local, then the cache pool condition judgment is required.
-			if !local && reflect.TypeOf(subpool).Name() == "CachePool" {
-				continue
-			}
-			if subpool.Filter(tx) {
+			if subpool.FilterAdd(tx, local) {
 				txsets[j] = append(txsets[j], tx)
 				splits[i] = j
 				break

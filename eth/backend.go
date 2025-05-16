@@ -248,7 +248,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			Lifetime:     config.TxPool.Lifetime,
 		}
 		cachePool := cachepool.New(cfg, eth.blockchain)
-		// The cachepool should be placed at the top.
 		subPools = append([]txpool.SubPool{cachePool}, subPools...)
 	}
 
