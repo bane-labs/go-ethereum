@@ -2,10 +2,10 @@ package beacon
 
 import (
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/p2p"
 )
@@ -18,7 +18,14 @@ const (
 
 // Handshake executes the eth protocol handshake, negotiating version number,
 // network IDs, difficulties, head and genesis blocks.
-func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis common.Hash, forkID forkid.ID, forkFilter forkid.Filter, blobSync bool) error {
+func (p *Peer) Handshake(network uint64, chain *core.BlockChain, blobSync bool) error {
+	var (
+		genesis    = chain.Genesis()
+		latest     = chain.CurrentBlock()
+		forkID     = forkid.NewID(chain.Config(), genesis, latest.Number.Uint64(), latest.Time)
+		forkFilter = forkid.NewFilter(chain)
+		td         = chain.GetTd(latest.Hash(), latest.Number.Uint64())
+	)
 	// Send out own handshake in a new thread
 	errc := make(chan error, 2)
 
@@ -29,14 +36,14 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 			ProtocolVersion: uint32(p.version),
 			NetworkID:       network,
 			TD:              td,
-			Head:            head,
-			Genesis:         genesis,
+			Head:            latest.Hash(),
+			Genesis:         genesis.Hash(),
 			ForkID:          forkID,
 			BlobSync:        blobSync,
 		})
 	}()
 	go func() {
-		errc <- p.readStatus(network, &status, genesis, forkFilter)
+		errc <- p.readStatus(network, &status, genesis.Hash(), forkFilter)
 	}()
 	timeout := time.NewTimer(handshakeTimeout)
 	defer timeout.Stop()

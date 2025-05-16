@@ -117,7 +117,7 @@ func TestTxIndexer(t *testing.T) {
 	}
 	for _, c := range cases {
 		db, _ := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), "", "", false)
-		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), append([]types.Receipts{{}}, receipts...), big.NewInt(0))
+		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), types.EncodeBlockReceiptLists(append([]types.Receipts{{}}, receipts...)), big.NewInt(0))
 
 		// Index the initial blocks from ancient store
 		indexer := &txIndexer{
@@ -236,7 +236,8 @@ func TestTxIndexerRepair(t *testing.T) {
 	}
 	for _, c := range cases {
 		db, _ := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), "", "", false)
-		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), append([]types.Receipts{{}}, receipts...), big.NewInt(0))
+		encReceipts := types.EncodeBlockReceiptLists(append([]types.Receipts{{}}, receipts...))
+		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), encReceipts, big.NewInt(0))
 
 		// Index the initial blocks from ancient store
 		indexer := &txIndexer{
@@ -426,7 +427,8 @@ func TestTxIndexerReport(t *testing.T) {
 	}
 	for _, c := range cases {
 		db, _ := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), "", "", false)
-		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), append([]types.Receipts{{}}, receipts...), big.NewInt(0))
+		encReceipts := types.EncodeBlockReceiptLists(append([]types.Receipts{{}}, receipts...))
+		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), encReceipts, big.NewInt(0))
 
 		// Index the initial blocks from ancient store
 		indexer := &txIndexer{
