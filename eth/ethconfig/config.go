@@ -170,6 +170,24 @@ type Config struct {
 	// "debug", "info", "warn", "error", "dpanic", "panic", "fatal". If not specified,
 	// "info" is used.
 	DBFTLogLevel string `toml:",omitempty"`
+
+	// OneMsgR1CSPath is the file path of R1CS for proving one message encryption.
+	OneMsgR1CSPath string `toml:",omitempty"`
+
+	// TwoMsgR1CSPath is the file path of R1CS for proving two message encryption.
+	TwoMsgR1CSPath string `toml:",omitempty"`
+
+	// SevenMsgR1CSPath is the file path of proving key for proving seven message encryption.
+	SevenMsgR1CSPath string `toml:",omitempty"`
+
+	// OneMsgProvingKeyPath is the file path of proving key for proving one message encryption.
+	OneMsgProvingKeyPath string `toml:",omitempty"`
+
+	// TwoMsgProvingKeyPath is the file path of proving key for proving two message encryption.
+	TwoMsgProvingKeyPath string `toml:",omitempty"`
+
+	// SevenMsgProvingKeyPath is the file path of proving key for proving seven message encryption.
+	SevenMsgProvingKeyPath string `toml:",omitempty"`
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain config.

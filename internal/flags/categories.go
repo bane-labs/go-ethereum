@@ -27,6 +27,7 @@ const (
 	BlobPoolCategory   = "TRANSACTION POOL (BLOB)"
 	PerfCategory       = "PERFORMANCE TUNING"
 	AccountCategory    = "ACCOUNT"
+	DKGCategory        = "DKG"
 	AntiMEVCategory    = "ANTI-MEV"
 	APICategory        = "API AND CONSOLE"
 	NetworkingCategory = "NETWORKING"

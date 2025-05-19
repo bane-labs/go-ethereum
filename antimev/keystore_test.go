@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/bane-labs/zk-dkg/encryption"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
 	"github.com/ethereum/go-ethereum/common"
@@ -106,9 +107,9 @@ func TestShare(t *testing.T) {
 	for i := 0; i < size; i++ {
 		// No reshare to handle
 		kss[i].OnSharePeriodStart()
-		msgs, pvss, err := kss[i].DKGShare(pubs)
+		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
-		contract.shareMsgs[i] = msgs
+		contract.shareMsgs[i] = encryptShareMessages(pubs, ss)
 		contract.sharePVSSes[i] = pvss
 	}
 	// Send secret sharing messages
@@ -161,9 +162,9 @@ func TestReshare(t *testing.T) {
 	for i := 0; i < size; i++ {
 		// No reshare to handle
 		kss[i].OnSharePeriodStart()
-		msgs, pvss, err := kss[i].DKGShare(pubs)
+		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
-		contract.shareMsgs[i] = msgs
+		contract.shareMsgs[i] = encryptShareMessages(pubs, ss)
 		contract.sharePVSSes[i] = pvss
 	}
 	// Send secret sharing messages
@@ -192,13 +193,13 @@ func TestReshare(t *testing.T) {
 	// Execute resharing this time
 	for i := 0; i < size; i++ {
 		kss[i].OnSharePeriodStart()
-		rMsgs, rPvss, err := kss[i].DKGReshare(pubs)
+		rss, rPvss, err := kss[i].DKGReshare()
 		require.NoError(t, err)
-		sMsgs, sPvss, err := kss[i].DKGShare(pubs)
+		ss, sPvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
-		contract.shareMsgs[i] = sMsgs
+		contract.shareMsgs[i] = encryptShareMessages(pubs, ss)
 		contract.sharePVSSes[i] = sPvss
-		contract.reshareMsgs[i] = rMsgs
+		contract.reshareMsgs[i] = encryptShareMessages(pubs, rss)
 		contract.resharePVSSes[i] = rPvss
 	}
 	// Send resharing messages
@@ -257,9 +258,9 @@ func TestGroupChange(t *testing.T) {
 		kss[i].OnSharePeriodStart()
 		// Sharing members, i ranges from 0 to 6
 		if i < size {
-			msgs, pvss, err := kss[i].DKGShare(pubs[:size])
+			ss, pvss, err := kss[i].DKGShare()
 			require.NoError(t, err)
-			contract.shareMsgs[i] = msgs
+			contract.shareMsgs[i] = encryptShareMessages(pubs[:size], ss)
 			contract.sharePVSSes[i] = pvss
 		}
 		// Not a member, do nothing, i is 7
@@ -292,15 +293,15 @@ func TestGroupChange(t *testing.T) {
 		kss[i].OnSharePeriodStart()
 		// Resharing members
 		if i < size {
-			rMsgs, rPvss, err := kss[i].DKGReshare(pubs[1:])
+			rss, rPvss, err := kss[i].DKGReshare()
 			require.NoError(t, err)
-			contract.reshareMsgs[i] = rMsgs
+			contract.reshareMsgs[i] = encryptShareMessages(pubs[1:], rss)
 			contract.resharePVSSes[i] = rPvss
 		}
 		if i > 0 {
-			sMsgs, sPvss, err := kss[i].DKGShare(pubs[1:])
+			ss, sPvss, err := kss[i].DKGShare()
 			require.NoError(t, err)
-			contract.shareMsgs[i-1] = sMsgs
+			contract.shareMsgs[i-1] = encryptShareMessages(pubs[1:], ss)
 			contract.sharePVSSes[i-1] = sPvss
 		}
 	}
@@ -361,9 +362,9 @@ func TestRecover(t *testing.T) {
 		kss[i].OnSharePeriodStart()
 		// Sharing members, i ranges from 0 to 6
 		if i < size {
-			msgs, pvss, err := kss[i].DKGShare(pubs[:size])
+			ss, pvss, err := kss[i].DKGShare()
 			require.NoError(t, err)
-			contract.shareMsgs[i] = msgs
+			contract.shareMsgs[i] = encryptShareMessages(pubs[:size], ss)
 			contract.sharePVSSes[i] = pvss
 		}
 		// Not a member, do nothing, i is 7
@@ -396,9 +397,9 @@ func TestRecover(t *testing.T) {
 		kss[i].OnSharePeriodStart()
 		// Resharing members
 		if i < size {
-			rMsgs, rPvss, err := kss[i].DKGReshare(pubs[1:])
+			rss, rPvss, err := kss[i].DKGReshare()
 			require.NoError(t, err)
-			contract.reshareMsgs[i] = rMsgs
+			contract.reshareMsgs[i] = encryptShareMessages(pubs[1:], rss)
 			contract.resharePVSSes[i] = rPvss
 		}
 	}
@@ -416,9 +417,9 @@ func TestRecover(t *testing.T) {
 		kss[i].OnRecoverPeriodStart()
 		require.NoError(t, err)
 		if i < 7 {
-			msgs, err := kss[i].DKGRecover(rIdxs, rPubs)
+			ss, err := kss[i].DKGRecover(rIdxs)
 			require.NoError(t, err)
-			contract.recoverMsgs[i] = msgs
+			contract.recoverMsgs[i] = encryptShareMessages(rPubs, ss)
 		}
 	}
 	// Send recover messages, broadcast to all nodes
@@ -427,8 +428,9 @@ func TestRecover(t *testing.T) {
 		require.NoError(t, err)
 	}
 	// Recover the lost resharing messages
-	msgs, pvss, err := kss[7].TryRecoverReshare(pubs[1:])
+	ss, pvss, err := kss[7].TryRecoverReshare()
 	require.NoError(t, err)
+	msgs := encryptShareMessages(pubs[1:], ss)
 	for i := 1; i < len(addrs); i++ {
 		err := kss[i].ReceiveSecretReshare(i, 7, msgs, pvss)
 		require.NoError(t, err)
@@ -483,4 +485,26 @@ func decodeBLS12381FieldElement(in []byte) (fp.Element, error) {
 	copy(res[:], in[16:])
 
 	return fp.BigEndian.Element(&res)
+}
+
+func encryptShareMessages(pubs []*ecies.PublicKey, shares []*big.Int) [][]byte {
+	if len(pubs) != len(shares) {
+		panic("implementation bug")
+	}
+	msgs := make([][]byte, len(pubs))
+	for i, s := range shares {
+		msgs[i] = encryptShareMessage(pubs[i], s)
+	}
+	return msgs
+}
+
+func encryptShareMessage(pub *ecies.PublicKey, share *big.Int) []byte {
+	nonce, ess, _, bigR := encryption.ECIESEncrypt(pub, share.Bytes())
+	bigRBytes := bigR.RawBytes()
+	// len(message)=64+12+len(ess)
+	msg := make([]byte, 0)
+	msg = append(msg, bigRBytes[:]...)
+	msg = append(msg, nonce...)
+	msg = append(msg, ess...)
+	return msg
 }

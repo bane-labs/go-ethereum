@@ -5,8 +5,6 @@ import (
 	"errors"
 	"math/big"
 
-	"github.com/bane-labs/zk-dkg/encryption"
-	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
 )
 
@@ -72,12 +70,12 @@ func (tkg *thresholdKeyGroup) copy() *thresholdKeyGroup {
 }
 
 // prepare generates local secrets and returns sharing messages.
-func (tkg *thresholdKeyGroup) prepare(threshold int, messagePubKeys []*ecies.PublicKey) ([][]byte, *tpke.PVSS, error) {
+func (tkg *thresholdKeyGroup) prepare(size int, threshold int) ([]*big.Int, *tpke.PVSS) {
 	// Generate local secret
 	secret := tpke.RandomSecret(threshold)
 	tkg.pendingSecrets = append(tkg.pendingSecrets, secret)
 	// Generate and encrypt messages to share the secret
-	return generateShareMessages(secret, messagePubKeys)
+	return generateShares(secret, size)
 }
 
 // confirmSecret requires the final contract-received PVSS to confirm the secret.
@@ -114,34 +112,35 @@ func (tkg *thresholdKeyGroup) aggregate(scaler int, aggregatedCmt []byte, isRece
 }
 
 // recover returns received shared secrets with different message encryption.
-func (tkg *thresholdKeyGroup) recover(secretIndexs []int, receiverEthPubKeys []*ecies.PublicKey) ([][]byte, error) {
+func (tkg *thresholdKeyGroup) recover(secretIndexs []int) ([]*big.Int, error) {
 	// Generate message
-	srms := make([][]byte, len(secretIndexs))
+	ss := make([]*big.Int, len(secretIndexs))
 	for i, index := range secretIndexs {
 		arrIndex := index - 1
 		if tkg.receivedSecrets[arrIndex] == nil {
 			return nil, ErrUnrecoverable
 		}
-		srms[i] = encryptShareMessage(receiverEthPubKeys[i], tkg.receivedSecrets[arrIndex].Bytes())
+		ss[i] = tkg.receivedSecrets[arrIndex]
 	}
 
-	return srms, nil
+	return ss, nil
 }
 
 // reshare does almost the same as dkgPrepare, but local secret is reused to
 // produce the same global public key.
-func (tkg *thresholdKeyGroup) reshare(messagePubKeys []*ecies.PublicKey) ([][]byte, *tpke.PVSS, error) {
+func (tkg *thresholdKeyGroup) reshare(size int) ([]*big.Int, *tpke.PVSS, error) {
 	// Check if has a local secret
 	if tkg.localSecret == nil {
 		return nil, nil, ErrNoSecretToReshare
 	}
 	// Generate and encrypt messages to share the secret
-	return generateShareMessages(tkg.localSecret.Renovate(), messagePubKeys)
+	ss, pvss := generateShares(tkg.localSecret.Renovate(), size)
+	return ss, pvss, nil
 }
 
 // reshareRecovered tries to recover a dkg secret, and returns an error if
 // the attempt fails when shares are not enough.
-func (tkg *thresholdKeyGroup) reshareRecovered(threshold int, messagePubKeys []*ecies.PublicKey) ([][]byte, *tpke.PVSS, error) {
+func (tkg *thresholdKeyGroup) reshareRecovered(size int, threshold int) ([]*big.Int, *tpke.PVSS, error) {
 	// Collect all shares
 	is := make([]int, 0)
 	fis := make([]*big.Int, 0)
@@ -156,37 +155,17 @@ func (tkg *thresholdKeyGroup) reshareRecovered(threshold int, messagePubKeys []*
 	}
 	// Recover the secret
 	tkg.localSecret = tpke.RecoverSecret(is[:threshold], fis[:threshold])
-	return tkg.reshare(messagePubKeys)
+	return tkg.reshare(size)
 }
 
-// generateShareMessages generates secret sharing messages.
+// generateShares generates shares from a secret.
 // Secret shares can be decrypted by specific receivers, but pvss is public.
-func generateShareMessages(secret *tpke.Secret, messagePubkeys []*ecies.PublicKey) ([][]byte, *tpke.PVSS, error) {
+func generateShares(secret *tpke.Secret, size int) ([]*big.Int, *tpke.PVSS) {
 	// Random value for pvss generation
 	randR := randScalar()
-	size := len(messagePubkeys)
 	pvss, ss := tpke.GenerateSecretShares(randR, size, secret)
-	// Generate message
-	messages := make([][]byte, size)
-	for i, key := range messagePubkeys {
-		if key == nil {
-			return nil, nil, ErrInvalidMessageKey
-		}
-		messages[i] = encryptShareMessage(key, ss[i].Bytes())
-	}
 
-	return messages, pvss, nil
-}
-
-func encryptShareMessage(pub *ecies.PublicKey, share []byte) []byte {
-	nonce, ess, _, bigR := encryption.ECIESEncrypt(pub, share)
-	bigRBytes := bigR.RawBytes()
-	// len(message)=64+12+len(ess)
-	msg := make([]byte, 0)
-	msg = append(msg, bigRBytes[:]...)
-	msg = append(msg, nonce...)
-	msg = append(msg, ess...)
-	return msg
+	return ss, pvss
 }
 
 // receiveShareMessage verifies received sharing messages. It verifies shared
