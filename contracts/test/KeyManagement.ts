@@ -36,6 +36,12 @@ describe("KeyManagement", function () {
         KeyManagement = new ethers.Contract(SYS_SETTINGS.KEYMANAGEMENT_PROXY, contract.abi, signers[0]);
     });
 
+    describe("ZK_VERSION", function () {
+        it("Should return the correct ZK version", async function () {
+            expect(await KeyManagement.ZK_VERSION()).to.eq(1);
+        });
+    });
+
     describe("verifyShareProof", function () {
         it("Should not revert if receive a valid proof for seven messages", async function () {
             const pubkeys = [
