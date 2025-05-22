@@ -1053,7 +1053,7 @@ func getZKVersion(backend *ethapi.Backend, state *state.StateDB, header *types.H
 // readFromContract calls a contract with ABI-packed inputs.
 func readFromContract(res interface{}, backend *ethapi.Backend, contract common.Address, contractAbi abi.ABI, state *state.StateDB, header *types.Header, method string, args ...interface{}) error {
 	if backend == nil {
-		return errors.New("eth API backend is not initialized, DKG can't function properly")
+		return errNotInitializedBackend
 	}
 	data, err := contractAbi.Pack(method, args...)
 	if err != nil {
@@ -1080,7 +1080,7 @@ func readFromContract(res interface{}, backend *ethapi.Backend, contract common.
 // sendTransactionToKeyManagement sends a transaction to KeyManagement contract.
 func sendTransactionToKeyManagement(api *ethapi.TransactionAPI, signer common.Address, method string, zkVersion uint64, args ...interface{}) (*common.Hash, error) {
 	if api == nil {
-		return nil, errors.New("eth transaction API is not initialized, DKG can't function properly")
+		return nil, errNotInitializedBackend
 	}
 	// Choose different abi depends on the ZK settings.
 	var abi abi.ABI
