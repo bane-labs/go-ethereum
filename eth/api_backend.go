@@ -40,6 +40,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/eth/verifier"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/miner"
@@ -562,4 +563,20 @@ func (b *EthAPIBackend) BlobSidecarByRoot(ctx context.Context, hash common.Hash,
 		return nil, errors.New("blob sidecar index out of range")
 	}
 	return blockBlobs[index], nil
+}
+
+func (b *EthAPIBackend) ExtensiblePayloadsVerifier() *verifier.ExtensibleVerifier {
+	return b.eth.extensibleVerifier
+}
+
+func (b *EthAPIBackend) IsExtensibleAllowed(blockNum uint64, addr common.Address) error {
+	return b.eth.extensibleVerifier.IsExtensibleAllowed(blockNum, addr)
+}
+
+func (b *EthAPIBackend) GetValidatorsSorted(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	return b.eth.extensibleVerifier.GetValidatorsSorted(blockNum, state, header)
+}
+
+func (b *EthAPIBackend) GetDKGIndex(blockNum uint64, validatorIndex int) (int, error) {
+	return b.eth.extensibleVerifier.GetDKGIndex(blockNum, validatorIndex)
 }

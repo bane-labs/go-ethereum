@@ -12,12 +12,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// Ledger is enough of Blockchain to satisfy Pool.
-type Ledger interface {
-	BlockHeight() uint64
-	IsAddressAllowed(common.Address) error
-}
-
 // Pool represents a pool of extensible payloads.
 type Pool struct {
 	lock     sync.RWMutex
@@ -25,11 +19,11 @@ type Pool struct {
 	senders  map[common.Address]*list.List
 	// singleCap represents the maximum number of payloads from a single sender.
 	singleCap int
-	chain     Ledger
+	chain     BlockChainAPI
 }
 
 // NewPool returns a new payload pool using the provided chain.
-func NewPool(bc Ledger, capacity int) *Pool {
+func NewPool(bc BlockChainAPI, capacity int) *Pool {
 	if capacity <= 0 {
 		panic("invalid capacity")
 	}
@@ -82,7 +76,7 @@ func (p *Pool) verify(m *Message) (bool, error) {
 		return false, err
 	}
 
-	h := p.chain.BlockHeight()
+	h := uint64(p.chain.BlockNumber())
 	if h < m.ValidBlockStart || m.ValidBlockEnd <= h {
 		// We can receive a consensus payload for the last or next block
 		// which leads to an unwanted node disconnect.
