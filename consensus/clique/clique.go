@@ -43,7 +43,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"golang.org/x/crypto/sha3"
 )
@@ -649,15 +648,6 @@ func (c *Clique) Close() error {
 // SubscribeEnvelopeEvent creates a subscription that fires for all new envelopes that enter the consensus engine.
 func (c *Clique) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription {
 	return c.scope.Track(c.envelopeFeed.Subscribe(ch))
-}
-
-// APIs implements consensus.Engine, returning the user facing RPC API to allow
-// controlling the signer voting.
-func (c *Clique) APIs(chain consensus.ChainHeaderReader) []rpc.API {
-	return []rpc.API{{
-		Namespace: "clique",
-		Service:   &API{chain: chain, clique: c},
-	}}
 }
 
 // SealHash returns the hash of a block prior to it being sealed.

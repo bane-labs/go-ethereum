@@ -32,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
 )
@@ -450,11 +449,6 @@ func (beacon *Beacon) CalcDifficulty(chain consensus.ChainHeaderReader, time uin
 		return beacon.ethone.CalcDifficulty(chain, time, parent)
 	}
 	return beaconDifficulty
-}
-
-// APIs implements consensus.Engine, returning the user facing RPC APIs.
-func (beacon *Beacon) APIs(chain consensus.ChainHeaderReader) []rpc.API {
-	return beacon.ethone.APIs(chain)
 }
 
 // Close shutdowns the consensus engine
