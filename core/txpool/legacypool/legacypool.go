@@ -278,34 +278,33 @@ func New(config Config, chain BlockChain) *LegacyPool {
 	// Sanitize the input to ensure no vulnerable gas prices are set
 	config = (&config).sanitize()
 
-	// Create the transaction pool with its initial settings
-	pool := &LegacyPool{
-		config:          config,
-		chain:           chain,
-		chainconfig:     chain.Config(),
-		signer:          types.LatestSigner(chain.Config()),
-		pending:         make(map[common.Address]*list),
-		cached:          make(map[common.Address]*list),
-		queue:           make(map[common.Address]*list),
-		beats:           make(map[common.Address]time.Time),
-		all:             newLookup(),
-		reqResetCh:      make(chan *txpoolResetRequest),
-		reqPromoteCh:    make(chan *accountSet),
-		queueTxEventCh:  make(chan *types.Transaction),
-		reorgDoneCh:     make(chan chan struct{}),
-		reorgShutdownCh: make(chan struct{}),
-		initDoneCh:      make(chan struct{}),
-	}
-	pool.locals = newAccountSet(pool.signer)
-	for _, addr := range config.Locals {
-		log.Info("Setting new local account", "address", addr)
-		pool.locals.add(addr)
-	}
-	pool.priced = newPricedList(pool.all)
-
+	// Create the transaction pool and its channels
+	pool := NewStatic(config, chain)
+	pool.reqResetCh = make(chan *txpoolResetRequest)
+	pool.reqPromoteCh = make(chan *accountSet)
+	pool.queueTxEventCh = make(chan *types.Transaction)
+	pool.reorgDoneCh = make(chan chan struct{})
+	pool.reorgShutdownCh = make(chan struct{})
+	pool.initDoneCh = make(chan struct{})
 	if !config.NoLocals && config.Journal != "" {
 		pool.journal = newTxJournal(config.Journal)
 	}
+	return pool
+}
+
+// NewStatic creates a new transaction pool without any channel
+// and journal. A pool created in this way should only be inited
+// with InitStatic.
+func NewStatic(config Config, chain BlockChain) *LegacyPool {
+	// Create the transaction pool with its initial settings
+	pool := &LegacyPool{
+		config:      config,
+		chain:       chain,
+		chainconfig: chain.Config(),
+		signer:      types.LatestSigner(chain.Config()),
+	}
+	pool.setEmptyLists()
+	pool.setInitialLocals()
 	return pool
 }
 
@@ -325,6 +324,32 @@ func (pool *LegacyPool) Filter(tx *types.Transaction) bool {
 // from disk and filtered based on the provided starting settings. The internal
 // goroutines will be spun up and the pool deemed operational afterwards.
 func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserve txpool.AddressReserver) error {
+	// Do basic initializations about reserver, gas price and state
+	pool.InitStatic(gasTip, head, reserve)
+
+	// Start the reorg loop early, so it can handle requests generated during
+	// journal loading.
+	pool.wg.Add(1)
+	go pool.scheduleReorgLoop()
+
+	// If local transactions and journaling is enabled, load from disk
+	if pool.journal != nil {
+		if err := pool.journal.load(pool.addLocals); err != nil {
+			log.Warn("Failed to load transaction journal", "err", err)
+		}
+		if err := pool.journal.rotate(pool.local()); err != nil {
+			log.Warn("Failed to rotate transaction journal", "err", err)
+		}
+	}
+	pool.wg.Add(1)
+	go pool.loop()
+	return nil
+}
+
+// InitStatic sets the gas price needed to keep a transaction in the pool
+// and the chain head to allow balance / nonce checks. This method doesn't
+// start loops or load journals, so the pool can be released automatically.
+func (pool *LegacyPool) InitStatic(gasTip uint64, head *types.Header, reserve txpool.AddressReserver) error {
 	// Set the address reserver to request exclusive access to pooled accounts
 	pool.reserve = reserve
 
@@ -344,24 +369,34 @@ func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserve txpool.A
 	pool.currentHead.Store(head)
 	pool.currentState = statedb
 	pool.pendingNonces = newNoncer(statedb)
-
-	// Start the reorg loop early, so it can handle requests generated during
-	// journal loading.
-	pool.wg.Add(1)
-	go pool.scheduleReorgLoop()
-
-	// If local transactions and journaling is enabled, load from disk
-	if pool.journal != nil {
-		if err := pool.journal.load(pool.addLocals); err != nil {
-			log.Warn("Failed to load transaction journal", "err", err)
-		}
-		if err := pool.journal.rotate(pool.local()); err != nil {
-			log.Warn("Failed to rotate transaction journal", "err", err)
-		}
-	}
-	pool.wg.Add(1)
-	go pool.loop()
 	return nil
+}
+
+// ResetStatic reverts any transaction insertion to a pool created by NewStatic
+// and inited by InitStatic, so that the pool can be reused as only initialized.
+func (pool *LegacyPool) ResetStatic() {
+	pool.setEmptyLists()
+	pool.setInitialLocals()
+	pool.pendingNonces = newNoncer(pool.currentState)
+}
+
+// setEmptyLists sets all transaction records of the pool to empty.
+func (pool *LegacyPool) setEmptyLists() {
+	pool.pending = make(map[common.Address]*list)
+	pool.cached = make(map[common.Address]*list)
+	pool.queue = make(map[common.Address]*list)
+	pool.beats = make(map[common.Address]time.Time)
+	pool.all = newLookup()
+	pool.priced = newPricedList(pool.all)
+}
+
+// setInitialLocals resets the local accounts of the pool to initially configured.
+func (pool *LegacyPool) setInitialLocals() {
+	pool.locals = newAccountSet(pool.signer)
+	for _, addr := range pool.config.Locals {
+		log.Info("Setting new local account", "address", addr)
+		pool.locals.add(addr)
+	}
 }
 
 // loop is the transaction pool's main event loop, waiting for and reacting to
@@ -475,9 +510,9 @@ func (pool *LegacyPool) loop() {
 	}
 }
 
-// CloseSilently is the same as Close(), but doesn't log. Intended to be used
-// for short-lived verification pools (not the main node tx pool).
-func (pool *LegacyPool) CloseSilently() {
+// Close terminates the transaction pool. If the pool is created through NewStatic
+// and inited through InitStatic, then this operation is not necessary.
+func (pool *LegacyPool) Close() error {
 	// Terminate the pool reorger and return
 	close(pool.reorgShutdownCh)
 	pool.wg.Wait()
@@ -485,11 +520,6 @@ func (pool *LegacyPool) CloseSilently() {
 	if pool.journal != nil {
 		pool.journal.close()
 	}
-}
-
-// Close terminates the transaction pool.
-func (pool *LegacyPool) Close() error {
-	pool.CloseSilently()
 	log.Info("Transaction pool stopped")
 	return nil
 }
@@ -1184,6 +1214,10 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, local, sync bool) []error 
 		}
 		errs[nilSlot] = err
 		nilSlot++
+	}
+	// Return if no channel is initialized, ref NewStatic and InitStatic
+	if pool.reqPromoteCh == nil {
+		return errs
 	}
 	// Reorg the pool internals if needed and return
 	done := pool.requestPromoteExecutables(dirtyAddrs)

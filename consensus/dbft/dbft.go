@@ -223,6 +223,10 @@ type DBFT struct {
 	validatorsCache *lru.Cache[uint64, []common.Address]
 	// dkgIndexCache is a cache for storing the index array of the ordered validators
 	dkgIndexCache *lru.Cache[uint64, []int]
+	// staticPool is a legacy pool instance for decrypted transaction verification,
+	// which is initialized once per height at postBlock callback. It should be reset
+	// before any reusage at the same height.
+	staticPool *legacypool.LegacyPool
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
@@ -910,9 +914,11 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	}
 	ethBlock := dbftBlock.ToEthBlock()
 
-	localPool := c.newLocalPool(parent)
-	defer localPool.CloseSilently()
-	errs := localPool.Add(dbftBlock.transactions, false, false)
+	// If is the first view of the block, then initialize static pool with fresh parent.
+	if c.dbft.Context.ViewNumber == 0 {
+		c.initStaticPool(parent)
+	}
+	errs := c.staticPool.Add(dbftBlock.transactions, false, false)
 	for i, err := range errs {
 		if err != nil {
 			log.Warn("proposed PreBlock has invalid transaction",
@@ -923,6 +929,7 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 			return false
 		}
 	}
+	c.staticPool.ResetStatic()
 
 	state, receipts, gasUsed, err := c.chain.VerifyBlock(ethBlock, true)
 	if err != nil {
@@ -1122,7 +1129,6 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			j                  int
 			txx                = make([]*types.Transaction, len(pre.transactions))
 			parent             = c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
-			localPool          = c.newLocalPool(parent)
 			fallbackToEnvelope = func(i int, incrementJ bool, reason string) bool {
 				if len(reason) != 0 {
 					log.Info("Falling back to envelope",
@@ -1130,7 +1136,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 						"envelope index", i,
 						"reason", reason)
 				}
-				errs := localPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
+				errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
 				if errs[0] != nil {
 					log.Info("Falling back to original set of transactions",
 						"envelope hash", pre.transactions[i].Hash(),
@@ -1147,7 +1153,6 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 				return true
 			}
 		)
-		defer localPool.CloseSilently()
 
 		// If we're backup, then pre.finalReceipts are filled in during PreBlock verification;
 		// if we're primary, then reuse receipts got after PrepareRequest construction since
@@ -1156,7 +1161,8 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 		if ctx.IsPrimary() && pre.finalState == nil {
 			receipts = c.sealingReceipts
 		}
-
+		// No need to reinitialize static pool since it was already initialized in verifyPreBlockCb.
+		// Reset the static pool after processing all transactions.
 		for i := range pre.transactions {
 			var isEnvelope = j < len(pre.envelopesData) && pre.envelopesData[j].index == i
 			if !isEnvelope || // pre.transactions[i] is not an envelope, use it as-is.
@@ -1192,7 +1198,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 					break
 				}
 			}
-			errs := localPool.Add([]*types.Transaction{decryptedTx}, false, false)
+			errs := c.staticPool.Add([]*types.Transaction{decryptedTx}, false, false)
 			if errs[0] != nil {
 				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction has pool conflicts: %s", errs[0].Error())) {
 					continue
@@ -1205,6 +1211,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			hasDecryptedTxs = true
 		}
 		pre.finalTransactions = txx
+		c.staticPool.ResetStatic()
 	}
 
 	// Use cached processing results if no new transactions were included into
@@ -1250,10 +1257,10 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 	return nil
 }
 
-// newLocalPool returns an initialized instance of LegacyPool with default config
+// newStaticPool returns an initialized instance of LegacyPool with default config
 // except that locals are prohibited and journal is not stored.
-func (c *DBFT) newLocalPool(parent *types.Header) *legacypool.LegacyPool {
-	p := legacypool.New(legacypool.Config{
+func newStaticPool(chain ChainHeaderReader) *legacypool.LegacyPool {
+	return legacypool.NewStatic(legacypool.Config{
 		Locals:                  nil,
 		NoLocals:                true,
 		Journal:                 "",
@@ -1267,10 +1274,12 @@ func (c *DBFT) newLocalPool(parent *types.Header) *legacypool.LegacyPool {
 		Lifetime:                legacypool.DefaultConfig.Lifetime,
 		ReannounceTimeThreshold: legacypool.DefaultConfig.ReannounceTimeThreshold,
 		ReannounceRemotes:       false,
-	}, c.chain)
-	p.Init(legacypool.DefaultConfig.PriceLimit, parent, func(addr common.Address, reserve bool) error { return nil })
+	}, chain)
+}
 
-	return p
+// initStaticPool initializes the static pool with the provided parent header.
+func (c *DBFT) initStaticPool(parent *types.Header) {
+	c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, func(addr common.Address, reserve bool) error { return nil })
 }
 
 // validateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
@@ -2032,6 +2041,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 	if c.dbftStarted.CompareAndSwap(false, true) {
 		c.chain = chain
 		c.blockQueue.chain = chain
+		c.staticPool = newStaticPool(c.chain)
 
 		// Subscribe for minted blocks prior to accessing current chain header.
 		// Sealing proposal awaiting may take some time during which new blocks may
