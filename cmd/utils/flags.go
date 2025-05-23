@@ -525,6 +525,38 @@ var (
 		Category: flags.AntiMEVCategory,
 	}
 
+	// ZK-DKG settings.
+	OneMsgR1CSPathFlag = &cli.PathFlag{
+		Name:     "dkg.one-msg-r1cs",
+		Usage:    "R1CS file for one message encryption in DKG",
+		Category: flags.DKGCategory,
+	}
+	TwoMsgR1CSPathFlag = &cli.PathFlag{
+		Name:     "dkg.two-msg-r1cs",
+		Usage:    "R1CS file for two message encryption in DKG",
+		Category: flags.DKGCategory,
+	}
+	SevenMsgR1CSPathFlag = &cli.PathFlag{
+		Name:     "dkg.seven-msg-r1cs",
+		Usage:    "R1CS file for seven message encryption in DKG",
+		Category: flags.DKGCategory,
+	}
+	OneMsgProvingKeyPathFlag = &cli.PathFlag{
+		Name:     "dkg.one-msg-pk",
+		Usage:    "Proving key file for one message encryption in DKG",
+		Category: flags.DKGCategory,
+	}
+	TwoMsgProvingKeyPathFlag = &cli.PathFlag{
+		Name:     "dkg.two-msg-pk",
+		Usage:    "Proving key file for two message encryption in DKG",
+		Category: flags.DKGCategory,
+	}
+	SevenMsgProvingKeyPathFlag = &cli.PathFlag{
+		Name:     "dkg.seven-msg-pk",
+		Usage:    "Proving key file for seven message encryption in DKG",
+		Category: flags.DKGCategory,
+	}
+
 	// EVM settings
 	VMEnableDebugFlag = &cli.BoolFlag{
 		Name:     "vmdebug",
@@ -1749,6 +1781,24 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(DBFTLogLevelFlag.Name) {
 		cfg.DBFTLogLevel = ctx.String(DBFTLogLevelFlag.Name)
+	}
+	if ctx.IsSet(OneMsgR1CSPathFlag.Name) {
+		cfg.OneMsgR1CSPath = ctx.String(OneMsgR1CSPathFlag.Name)
+	}
+	if ctx.IsSet(TwoMsgR1CSPathFlag.Name) {
+		cfg.TwoMsgR1CSPath = ctx.String(TwoMsgR1CSPathFlag.Name)
+	}
+	if ctx.IsSet(SevenMsgR1CSPathFlag.Name) {
+		cfg.SevenMsgR1CSPath = ctx.String(SevenMsgR1CSPathFlag.Name)
+	}
+	if ctx.IsSet(OneMsgProvingKeyPathFlag.Name) {
+		cfg.OneMsgProvingKeyPath = ctx.String(OneMsgProvingKeyPathFlag.Name)
+	}
+	if ctx.IsSet(TwoMsgProvingKeyPathFlag.Name) {
+		cfg.TwoMsgProvingKeyPath = ctx.String(TwoMsgProvingKeyPathFlag.Name)
+	}
+	if ctx.IsSet(SevenMsgProvingKeyPathFlag.Name) {
+		cfg.SevenMsgProvingKeyPath = ctx.String(SevenMsgProvingKeyPathFlag.Name)
 	}
 	if !ctx.Bool(SnapshotFlag.Name) || cfg.SnapshotCache == 0 {
 		// If snap-sync is requested, this flag is also required

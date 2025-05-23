@@ -130,4 +130,7 @@ interface IKeyManagement {
 
     // get aggregated commitment by round
     function aggregatedCommitments(uint round) external view returns (bytes memory);
+
+    // get the version number of ZK solution for DKG
+    function ZK_VERSION() external pure returns (uint);
 }

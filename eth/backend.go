@@ -527,6 +527,17 @@ func (s *Ethereum) StartMining() error {
 				log.Info("Initializing BFT consensus",
 					"account", eb.String())
 				bft.Authorize(eb, wallet.SignData, s.antimevKeystore)
+				err := bft.WithZKFiles(
+					s.config.OneMsgR1CSPath,
+					s.config.TwoMsgR1CSPath,
+					s.config.SevenMsgR1CSPath,
+					s.config.OneMsgProvingKeyPath,
+					s.config.TwoMsgProvingKeyPath,
+					s.config.SevenMsgProvingKeyPath,
+				)
+				if err != nil {
+					return fmt.Errorf("DKG initialization failed: %v", err)
+				}
 			}
 		}
 		// If mining is started, we can disable the transaction rejection mechanism

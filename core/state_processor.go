@@ -242,7 +242,7 @@ func processKeyManagementOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error 
 	if !vmenv.ChainConfig().IsNeoXDKG(vmenv.Context.BlockNumber) {
 		return nil
 	}
-	data, err := systemcontracts.KeyManagementABI.Pack("onPersistV2")
+	data, err := systemcontracts.KeyManagementABIBasic.Pack("onPersistV2")
 	if err != nil {
 		return fmt.Errorf("failed to pack KeyManagement onPersistV2 call: %w", err)
 	}

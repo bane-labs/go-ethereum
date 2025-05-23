@@ -161,7 +161,8 @@ type DBFT struct {
 	// dBFT engine is not started.
 	syncing atomic.Bool
 
-	config *config // Consensus engine configuration parameters
+	config  *config  // Consensus engine configuration parameters
+	zkFiles *zkFiles // ZK-DKG configuration parameters
 
 	signer       common.Address    // Ethereum address of the signing key
 	signFn       SignerFn          // Signer function to authorize hashes with
@@ -227,9 +228,10 @@ type DBFT struct {
 	fakeDiff bool // Skip difficulty verifications
 
 	// The fields for dkg
-	dkgSnapshot  *Snapshot
-	txWatchList  []*TxWatchRetry
-	loopTaskChan chan *TxWatchList
+	dkgSnapshot          *snapshot
+	executeProofTaskChan chan *taskList
+	loopWatchTaskChan    chan struct{}
+	appendWatchTaskChan  chan *taskList
 }
 
 // config represents Engine configuration.
@@ -240,6 +242,17 @@ type config struct {
 	enforceECDSASignatures bool
 	logLevel               *zap.AtomicLevel
 	statisticsConfig       StatisticsConfig
+}
+
+// zkFiles represents ZK-DKG configuration about R1CS and PK files.
+type zkFiles struct {
+	// ZK-DKG required parameter files.
+	oneMsgR1CSPath         string
+	twoMsgR1CSPath         string
+	sevenMsgR1CSPath       string
+	oneMsgProvingKeyPath   string
+	twoMsgProvingKeyPath   string
+	sevenMsgProvingKeyPath string
 }
 
 // New creates a DBFT proof-of-authority consensus engine with the initial
@@ -299,8 +312,10 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 		dkgIndexCache:   lru.NewCache[uint64, []int](validatorsCacheCap),
 
-		dkgSnapshot:  NewSnapshot(),
-		loopTaskChan: make(chan *TxWatchList),
+		dkgSnapshot:          NewSnapshot(),
+		executeProofTaskChan: make(chan *taskList, 2), // The maximum number of task lists per epoch is 3
+		loopWatchTaskChan:    make(chan struct{}),
+		appendWatchTaskChan:  make(chan *taskList, 2),
 	}
 
 	var err error
@@ -1507,6 +1522,21 @@ func (c *DBFT) WithTxPool(pool txPool) {
 	c.txpool = pool
 }
 
+// WithZKFiles initializes the paths of ZK required files. Each pair of R1CS and PK
+// will be used in different cases, e.g. r1cs1 and pk1 for 1 message encryption, r1cs7
+// and pk7 for 7 message encryption. Ref https://github.com/bane-labs/zk-dkg.
+func (c *DBFT) WithZKFiles(r1cs1, r1cs2, r1cs7, pk1, pk2, pk7 string) error {
+	c.zkFiles = &zkFiles{
+		oneMsgR1CSPath:         r1cs1,
+		twoMsgR1CSPath:         r1cs2,
+		sevenMsgR1CSPath:       r1cs7,
+		oneMsgProvingKeyPath:   pk1,
+		twoMsgProvingKeyPath:   pk2,
+		sevenMsgProvingKeyPath: pk7,
+	}
+	return nil
+}
+
 // postBlock is a callback that updates latest accepted block data and resets
 // last proposal data. It must be called every time new block arrives from chain
 // or from consensus.
@@ -2013,7 +2043,8 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		// Start DKG task dispatcher prior to sealing proposal awaiting since new
 		// block may be discovered during awaiting which may lead to DKG-related
 		// transactions submission.
-		go c.loopTaskList()
+		go c.loopExecuteProofTask()
+		go c.loopWatchTaskList()
 
 		// Current head of the header chain may be above the block chain, and
 		// dBFT must always be based on the latest state data (i.e. blocks), thus,
@@ -2320,7 +2351,8 @@ drainLoop:
 	close(c.messages)
 	close(c.txs)
 	close(c.chainHeadEvents)
-	close(c.loopTaskChan)
+	close(c.executeProofTaskChan)
+	close(c.loopWatchTaskChan)
 	close(c.finished)
 	log.Info("dBFT event loop finished")
 }

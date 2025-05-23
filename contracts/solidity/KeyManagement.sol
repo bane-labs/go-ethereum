@@ -21,6 +21,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         Recover,
         Share
     }
+    uint public constant ZK_VERSION = 1;
 
     // succeeded dkg round index, starts from 1, 0 means empty
     uint public roundNumber;

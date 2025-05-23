@@ -12,6 +12,7 @@ MAIN_DIR = ./privnet
 SINGLE_DIR = $(MAIN_DIR)/single
 FOUR_DIR = $(MAIN_DIR)/four
 SEVEN_DIR = $(MAIN_DIR)/seven
+ZK_DIR = $(MAIN_DIR)/zk
 
 BOOTNODE = bootnode
 BOOTNODE_PORT = 30304
@@ -82,6 +83,10 @@ define run_bootnode
     @$(GETHBIN)/bootnode -nodekey $(1)/$(BOOTNODE)/bootnode.key \
     	-addr :$(BOOTNODE_PORT) \
     	-verbosity $(BOOTNODE_LOGLEVEL) > $(1)/$(BOOTNODE)/bootnode.log 2>&1 &
+endef
+
+define run_miner_node_with_zk_dkg
+	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)" --antimev.password=$(1)/$(7)/password.txt --dkg.one-msg-r1cs=$(1)/r1cs/R1CS_1 --dkg.two-msg-r1cs=$(1)/r1cs/R1CS_2 --dkg.seven-msg-r1cs=$(1)/r1cs/R1CS_7 --dkg.one-msg-pk=$(1)/provingkey/PK_1 --dkg.two-msg-pk=$(1)/provingkey/PK_2 --dkg.seven-msg-pk=$(1)/provingkey/PK_7)
 endef
 
 define run_miner_node
@@ -239,6 +244,42 @@ $(SEVEN_DIR)/$(NODE8)/geth:
 	@echo "Initializing $(NODE8) (seed) from genesis"
 	$(call init_node,$(SEVEN_DIR),$(NODE8))
 
+$(ZK_DIR)/$(NODE0)/geth:
+	@echo "Initializing $(NODE0) (watch-only CN) from genesis"
+	$(call init_node,$(ZK_DIR),$(NODE0))
+
+$(ZK_DIR)/$(NODE1)/geth:
+	@echo "Initializing $(NODE1) (CN) from genesis"
+	$(call init_node,$(ZK_DIR),$(NODE1))
+
+$(ZK_DIR)/$(NODE2)/geth:
+	@echo "Initializing $(NODE2) (CN) from genesis"
+	$(call init_node,$(ZK_DIR),$(NODE2))
+
+$(ZK_DIR)/$(NODE3)/geth:
+	@echo "Initializing $(NODE3) (CN) from genesis"
+	$(call init_node,$(ZK_DIR),$(NODE3))
+
+$(ZK_DIR)/$(NODE4)/geth:
+	@echo "Initializing $(NODE4) (CN) from genesis"
+	$(call init_node,$(ZK_DIR),$(NODE4))
+
+$(ZK_DIR)/$(NODE5)/geth:
+	@echo "Initializing $(NODE5) (CN) from genesis"
+	$(call init_node,$(ZK_DIR),$(NODE5))
+
+$(ZK_DIR)/$(NODE6)/geth:
+	@echo "Initializing $(NODE6) (CN) from genesis"
+	$(call init_node,$(ZK_DIR),$(NODE6))
+
+$(ZK_DIR)/$(NODE7)/geth:
+	@echo "Initializing $(NODE7) (CN) from genesis"
+	$(call init_node,$(ZK_DIR),$(NODE7))
+
+$(ZK_DIR)/$(NODE8)/geth:
+	@echo "Initializing $(NODE8) (seed) from genesis"
+	$(call init_node,$(ZK_DIR),$(NODE8))
+
 privnet_start: $(SINGLE_DIR)/$(NODE0)/geth $(SINGLE_DIR)/$(NODE1)/geth $(SINGLE_DIR)/$(NODE2)/geth
 	@echo "Starting nodes..."
 	$(call run_bootnode,$(SINGLE_DIR))
@@ -271,6 +312,20 @@ privnet_start_seven: $(SEVEN_DIR)/$(NODE0)/geth $(SEVEN_DIR)/$(NODE1)/geth $(SEV
 	$(call run_miner_node,$(SEVEN_DIR),$(NODE7),$(NODE7_PORT),$(NODE7_AUTH_PORT),$(NODE7_HTTP_PORT),$(NODE7_WS_PORT),$(NODE7))
 	$(call run_node,$(SEVEN_DIR),$(NODE8),$(NODE8_PORT),$(NODE8_AUTH_PORT),$(NODE8_HTTP_PORT),$(NODE8_WS_PORT))
 	@echo "OK! Check logs in $(SEVEN_DIR)/<node_dir>/geth_node.log"
+
+privnet_start_zk: $(ZK_DIR)/$(NODE0)/geth $(ZK_DIR)/$(NODE1)/geth $(ZK_DIR)/$(NODE2)/geth $(ZK_DIR)/$(NODE3)/geth $(ZK_DIR)/$(NODE4)/geth $(ZK_DIR)/$(NODE5)/geth $(ZK_DIR)/$(NODE6)/geth $(ZK_DIR)/$(NODE7)/geth $(ZK_DIR)/$(NODE8)/geth
+	@echo "Starting nodes..."
+	$(call run_bootnode,$(ZK_DIR))
+	$(call run_miner_node_with_zk_dkg,$(ZK_DIR),$(NODE0),$(NODE0_PORT),$(NODE0_AUTH_PORT),$(NODE0_HTTP_PORT),$(NODE0_WS_PORT),$(NODE0))
+	$(call run_miner_node_with_zk_dkg,$(ZK_DIR),$(NODE1),$(NODE1_PORT),$(NODE1_AUTH_PORT),$(NODE1_HTTP_PORT),$(NODE1_WS_PORT),$(NODE1))
+	$(call run_miner_node_with_zk_dkg,$(ZK_DIR),$(NODE2),$(NODE2_PORT),$(NODE2_AUTH_PORT),$(NODE2_HTTP_PORT),$(NODE2_WS_PORT),$(NODE2))
+	$(call run_miner_node_with_zk_dkg,$(ZK_DIR),$(NODE3),$(NODE3_PORT),$(NODE3_AUTH_PORT),$(NODE3_HTTP_PORT),$(NODE3_WS_PORT),$(NODE3))
+	$(call run_miner_node_with_zk_dkg,$(ZK_DIR),$(NODE4),$(NODE4_PORT),$(NODE4_AUTH_PORT),$(NODE4_HTTP_PORT),$(NODE4_WS_PORT),$(NODE4))
+	$(call run_miner_node_with_zk_dkg,$(ZK_DIR),$(NODE5),$(NODE5_PORT),$(NODE5_AUTH_PORT),$(NODE5_HTTP_PORT),$(NODE5_WS_PORT),$(NODE5))
+	$(call run_miner_node_with_zk_dkg,$(ZK_DIR),$(NODE6),$(NODE6_PORT),$(NODE6_AUTH_PORT),$(NODE6_HTTP_PORT),$(NODE6_WS_PORT),$(NODE6))
+	$(call run_miner_node_with_zk_dkg,$(ZK_DIR),$(NODE7),$(NODE7_PORT),$(NODE7_AUTH_PORT),$(NODE7_HTTP_PORT),$(NODE7_WS_PORT),$(NODE7))
+	$(call run_node,$(ZK_DIR),$(NODE8),$(NODE8_PORT),$(NODE8_AUTH_PORT),$(NODE8_HTTP_PORT),$(NODE8_WS_PORT))
+	@echo "OK! Check logs in $(ZK_DIR)/<node_dir>/geth_node.log"
 
 docker_privnet_start:
 	docker compose -f .docker/docker-compose.yml up -d
