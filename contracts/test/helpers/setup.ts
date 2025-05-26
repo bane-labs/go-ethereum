@@ -38,22 +38,11 @@ export const allocGenesis = async () => {
     // Reset blockchain state
     await ethers.provider.send("hardhat_reset");
 
-    // Deploy libraries need link
-    const verifier1 = await ethers.deployContract("OneMessageVerifier");
-    const verifier2 = await ethers.deployContract("TwoMessageVerifier");
-    const verifier3 = await ethers.deployContract("SevenMessageVerifier");
-
     // Deploy Governance contract
     const governance_deploy = await ethers.deployContract("Governance");
     const reward_deploy = await ethers.deployContract("GovReward");
     const policy_deploy = await ethers.deployContract("Policy");
-    const keymanagement_deploy = await ethers.deployContract("KeyManagement", {
-        libraries: {
-            OneMessageVerifier: verifier1.target,
-            TwoMessageVerifier: verifier2.target,
-            SevenMessageVerifier: verifier3.target,
-        }
-    });
+    const keymanagement_deploy = await ethers.deployContract("KeyManagementV0");
 
     // Copy Bytecode to native address
     const governance_code = await ethers.provider.send("eth_getCode", [governance_deploy.target]);
@@ -74,7 +63,7 @@ export const allocGenesis = async () => {
     const reward_instance = new ethers.Contract(SYS_SETTINGS.REWARD_PROXY, reward_contract.abi, signers[0]);
     const policy_contract = require("../../artifacts/solidity/Policy.sol/Policy.json");
     const policy_instance = new ethers.Contract(SYS_SETTINGS.POLICY_PROXY, policy_contract.abi, signers[0]);
-    const keymanagement_contract = require("../../artifacts/solidity/KeyManagement.sol/KeyManagement.json");
+    const keymanagement_contract = require("../../artifacts/solidity/KeyManagementV0.sol/KeyManagementV0.json");
     const keymanagement_instance = new ethers.Contract(SYS_SETTINGS.KEYMANAGEMENT_PROXY, keymanagement_contract.abi, signers[0]);
 
     // Write Governance config to storage

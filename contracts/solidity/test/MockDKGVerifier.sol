@@ -4,9 +4,9 @@ pragma solidity ^0.8.20;
 import {OneMessageVerifier} from "../libraries/OneMessageVerifier.sol";
 import {TwoMessageVerifier} from "../libraries/TwoMessageVerifier.sol";
 import {SevenMessageVerifier} from "../libraries/SevenMessageVerifier.sol";
-import {KeyManagement} from "../KeyManagement.sol";
+import {KeyManagementV1} from "../KeyManagementV1.sol";
 
-contract MockDKGVerifier is KeyManagement {
+contract MockDKGVerifier is KeyManagementV1 {
     function mockMessageKey(address addr, bytes calldata pubkey) external {
         messagePubkeys[addr] = pubkey;
     }

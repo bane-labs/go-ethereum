@@ -3,14 +3,12 @@ pragma solidity ^0.8.25;
 
 import {Errors} from "./libraries/Errors.sol";
 import {BLS12381} from "./libraries/BLS12381.sol";
-import {OneMessageVerifier} from "./libraries/OneMessageVerifier.sol";
-import {TwoMessageVerifier} from "./libraries/TwoMessageVerifier.sol";
-import {SevenMessageVerifier} from "./libraries/SevenMessageVerifier.sol";
 import {IGovernance} from "./interfaces/IGovernance.sol";
 import {IKeyManagement} from "./interfaces/IKeyManagement.sol";
+import {IZKDKGV0} from "./interfaces/IZKDKGV0.sol";
 import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 
-contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
+contract KeyManagementV0 is GovProxyUpgradeable, IKeyManagement, IZKDKGV0 {
     address public constant SELF = 0x1212100000000000000000000000000000000008;
     // governance contact
     address public constant GOV = 0x1212000000000000000000000000000000000001;
@@ -21,7 +19,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         Recover,
         Share
     }
-    uint public constant ZK_VERSION = 1;
+    uint public constant ZK_VERSION = 0;
 
     // succeeded dkg round index, starts from 1, 0 means empty
     uint public roundNumber;
@@ -76,13 +74,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         messagePubkeys[candidate] = pubkey;
     }
 
-    function reshare(
-        bytes calldata pvss,
-        bytes[] calldata messages,
-        uint[8] calldata proof,
-        uint[2] calldata commitments,
-        uint[2] calldata commitmentPok
-    ) external {
+    function reshare(bytes calldata pvss, bytes[] calldata messages) external {
         // check period
         _checkPeriodAllowed(Period.Share);
 
@@ -106,41 +98,16 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
 
         // verify pvss
         _verifyPVSS(n, t, pvss);
-
-        // verify zk proof
-        bytes32 pubHash = _computeVerifierHashInputForShareOrReshare(
-            n,
-            t,
-            pvss,
-            messages,
-            IGovernance(GOV).getPendingConsensus()
-        );
-        uint[32] memory input;
-        for (uint i = 0; i < 32; i++) {
-            input[i] = uint8(pubHash[i]);
-        }
-        SevenMessageVerifier.verifyProof(
-            proof,
-            commitments,
-            commitmentPok,
-            input
-        );
+        rpvsses[round][index] = pvss;
 
         // record messages
-        rpvsses[round][index] = pvss;
         reshareMsgs[round][index] = messages;
 
         // emit a event
         emit Reshare(round, index, msg.sender);
     }
 
-    function share(
-        bytes calldata pvss,
-        bytes[] calldata messages,
-        uint[8] calldata proof,
-        uint[2] calldata commitments,
-        uint[2] calldata commitmentPok
-    ) external {
+    function share(bytes calldata pvss, bytes[] calldata messages) external {
         // check period
         _checkPeriodAllowed(Period.Share);
 
@@ -155,30 +122,11 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         if (messages.length != n) revert Errors.InvalidMessageAmount();
 
         // verify pvss
+        uint round = roundNumber + 1;
         _verifyPVSS(n, t, pvss);
-
-        // verify zk proof
-        bytes32 pubHash = _computeVerifierHashInputForShareOrReshare(
-            n,
-            t,
-            pvss,
-            messages,
-            IGovernance(GOV).getPendingConsensus()
-        );
-        uint[32] memory input;
-        for (uint i = 0; i < 32; i++) {
-            input[i] = uint8(pubHash[i]);
-        }
-        SevenMessageVerifier.verifyProof(
-            proof,
-            commitments,
-            commitmentPok,
-            input
-        );
+        spvsses[round][index] = pvss;
 
         // record messages
-        uint round = roundNumber + 1;
-        spvsses[round][index] = pvss;
         sharedPubs[round][index] = pvss[:BLS12381.G1_SIZE];
         shareMsgs[round][index] = messages;
 
@@ -186,61 +134,19 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
         emit Share(round, index, msg.sender);
     }
 
-    function recover(
-        uint[] calldata idxs,
-        bytes[] calldata messages,
-        uint[8] calldata proof,
-        uint[2] calldata commitments,
-        uint[2] calldata commitmentPok
-    ) external {
+    function recover(uint[] calldata idxs, bytes[] calldata messages) external {
         // check period
         _checkPeriodAllowed(Period.Recover);
 
-        // check index and round
+        // check index
         uint index = indexOfResharing(msg.sender);
         if (index < 1) revert Errors.NotShareMember();
 
-        // check amount, we only have settings for 2 cases
-        uint length = idxs.length;
-        if (length < 1 || length > 2 || messages.length != length)
-            revert Errors.InvalidMessageAmount();
-
-        // check round
+        // check absent secret index & record messages
+        uint n = IGovernance(GOV).consensusSize();
         uint round = roundNumber + 1;
         if (round < 2) revert Errors.InvalidRoundNumber();
-
-        // verify zk proof
-        (uint n, uint t) = numberAndThreshold();
-        bytes32 pubHash = _computeVerifierHashInputForRecover(
-            index,
-            t,
-            round,
-            idxs,
-            messages,
-            IGovernance(GOV).getPendingConsensus()
-        );
-        uint[32] memory input;
-        for (uint i = 0; i < 32; i++) {
-            input[i] = uint8(pubHash[i]);
-        }
-        if (length == 1) {
-            OneMessageVerifier.verifyProof(
-                proof,
-                commitments,
-                commitmentPok,
-                input
-            );
-        } else {
-            TwoMessageVerifier.verifyProof(
-                proof,
-                commitments,
-                commitmentPok,
-                input
-            );
-        }
-
-        // check absent secret index & record messages
-        for (uint i = 0; i < length; i++) {
+        for (uint i = 0; i < idxs.length; i++) {
             if (idxs[i] > n || idxs[i] == 0) revert Errors.IndexOutOfRange();
             if (reshareMsgs[round][idxs[i]].length > 0)
                 revert Errors.NoNeedForRecover();
@@ -253,10 +159,7 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
 
     function reshareRecovered(
         bytes calldata pvss,
-        bytes[] calldata messages,
-        uint[8] calldata proof,
-        uint[2] calldata commitments,
-        uint[2] calldata commitmentPok
+        bytes[] calldata messages
     ) external {
         // check period
         _checkPeriodAllowed(Period.Recover);
@@ -281,29 +184,10 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
 
         // verify pvss
         _verifyPVSS(n, t, pvss);
-
-        // verify zk proof
-        bytes32 pubHash = _computeVerifierHashInputForShareOrReshare(
-            n,
-            t,
-            pvss,
-            messages,
-            IGovernance(GOV).getPendingConsensus()
-        );
-        uint[32] memory input;
-        for (uint i = 0; i < 32; i++) {
-            input[i] = uint8(pubHash[i]);
-        }
-        SevenMessageVerifier.verifyProof(
-            proof,
-            commitments,
-            commitmentPok,
-            input
-        );
+        rpvsses[round][index] = pvss;
 
         // record messages
         if (reshareMsgs[round][index].length > 0) revert Errors.MessageExists();
-        rpvsses[round][index] = pvss;
         reshareMsgs[round][index] = messages;
 
         // emit a event
@@ -400,119 +284,6 @@ contract KeyManagement is GovProxyUpgradeable, IKeyManagement {
             ) revert Errors.InvalidPVSS();
             bigfiOffset += BLS12381.G1_SIZE;
         }
-    }
-
-    function _computeVerifierHashInputForShareOrReshare(
-        uint n,
-        uint t,
-        bytes calldata pvss,
-        bytes[] calldata messages,
-        address[] memory participants
-    ) internal view returns (bytes32) {
-        // compute zk public input, n*(2*256+2*256+2*384+12+1+48)
-        bytes memory pubInput = new bytes(n * 1853);
-        uint pos = 0;
-        for (uint i = 0; i < n; i++) {
-            bytes memory pubKey = messagePubkeys[participants[i]];
-            uint bigFiStart = (t + 1) *
-                BLS12381.G1_SIZE +
-                BLS12381.G2_SIZE +
-                i *
-                BLS12381.G1_SIZE;
-            bytes memory bigFi = bytes.concat(
-                pvss[bigFiStart + 16:bigFiStart + 64],
-                pvss[bigFiStart + 80:bigFiStart + 128]
-            );
-            for (uint j = 0; j < 96; j++) {
-                for (uint k = 0; k < 8; k++) {
-                    if (j < 64) {
-                        // bigR bits (512)
-                        pubInput[pos + j * 8 + k] =
-                            (messages[i][j] >> (7 - k)) &
-                            0x01;
-                        // message key bits (512)
-                        pubInput[pos + 512 + j * 8 + k] =
-                            (pubKey[j + 1] >> (7 - k)) &
-                            0x01;
-                    }
-                    // bigFi bits (768)
-                    pubInput[pos + 1024 + j * 8 + k] =
-                        (bigFi[j] >> (7 - k)) &
-                        0x01;
-                }
-            }
-            // nonce bytes (12)
-            for (uint j = 0; j < 12; j++) {
-                pubInput[pos + 1792 + j] = messages[i][64 + j];
-            }
-            // value 2 as byte (1)
-            pubInput[pos + 1804] = 0x02;
-            // encryptedFi bytes (48)
-            for (uint j = 0; j < 48; j++) {
-                pubInput[pos + 1805 + j] = messages[i][76 + j];
-            }
-            pos += 1853;
-        }
-        return sha256(pubInput);
-    }
-
-    function _computeVerifierHashInputForRecover(
-        uint selfIndex,
-        uint t,
-        uint round,
-        uint[] calldata indexes,
-        bytes[] calldata messages, // len(messages) == len(indexes)
-        address[] memory participants // len(receivers) == n
-    ) internal view returns (bytes32) {
-        // compute zk public input, amount*(2*256+2*256+2*384+12+1+48)
-        bytes memory pubInput = new bytes(indexes.length * 1853);
-        uint pos = 0;
-        for (uint i = 0; i < indexes.length; i++) {
-            bytes memory pubKey = messagePubkeys[participants[indexes[i] - 1]];
-            // compute bigFi from spvss commitment, bigFi = pvss.cmt.evaluate(indexes[i])
-            bytes memory pvss = spvsses[round - 1][indexes[i]];
-            bytes memory bigFi = new bytes(96);
-            uint bigFiStart = (t + 1) *
-                BLS12381.G1_SIZE +
-                BLS12381.G2_SIZE +
-                (selfIndex - 1) *
-                BLS12381.G1_SIZE;
-            // cut slice from 128 to 96 with MCOPY
-            assembly {
-                mcopy(add(bigFi, 32), add(pvss, add(48, bigFiStart)), 48)
-                mcopy(add(bigFi, 80), add(pvss, add(112, bigFiStart)), 48)
-            }
-            for (uint j = 0; j < 96; j++) {
-                for (uint k = 0; k < 8; k++) {
-                    if (j < 64) {
-                        // bigR bits (512)
-                        pubInput[pos + j * 8 + k] =
-                            (messages[i][j] >> (7 - k)) &
-                            0x01;
-                        // message key bits (512)
-                        pubInput[pos + 512 + j * 8 + k] =
-                            (pubKey[j + 1] >> (7 - k)) &
-                            0x01;
-                    }
-                    // bigFi bits (768)
-                    pubInput[pos + 1024 + j * 8 + k] =
-                        (bigFi[j] >> (7 - k)) &
-                        0x01;
-                }
-            }
-            // nonce bytes (12)
-            for (uint j = 0; j < 12; j++) {
-                pubInput[pos + 1792 + j] = messages[i][64 + j];
-            }
-            // value 2 as byte (1)
-            pubInput[pos + 1804] = 0x02;
-            // encryptedFi bytes (48)
-            for (uint j = 0; j < 48; j++) {
-                pubInput[pos + 1805 + j] = messages[i][76 + j];
-            }
-            pos += 1853;
-        }
-        return sha256(pubInput);
     }
 
     function numberAndThreshold() public view returns (uint, uint) {
