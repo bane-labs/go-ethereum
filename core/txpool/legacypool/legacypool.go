@@ -372,6 +372,11 @@ func (pool *LegacyPool) InitStatic(gasTip uint64, head *types.Header, reserve tx
 	return nil
 }
 
+// StaticInited returns whether the pool is initialized with InitStatic.
+func (pool *LegacyPool) StaticInited() bool {
+	return pool.currentState != nil
+}
+
 // ResetStatic reverts any transaction insertion to a pool created by NewStatic
 // and inited by InitStatic, so that the pool can be reused as only initialized.
 func (pool *LegacyPool) ResetStatic() {

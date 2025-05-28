@@ -915,7 +915,7 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	ethBlock := dbftBlock.ToEthBlock()
 
 	// If is the first view of the block, then initialize static pool with fresh parent.
-	if c.dbft.Context.ViewNumber == 0 {
+	if c.dbft.Context.ViewNumber == 0 || !c.staticPool.StaticInited() {
 		c.initStaticPool(parent)
 	}
 	errs := c.staticPool.Add(dbftBlock.transactions, false, false)
