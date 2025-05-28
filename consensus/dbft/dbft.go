@@ -2074,12 +2074,24 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 			return
 		}
 
-		// Manually initialize static pool in case if waitForNewSealingProposal didn't call
+		// Manually initialize static pool and DKG snapshot in case if waitForNewSealingProposal didn't call
 		// postBlock callback. We're sure that state of the latest block is available by this moment,
 		// miner guarantees that. We can't do it earlier because blocks chain may be out of sync compared to headers
 		// chain, ref. 3721f549.
 		if c.lastIndex == currHeader.Number.Uint64() {
 			c.initStaticPool(currHeader)
+			if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
+				c.lock.RLock()
+				ks := c.amevKeystore
+				c.lock.RUnlock()
+				err := c.handleDKG(c.dkgSnapshot, ks, currHeader, nil, false)
+				if err != nil {
+					log.Crit("Failed to initialize DKG snapshot",
+						"height", currHeader.Number.Uint64(),
+						"err", err.Error())
+					return
+				}
+			}
 		}
 
 		log.Info("Starting dBFT engine",
@@ -2144,19 +2156,6 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 			"sealing proposal index", b.NumberU64())
 		ltstHeader := c.chain.GetHeaderByNumber(b.NumberU64() - 1)
 		c.postBlock(ltstHeader, nil)
-	} else if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
-		// Manually initialize DKG snapshot based on the latest block information
-		// (we're sure that state of the latest block is available by this moment,
-		// miner guarantees that). We can't do it earlier because blocks chain
-		// may be out of sync compared to headers chain, ref. 3721f549.
-		currHeader := c.chain.GetHeaderByNumber(c.lastIndex)
-		c.lock.RLock()
-		ks := c.amevKeystore
-		c.lock.RUnlock()
-		err := c.handleDKG(c.dkgSnapshot, ks, currHeader, nil, false)
-		if err != nil {
-			return fmt.Errorf("failed to initialize DKG snapshot at height %d: %w", currHeader.Number.Uint64(), err)
-		}
 	}
 
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
