@@ -914,10 +914,6 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	}
 	ethBlock := dbftBlock.ToEthBlock()
 
-	// If is the first view of the block, then initialize static pool with fresh parent.
-	if c.dbft.Context.ViewNumber == 0 {
-		c.initStaticPool(parent)
-	}
 	errs := c.staticPool.Add(dbftBlock.transactions, false, false)
 	for i, err := range errs {
 		if err != nil {
@@ -1557,6 +1553,7 @@ func (c *DBFT) postBlock(h *types.Header, state *state.StateDB) {
 		c.lastBlockHash = h.Hash()
 		c.lastBlockSealHash, _ = honestSealHash(h) // no error expected, h is verified.
 		c.lastBlockExtra = h.Extra
+		c.initStaticPool(h)
 
 		// handle DKG
 		if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
@@ -2075,6 +2072,14 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 				"index", c.lastIndex+1,
 				"err", err.Error())
 			return
+		}
+
+		// Manually initialize static pool in case if waitForNewSealingProposal didn't call
+		// postBlock callback. We're sure that state of the latest block is available by this moment,
+		// miner guarantees that. We can't do it earlier because blocks chain may be out of sync compared to headers
+		// chain, ref. 3721f549.
+		if c.lastIndex == currHeader.Number.Uint64() {
+			c.initStaticPool(currHeader)
 		}
 
 		log.Info("Starting dBFT engine",
