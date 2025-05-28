@@ -2125,19 +2125,15 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext bool) error {
 	log.Info("Fetching latest sealing proposal",
 		"desired number", desiredHeight)
-	var (
-		ok           bool
-		lastProposal *types.Block
-	)
+	var lastProposal *types.Block
 	// Wait here...
 	for {
 		c.lastProposalLock.RLock()
 		if c.lastProposal != nil && c.lastProposal.NumberU64() >= desiredHeight {
 			lastProposal = c.lastProposal
-			ok = true
 		}
 		c.lastProposalLock.RUnlock()
-		if ok {
+		if lastProposal != nil {
 			break
 		}
 		select {
