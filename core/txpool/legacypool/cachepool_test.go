@@ -1,12 +1,10 @@
-package cachepool
+package legacypool
 
 import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"math/big"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,124 +17,30 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 )
 
 var (
-	// testTxPoolConfig is a transaction pool configuration without stateful disk
+	// testCachePoolConfig is a transaction pool configuration without stateful disk
 	// sideeffects used during testing.
-	testTxPoolConfig Config
-
-	// eip1559Config is a chain config with EIP-1559 enabled at block 0.
-	eip1559Config *params.ChainConfig
+	testCachePoolConfig CacheConfig
 )
 
 func init() {
-	testTxPoolConfig = DefaultConfig
-
-	cpy := *params.TestChainConfig
-	eip1559Config = &cpy
-	eip1559Config.BerlinBlock = common.Big0
-	eip1559Config.LondonBlock = common.Big0
+	testCachePoolConfig = DefaultCacheConfig
 }
 
-type testBlockChain struct {
-	config        *params.ChainConfig
-	gasLimit      atomic.Uint64
-	statedb       *state.StateDB
-	chainHeadFeed *event.Feed
+func setupCachePool() (*CachePool, *ecdsa.PrivateKey) {
+	return setupCachePoolWithConfig(params.TestChainConfig)
 }
 
-func newTestBlockChain(config *params.ChainConfig, gasLimit uint64, statedb *state.StateDB, chainHeadFeed *event.Feed) *testBlockChain {
-	bc := testBlockChain{config: config, statedb: statedb, chainHeadFeed: new(event.Feed)}
-	bc.gasLimit.Store(gasLimit)
-	return &bc
-}
-
-func (bc *testBlockChain) Config() *params.ChainConfig {
-	return bc.config
-}
-
-func (bc *testBlockChain) CurrentBlock() *types.Header {
-	return &types.Header{
-		Number:   new(big.Int),
-		GasLimit: bc.gasLimit.Load(),
-	}
-}
-
-func (bc *testBlockChain) GetBlock(hash common.Hash, number uint64) *types.Block {
-	return types.NewBlock(bc.CurrentBlock(), nil, nil, nil, trie.NewStackTrie(nil))
-}
-
-func (bc *testBlockChain) StateAt(common.Hash) (*state.StateDB, error) {
-	return bc.statedb, nil
-}
-
-func (bc *testBlockChain) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return bc.chainHeadFeed.Subscribe(ch)
-}
-
-func transaction(nonce uint64, gaslimit uint64, key *ecdsa.PrivateKey) *types.Transaction {
-	return pricedTransaction(nonce, gaslimit, big.NewInt(1), key)
-}
-
-func pricedTransaction(nonce uint64, gaslimit uint64, gasprice *big.Int, key *ecdsa.PrivateKey) *types.Transaction {
-	tx, _ := types.SignTx(types.NewTransaction(nonce, common.Address{}, big.NewInt(100), gaslimit, gasprice, nil), types.HomesteadSigner{}, key)
-	return tx
-}
-
-func dynamicFeeTx(nonce uint64, gaslimit uint64, gasFee *big.Int, tip *big.Int, key *ecdsa.PrivateKey) *types.Transaction {
-	tx, _ := types.SignNewTx(key, types.LatestSignerForChainID(params.TestChainConfig.ChainID), &types.DynamicFeeTx{
-		ChainID:    params.TestChainConfig.ChainID,
-		Nonce:      nonce,
-		GasTipCap:  tip,
-		GasFeeCap:  gasFee,
-		Gas:        gaslimit,
-		To:         &common.Address{},
-		Value:      big.NewInt(100),
-		Data:       nil,
-		AccessList: nil,
-	})
-	return tx
-}
-
-func makeAddressReserver() txpool.AddressReserver {
-	var (
-		reserved = make(map[common.Address]struct{})
-		lock     sync.Mutex
-	)
-	return func(addr common.Address, reserve bool) error {
-		lock.Lock()
-		defer lock.Unlock()
-
-		_, exists := reserved[addr]
-		if reserve {
-			if exists {
-				panic("already reserved")
-			}
-			reserved[addr] = struct{}{}
-			return nil
-		}
-		if !exists {
-			panic("not reserved")
-		}
-		delete(reserved, addr)
-		return nil
-	}
-}
-
-func setupPool() (*CachePool, *ecdsa.PrivateKey) {
-	return setupPoolWithConfig(params.TestChainConfig)
-}
-
-func setupPoolWithConfig(config *params.ChainConfig) (*CachePool, *ecdsa.PrivateKey) {
+func setupCachePoolWithConfig(config *params.ChainConfig) (*CachePool, *ecdsa.PrivateKey) {
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
 	blockchain := newTestBlockChain(config, 10000000, statedb, new(event.Feed))
 
 	key, _ := crypto.GenerateKey()
-	pool := New(testTxPoolConfig, blockchain)
+	pool := NewCache(testCachePoolConfig, blockchain)
 	if err := pool.Init(1, blockchain.CurrentBlock(), makeAddressReserver()); err != nil {
 		panic(err)
 	}
@@ -145,8 +49,8 @@ func setupPoolWithConfig(config *params.ChainConfig) (*CachePool, *ecdsa.Private
 	return pool, key
 }
 
-// validatePoolInternals checks various consistency invariants within the pool.
-func validatePoolInternals(pool *CachePool) error {
+// validateCachePoolInternals checks various consistency invariants within the pool.
+func validateCachePoolInternals(pool *CachePool) error {
 	pool.mu.RLock()
 	defer pool.mu.RUnlock()
 
@@ -158,11 +62,7 @@ func validatePoolInternals(pool *CachePool) error {
 	return nil
 }
 
-func deriveSender(tx *types.Transaction) (common.Address, error) {
-	return types.Sender(types.HomesteadSigner{}, tx)
-}
-
-func testAddBalance(pool *CachePool, addr common.Address, amount *big.Int) {
+func testCachePoolAddBalance(pool *CachePool, addr common.Address, amount *big.Int) {
 	pool.mu.Lock()
 	pool.currentState.AddBalance(addr, uint256.MustFromBig(amount))
 	pool.mu.Unlock()
@@ -176,8 +76,8 @@ func TestCachePool(t *testing.T) {
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
-	config := testTxPoolConfig
-	pool := New(config, blockchain)
+	config := testCachePoolConfig
+	pool := NewCache(config, blockchain)
 	pool.Init(1, blockchain.CurrentBlock(), makeAddressReserver())
 	defer pool.Close()
 
@@ -185,7 +85,7 @@ func TestCachePool(t *testing.T) {
 	keys := make([]*ecdsa.PrivateKey, 2)
 	for i := 0; i < len(keys); i++ {
 		keys[i], _ = crypto.GenerateKey()
-		testAddBalance(pool, crypto.PubkeyToAddress(keys[i].PublicKey), big.NewInt(10000000))
+		testCachePoolAddBalance(pool, crypto.PubkeyToAddress(keys[i].PublicKey), big.NewInt(10000000))
 		fmt.Println(crypto.PubkeyToAddress(keys[i].PublicKey))
 	}
 
@@ -231,23 +131,23 @@ func TestCachePool(t *testing.T) {
 	require.Equal(t, tx.Hash(), tx2.Hash())
 }
 
-func testSetNonce(pool *CachePool, addr common.Address, nonce uint64) {
+func testCachePoolSetNonce(pool *CachePool, addr common.Address, nonce uint64) {
 	pool.mu.Lock()
 	pool.currentState.SetNonce(addr, nonce)
 	pool.mu.Unlock()
 }
 
-func TestInvalidTransactions(t *testing.T) {
+func TestCachePoolInvalidTransactions(t *testing.T) {
 	t.Parallel()
 
-	pool, key := setupPool()
+	pool, key := setupCachePool()
 	defer pool.Close()
 
 	tx := transaction(0, 100, key)
 	from, _ := deriveSender(tx)
 
 	// Intrinsic gas too low
-	testAddBalance(pool, from, big.NewInt(1))
+	testCachePoolAddBalance(pool, from, big.NewInt(1))
 	if err, want := pool.addLocal(tx), core.ErrIntrinsicGas; !errors.Is(err, want) {
 		t.Errorf("want %v have %v", want, err)
 	}
@@ -258,14 +158,14 @@ func TestInvalidTransactions(t *testing.T) {
 		t.Errorf("want %v have %v", want, err)
 	}
 
-	testSetNonce(pool, from, 1)
-	testAddBalance(pool, from, big.NewInt(0xffffffffffffff))
+	testCachePoolSetNonce(pool, from, 1)
+	testCachePoolAddBalance(pool, from, big.NewInt(0xffffffffffffff))
 	tx = transaction(0, 100000, key)
 	if err, want := pool.addLocal(tx), core.ErrNonceTooLow; !errors.Is(err, want) {
 		t.Errorf("want %v have %v", want, err)
 	}
 
-	testSetNonce(pool, from, 0)
+	testCachePoolSetNonce(pool, from, 0)
 	if err, want := pool.addLocal(tx), ErrTxPoolCached; !errors.Is(err, want) {
 		t.Errorf("want %v have %v", want, err)
 	}
@@ -274,12 +174,12 @@ func TestInvalidTransactions(t *testing.T) {
 func TestCache(t *testing.T) {
 	t.Parallel()
 
-	pool, key := setupPool()
+	pool, key := setupCachePool()
 	defer pool.Close()
 
 	tx := transaction(0, 100000, key)
 	from, _ := deriveSender(tx)
-	testAddBalance(pool, from, big.NewInt(1000000))
+	testCachePoolAddBalance(pool, from, big.NewInt(1000000))
 	<-pool.requestReset(nil, nil)
 
 	pool.Add([]*types.Transaction{tx}, true, true)
@@ -289,7 +189,7 @@ func TestCache(t *testing.T) {
 
 	tx = transaction(1, 100000, key)
 	from, _ = deriveSender(tx)
-	testSetNonce(pool, from, 2)
+	testCachePoolSetNonce(pool, from, 2)
 	pool.Add([]*types.Transaction{tx}, true, true)
 
 	if _, ok := pool.cached[from].txs.items[tx.Nonce()]; ok {
@@ -297,24 +197,24 @@ func TestCache(t *testing.T) {
 	}
 }
 
-func TestNegativeValue(t *testing.T) {
+func TestCachePoolNegativeValue(t *testing.T) {
 	t.Parallel()
 
-	pool, key := setupPool()
+	pool, key := setupCachePool()
 	defer pool.Close()
 
 	tx, _ := types.SignTx(types.NewTransaction(0, common.Address{}, big.NewInt(-1), 100, big.NewInt(1), nil), types.HomesteadSigner{}, key)
 	from, _ := deriveSender(tx)
-	testAddBalance(pool, from, big.NewInt(1))
+	testCachePoolAddBalance(pool, from, big.NewInt(1))
 	if err := pool.addLocal(tx); err != txpool.ErrNegativeValue {
 		t.Error("expected", txpool.ErrNegativeValue, "got", err)
 	}
 }
 
-func TestTipAboveFeeCap(t *testing.T) {
+func TestCachePoolTipAboveFeeCap(t *testing.T) {
 	t.Parallel()
 
-	pool, key := setupPoolWithConfig(eip1559Config)
+	pool, key := setupCachePoolWithConfig(eip1559Config)
 	defer pool.Close()
 
 	tx := dynamicFeeTx(0, 100, big.NewInt(1), big.NewInt(2), key)
@@ -324,10 +224,10 @@ func TestTipAboveFeeCap(t *testing.T) {
 	}
 }
 
-func TestVeryHighValues(t *testing.T) {
+func TestCachePoolVeryHighValues(t *testing.T) {
 	t.Parallel()
 
-	pool, key := setupPoolWithConfig(eip1559Config)
+	pool, key := setupCachePoolWithConfig(eip1559Config)
 	defer pool.Close()
 
 	veryBigNumber := big.NewInt(1)
@@ -344,10 +244,10 @@ func TestVeryHighValues(t *testing.T) {
 	}
 }
 
-func TestChainFork(t *testing.T) {
+func TestCachePoolChainFork(t *testing.T) {
 	t.Parallel()
 
-	pool, key := setupPool()
+	pool, key := setupCachePool()
 	defer pool.Close()
 
 	addr := crypto.PubkeyToAddress(key.PublicKey)
@@ -382,16 +282,16 @@ func TestCacheTimeLimiting(t *testing.T) {
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
-	config := testTxPoolConfig
+	config := testCachePoolConfig
 	config.Lifetime = time.Second
 
-	pool := New(config, blockchain)
+	pool := NewCache(config, blockchain)
 	pool.Init(1, blockchain.CurrentBlock(), makeAddressReserver())
 	defer pool.Close()
 
 	local, _ := crypto.GenerateKey()
 
-	testAddBalance(pool, crypto.PubkeyToAddress(local.PublicKey), big.NewInt(1000000000))
+	testCachePoolAddBalance(pool, crypto.PubkeyToAddress(local.PublicKey), big.NewInt(1000000000))
 
 	if err := pool.addLocal(pricedTransaction(1, 100000, big.NewInt(1), local)); !errors.Is(err, ErrTxPoolCached) {
 		t.Fatalf("failed to add local transaction: %v", err)
@@ -401,7 +301,7 @@ func TestCacheTimeLimiting(t *testing.T) {
 	if cached != 1 {
 		t.Fatalf("cached transaction mismatched: have %d, want %d", cached, 1)
 	}
-	if err := validatePoolInternals(pool); err != nil {
+	if err := validateCachePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 
@@ -413,7 +313,7 @@ func TestCacheTimeLimiting(t *testing.T) {
 	if cached != 1 {
 		t.Fatalf("cached transaction mismatched: have %d, want %d", cached, 1)
 	}
-	if err := validatePoolInternals(pool); err != nil {
+	if err := validateCachePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 
@@ -425,7 +325,7 @@ func TestCacheTimeLimiting(t *testing.T) {
 		t.Fatalf("cached transactions mismatched: have %d, want %d", cached, 0)
 	}
 
-	if err := validatePoolInternals(pool); err != nil {
+	if err := validateCachePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 
@@ -438,7 +338,7 @@ func TestCacheTimeLimiting(t *testing.T) {
 	if cached != 0 {
 		t.Fatalf("cached transactions mismatched: have %d, want %d", cached, 0)
 	}
-	if err := validatePoolInternals(pool); err != nil {
+	if err := validateCachePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 
@@ -459,7 +359,7 @@ func TestCacheTimeLimiting(t *testing.T) {
 	if cached != 2 {
 		t.Fatalf("cached transactions mismatched: have %d, want %d", cached, 0)
 	}
-	if err := validatePoolInternals(pool); err != nil {
+	if err := validateCachePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 
@@ -470,31 +370,31 @@ func TestCacheTimeLimiting(t *testing.T) {
 		t.Fatalf("cached transactions mismatched: have %d, want %d", cached, 0)
 	}
 
-	if err := validatePoolInternals(pool); err != nil {
+	if err := validateCachePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 }
 
 // Tests that if transactions start being capped, transactions are also removed from 'all'
-func TestCapClearsFromAll(t *testing.T) {
+func TestCachePoolCapClearsFromAll(t *testing.T) {
 	t.Parallel()
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
-	config := testTxPoolConfig
+	config := testCachePoolConfig
 	config.AccountSlots = 2
 	config.GlobalSlots = 8
 
-	pool := New(config, blockchain)
+	pool := NewCache(config, blockchain)
 	pool.Init(1, blockchain.CurrentBlock(), makeAddressReserver())
 	defer pool.Close()
 
 	// Create a number of test accounts and fund them
 	key, _ := crypto.GenerateKey()
 	addr := crypto.PubkeyToAddress(key.PublicKey)
-	testAddBalance(pool, addr, big.NewInt(1000000))
+	testCachePoolAddBalance(pool, addr, big.NewInt(1000000))
 
 	txs := types.Transactions{}
 	for j := 0; j < int(config.GlobalSlots)*2; j++ {
@@ -502,21 +402,21 @@ func TestCapClearsFromAll(t *testing.T) {
 	}
 	// Import the batch and verify that limits have been enforced
 	pool.addLocals(txs)
-	if err := validatePoolInternals(pool); err != nil {
+	if err := validateCachePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 }
 
 // TestStatusCheck tests that the pool can correctly retrieve the
 // cached status of individual transactions.
-func TestStatusCheck(t *testing.T) {
+func TestCachePoolStatusCheck(t *testing.T) {
 	t.Parallel()
 
 	// Create the pool to test the status retrievals with
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
-	pool := New(testTxPoolConfig, blockchain)
+	pool := NewCache(testCachePoolConfig, blockchain)
 	pool.Init(1, blockchain.CurrentBlock(), makeAddressReserver())
 	defer pool.Close()
 
@@ -524,7 +424,7 @@ func TestStatusCheck(t *testing.T) {
 	keys := make([]*ecdsa.PrivateKey, 3)
 	for i := 0; i < len(keys); i++ {
 		keys[i], _ = crypto.GenerateKey()
-		testAddBalance(pool, crypto.PubkeyToAddress(keys[i].PublicKey), big.NewInt(1000000))
+		testCachePoolAddBalance(pool, crypto.PubkeyToAddress(keys[i].PublicKey), big.NewInt(1000000))
 	}
 	// Generate and queue a batch of transactions
 	txs := types.Transactions{}
@@ -541,7 +441,7 @@ func TestStatusCheck(t *testing.T) {
 	if cached != 4 {
 		t.Fatalf("cached transactions mismatched: have %d, want %d", cached, 4)
 	}
-	if err := validatePoolInternals(pool); err != nil {
+	if err := validateCachePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 	// Retrieve the status of each transaction and validate them

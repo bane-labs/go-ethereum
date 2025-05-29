@@ -38,7 +38,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state/pruner"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
-	"github.com/ethereum/go-ethereum/core/txpool/cachepool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -242,12 +241,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	subPools := []txpool.SubPool{legacyPool, blobPool}
 	enableAMEVCachePool := config.TxPool.AMEVCache && !config.TxPool.NoLocals
 	if enableAMEVCachePool {
-		cfg := cachepool.Config{
+		cfg := legacypool.CacheConfig{
 			AccountSlots: config.TxPool.AccountSlots,
 			GlobalSlots:  config.TxPool.GlobalSlots,
 			Lifetime:     config.TxPool.Lifetime,
 		}
-		cachePool := cachepool.New(cfg, eth.blockchain)
+		cachePool := legacypool.NewCache(cfg, eth.blockchain)
 		subPools = append([]txpool.SubPool{cachePool}, subPools...)
 	}
 

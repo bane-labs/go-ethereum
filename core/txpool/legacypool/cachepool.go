@@ -1,4 +1,4 @@
-package cachepool
+package legacypool
 
 import (
 	"errors"
@@ -24,32 +24,13 @@ import (
 	"github.com/holiman/uint256"
 )
 
-const (
-	// txSlotSize is used to calculate how many data slots a single transaction
-	// takes up based on its size. The slots are used as DoS protection, ensuring
-	// that validating a new transaction remains a constant operation (in reality
-	// O(maxslots), where max slots are 4 currently).
-	txSlotSize = 32 * 1024
-
-	// txMaxSize is the maximum size a single transaction can have. This field has
-	// non-trivial consequences: larger transactions are significantly harder and
-	// more expensive to propagate; larger transactions also take more resources
-	// to validate whether they fit into the pool or not.
-	txMaxSize = 4 * txSlotSize // 128KB
-)
-
 var (
 	// ErrTxPoolCached is returned if the transaction is cached in cache pool successfully.
 	// We use an error return here because we don't want a wallet nonce change after response.
 	ErrTxPoolCached = errors.New("transaction cached")
-	// ErrTxPoolOverflow is returned if the transaction pool is full and can't accept
+	// ErrCachePoolOverflow is returned if the transaction pool is full and can't accept
 	// another remote transaction.
-	ErrTxPoolOverflow = errors.New("cachepool is full")
-)
-
-var (
-	evictionInterval    = time.Minute     // Time interval to check for evictable transactions
-	statsReportInterval = 8 * time.Second // Time interval to report transaction pool stats
+	ErrCachePoolOverflow = errors.New("cachepool is full")
 )
 
 var (
@@ -60,37 +41,24 @@ var (
 	cachedEvictionMeter  = metrics.NewRegisteredMeter("txpool/cached/eviction", nil)
 
 	// General tx metrics
-	knownTxMeter   = metrics.NewRegisteredMeter("txpool/cached/known", nil)
-	invalidTxMeter = metrics.NewRegisteredMeter("txpool/cached/invalid", nil)
+	knownCachedTxMeter   = metrics.NewRegisteredMeter("txpool/cached/known", nil)
+	invalidCachedTxMeter = metrics.NewRegisteredMeter("txpool/cached/invalid", nil)
 
-	// throttleTxMeter counts how many transactions are rejected due to too-many-changes between
+	// throttleCachedTxMeter counts how many transactions are rejected due to too-many-changes between
 	// txpool reorgs.
-	throttleTxMeter = metrics.NewRegisteredMeter("txpool/cached/throttle", nil)
-	// reorgDurationTimer measures how long time a txpool reorg takes.
-	reorgDurationTimer = metrics.NewRegisteredTimer("txpool/cached/reorgtime", nil)
-	// dropBetweenReorgHistogram counts how many drops we experience between two reorg runs. It is expected
+	throttleCachedTxMeter = metrics.NewRegisteredMeter("txpool/cached/throttle", nil)
+	// cachedReorgDurationTimer measures how long time a txpool reorg takes.
+	cachedReorgDurationTimer = metrics.NewRegisteredTimer("txpool/cached/reorgtime", nil)
+	// cachedDropBetweenReorgHistogram counts how many drops we experience between two reorg runs. It is expected
 	// that this number is pretty low, since txpool reorgs happen very frequently.
-	dropBetweenReorgHistogram = metrics.NewRegisteredHistogram("txpool/cached/dropbetweenreorg", nil, metrics.NewExpDecaySample(1028, 0.015))
+	cachedDropBetweenReorgHistogram = metrics.NewRegisteredHistogram("txpool/cached/dropbetweenreorg", nil, metrics.NewExpDecaySample(1028, 0.015))
 
-	cachedGauge = metrics.NewRegisteredGauge("txpool/cached", nil)
-	slotsGauge  = metrics.NewRegisteredGauge("txpool/cached/slots", nil)
+	cachedGauge      = metrics.NewRegisteredGauge("txpool/cached", nil)
+	cachedSlotsGauge = metrics.NewRegisteredGauge("txpool/cached/slots", nil)
 )
 
-// BlockChain defines the minimal set of methods needed to back a tx pool with
-// a chain. Exists to allow mocking the live chain out of tests.
-type BlockChain interface {
-	// Config retrieves the chain's fork configuration.
-	Config() *params.ChainConfig
-
-	// CurrentBlock returns the current head of the chain.
-	CurrentBlock() *types.Header
-
-	// StateAt returns a state database for a given root hash (generally the head).
-	StateAt(root common.Hash) (*state.StateDB, error)
-}
-
-// Config are the configuration parameters of the transaction pool.
-type Config struct {
+// CacheConfig are the configuration parameters of the transaction pool.
+type CacheConfig struct {
 	AccountSlots uint64 // Number of cached transaction slots guaranteed per account
 	GlobalSlots  uint64 // Maximum number of cached transaction slots for all accounts
 
@@ -98,7 +66,7 @@ type Config struct {
 }
 
 // DefaultConfig contains the default configurations for the transaction pool.
-var DefaultConfig = Config{
+var DefaultCacheConfig = CacheConfig{
 	AccountSlots: 16,
 	GlobalSlots:  4096 + 1024, // urgent + floating queue capacity with 4:1 ratio
 
@@ -107,7 +75,7 @@ var DefaultConfig = Config{
 
 // sanitize checks the provided user configurations and changes anything that's
 // unreasonable or unworkable.
-func (config *Config) sanitize() Config {
+func (config *CacheConfig) sanitize() CacheConfig {
 	conf := *config
 	if conf.AccountSlots < 1 {
 		log.Warn("Sanitizing invalid txpool account slots", "provided", conf.AccountSlots, "updated", DefaultConfig.AccountSlots)
@@ -126,7 +94,7 @@ func (config *Config) sanitize() Config {
 
 // CachePool contains all currently AMEV cached transactions.
 type CachePool struct {
-	config      Config
+	config      CacheConfig
 	chainconfig *params.ChainConfig
 	chain       BlockChain
 	gasTip      atomic.Pointer[uint256.Int]
@@ -150,13 +118,9 @@ type CachePool struct {
 	changesSinceReorg int // A counter for how many drops we've performed in-between reorg.
 }
 
-type txpoolResetRequest struct {
-	oldHead, newHead *types.Header
-}
-
 // New creates a new transaction pool to gather, sort and filter inbound
 // transactions from the network.
-func New(config Config, chain BlockChain) *CachePool {
+func NewCache(config CacheConfig, chain BlockChain) *CachePool {
 	// Sanitize the input to ensure no vulnerable gas prices are set
 	config = (&config).sanitize()
 
@@ -469,14 +433,14 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 	hash := tx.Hash()
 	if pool.all.Get(hash) != nil {
 		log.Trace("Discarding already known transaction", "hash", hash)
-		knownTxMeter.Mark(1)
+		knownCachedTxMeter.Mark(1)
 		return false, txpool.ErrAlreadyKnown
 	}
 
 	// If the transaction fails basic validation, discard it
 	if err := pool.validateTx(tx); err != nil {
 		log.Trace("Discarding invalid transaction", "hash", hash, "err", err)
-		invalidTxMeter.Mark(1)
+		invalidCachedTxMeter.Mark(1)
 		return false, err
 	}
 	// already validated by this point
@@ -512,8 +476,8 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 		// do too many replacements between reorg-runs, so we cap the number of
 		// replacements to 25% of the slots
 		if pool.changesSinceReorg > int(pool.config.GlobalSlots/4) {
-			throttleTxMeter.Mark(1)
-			return false, ErrTxPoolOverflow
+			throttleCachedTxMeter.Mark(1)
+			return false, ErrCachePoolOverflow
 		}
 	}
 
@@ -543,7 +507,7 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 		// Nothing was replaced, bump the queued counter
 		cachedGauge.Inc(1)
 	}
-	pool.all.Add(tx)
+	pool.all.Add(tx, true)
 	log.Trace("Pooled new executable cached transaction", "hash", hash, "from", from, "to", tx.To())
 
 	// Successful promotion, bump the heartbeat
@@ -584,7 +548,7 @@ func (pool *CachePool) Add(txs []*types.Transaction, local, sync bool) []error {
 		// If the transaction is known, pre-set the error slot
 		if pool.all.Get(tx.Hash()) != nil {
 			errs[i] = txpool.ErrAlreadyKnown
-			knownTxMeter.Mark(1)
+			knownCachedTxMeter.Mark(1)
 			continue
 		}
 		// Exclude transactions with basic errors, e.g invalid signatures and
@@ -593,7 +557,7 @@ func (pool *CachePool) Add(txs []*types.Transaction, local, sync bool) []error {
 		if err := pool.validateTxBasics(tx, local); err != nil {
 			errs[i] = err
 			log.Trace("Discarding invalid transaction", "hash", tx.Hash(), "err", err)
-			invalidTxMeter.Mark(1)
+			invalidCachedTxMeter.Mark(1)
 			continue
 		}
 		// Accumulate all unknown transactions for deeper processing
@@ -765,7 +729,7 @@ func (pool *CachePool) scheduleReorgLoop() {
 // runReorg runs reset on behalf of scheduleReorgLoop.
 func (pool *CachePool) runReorg(done chan struct{}, reset *txpoolResetRequest) {
 	defer func(t0 time.Time) {
-		reorgDurationTimer.Update(time.Since(t0))
+		cachedReorgDurationTimer.Update(time.Since(t0))
 	}(time.Now())
 	defer close(done)
 
@@ -784,7 +748,7 @@ func (pool *CachePool) runReorg(done chan struct{}, reset *txpoolResetRequest) {
 	// Ensure pool.cached sizes stay within the configured limits.
 	pool.truncateCached()
 
-	dropBetweenReorgHistogram.Update(int64(pool.changesSinceReorg))
+	cachedDropBetweenReorgHistogram.Update(int64(pool.changesSinceReorg))
 	pool.changesSinceReorg = 0 // Reset change counter
 	pool.mu.Unlock()
 
@@ -920,99 +884,4 @@ func (pool *CachePool) demoteUnexecutables() {
 			pool.reserve(addr, false)
 		}
 	}
-}
-
-// lookup is used internally by CachePool to track transactions while allowing
-// lookup without mutex contention.
-//
-// Note, although this type is properly protected against concurrent access, it
-// is **not** a type that should ever be mutated or even exposed outside of the
-// transaction pool, since its internal state is tightly coupled with the pools
-// internal mechanisms. The sole purpose of the type is to permit out-of-bound
-// peeking into the pool in CachePool.Get without having to acquire the widely scoped
-// CachePool.mu mutex.
-//
-// This lookup set combines the notion of "local transactions", which is useful
-// to build upper-level structure.
-type lookup struct {
-	slots  int
-	lock   sync.RWMutex
-	locals map[common.Hash]*types.Transaction
-}
-
-// newLookup returns a new lookup structure.
-func newLookup() *lookup {
-	return &lookup{
-		locals: make(map[common.Hash]*types.Transaction),
-	}
-}
-
-// Range calls f on each key and value present in the map. The callback passed
-// should return the indicator whether the iteration needs to be continued.
-// Callers need to specify which set (or both) to be iterated.
-func (t *lookup) Range(f func(hash common.Hash, tx *types.Transaction) bool) {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
-	for key, value := range t.locals {
-		if !f(key, value) {
-			return
-		}
-	}
-}
-
-// Get returns a transaction if it exists in the lookup, or nil if not found.
-func (t *lookup) Get(hash common.Hash) *types.Transaction {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
-	return t.locals[hash]
-}
-
-// Count returns the current number of transactions in the lookup.
-func (t *lookup) Count() int {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
-	return len(t.locals)
-}
-
-// Slots returns the current number of slots used in the lookup.
-func (t *lookup) Slots() int {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
-	return t.slots
-}
-
-// Add adds a transaction to the lookup.
-func (t *lookup) Add(tx *types.Transaction) {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
-	t.slots += numSlots(tx)
-	slotsGauge.Update(int64(t.slots))
-
-	t.locals[tx.Hash()] = tx
-}
-
-// Remove removes a transaction from the lookup.
-func (t *lookup) Remove(hash common.Hash) {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
-	tx, ok := t.locals[hash]
-	if !ok {
-		log.Error("No transaction found to be deleted", "hash", hash)
-		return
-	}
-	t.slots -= numSlots(tx)
-	slotsGauge.Update(int64(t.slots))
-
-	delete(t.locals, hash)
-}
-
-// numSlots calculates the number of slots needed for a single transaction.
-func numSlots(tx *types.Transaction) int {
-	return int((tx.Size() + txSlotSize - 1) / txSlotSize)
 }
