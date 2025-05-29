@@ -262,7 +262,7 @@ type DBFT struct {
 	dkgTaskWatcherToCloseCh  chan struct{}
 
 	// various native contract APIs that dBFT uses.
-	backend *ethapi.Backend
+	backend ethapi.Backend
 	txAPI   *ethapi.TransactionAPI
 	// staticPool is a legacy pool instance for decrypted transaction verification,
 	// which is initialized once per height at postBlock callback. It should be reset
@@ -467,7 +467,7 @@ func (c *DBFT) getValidatorsCb(txs ...dbft.Transaction[common.Hash]) []dbft.Publ
 		// GetValidatorsSorted with empty args is used by dbft to fill the list of
 		// block's validators, thus should return validators from the current
 		// epoch without recalculation.
-		pKeys, err = (*c.backend).GetValidatorsSorted(&c.lastIndex, nil, nil)
+		pKeys, err = c.backend.GetValidatorsSorted(&c.lastIndex, nil, nil)
 	}
 	// GetValidatorsSorted with non-empty args is used by dbft to fill block's
 	// NextConsensus field, but DBFT doesn't provide WithGetConsensusAddress
@@ -1093,7 +1093,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 		)
 		for _, preC := range ctx.PreCommitPayloads {
 			if preC != nil && preC.ViewNumber() == ctx.ViewNumber {
-				dkgIndex, err := (*c.backend).GetDKGIndex(blockNum, int(preC.ValidatorIndex()))
+				dkgIndex, err := c.backend.GetDKGIndex(blockNum, int(preC.ValidatorIndex()))
 				if err != nil {
 					return fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", int(preC.ValidatorIndex()), blockNum)
 				}
@@ -1477,7 +1477,7 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 		for i := 0; i < len(vals); i++ {
 			if p := dctx.CommitPayloads[i]; p != nil && p.ViewNumber() == dctx.ViewNumber {
 				blockNum := block.header.Number.Uint64() - 1
-				dkgIndex, err := (*c.backend).GetDKGIndex(blockNum, i)
+				dkgIndex, err := c.backend.GetDKGIndex(blockNum, i)
 				if err != nil {
 					return nil, fmt.Errorf("get DKG index failed: ValidatorIndex %d, block height %d", i, blockNum)
 				}
@@ -1510,7 +1510,7 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 // WithEthAPIBackend initializes Eth API backend and transaction API for
 // proper consensus module work.
 func (c *DBFT) WithEthAPIBackend(b ethapi.Backend) {
-	c.backend = &b
+	c.backend = b
 	c.txAPI = ethapi.NewTransactionAPI(b, new(ethapi.AddrLocker))
 }
 
@@ -2479,7 +2479,7 @@ func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.In
 
 func (c *DBFT) validatePayload(p *Payload) error {
 	h := c.chain.CurrentBlock().Number.Uint64()
-	validators, err := (*c.backend).GetValidatorsSorted(&h, nil, nil)
+	validators, err := c.backend.GetValidatorsSorted(&h, nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get next block validators: %w", err)
 	}
@@ -2563,7 +2563,7 @@ func (c *DBFT) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, pa
 
 func (c *DBFT) calcDifficulty(signer common.Address, parent *types.Header) *big.Int {
 	h := parent.Number.Uint64()
-	vals, err := (*c.backend).GetValidatorsSorted(&h, nil, nil)
+	vals, err := c.backend.GetValidatorsSorted(&h, nil, nil)
 	if err != nil {
 		return nil
 	}
@@ -2805,7 +2805,7 @@ func (c *DBFT) getGlobalPublicKey(h *types.Header, s *state.StateDB) (*tpke.Publ
 // calculation).
 func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) (common.Hash, common.Hash) {
 	var multisig, threshold common.Hash
-	nextVals, err := (*c.backend).GetValidatorsSorted(nil, s.Copy(), h)
+	nextVals, err := c.backend.GetValidatorsSorted(nil, s.Copy(), h)
 	if err != nil {
 		log.Crit("Failed to compute next block validators",
 			"err", err)
