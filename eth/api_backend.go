@@ -573,8 +573,12 @@ func (b *EthAPIBackend) IsExtensibleAllowed(blockNum uint64, addr common.Address
 	return b.eth.extensibleVerifier.IsExtensibleAllowed(blockNum, addr)
 }
 
-func (b *EthAPIBackend) GetValidatorsSorted(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
-	return b.eth.extensibleVerifier.GetValidatorsSorted(blockNum, state, header)
+func (b *EthAPIBackend) GetValidatorsSortedByBlockNumber(blockNum uint64) ([]common.Address, error) {
+	return b.eth.extensibleVerifier.GetValidatorsSortedByBlockNumber(blockNum)
+}
+
+func (b *EthAPIBackend) GetValidatorsSortedByState(state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	return b.eth.extensibleVerifier.GetValidatorsSortedByState(state, header)
 }
 
 func (b *EthAPIBackend) GetDKGIndex(blockNum uint64, validatorIndex int) (int, error) {

@@ -464,12 +464,12 @@ func (c *DBFT) getValidatorsCb(txs ...dbft.Transaction[common.Hash]) []dbft.Publ
 		err   error
 	)
 	if txs == nil {
-		// GetValidatorsSorted with empty args is used by dbft to fill the list of
+		// GetValidatorsSortedByBlockNumber is used by dbft to fill the list of
 		// block's validators, thus should return validators from the current
 		// epoch without recalculation.
-		pKeys, err = c.backend.GetValidatorsSorted(&c.lastIndex, nil, nil)
+		pKeys, err = c.backend.GetValidatorsSortedByBlockNumber(c.lastIndex)
 	}
-	// GetValidatorsSorted with non-empty args is used by dbft to fill block's
+	// GetValidatorsSortedByState is used by dbft to fill block's
 	// NextConsensus field, but DBFT doesn't provide WithGetConsensusAddress
 	// callback and fills NextConsensus by itself via WithNewBlockFromContext
 	// callback. Thus, leave pKeys empty if txes != nil.
@@ -2479,7 +2479,7 @@ func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.In
 
 func (c *DBFT) validatePayload(p *Payload) error {
 	h := c.chain.CurrentBlock().Number.Uint64()
-	validators, err := c.backend.GetValidatorsSorted(&h, nil, nil)
+	validators, err := c.backend.GetValidatorsSortedByBlockNumber(h)
 	if err != nil {
 		return fmt.Errorf("failed to get next block validators: %w", err)
 	}
@@ -2563,7 +2563,7 @@ func (c *DBFT) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, pa
 
 func (c *DBFT) calcDifficulty(signer common.Address, parent *types.Header) *big.Int {
 	h := parent.Number.Uint64()
-	vals, err := c.backend.GetValidatorsSorted(&h, nil, nil)
+	vals, err := c.backend.GetValidatorsSortedByBlockNumber(h)
 	if err != nil {
 		return nil
 	}
@@ -2805,7 +2805,7 @@ func (c *DBFT) getGlobalPublicKey(h *types.Header, s *state.StateDB) (*tpke.Publ
 // calculation).
 func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) (common.Hash, common.Hash) {
 	var multisig, threshold common.Hash
-	nextVals, err := c.backend.GetValidatorsSorted(nil, s.Copy(), h)
+	nextVals, err := c.backend.GetValidatorsSortedByState(s.Copy(), h)
 	if err != nil {
 		log.Crit("Failed to compute next block validators",
 			"err", err)
