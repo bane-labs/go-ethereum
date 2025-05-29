@@ -76,7 +76,7 @@ func (s *snapshot) Copy() *snapshot {
 }
 
 // init initializes snapshot with the specified startup parameters.
-func (s *snapshot) init(api *ethapi.Backend, h *types.Header, state *state.StateDB, height uint64) error {
+func (s *snapshot) init(api ethapi.Backend, h *types.Header, state *state.StateDB, height uint64) error {
 	s.EpochStartHeight = height
 	round, err := getRoundNumber(api, state, h)
 	if err != nil {
@@ -227,7 +227,7 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 				// same network id and round number, then we should get the same result.
 				// The result will be checked in epoch change, log an error message if no secret
 				// can not be confirmed in committed PVSS.
-				_, _, err := keystore.DKGShare((*c.backend).ChainConfig().ChainID)
+				_, _, err := keystore.DKGShare(c.backend.ChainConfig().ChainID)
 				if err != nil {
 					return fmt.Errorf("failed to replay sharing, err: %v", err)
 				}
@@ -286,7 +286,7 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 			// If is a member of pending consensus.
 			indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
 			if indexOfSharing > 0 {
-				err = taskList.taskShare(keystore, (*c.backend).ChainConfig().ChainID, receiverMessageKeys, zkVersion, currentHeight, recoverStartHeight)
+				err = taskList.taskShare(keystore, c.backend.ChainConfig().ChainID, receiverMessageKeys, zkVersion, currentHeight, recoverStartHeight)
 				if err != nil {
 					return fmt.Errorf("failed to task DKG share, err: %v", err)
 				}
@@ -633,7 +633,7 @@ watchLoop:
 			if newWatchList != nil && len(*newWatchList) > 0 {
 				watchTaskList = append(watchTaskList, *newWatchList...)
 			}
-			currentHeight := (*c.backend).CurrentBlock().Number.Uint64()
+			currentHeight := c.backend.CurrentBlock().Number.Uint64()
 			log.Info("DKG task watcher", "currentHeight", currentHeight, "watchListLength", len(watchTaskList))
 
 			// Loop tasks in watchTaskList.
@@ -854,7 +854,7 @@ func (t *taskList) taskReshareRecover(keystore *antimev.KeyStore, receiverMessag
 }
 
 // getCurrentConsensus returns an address list of current CNs.
-func getCurrentConsensus(backend *ethapi.Backend, state *state.StateDB, header *types.Header) ([]common.Address, error) {
+func getCurrentConsensus(backend ethapi.Backend, state *state.StateDB, header *types.Header) ([]common.Address, error) {
 	var result []common.Address
 	err := readFromContract(&result, backend, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "getCurrentConsensus")
 	if err != nil {
@@ -864,7 +864,7 @@ func getCurrentConsensus(backend *ethapi.Backend, state *state.StateDB, header *
 }
 
 // getPendingConsensus returns an address list of pending CNs.
-func getPendingConsensus(backend *ethapi.Backend, state *state.StateDB, header *types.Header) ([]common.Address, error) {
+func getPendingConsensus(backend ethapi.Backend, state *state.StateDB, header *types.Header) ([]common.Address, error) {
 	var result []common.Address
 	err := readFromContract(&result, backend, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "getPendingConsensus")
 	if err != nil {
@@ -874,7 +874,7 @@ func getPendingConsensus(backend *ethapi.Backend, state *state.StateDB, header *
 }
 
 // getSharePeriodDuration returns a number of blocks as the duration of each sharing period.
-func getSharePeriodDuration(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
+func getSharePeriodDuration(backend ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
 	var result *big.Int
 	err := readFromContract(&result, backend, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "sharePeriodDuration")
 	if err != nil {
@@ -884,7 +884,7 @@ func getSharePeriodDuration(backend *ethapi.Backend, state *state.StateDB, heade
 }
 
 // getEpochDuration returns a number of blocks as the duration of each governanace epoch.
-func getEpochDuration(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
+func getEpochDuration(backend ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
 	var result *big.Int
 	err := readFromContract(&result, backend, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "epochDuration")
 	if err != nil {
@@ -894,7 +894,7 @@ func getEpochDuration(backend *ethapi.Backend, state *state.StateDB, header *typ
 }
 
 // getCurrentEpochStartHeight returns the block height when the current governanace epoch starts.
-func getCurrentEpochStartHeight(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
+func getCurrentEpochStartHeight(backend ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
 	var result *big.Int
 	err := readFromContract(&result, backend, systemcontracts.GovernanceProxyHash, systemcontracts.GovernanceABI, state, header, "currentEpochStartHeight")
 	if err != nil {
@@ -904,7 +904,7 @@ func getCurrentEpochStartHeight(backend *ethapi.Backend, state *state.StateDB, h
 }
 
 // getMessagePubkeys returns the message keys of input address list.
-func getMessagePubkeys(backend *ethapi.Backend, addrs []common.Address, state *state.StateDB, header *types.Header) ([]*ecies.PublicKey, error) {
+func getMessagePubkeys(backend ethapi.Backend, addrs []common.Address, state *state.StateDB, header *types.Header) ([]*ecies.PublicKey, error) {
 	result := make([]*ecies.PublicKey, len(addrs))
 	for i, addr := range addrs {
 		pub, err := getMessagePubkey(backend, addr, state, header)
@@ -917,7 +917,7 @@ func getMessagePubkeys(backend *ethapi.Backend, addrs []common.Address, state *s
 }
 
 // getMessagePubkey returns the message key of input address.
-func getMessagePubkey(backend *ethapi.Backend, addr common.Address, state *state.StateDB, header *types.Header) (*ecies.PublicKey, error) {
+func getMessagePubkey(backend ethapi.Backend, addr common.Address, state *state.StateDB, header *types.Header) (*ecies.PublicKey, error) {
 	var result string
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic, state, header, "messagePubkeys", addr)
 	if err != nil {
@@ -935,7 +935,7 @@ func getMessagePubkey(backend *ethapi.Backend, addr common.Address, state *state
 }
 
 // getIndexCurrentNeedRecovering returns an array of DKG index that needs recover.
-func getIndexCurrentNeedRecovering(backend *ethapi.Backend, state *state.StateDB, header *types.Header) ([]uint64, error) {
+func getIndexCurrentNeedRecovering(backend ethapi.Backend, state *state.StateDB, header *types.Header) ([]uint64, error) {
 	var result []*big.Int
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic, state, header, "indexCurrentNeedRecovering")
 	if err != nil {
@@ -949,7 +949,7 @@ func getIndexCurrentNeedRecovering(backend *ethapi.Backend, state *state.StateDB
 }
 
 // isShareReady checks if the DKG sharing is 100% uploaded.
-func isShareReady(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (bool, error) {
+func isShareReady(backend ethapi.Backend, state *state.StateDB, header *types.Header) (bool, error) {
 	var result bool
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic, state, header, "isShareReady")
 	if err != nil {
@@ -959,7 +959,7 @@ func isShareReady(backend *ethapi.Backend, state *state.StateDB, header *types.H
 }
 
 // getReshareMsgs gets the reshare messages from specific sender index and round.
-func getReshareMsgs(backend *ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
+func getReshareMsgs(backend ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
 	var result [][]byte
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic,
 		state, header, "getReshareMsgs", big.NewInt(int64(round)), big.NewInt(int64(index)))
@@ -970,7 +970,7 @@ func getReshareMsgs(backend *ethapi.Backend, round, index uint64, state *state.S
 }
 
 // getResharePVSS gets the reshare PVSS from specific sender index and round.
-func getResharePVSS(backend *ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+func getResharePVSS(backend ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
 	var result []byte
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic,
 		state, header, "rpvsses", big.NewInt(int64(round)), big.NewInt(int64(index)))
@@ -981,7 +981,7 @@ func getResharePVSS(backend *ethapi.Backend, round, index uint64, state *state.S
 }
 
 // getShareMsgs gets the share messages from specific sender index and round.
-func getShareMsgs(backend *ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
+func getShareMsgs(backend ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([][]byte, error) {
 	var result [][]byte
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic,
 		state, header, "getShareMsgs", big.NewInt(int64(round)), big.NewInt(int64(index)))
@@ -992,7 +992,7 @@ func getShareMsgs(backend *ethapi.Backend, round, index uint64, state *state.Sta
 }
 
 // getSharePVSS gets the share PVSS from specific sender index and round.
-func getSharePVSS(backend *ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+func getSharePVSS(backend ethapi.Backend, round, index uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
 	var result []byte
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic,
 		state, header, "spvsses", big.NewInt(int64(round)), big.NewInt(int64(index)))
@@ -1003,7 +1003,7 @@ func getSharePVSS(backend *ethapi.Backend, round, index uint64, state *state.Sta
 }
 
 // getRecoverMsgs gets the recover messages from specific sender index and round, with a receiver index.
-func getRecoverMsgs(backend *ethapi.Backend, round, senderIndex, arrIndex uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+func getRecoverMsgs(backend ethapi.Backend, round, senderIndex, arrIndex uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
 	var result []byte
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic,
 		state, header, "recoverMsgs", big.NewInt(int64(round)), big.NewInt(int64(senderIndex)), big.NewInt(int64(arrIndex)))
@@ -1014,7 +1014,7 @@ func getRecoverMsgs(backend *ethapi.Backend, round, senderIndex, arrIndex uint64
 }
 
 // getAggregatedCommitment gets the global aggregated commitment after DKG share.
-func getAggregatedCommitment(backend *ethapi.Backend, round uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
+func getAggregatedCommitment(backend ethapi.Backend, round uint64, state *state.StateDB, header *types.Header) ([]byte, error) {
 	var result []byte
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic,
 		state, header, "aggregatedCommitments", big.NewInt(int64(round)))
@@ -1025,7 +1025,7 @@ func getAggregatedCommitment(backend *ethapi.Backend, round uint64, state *state
 }
 
 // getRoundNumber gets the DKG round number.
-func getRoundNumber(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
+func getRoundNumber(backend ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
 	var result *big.Int
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic,
 		state, header, "roundNumber")
@@ -1036,7 +1036,7 @@ func getRoundNumber(backend *ethapi.Backend, state *state.StateDB, header *types
 }
 
 // getZKVersion gets the DKG ZK version
-func getZKVersion(backend *ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
+func getZKVersion(backend ethapi.Backend, state *state.StateDB, header *types.Header) (uint64, error) {
 	var result *big.Int
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic,
 		state, header, "ZK_VERSION")
@@ -1051,7 +1051,7 @@ func getZKVersion(backend *ethapi.Backend, state *state.StateDB, header *types.H
 }
 
 // readFromContract calls a contract with ABI-packed inputs.
-func readFromContract(res interface{}, backend *ethapi.Backend, contract common.Address, contractAbi abi.ABI, state *state.StateDB, header *types.Header, method string, args ...interface{}) error {
+func readFromContract(res interface{}, backend ethapi.Backend, contract common.Address, contractAbi abi.ABI, state *state.StateDB, header *types.Header, method string, args ...interface{}) error {
 	if backend == nil {
 		return errNotInitializedBackend
 	}
@@ -1070,7 +1070,7 @@ func readFromContract(res interface{}, backend *ethapi.Backend, contract common.
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel when we are finished consuming integers.
 	defer cancel()
-	result, err := ethapi.DoCallAtState(ctx, *backend, txArgs, state, header, nil, nil, 0, math.MaxUint64)
+	result, err := ethapi.DoCallAtState(ctx, backend, txArgs, state, header, nil, nil, 0, math.MaxUint64)
 	if err != nil {
 		return fmt.Errorf("failed to call at state '%s': %v", method, err)
 	}
