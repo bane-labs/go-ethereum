@@ -57,31 +57,48 @@ func NewExtensibleVerifier(backend ethapi.Backend, syncing func() bool) *Extensi
 
 // IsExtensibleAllowed determines if address is allowed to send extensible payloads
 // (only consensus payloads for now) at the specified height.
-func (v *ExtensibleVerifier) IsExtensibleAllowed(h uint64, u common.Address) error {
+func (v *ExtensibleVerifier) IsExtensibleAllowed(blockNum uint64, addr common.Address) error {
 	// Can't verify extensible sender if the node has an outdated state.
 	if v.syncing() {
 		return dbftproto.ErrSyncing
 	}
 	// Only validators are included into extensible whitelist for now.
-	validators, err := v.GetValidatorsSorted(&h, nil, nil)
+	validators, err := v.GetValidatorsSortedByBlockNumber(blockNum)
 	if err != nil {
 		return fmt.Errorf("failed to get validators: %w", err)
 	}
-	_, found := slices.BinarySearchFunc(validators, u, common.Address.Cmp)
+	_, found := slices.BinarySearchFunc(validators, addr, common.Address.Cmp)
 	if !found {
 		return fmt.Errorf("address is not a validator")
 	}
 	return nil
 }
 
-// GetValidatorsSorted returns validators chosen in the result of the latest
+// GetValidatorsSortedByBlockNumber returns validators chosen in the result of the
+// latest finalized voting epoch. It calls Governance contract under the hood. The
+// call is based on the state of the block with the specified height. Validators
+// returned from this method are sorted in the original order used by Governance
+// contract. This method will use the cached values.
+func (v *ExtensibleVerifier) GetValidatorsSortedByBlockNumber(blockNum uint64) ([]common.Address, error) {
+	return v.getValidatorsSorted(&blockNum, nil, nil)
+}
+
+// GetValidatorsSortedByState returns validators chosen in the result of the latest
+// finalized voting epoch. It calls Governance contract under the hood. The call is
+// based on the provided state. Validators returned from this method are sorted in
+// the original order used by Governance contract.
+func (v *ExtensibleVerifier) GetValidatorsSortedByState(state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	return v.getValidatorsSorted(nil, state, header)
+}
+
+// getValidatorsSorted returns validators chosen in the result of the latest
 // finalized voting epoch. It calls Governance contract under the hood. The call
 // is based on the provided state or (if not provided) on the state of the block
 // with the specified height. Validators returned from this method are always
 // sorted by bytes order (even if the list returned from governance contract is
 // sorted in another way). This method uses cached values in case of validators
 // requested by block height.
-func (v *ExtensibleVerifier) GetValidatorsSorted(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
+func (v *ExtensibleVerifier) getValidatorsSorted(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error) {
 	res, err := v.getValidators(blockNum, state, header)
 	if err != nil {
 		return nil, err
@@ -135,18 +152,18 @@ func (v *ExtensibleVerifier) getValidators(blockNum *uint64, state *state.StateD
 	if err != nil {
 		return nil, fmt.Errorf("failed to perform '%s' call: %w", method, err)
 	}
-	var res []common.Address
-	err = unpackContractExecutionResult(&res, result, systemcontracts.GovernanceABI, method)
+	var validators []common.Address
+	err = unpackContractExecutionResult(&validators, result, systemcontracts.GovernanceABI, method)
 	if err != nil {
 		return nil, err
 	}
 
 	// Update cache in case if existing state was used for validators retrieval.
 	if state == nil && blockNum != nil {
-		_ = v.validatorsCache.Add(*blockNum, res)
+		_ = v.validatorsCache.Add(*blockNum, validators)
 	}
 
-	return res, err
+	return validators, err
 }
 
 func unpackContractExecutionResult(res interface{}, result *core.ExecutionResult, contractAbi abi.ABI, method string) error {

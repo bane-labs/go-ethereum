@@ -113,7 +113,8 @@ type Backend interface {
 	IsExtensibleAllowed(blockNum uint64, addr common.Address) error
 
 	// Validators API
-	GetValidatorsSorted(blockNum *uint64, state *state.StateDB, header *types.Header) ([]common.Address, error)
+	GetValidatorsSortedByBlockNumber(blockNum uint64) ([]common.Address, error)
+	GetValidatorsSortedByState(state *state.StateDB, header *types.Header) ([]common.Address, error)
 	GetDKGIndex(blockNum uint64, validatorIndex int) (int, error)
 }
 
