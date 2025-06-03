@@ -1586,7 +1586,7 @@ func setTxPool(ctx *cli.Context, cfg *legacypool.Config) {
 		cfg.ReannounceRemotes = ctx.Bool(TxPoolReannounceRemotesFlag.Name)
 	}
 	if ctx.IsSet(TxPoolAMEVCacheFlag.Name) {
-		cfg.SignaturesCache = ctx.Bool(TxPoolAMEVCacheFlag.Name)
+		cfg.AMEVCache = ctx.Bool(TxPoolAMEVCacheFlag.Name)
 	}
 }
 

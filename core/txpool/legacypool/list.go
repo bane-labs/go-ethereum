@@ -439,17 +439,10 @@ func (l *list) Cap(threshold int) types.Transactions {
 func (l *list) Remove(tx *types.Transaction) (bool, types.Transactions) {
 	// Remove the transaction from the set
 	nonce := tx.Nonce()
-	txInList := l.txs.Get(nonce)
-	if txInList == nil {
-		return false, nil
-	}
-	if txInList.Hash().Cmp(tx.Hash()) != 0 {
-		return false, nil
-	}
 	if removed := l.txs.Remove(nonce); !removed {
 		return false, nil
 	}
-	l.subTotalCost([]*types.Transaction{txInList})
+	l.subTotalCost([]*types.Transaction{tx})
 	// In strict mode, filter out non-executable transactions
 	if l.strict {
 		txs := l.txs.Filter(func(tx *types.Transaction) bool { return tx.Nonce() > nonce })

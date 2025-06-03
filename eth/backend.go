@@ -238,8 +238,19 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		config.TxPool.Journal = stack.ResolvePath(config.TxPool.Journal)
 	}
 	legacyPool := legacypool.New(config.TxPool, eth.blockchain)
+	subPools := []txpool.SubPool{legacyPool, blobPool}
+	enableAMEVCachePool := config.TxPool.AMEVCache && !config.TxPool.NoLocals
+	if enableAMEVCachePool {
+		cfg := legacypool.CacheConfig{
+			AccountSlots: config.TxPool.AccountSlots,
+			GlobalSlots:  config.TxPool.GlobalSlots,
+			Lifetime:     config.TxPool.Lifetime,
+		}
+		cachePool := legacypool.NewCache(cfg, eth.blockchain)
+		subPools = append([]txpool.SubPool{cachePool}, subPools...)
+	}
 
-	eth.txPool, err = txpool.New(config.TxPool.PriceLimit, eth.blockchain, []txpool.SubPool{legacyPool, blobPool})
+	eth.txPool, err = txpool.New(config.TxPool.PriceLimit, eth.blockchain, subPools)
 	if err != nil {
 		return nil, err
 	}
