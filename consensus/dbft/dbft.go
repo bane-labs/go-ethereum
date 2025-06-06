@@ -1274,8 +1274,8 @@ func newStaticPool(chain ChainHeaderReader) *legacypool.LegacyPool {
 }
 
 // initStaticPool initializes the static pool with the provided parent header.
-func (c *DBFT) initStaticPool(parent *types.Header) error {
-	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, func(addr common.Address, reserve bool) error { return nil })
+func (c *DBFT) initStaticPool(parent *types.Header, state *state.StateDB) error {
+	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, state, func(addr common.Address, reserve bool) error { return nil })
 }
 
 // validateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
@@ -1553,7 +1553,7 @@ func (c *DBFT) postBlock(h *types.Header, state *state.StateDB) {
 		c.lastBlockHash = h.Hash()
 		c.lastBlockSealHash, _ = honestSealHash(h) // no error expected, h is verified.
 		c.lastBlockExtra = h.Extra
-		err := c.initStaticPool(h)
+		err := c.initStaticPool(h, state)
 		if err != nil {
 			log.Crit("failed to initialize static pool",
 				"height", c.lastIndex,
@@ -2085,7 +2085,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		// miner guarantees that. We can't do it earlier because blocks chain may be out of sync compared to headers
 		// chain, ref. 3721f549.
 		if c.lastIndex == currHeader.Number.Uint64() {
-			err := c.initStaticPool(currHeader)
+			err := c.initStaticPool(currHeader, nil)
 			if err != nil {
 				log.Crit("failed to initialize static pool",
 					"height", c.lastIndex,
