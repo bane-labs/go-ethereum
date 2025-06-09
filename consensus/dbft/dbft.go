@@ -915,6 +915,7 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	ethBlock := dbftBlock.ToEthBlock()
 
 	errs := c.staticPool.Add(dbftBlock.transactions, false, false)
+	c.staticPool.ResetStatic()
 	for i, err := range errs {
 		if err != nil {
 			log.Warn("proposed PreBlock has invalid transaction",
@@ -925,7 +926,6 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 			return false
 		}
 	}
-	c.staticPool.ResetStatic()
 
 	state, receipts, gasUsed, err := c.chain.VerifyBlock(ethBlock, true)
 	if err != nil {
