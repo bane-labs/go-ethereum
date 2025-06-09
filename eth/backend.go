@@ -308,8 +308,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if config.BlobPool.Datadir != "" {
 		config.BlobPool.Datadir = stack.ResolvePath(config.BlobPool.Datadir)
 	}
-	blobPool := blobpool.New(config.BlobPool, eth.blockchain, legacyPool.HasPendingAuth)
-	subPools := []txpool.SubPool{legacyPool, blobPool}
+	eth.blobTxPool = blobpool.New(config.BlobPool, eth.blockchain, legacyPool.HasPendingAuth)
+	subPools := []txpool.SubPool{legacyPool, eth.blobTxPool}
 	enableAMEVCachePool := config.TxPool.AMEVCache && !config.TxPool.NoLocals
 	if enableAMEVCachePool {
 		cfg := legacypool.CacheConfig{
@@ -347,7 +347,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 	blobStorage.WarmCache()
-	eth.filesystem, err = core.NewFileSystem(eth.blockchain, blobPool, blobStorage)
+	eth.filesystem, err = core.NewFileSystem(eth.blockchain, eth.blobTxPool, blobStorage)
 	if err != nil {
 		return nil, err
 	}
