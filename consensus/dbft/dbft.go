@@ -1157,6 +1157,9 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 		if ctx.IsPrimary() && pre.finalState == nil {
 			receipts = c.sealingReceipts
 		}
+		if len(receipts) != len(pre.transactions) {
+			return fmt.Errorf("number of receipts mismatch: expected %d, actual %d", len(pre.transactions), len(receipts))
+		}
 		// No need to reinitialize static pool since it was already initialized in verifyPreBlockCb.
 		// Reset the static pool after processing all transactions.
 		for i := range pre.transactions {
