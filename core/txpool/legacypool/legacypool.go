@@ -329,7 +329,7 @@ func (pool *LegacyPool) FilterAdd(tx *types.Transaction, local bool) bool {
 // goroutines will be spun up and the pool deemed operational afterwards.
 func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserve txpool.AddressReserver) error {
 	// Do basic initializations about reserver, gas price and state
-	pool.InitStatic(gasTip, head, reserve)
+	pool.InitStatic(gasTip, head, nil, reserve)
 
 	// Start the reorg loop early, so it can handle requests generated during
 	// journal loading.
@@ -353,7 +353,7 @@ func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserve txpool.A
 // InitStatic sets the gas price needed to keep a transaction in the pool
 // and the chain head to allow balance / nonce checks. This method doesn't
 // start loops or load journals, so the pool can be released automatically.
-func (pool *LegacyPool) InitStatic(gasTip uint64, head *types.Header, reserve txpool.AddressReserver) error {
+func (pool *LegacyPool) InitStatic(gasTip uint64, head *types.Header, statedb *state.StateDB, reserve txpool.AddressReserver) error {
 	// Set the address reserver to request exclusive access to pooled accounts
 	pool.reserve = reserve
 
@@ -363,12 +363,16 @@ func (pool *LegacyPool) InitStatic(gasTip uint64, head *types.Header, reserve tx
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	statedb, err := pool.chain.StateAt(head.Root)
-	if err != nil {
-		statedb, err = pool.chain.StateAt(types.EmptyRootHash)
-	}
-	if err != nil {
-		return err
+	// If the state is provided, then use it directly.
+	var err error
+	if statedb == nil {
+		statedb, err = pool.chain.StateAt(head.Root)
+		if err != nil {
+			statedb, err = pool.chain.StateAt(types.EmptyRootHash)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	pool.currentHead.Store(head)
 	pool.currentState = statedb

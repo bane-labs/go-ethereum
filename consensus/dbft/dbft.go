@@ -914,11 +914,8 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	}
 	ethBlock := dbftBlock.ToEthBlock()
 
-	// If is the first view of the block, then initialize static pool with fresh parent.
-	if c.dbft.Context.ViewNumber == 0 {
-		c.initStaticPool(parent)
-	}
 	errs := c.staticPool.Add(dbftBlock.transactions, false, false)
+	c.staticPool.ResetStatic()
 	for i, err := range errs {
 		if err != nil {
 			log.Warn("proposed PreBlock has invalid transaction",
@@ -929,7 +926,6 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 			return false
 		}
 	}
-	c.staticPool.ResetStatic()
 
 	state, receipts, gasUsed, err := c.chain.VerifyBlock(ethBlock, true)
 	if err != nil {
@@ -1161,6 +1157,9 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 		if ctx.IsPrimary() && pre.finalState == nil {
 			receipts = c.sealingReceipts
 		}
+		if len(receipts) != len(pre.transactions) {
+			return fmt.Errorf("number of receipts mismatch: expected %d, actual %d", len(pre.transactions), len(receipts))
+		}
 		// No need to reinitialize static pool since it was already initialized in verifyPreBlockCb.
 		// Reset the static pool after processing all transactions.
 		for i := range pre.transactions {
@@ -1278,8 +1277,8 @@ func newStaticPool(chain ChainHeaderReader) *legacypool.LegacyPool {
 }
 
 // initStaticPool initializes the static pool with the provided parent header.
-func (c *DBFT) initStaticPool(parent *types.Header) {
-	c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, func(addr common.Address, reserve bool) error { return nil })
+func (c *DBFT) initStaticPool(parent *types.Header, state *state.StateDB) error {
+	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, state, func(addr common.Address, reserve bool) error { return nil })
 }
 
 // validateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
@@ -1557,6 +1556,13 @@ func (c *DBFT) postBlock(h *types.Header, state *state.StateDB) {
 		c.lastBlockHash = h.Hash()
 		c.lastBlockSealHash, _ = honestSealHash(h) // no error expected, h is verified.
 		c.lastBlockExtra = h.Extra
+		err := c.initStaticPool(h, state)
+		if err != nil {
+			log.Crit("failed to initialize static pool",
+				"height", c.lastIndex,
+				"hash", c.lastBlockHash,
+				"error", err)
+		}
 
 		// handle DKG
 		if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
@@ -2077,6 +2083,32 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 			return
 		}
 
+		// Manually initialize static pool and DKG snapshot in case if waitForNewSealingProposal didn't call
+		// postBlock callback. We're sure that state of the latest block is available by this moment,
+		// miner guarantees that. We can't do it earlier because blocks chain may be out of sync compared to headers
+		// chain, ref. 3721f549.
+		if c.lastIndex == currHeader.Number.Uint64() {
+			err := c.initStaticPool(currHeader, nil)
+			if err != nil {
+				log.Crit("failed to initialize static pool",
+					"height", c.lastIndex,
+					"hash", c.lastBlockHash,
+					"error", err)
+			}
+			if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
+				c.lock.RLock()
+				ks := c.amevKeystore
+				c.lock.RUnlock()
+				err := c.handleDKG(c.dkgSnapshot, ks, currHeader, nil, false)
+				if err != nil {
+					log.Crit("Failed to initialize DKG snapshot",
+						"height", currHeader.Number.Uint64(),
+						"err", err.Error())
+					return
+				}
+			}
+		}
+
 		log.Info("Starting dBFT engine",
 			"last height", c.lastIndex,
 			"last timestamp", c.lastTimestamp)
@@ -2108,19 +2140,15 @@ func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results c
 func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext bool) error {
 	log.Info("Fetching latest sealing proposal",
 		"desired number", desiredHeight)
-	var (
-		ok           bool
-		lastProposal *types.Block
-	)
+	var lastProposal *types.Block
 	// Wait here...
 	for {
 		c.lastProposalLock.RLock()
 		if c.lastProposal != nil && c.lastProposal.NumberU64() >= desiredHeight {
 			lastProposal = c.lastProposal
-			ok = true
 		}
 		c.lastProposalLock.RUnlock()
-		if ok {
+		if lastProposal != nil {
 			break
 		}
 		select {
@@ -2139,19 +2167,6 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 			"sealing proposal index", b.NumberU64())
 		ltstHeader := c.chain.GetHeaderByNumber(b.NumberU64() - 1)
 		c.postBlock(ltstHeader, nil)
-	} else if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
-		// Manually initialize DKG snapshot based on the latest block information
-		// (we're sure that state of the latest block is available by this moment,
-		// miner guarantees that). We can't do it earlier because blocks chain
-		// may be out of sync compared to headers chain, ref. 3721f549.
-		currHeader := c.chain.GetHeaderByNumber(c.lastIndex)
-		c.lock.RLock()
-		ks := c.amevKeystore
-		c.lock.RUnlock()
-		err := c.handleDKG(c.dkgSnapshot, ks, currHeader, nil, false)
-		if err != nil {
-			return fmt.Errorf("failed to initialize DKG snapshot at height %d: %w", currHeader.Number.Uint64(), err)
-		}
 	}
 
 	if b.ParentHash().Cmp(c.lastBlockHash) != 0 {
