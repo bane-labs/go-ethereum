@@ -2706,6 +2706,8 @@ func (c *DBFT) Close() error {
 		}
 		<-c.dkgTaskExecutorToCloseCh
 		<-c.dkgTaskWatcherToCloseCh
+		close(c.dkgTaskExecutorCh)
+		close(c.dkgTaskWatcherCh)
 	}
 	log.Info("dBFT engine stopped")
 	return nil

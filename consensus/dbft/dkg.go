@@ -561,14 +561,12 @@ executeLoop:
 			sevenMsgR1CS = nil
 			sevenMsgPK = nil
 
-			if len(watchList) > 0 {
-				select {
-				case <-c.quit:
-					break executeLoop
-				case c.dkgTaskWatcherCh <- &watchList:
-					// Blocking send since transactions have been constructed and sent, we need to
-					// notify dkgTaskWatcherCh anyway even if it will block dBFT operation.
-				}
+			select {
+			case <-c.quit:
+				break executeLoop
+			case c.dkgTaskWatcherCh <- &watchList:
+				// Use blocking send since transactions have been constructed and sent, we need to
+				// notify dkgTaskWatcherCh anyway even if it will block dBFT operation.
 			}
 		}
 	}
@@ -582,7 +580,6 @@ drainLoop:
 		}
 	}
 
-	close(c.dkgTaskExecutorCh)
 	close(c.dkgTaskExecutorToCloseCh)
 	log.Info("DKG task executor stopped")
 }
@@ -623,8 +620,7 @@ watchLoop:
 							if err != nil {
 								needRetry = true
 								log.Error("DKG get transaction receipt failed", "err", err, "txHash", item.TxHash)
-							}
-							if receipt["status"] != types.ReceiptStatusSuccessful {
+							} else if receipt["status"] != types.ReceiptStatusSuccessful {
 								needRetry = true
 								log.Error("DKG get transaction receipt status error", "txHash", item.TxHash, "status", receipt["status"])
 							}
@@ -663,7 +659,6 @@ drainLoop:
 		}
 	}
 
-	close(c.dkgTaskWatcherCh)
 	close(c.dkgTaskWatcherToCloseCh)
 	log.Info("DKG task watcher stopped")
 }
