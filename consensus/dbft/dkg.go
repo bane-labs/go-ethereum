@@ -129,10 +129,13 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 	// If there is an ongoing round and it's time to epoch change.
 	if snapshot.initDone && currentHeight == snapshot.EpochStartHeight+epochDuration {
 		indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
-		// Call ReceiveRecoveredReshare at targetHeight, only at this block height we can get aggregatedCommitments.
-		if len(snapshot.IndexNeedRecover) > 0 && indexOfSharing > 0 {
-			if err := c.syncRecoveredReshares(snapshot, keystore, indexOfSharing, state, h); err != nil {
-				return fmt.Errorf("failed to sync recovered secrets, err: %v", err)
+		ready, err := isShareReady(c.backend, state, h)
+		if err != nil {
+			return fmt.Errorf("failed to check if sharing is ready: %v", err)
+		}
+		if ready && indexOfSharing > 0 {
+			if err := c.syncThisRoundSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
+				return fmt.Errorf("failed to sync sharing DKG, err: %v", err)
 			}
 		}
 		// if indexOfSharing is 0, then selfPvss should be nil.
@@ -693,28 +696,6 @@ func (c *DBFT) syncRecoveredSecrets(snap *snapshot, keystore *antimev.KeyStore, 
 		}
 		if len(msg) > 0 {
 			err = keystore.ReceiveRecoverShare(selfIndex, i+1, msg, pvss)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// syncRecoveredReshares synchronizes DKG data in this round to update the local anti-mev keystore after recover.
-func (c *DBFT) syncRecoveredReshares(snap *snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
-	for _, index := range snap.IndexNeedRecover {
-		// Call ReceiveSecretReshare
-		rpvss, err := getResharePVSS(c.backend, snap.Round, index, state, header)
-		if err != nil {
-			return err
-		}
-		if len(rpvss) > 0 {
-			reshareMsgs, err := getReshareMsgs(c.backend, snap.Round, index, state, header)
-			if err != nil {
-				return err
-			}
-			err = keystore.ReceiveSecretReshare(selfIndex, int(index), reshareMsgs, rpvss)
 			if err != nil {
 				return err
 			}
