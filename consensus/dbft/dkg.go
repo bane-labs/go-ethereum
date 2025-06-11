@@ -1057,7 +1057,7 @@ func sendTransactionToKeyManagement(api *ethapi.TransactionAPI, signer common.Ad
 	case 1:
 		abi = systemcontracts.KeyManagementABIZKV1
 	default:
-		panic(fmt.Errorf("Unknown ZK version %d", zkVersion))
+		panic(fmt.Errorf("unknown ZK version %d", zkVersion))
 	}
 	data, err := abi.Pack(method, args...)
 	if err != nil {
