@@ -104,7 +104,7 @@ func (s *snapshot) reset() {
 // It constructs and sends transaction to KeyManagement contract using amev store.
 func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *types.Header, state *state.StateDB, suspended bool) error {
 	currentHeight := h.Number.Uint64()
-	taskList := taskList(make([]*task, 0))
+	taskList := make(taskList, 0)
 	amevAddress := keystore.Address()
 	if state == nil {
 		s, err := c.chain.StateAt(h.Root)
@@ -343,275 +343,327 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 		if err := keystore.Persist(); err != nil {
 			return fmt.Errorf("failed to persist keystore, err: %v", err)
 		}
+		// Notify dkgTaskExecutorCh iff there's new task.
 		if len(taskList) > 0 {
 			select {
-			case c.executeProofTaskChan <- &taskList:
+			case <-c.quit:
+				return nil
+			case c.dkgTaskExecutorCh <- &taskList:
 			default:
 				// Give up the tasks since the channel is going to block DKG and dBFT.
-				return fmt.Errorf("proof task channel is full")
+				return fmt.Errorf("DKG task executor channel is full")
 			}
 		}
-		c.loopWatchTaskChan <- struct{}{}
+		// Always notify dkgTaskWatcherCh since it needs heartbit.
+		select {
+		case <-c.quit:
+			return nil
+		case c.dkgTaskWatcherCh <- nil:
+		default:
+			// Use non-blocking send since if dkgTaskWatcherCh is busy with processing
+			// some other tasks, then triggering it one more time is completely useless.
+			log.Info("failed to send heartbit signal to DKG task watcher: handler is busy, will retry after the next block",
+				"index", h.Number.Uint64())
+		}
 	}
 	return nil
 }
 
-// loopExecuteProofTask executes ZK proof generation if there is a task.
-func (c *DBFT) loopExecuteProofTask() {
-	log.Info("DKG proof dispatcher started")
-	defer log.Info("DKG proof dispatcher stopped")
+// dkgTaskExecutor executes ZK proof generation if there is a task.
+func (c *DBFT) dkgTaskExecutor() {
+	log.Info("DKG task executor started")
 
-	for pendingList := range c.executeProofTaskChan {
-		log.Info("DKG loopExecuteProofTask", "pendingListLength", len(*pendingList))
+executeLoop:
+	for {
+		select {
+		case <-c.quit:
+			break executeLoop
+		case pendingList := <-c.dkgTaskExecutorCh:
+			var watchList taskList
+			log.Info("DKG task executor", "pendingListLength", len(*pendingList))
 
-		// Share and reshare are always in the same task list for proving, so here is a cache to reduce file read.
-		// 1 and 2 message proving happen at most once per epoch, and not together with a 7, so no cache for them.
-		// A task list to prove is consist of 7+7 (length is 2), 1 or 2 or 7 (length is 1), no other case for now.
-		// So this cache should not alloc memory when a 1 or 2 message proving is going to happen.
-		var (
-			sevenMsgR1CS constraint.ConstraintSystem
-			sevenMsgPK   *groth16.ProvingKey
-		)
+			// Share and reshare are always in the same task list for proving, so here is a cache to reduce file read.
+			// 1 and 2 message proving happen at most once per epoch, and not together with a 7, so no cache for them.
+			// A task list to prove is consist of 7+7 (length is 2), 1 or 2 or 7 (length is 1), no other case for now.
+			// So this cache should not alloc memory when a 1 or 2 message proving is going to happen.
+			var (
+				sevenMsgR1CS constraint.ConstraintSystem
+				sevenMsgPK   *groth16.ProvingKey
+			)
 
-		// Handle new tasks immediately but one by one.
-		watchList := taskList(make([]*task, 0))
-		for _, task := range *pendingList {
-			switch task.Method {
-			case "share", "reshare", "reshareRecovered":
-				// Prove the encryption of seven new messages.
-				ss := task.Params[0].([]*big.Int)
-				pvss := task.Params[1].([]byte)
-				pubs := task.Params[2].([]*ecies.PublicKey)
-				if len(ss) != len(pubs) {
-					panic(fmt.Errorf("%s task array mismatch: secrets %d, keys %d", task.Method, len(ss), len(pubs)))
-				}
-				// Convert types.
-				fis := make([]fr.Element, len(ss))
-				for i, s := range ss {
-					fis[i].SetBigInt(s)
-				}
-				// Compute necessary inputs for circuit.
-				fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs := circuit.PrepareEncryptedKeyShares(pubs, fis)
-				// Update the task parameters for sending a transaction.
-				msgs := encodeMessages(encryptedFis, bigRs, nonces)
-				// Send transactions based on ZK settings.
-				switch task.ZKVersion {
-				case 0:
-					// Send the transaction.
-					txHash, err := sendTransactionToKeyManagement(c.txAPI, c.signer, task.Method, task.ZKVersion, pvss, msgs)
-					if err != nil {
-						log.Error("failed to send DKG transaction", "err", err)
-					} else {
-						task.TxHash = txHash
-						log.Info("DKG transaction sent", "txHash", txHash)
+			// Handle new tasks immediately but one by one.
+			for _, task := range *pendingList {
+				switch task.Method {
+				case "share", "reshare", "reshareRecovered":
+					// Prove the encryption of seven new messages.
+					ss := task.Params[0].([]*big.Int)
+					pvss := task.Params[1].([]byte)
+					pubs := task.Params[2].([]*ecies.PublicKey)
+					if len(ss) != len(pubs) {
+						panic(fmt.Errorf("%s task array mismatch: secrets %d, keys %d", task.Method, len(ss), len(pubs)))
 					}
-					task.Params = []interface{}{pvss, msgs}
-				case 1:
-					// The circuit setup is limited for proofs of 7-message tasks, so disable zk for a privnet in different sizes.
-					if len(fis) != 7 {
-						panic(fmt.Errorf("invalid number of %s message inputs: expect 7, get %d", task.Method, len(fis)))
+					// Convert types.
+					fis := make([]fr.Element, len(ss))
+					for i, s := range ss {
+						fis[i].SetBigInt(s)
 					}
-					var err error
-					if sevenMsgR1CS == nil {
-						sevenMsgR1CS, err = helper.ReadCSS(c.zkFiles.sevenMsgR1CSPath)
+					// Compute necessary inputs for circuit.
+					fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs := circuit.PrepareEncryptedKeyShares(pubs, fis)
+					// Update the task parameters for sending a transaction.
+					msgs := encodeMessages(encryptedFis, bigRs, nonces)
+					// Send transactions based on ZK settings.
+					switch task.ZKVersion {
+					case 0:
+						// Send the transaction.
+						txHash, err := sendTransactionToKeyManagement(c.txAPI, c.signer, task.Method, task.ZKVersion, pvss, msgs)
 						if err != nil {
-							log.Error("invalid r1cs file", "file", c.zkFiles.sevenMsgR1CSPath, "err", err)
-							continue
+							log.Error("failed to send DKG transaction", "err", err)
+						} else {
+							task.TxHash = txHash
+							log.Info("DKG transaction sent", "txHash", txHash)
 						}
-					}
-					if sevenMsgPK == nil {
-						sevenMsgPK, err = helper.ReadProvingKey(c.zkFiles.sevenMsgProvingKeyPath)
-						if err != nil {
-							log.Error("invalid proving key file", "file", c.zkFiles.sevenMsgProvingKeyPath, "err", err)
-							continue
-						}
-					}
-					// Compute zk proof.
-					proof, _, err := zkdkg.ProveMultipleKeyShareEncryption(sevenMsgR1CS, sevenMsgPK, pubs, rs, bigRs, fisBytes, fisInts, bigFis, encryptedFis, nonces)
-					if err != nil {
-						log.Error("failed to prove DKG", "method", task.Method)
-						continue
-					}
-					proofData, cmts, cmtPok := helper.GetContractInput(proof)
-					// Send the transaction.
-					txHash, err := sendTransactionToKeyManagement(c.txAPI, c.signer, task.Method, task.ZKVersion, pvss, msgs, proofData, cmts, cmtPok)
-					if err != nil {
-						log.Error("failed to send DKG transaction", "err", err)
-					} else {
-						task.TxHash = txHash
-						log.Info("DKG transaction sent", "txHash", txHash)
-					}
-					task.Params = []interface{}{pvss, msgs, proofData, cmts, cmtPok}
-				default:
-					log.Error("Unsupported ZK version", "version", task.ZKVersion)
-					continue
-				}
-				// Add the transation to retry list.
-				watchList = append(watchList, task)
-			case "recover":
-				// Prove the encryption of old share messages and new messages, possibly 2 or 4 in total.
-				indexes := task.Params[0].([]uint64)
-				ss := task.Params[1].([]*big.Int)
-				pubs := task.Params[2].([]*ecies.PublicKey)
-				if len(ss) != len(pubs) || len(ss) != len(indexes) {
-					panic(fmt.Errorf("%s task array mismatch: indexes %d, secrets %d, keys %d", task.Method, len(indexes), len(ss), len(pubs)))
-				}
-				// Convert types.
-				fis := make([]fr.Element, len(ss))
-				idxsBigInt := make([]*big.Int, len(indexes))
-				for i, s := range ss {
-					fis[i].SetBigInt(s)
-				}
-				for i, idx := range indexes {
-					idxsBigInt[i] = big.NewInt(int64(idx))
-				}
-				// Compute necessary inputs for circuit.
-				fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs := circuit.PrepareEncryptedKeyShares(pubs, fis)
-				// Update the task parameters for sending a transaction.
-				msgs := encodeMessages(encryptedFis, bigRs, nonces)
-				// Send transactions based on ZK settings.
-				switch task.ZKVersion {
-				case 0:
-					// Send the transaction.
-					txHash, err := sendTransactionToKeyManagement(c.txAPI, c.signer, task.Method, task.ZKVersion, idxsBigInt, msgs)
-					if err != nil {
-						log.Error("failed to send DKG transaction", "err", err)
-					} else {
-						task.TxHash = txHash
-						log.Info("DKG transaction sent", "txHash", txHash)
-					}
-					task.Params = []interface{}{idxsBigInt, msgs}
-				case 1:
-					// Compute zk proof.
-					var (
-						r1cs       constraint.ConstraintSystem
-						provingKey *groth16.ProvingKey
-						err        error
-					)
-					switch len(indexes) {
+						task.Params = []interface{}{pvss, msgs}
 					case 1:
-						r1cs, err = helper.ReadCSS(c.zkFiles.oneMsgR1CSPath)
+						// The circuit setup is limited for proofs of 7-message tasks, so disable zk for a privnet in different sizes.
+						if len(fis) != 7 {
+							panic(fmt.Errorf("invalid number of %s message inputs: expect 7, get %d", task.Method, len(fis)))
+						}
+						var err error
+						if sevenMsgR1CS == nil {
+							sevenMsgR1CS, err = helper.ReadCSS(c.zkFiles.sevenMsgR1CSPath)
+							if err != nil {
+								log.Error("invalid r1cs file", "file", c.zkFiles.sevenMsgR1CSPath, "err", err)
+								continue
+							}
+						}
+						if sevenMsgPK == nil {
+							sevenMsgPK, err = helper.ReadProvingKey(c.zkFiles.sevenMsgProvingKeyPath)
+							if err != nil {
+								log.Error("invalid proving key file", "file", c.zkFiles.sevenMsgProvingKeyPath, "err", err)
+								continue
+							}
+						}
+						// Compute zk proof.
+						proof, _, err := zkdkg.ProveMultipleKeyShareEncryption(sevenMsgR1CS, sevenMsgPK, pubs, rs, bigRs, fisBytes, fisInts, bigFis, encryptedFis, nonces)
 						if err != nil {
-							log.Error("invalid r1cs file", "file", c.zkFiles.oneMsgR1CSPath, "err", err)
+							log.Error("failed to prove DKG", "method", task.Method)
 							continue
 						}
-						provingKey, err = helper.ReadProvingKey(c.zkFiles.oneMsgProvingKeyPath)
+						proofData, cmts, cmtPok := helper.GetContractInput(proof)
+						// Send the transaction.
+						txHash, err := sendTransactionToKeyManagement(c.txAPI, c.signer, task.Method, task.ZKVersion, pvss, msgs, proofData, cmts, cmtPok)
 						if err != nil {
-							log.Error("invalid proving key file", "file", c.zkFiles.oneMsgProvingKeyPath, "err", err)
-							continue
+							log.Error("failed to send DKG transaction", "err", err)
+						} else {
+							task.TxHash = txHash
+							log.Info("DKG transaction sent", "txHash", txHash)
 						}
-					case 2:
-						r1cs, err = helper.ReadCSS(c.zkFiles.twoMsgR1CSPath)
-						if err != nil {
-							log.Error("invalid r1cs file", "file", c.zkFiles.twoMsgR1CSPath, "err", err)
-							continue
-						}
-						provingKey, err = helper.ReadProvingKey(c.zkFiles.twoMsgProvingKeyPath)
-						if err != nil {
-							log.Error("invalid proving key file", "file", c.zkFiles.twoMsgProvingKeyPath, "err", err)
-							continue
-						}
+						task.Params = []interface{}{pvss, msgs, proofData, cmts, cmtPok}
 					default:
-						// The circuit setup is limited for proofs of 1-or-2-message tasks, other cases shouldn't happen.
-						panic(fmt.Errorf("invalid number of %s message inputs: expect 1 or 2, get %d", task.Method, len(fis)))
-					}
-					proof, _, err := zkdkg.ProveMultipleKeyShareEncryption(r1cs, provingKey, pubs, rs, bigRs, fisBytes, fisInts, bigFis, encryptedFis, nonces)
-					if err != nil {
-						log.Error("failed to prove DKG", "method", task.Method)
+						log.Error("Unsupported ZK version", "version", task.ZKVersion)
 						continue
 					}
-					proofData, cmts, cmtPok := helper.GetContractInput(proof)
-					// Send the transaction.
-					txHash, err := sendTransactionToKeyManagement(c.txAPI, c.signer, task.Method, task.ZKVersion, idxsBigInt, msgs, proofData, cmts, cmtPok)
-					if err != nil {
-						log.Error("failed to send DKG transaction", "err", err)
-					} else {
-						task.TxHash = txHash
-						log.Info("DKG transaction sent", "txHash", txHash)
+					// Add the transation to retry list.
+					watchList = append(watchList, task)
+				case "recover":
+					// Prove the encryption of old share messages and new messages, possibly 2 or 4 in total.
+					indexes := task.Params[0].([]uint64)
+					ss := task.Params[1].([]*big.Int)
+					pubs := task.Params[2].([]*ecies.PublicKey)
+					if len(ss) != len(pubs) || len(ss) != len(indexes) {
+						panic(fmt.Errorf("%s task array mismatch: indexes %d, secrets %d, keys %d", task.Method, len(indexes), len(ss), len(pubs)))
 					}
-					task.Params = []interface{}{idxsBigInt, msgs, proofData, cmts, cmtPok}
-					// Release immediately after proving.
-					r1cs = nil
-					provingKey = nil
+					// Convert types.
+					fis := make([]fr.Element, len(ss))
+					idxsBigInt := make([]*big.Int, len(indexes))
+					for i, s := range ss {
+						fis[i].SetBigInt(s)
+					}
+					for i, idx := range indexes {
+						idxsBigInt[i] = big.NewInt(int64(idx))
+					}
+					// Compute necessary inputs for circuit.
+					fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs := circuit.PrepareEncryptedKeyShares(pubs, fis)
+					// Update the task parameters for sending a transaction.
+					msgs := encodeMessages(encryptedFis, bigRs, nonces)
+					// Send transactions based on ZK settings.
+					switch task.ZKVersion {
+					case 0:
+						// Send the transaction.
+						txHash, err := sendTransactionToKeyManagement(c.txAPI, c.signer, task.Method, task.ZKVersion, idxsBigInt, msgs)
+						if err != nil {
+							log.Error("failed to send DKG transaction", "err", err)
+						} else {
+							task.TxHash = txHash
+							log.Info("DKG transaction sent", "txHash", txHash)
+						}
+						task.Params = []interface{}{idxsBigInt, msgs}
+					case 1:
+						// Compute zk proof.
+						var (
+							r1cs       constraint.ConstraintSystem
+							provingKey *groth16.ProvingKey
+							err        error
+						)
+						switch len(indexes) {
+						case 1:
+							r1cs, err = helper.ReadCSS(c.zkFiles.oneMsgR1CSPath)
+							if err != nil {
+								log.Error("invalid r1cs file", "file", c.zkFiles.oneMsgR1CSPath, "err", err)
+								continue
+							}
+							provingKey, err = helper.ReadProvingKey(c.zkFiles.oneMsgProvingKeyPath)
+							if err != nil {
+								log.Error("invalid proving key file", "file", c.zkFiles.oneMsgProvingKeyPath, "err", err)
+								continue
+							}
+						case 2:
+							r1cs, err = helper.ReadCSS(c.zkFiles.twoMsgR1CSPath)
+							if err != nil {
+								log.Error("invalid r1cs file", "file", c.zkFiles.twoMsgR1CSPath, "err", err)
+								continue
+							}
+							provingKey, err = helper.ReadProvingKey(c.zkFiles.twoMsgProvingKeyPath)
+							if err != nil {
+								log.Error("invalid proving key file", "file", c.zkFiles.twoMsgProvingKeyPath, "err", err)
+								continue
+							}
+						default:
+							// The circuit setup is limited for proofs of 1-or-2-message tasks, other cases shouldn't happen.
+							panic(fmt.Errorf("invalid number of %s message inputs: expect 1 or 2, get %d", task.Method, len(fis)))
+						}
+						proof, _, err := zkdkg.ProveMultipleKeyShareEncryption(r1cs, provingKey, pubs, rs, bigRs, fisBytes, fisInts, bigFis, encryptedFis, nonces)
+						if err != nil {
+							log.Error("failed to prove DKG", "method", task.Method)
+							continue
+						}
+						proofData, cmts, cmtPok := helper.GetContractInput(proof)
+						// Send the transaction.
+						txHash, err := sendTransactionToKeyManagement(c.txAPI, c.signer, task.Method, task.ZKVersion, idxsBigInt, msgs, proofData, cmts, cmtPok)
+						if err != nil {
+							log.Error("failed to send DKG transaction", "err", err)
+						} else {
+							task.TxHash = txHash
+							log.Info("DKG transaction sent", "txHash", txHash)
+						}
+						task.Params = []interface{}{idxsBigInt, msgs, proofData, cmts, cmtPok}
+						// Release immediately after proving.
+						r1cs = nil
+						provingKey = nil
+					default:
+						log.Error("Unsupported ZK version", "version", task.ZKVersion)
+						continue
+					}
+					// Add the transation to retry list.
+					watchList = append(watchList, task)
 				default:
-					log.Error("Unsupported ZK version", "version", task.ZKVersion)
-					continue
+					panic(fmt.Errorf("unknown DKG method to prove: %s", task.Method))
 				}
-				// Add the transation to retry list.
-				watchList = append(watchList, task)
-			default:
-				panic(fmt.Errorf("unknown DKG method to prove: %s", task.Method))
+			}
+			// Release the cache when the task list is fully handled.
+			sevenMsgR1CS = nil
+			sevenMsgPK = nil
+
+			select {
+			case <-c.quit:
+				break executeLoop
+			case c.dkgTaskWatcherCh <- &watchList:
+				// Use blocking send since transactions have been constructed and sent, we need to
+				// notify dkgTaskWatcherCh anyway even if it will block dBFT operation.
 			}
 		}
-		// Release the cache when the task list is fully handled.
-		sevenMsgR1CS = nil
-		sevenMsgPK = nil
-		c.appendWatchTaskChan <- &watchList
 	}
-	close(c.appendWatchTaskChan)
+
+drainLoop:
+	for {
+		select {
+		case <-c.dkgTaskExecutorCh:
+		default:
+			break drainLoop
+		}
+	}
+
+	close(c.dkgTaskExecutorToCloseCh)
+	log.Info("DKG task executor stopped")
 }
 
-// loopWatchTaskList retries every transaction task in transaction watch list.
-func (c *DBFT) loopWatchTaskList() {
-	log.Info("DKG transaction dispatcher started")
-	defer log.Info("DKG transaction dispatcher stopped")
+// dkgTaskWatcher retries every transaction task in transaction watch list.
+func (c *DBFT) dkgTaskWatcher() {
+	log.Info("DKG task watcher started")
 
-	var watchTaskList []*task
-	for range c.loopWatchTaskChan {
-		currentHeight := (*c.backend).CurrentBlock().Number.Uint64()
-		if len(c.appendWatchTaskChan) > 0 {
-			// Append watchList from appendWatchTaskChan to watchTaskList.
-			newWatchList := <-c.appendWatchTaskChan
-			watchTaskList = append(watchTaskList, *newWatchList...)
-		}
-		log.Info("DKG loopWatchTaskList", "currentHeight", currentHeight, "watchListLength", len(watchTaskList))
+	var watchTaskList taskList
+watchLoop:
+	for {
+		select {
+		case <-c.quit:
+			break watchLoop
+		case newWatchList := <-c.dkgTaskWatcherCh:
+			// If it's a heartbit, then just recheck the old tasks. If newWatchList is non-empty, then
+			// update the watchlist.
+			if newWatchList != nil && len(*newWatchList) > 0 {
+				watchTaskList = append(watchTaskList, *newWatchList...)
+			}
+			currentHeight := (*c.backend).CurrentBlock().Number.Uint64()
+			log.Info("DKG task watcher", "currentHeight", currentHeight, "watchListLength", len(watchTaskList))
 
-		// Loop tasks in watchTaskList.
-		var retryList []*task
-		if len(watchTaskList) > 0 {
-			for _, item := range watchTaskList {
-				if currentHeight < item.EndHeight && !item.ConfirmedSuccess {
-					needRetry := false
-					// Send failed, just resend and set transaction hash.
-					if item.TxHash == nil {
-						needRetry = true
-					}
-
-					// Send successfully, wait 3 blocks to check transaction status.
-					if item.TxHash != nil && currentHeight-item.SendHeight == 3 {
-						receipt, err := c.txAPI.GetTransactionReceipt(context.Background(), *item.TxHash)
-						if err != nil {
+			// Loop tasks in watchTaskList.
+			var retryList taskList
+			if len(watchTaskList) > 0 {
+				for _, item := range watchTaskList {
+					if currentHeight < item.EndHeight && !item.ConfirmedSuccess {
+						needRetry := false
+						// Send failed, just resend and set transaction hash.
+						if item.TxHash == nil {
 							needRetry = true
-							log.Error("DKG get transaction receipt failed", "err", err, "txHash", item.TxHash)
 						}
-						if receipt["status"] != types.ReceiptStatusSuccessful {
-							needRetry = true
-							log.Error("DKG get transaction receipt status error", "txHash", item.TxHash, "status", receipt["status"])
-						}
-					}
 
-					var err error
-					if needRetry {
-						item.TxHash, err = sendTransactionToKeyManagement(c.txAPI, c.signer, item.Method, item.ZKVersion, item.Params...)
-						if err != nil {
-							retryList = append(retryList, item)
-							log.Error("DKG retry sending transaction failed", "currentHeight", currentHeight, "method", item.Method, "err", err)
-							continue
+						// Send successfully, wait 3 blocks to check transaction status.
+						if item.TxHash != nil && currentHeight-item.SendHeight == 3 {
+							receipt, err := c.txAPI.GetTransactionReceipt(context.Background(), *item.TxHash)
+							if err != nil {
+								needRetry = true
+								log.Error("DKG get transaction receipt failed", "err", err, "txHash", item.TxHash)
+							} else if receipt["status"] != types.ReceiptStatusSuccessful {
+								needRetry = true
+								log.Error("DKG get transaction receipt status error", "txHash", item.TxHash, "status", receipt["status"])
+							}
+						}
+
+						var err error
+						if needRetry {
+							item.TxHash, err = sendTransactionToKeyManagement(c.txAPI, c.signer, item.Method, item.ZKVersion, item.Params...)
+							if err != nil {
+								retryList = append(retryList, item)
+								log.Error("DKG retry sending transaction failed", "currentHeight", currentHeight, "method", item.Method, "err", err)
+								continue
+							} else {
+								item.SendHeight = currentHeight
+								retryList = append(retryList, item)
+								log.Info("DKG retry transaction sent", "method", item.Method, "txHash", item.TxHash)
+							}
 						} else {
-							item.SendHeight = currentHeight
-							retryList = append(retryList, item)
-							log.Info("DKG retry transaction sent", "method", item.Method, "txHash", item.TxHash)
+							item.ConfirmedSuccess = true
+							log.Info("DKG get transaction receipt successfully", "method", item.Method, "txHash", item.TxHash)
 						}
-					} else {
-						item.ConfirmedSuccess = true
-						log.Info("DKG get transaction receipt successfully", "method", item.Method, "txHash", item.TxHash)
 					}
 				}
+				// Only keep retry failed and not reach max retry times.
+				watchTaskList = retryList
 			}
-			// Only keep retry failed and not reach max retry times.
-			watchTaskList = retryList
 		}
 	}
+
+drainLoop:
+	for {
+		select {
+		case <-c.dkgTaskWatcherCh:
+		default:
+			break drainLoop
+		}
+	}
+
+	close(c.dkgTaskWatcherToCloseCh)
+	log.Info("DKG task watcher stopped")
 }
 
 // syncLastRoundSecrets downloads DKG sharings and related PVSS, and sends to keystore.
@@ -986,7 +1038,7 @@ func sendTransactionToKeyManagement(api *ethapi.TransactionAPI, signer common.Ad
 	case 1:
 		abi = systemcontracts.KeyManagementABIZKV1
 	default:
-		panic(fmt.Errorf("Unknown ZK version %d", zkVersion))
+		panic(fmt.Errorf("unknown ZK version %d", zkVersion))
 	}
 	data, err := abi.Pack(method, args...)
 	if err != nil {

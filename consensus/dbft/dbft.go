@@ -133,6 +133,9 @@ var (
 	errUnauthorizedSigner = errors.New("unauthorized signer")
 )
 
+// errShutdown represents an error caused by engine shutdown initiated by user.
+var errShutdown = errors.New("shutdown detected")
+
 // DBFT is the proof-of-authority consensus engine.
 type DBFT struct {
 	messages chan Payload
@@ -171,7 +174,7 @@ type DBFT struct {
 
 	dbft             *dbft.DBFT[common.Hash]
 	dbftStarted      atomic.Bool
-	eventLoopStarted atomic.Bool
+	eventLoopRunning atomic.Bool
 	blockQueue       *blockQueue
 
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
@@ -214,8 +217,11 @@ type DBFT struct {
 	// irrespectively of the chain's height.
 	signerConfig types.Signer
 
-	quit     chan struct{}
-	finished chan struct{}
+	// Channels used for graceful engine shutdown.
+	quit                     chan struct{}
+	eventLoopToCloseCh       chan struct{}
+	dkgTaskExecutorToCloseCh chan struct{}
+	dkgTaskWatcherToCloseCh  chan struct{}
 
 	// various native contract APIs that dBFT uses.
 	backend         *ethapi.Backend
@@ -232,10 +238,9 @@ type DBFT struct {
 	fakeDiff bool // Skip difficulty verifications
 
 	// The fields for dkg
-	dkgSnapshot          *snapshot
-	executeProofTaskChan chan *taskList
-	loopWatchTaskChan    chan struct{}
-	appendWatchTaskChan  chan *taskList
+	dkgSnapshot       *snapshot
+	dkgTaskExecutorCh chan *taskList
+	dkgTaskWatcherCh  chan *taskList
 }
 
 // config represents Engine configuration.
@@ -310,16 +315,17 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
 		signerConfig:    types.LatestSigner(chainCfg),
 
-		quit:     make(chan struct{}),
-		finished: make(chan struct{}),
+		quit:                     make(chan struct{}),
+		eventLoopToCloseCh:       make(chan struct{}),
+		dkgTaskExecutorToCloseCh: make(chan struct{}),
+		dkgTaskWatcherToCloseCh:  make(chan struct{}),
 
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 		dkgIndexCache:   lru.NewCache[uint64, []int](validatorsCacheCap),
 
-		dkgSnapshot:          NewSnapshot(),
-		executeProofTaskChan: make(chan *taskList, 2), // The maximum number of task lists per epoch is 3
-		loopWatchTaskChan:    make(chan struct{}),
-		appendWatchTaskChan:  make(chan *taskList, 2),
+		dkgSnapshot:       NewSnapshot(),
+		dkgTaskExecutorCh: make(chan *taskList, 2), // The maximum number of task lists per epoch is 3
+		dkgTaskWatcherCh:  make(chan *taskList, 2),
 	}
 
 	var err error
@@ -2059,8 +2065,8 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		// Start DKG task dispatcher prior to sealing proposal awaiting since new
 		// block may be discovered during awaiting which may lead to DKG-related
 		// transactions submission.
-		go c.loopExecuteProofTask()
-		go c.loopWatchTaskList()
+		go c.dkgTaskExecutor()
+		go c.dkgTaskWatcher()
 
 		// Current head of the header chain may be above the block chain, and
 		// dBFT must always be based on the latest state data (i.e. blocks), thus,
@@ -2077,10 +2083,12 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 		// initialised by miner. Start consensus once we have new sealing work in Seal.
 		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
 		if err != nil {
-			log.Warn("Failed to fetch latest sealing proposal",
+			if errors.Is(err, errShutdown) {
+				return
+			}
+			log.Crit("Failed to fetch latest sealing proposal",
 				"index", c.lastIndex+1,
 				"err", err.Error())
-			return
 		}
 
 		// Manually initialize static pool and DKG snapshot in case if waitForNewSealingProposal didn't call
@@ -2153,10 +2161,9 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 		}
 		select {
 		case <-c.quit:
-			return errors.New("shutdown detected")
-		default:
+			return errShutdown
+		case <-time.After(time.Second):
 		}
-		time.Sleep(time.Second)
 	}
 
 	// And then retrieve proposal and check it.
@@ -2218,7 +2225,7 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 }
 
 func (c *DBFT) eventLoop() {
-	c.eventLoopStarted.Store(true)
+	c.eventLoopRunning.Store(true)
 	log.Info("dBFT event loop started")
 
 	// Track of the downloader events to be in sync with miner's status since miner's
@@ -2228,11 +2235,6 @@ func (c *DBFT) eventLoop() {
 	// prevent a major security vuln where external parties can DOS you with blocks
 	// and halt your dBFT operation for as long as the DOS continues.
 	downloaderEvents := c.mux.Subscribe(downloader.DoneEvent{}, downloader.FailedEvent{})
-	defer func() {
-		if !downloaderEvents.Closed() {
-			downloaderEvents.Unsubscribe()
-		}
-	}()
 	dlEventCh := downloaderEvents.Chan()
 
 events:
@@ -2240,10 +2242,7 @@ events:
 		oldView := c.dbft.ViewNumber
 		select {
 		case <-c.quit:
-			log.Info("shutting down dBFT event loop")
-			c.dbft.Timer.Stop()
-
-			c.chainHeadSub.Unsubscribe()
+			log.Info("Shutting down dBFT event loop")
 			break events
 		case <-c.dbft.Timer.C():
 			h, v := c.dbft.Timer.Height(), c.dbft.Timer.View()
@@ -2279,16 +2278,10 @@ events:
 		case tx := <-c.txs:
 			c.dbft.OnTransaction(&Transaction{Tx: tx})
 		case b := <-c.chainHeadEvents:
-			err := c.handleChainBlock(b.Block.Header(), true)
-			if err != nil {
-				log.Warn("Failed to handle chain block",
-					"index", b.Block.NumberU64(),
-					"err", err.Error())
-				break events
-			}
+			c.handleChainBlock(b.Block.Header(), true)
 		case err := <-c.chainHeadSub.Err():
 			// System has stopped.
-			log.Info("Stopping dBFT service since block subscriptions are stopped")
+			log.Info("Stopping dBFT event loop since block subscriptions are stopped")
 			if err != nil {
 				log.Info("Block subscriptions error",
 					"error", err.Error())
@@ -2303,26 +2296,13 @@ events:
 			switch ev.Data.(type) {
 			case downloader.FailedEvent:
 				latest := c.chain.CurrentHeader()
-				err := c.handleChainBlock(latest, false)
-				if err != nil {
-					log.Warn("Failed to handle latest chain block",
-						"index", latest.Number.Uint64(),
-						"err", err.Error())
-					break events
-				}
-
+				c.handleChainBlock(latest, false)
 			case downloader.DoneEvent:
 				// Stop reacting to downloader events.
 				downloaderEvents.Unsubscribe()
 
 				latest := c.chain.CurrentHeader()
-				err := c.handleChainBlock(latest, false)
-				if err != nil {
-					log.Warn("Failed to handle latest chain block",
-						"index", latest.Number.Uint64(),
-						"err", err.Error())
-					break events
-				}
+				c.handleChainBlock(latest, false)
 			}
 		}
 		// Always process block event if there is any, we can add one above or external
@@ -2337,13 +2317,7 @@ events:
 			}
 		}
 		if latestBlock.Block != nil {
-			err := c.handleChainBlock(latestBlock.Block.Header(), true)
-			if err != nil {
-				log.Warn("Failed to handle latest chain block",
-					"index", latestBlock.Block.NumberU64(),
-					"err", err.Error())
-				break events
-			}
+			c.handleChainBlock(latestBlock.Block.Header(), true)
 		}
 		newView := c.dbft.ViewNumber
 		// If ChangeView has happened, we always need to wait for the new proposal
@@ -2352,10 +2326,12 @@ events:
 			log.Info("Change view detected, waiting for new sealing task to be submitted by miner", "old view", oldView, "new view", newView)
 			err := c.waitForNewSealingProposal(uint64(c.dbft.Context.BlockIndex), true)
 			if err != nil {
-				log.Warn("Failed to fetch latest sealing proposal",
+				if errors.Is(err, errShutdown) {
+					break events
+				}
+				log.Crit("Failed to fetch latest sealing proposal",
 					"index", c.dbft.Context.BlockIndex,
 					"err", err.Error())
-				break events
 			}
 			log.Info("Start dBFT process for updated sealing work",
 				"index", c.dbft.Context.BlockIndex,
@@ -2363,6 +2339,12 @@ events:
 			)
 		}
 	}
+	c.dbft.Timer.Stop()
+	c.chainHeadSub.Unsubscribe()
+	if !downloaderEvents.Closed() {
+		downloaderEvents.Unsubscribe()
+	}
+	c.eventLoopRunning.Store(false)
 drainLoop:
 	for {
 		select {
@@ -2376,16 +2358,14 @@ drainLoop:
 	close(c.messages)
 	close(c.txs)
 	close(c.chainHeadEvents)
-	close(c.executeProofTaskChan)
-	close(c.loopWatchTaskChan)
-	close(c.finished)
-	log.Info("dBFT event loop finished")
+	close(c.eventLoopToCloseCh)
+	log.Info("dBFT event loop stopped")
 }
 
 // OnPayload handles Payload receive.
 func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
-	if c.dbft == nil || !c.dbftStarted.Load() {
-		log.Debug("Skip dBFT payload handling: dbft is inactive or not started yet", "hash", cp.Hash())
+	if c.dbft == nil || !c.eventLoopRunning.Load() {
+		log.Debug("Skip dBFT payload handling: dBFT event loop is inactive or not started yet", "hash", cp.Hash())
 		return nil
 	}
 	if c.syncing.Load() {
@@ -2500,7 +2480,7 @@ func (c *DBFT) newConsensusPayloadCb(ctx *dbft.Context[common.Hash], t dbft.Mess
 	return cp
 }
 
-func (c *DBFT) handleChainBlock(h *types.Header, checkForSync bool) error {
+func (c *DBFT) handleChainBlock(h *types.Header, checkForSync bool) {
 	// A short path if miner is not active and the node is in the process of block
 	// sync. In this case dBFT can't react properly on the newcoming blocks since no
 	// sealing task is expected from miner.
@@ -2509,7 +2489,7 @@ func (c *DBFT) handleChainBlock(h *types.Header, checkForSync bool) error {
 			"block index", h.Number.Int64(),
 			"dbft index", c.dbft.BlockIndex,
 		)
-		return nil
+		return
 	}
 
 	// We can get our own block here, so check for index.
@@ -2526,14 +2506,15 @@ func (c *DBFT) handleChainBlock(h *types.Header, checkForSync bool) error {
 
 		err := c.waitForNewSealingProposal(c.lastIndex+1, false)
 		if err != nil {
-			log.Warn("Failed to fetch latest sealing proposal",
+			if errors.Is(err, errShutdown) {
+				return
+			}
+			log.Crit("Failed to fetch latest sealing proposal",
 				"index", c.lastIndex+1,
 				"err", err.Error())
-			return err
 		}
 		c.dbft.Reset(c.lastTimestamp * NsInS)
 	}
-	return nil
 }
 
 // CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
@@ -2720,9 +2701,13 @@ func (c *DBFT) Close() error {
 	if c.dbftStarted.CompareAndSwap(true, false) {
 		log.Info("Shutting down dBFT engine")
 		close(c.quit)
-		if c.eventLoopStarted.CompareAndSwap(true, false) {
-			<-c.finished
+		if c.eventLoopRunning.Load() {
+			<-c.eventLoopToCloseCh
 		}
+		<-c.dkgTaskExecutorToCloseCh
+		<-c.dkgTaskWatcherToCloseCh
+		close(c.dkgTaskExecutorCh)
+		close(c.dkgTaskWatcherCh)
 	}
 	log.Info("dBFT engine stopped")
 	return nil
