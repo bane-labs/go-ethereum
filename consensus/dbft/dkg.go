@@ -127,7 +127,7 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 	}
 
 	// If there is an ongoing round and it's time to epoch change.
-	if snapshot.initDone && currentHeight == snapshot.EpochStartHeight+epochDuration {
+	if snapshot.initDone && currentHeight >= snapshot.EpochStartHeight+epochDuration {
 		indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
 		ready, err := isShareReady(c.backend, state, h)
 		if err != nil {
