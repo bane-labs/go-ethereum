@@ -19,6 +19,7 @@ package legacypool
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"sort"
@@ -329,7 +330,7 @@ func (pool *LegacyPool) FilterAdd(tx *types.Transaction, local bool) bool {
 // goroutines will be spun up and the pool deemed operational afterwards.
 func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserve txpool.AddressReserver) error {
 	// Do basic initializations about reserver, gas price and state
-	pool.InitStatic(gasTip, head, nil, reserve)
+	pool.InitStatic(gasTip, head, nil, reserve, true)
 
 	// Start the reorg loop early, so it can handle requests generated during
 	// journal loading.
@@ -353,7 +354,7 @@ func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserve txpool.A
 // InitStatic sets the gas price needed to keep a transaction in the pool
 // and the chain head to allow balance / nonce checks. This method doesn't
 // start loops or load journals, so the pool can be released automatically.
-func (pool *LegacyPool) InitStatic(gasTip uint64, head *types.Header, statedb *state.StateDB, reserve txpool.AddressReserver) error {
+func (pool *LegacyPool) InitStatic(gasTip uint64, head *types.Header, statedb *state.StateDB, reserve txpool.AddressReserver, allowMissingState bool) error {
 	// Set the address reserver to request exclusive access to pooled accounts
 	pool.reserve = reserve
 
@@ -368,10 +369,13 @@ func (pool *LegacyPool) InitStatic(gasTip uint64, head *types.Header, statedb *s
 	if statedb == nil {
 		statedb, err = pool.chain.StateAt(head.Root)
 		if err != nil {
+			if !allowMissingState {
+				return fmt.Errorf("failed to get state at %d (%s): %w", head.Number.Uint64(), head.Root, err)
+			}
 			statedb, err = pool.chain.StateAt(types.EmptyRootHash)
-		}
-		if err != nil {
-			return err
+			if err != nil {
+				return fmt.Errorf("failed to get state at %d by empty root: %w", head.Number.Uint64(), err)
+			}
 		}
 	}
 	pool.currentHead.Store(head)
