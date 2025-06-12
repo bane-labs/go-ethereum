@@ -104,7 +104,7 @@ func (s *snapshot) reset() {
 // It constructs and sends transaction to KeyManagement contract using amev store.
 func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *types.Header, state *state.StateDB, suspended bool) error {
 	currentHeight := h.Number.Uint64()
-	taskList := taskList(make([]*task, 0))
+	taskList := make(taskList, 0)
 	amevAddress := keystore.Address()
 	if state == nil {
 		s, err := c.chain.StateAt(h.Root)
@@ -588,7 +588,7 @@ drainLoop:
 func (c *DBFT) dkgTaskWatcher() {
 	log.Info("DKG task watcher started")
 
-	var watchTaskList []*task
+	var watchTaskList taskList
 watchLoop:
 	for {
 		select {
@@ -604,7 +604,7 @@ watchLoop:
 			log.Info("DKG task watcher", "currentHeight", currentHeight, "watchListLength", len(watchTaskList))
 
 			// Loop tasks in watchTaskList.
-			var retryList []*task
+			var retryList taskList
 			if len(watchTaskList) > 0 {
 				for _, item := range watchTaskList {
 					if currentHeight < item.EndHeight && !item.ConfirmedSuccess {
