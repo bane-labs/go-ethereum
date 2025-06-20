@@ -17,6 +17,7 @@
     "shanghaiTime": 0,
     "neoXDKGBlock": 1990080,
     "neoXAMEVBlock": 2088000,
+    "neoXEthSigBlock": 3750000,
     "dbft": {
       "period": 5,
       "standbyValidators": [

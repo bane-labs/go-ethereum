@@ -2,6 +2,49 @@
 
 This document outlines major changes between releases.
 
+## 0.4.0 "Karstification" (20 Jun 2025)
+
+This version introduces a preview of ZK-based DKG signature verification added to
+KeyManagement system contract and the support of ZK-based DKG signature generation
+at the dBFT side (this feature will be auto-enabled by dBFT once KeyManagement
+contract is upgraded by the network maintainers). Note that this feature is not yet
+finalized and is a subject of polishing for further releases. Also, this version adds
+a support for `NeoXEthSig` fork that switches to a canonical form of TPKE block
+signatures. In addition to that, this version contains a set of optimisations improving
+the efficiency of block producing process and a set of dBFT-related bug fixes.
+
+This version is fully compatible with v0.3.2 and does not require DB resync. For TestNet
+nodes upgrade, the DB reinitialization with updated genesis configuration is required
+(`NeoXEthSig` fork is scheduled at block 3750000 of TestNet). To upgrade MainNet nodes
+from v0.2.2, no DB reinitialization is required (since we don't yet enable `NeoXDKG`,
+`NeoXAMEV` and `NeoXEthSig` forks on MainNet), but anti-MEV keystore should be generated
+and provided to the node on startup following the notes from v0.3.0 release.
+
+New features:
+ * `NeoXEthSig` hardfork fixing the format of TPKE block signature (#463)
+ * ZK-based DKG signature verification support in KeyManagement contract (#442, #470)
+ * ZK-based DKG signature generation support in dBFT (#444)
+
+Behaviour changes:
+ * `txpool.signaturecache` CLI flag is renamed to `txpool.amevcache` (#457)
+
+Improvements:
+ * configurable dBFT status statistics period (#449)
+ * documentation improvements (#457)
+ * refactoring of encrypted transactions pool (#468)
+ * optimize conversion of dBFT CN index to DKG CN index (#458)
+ * use local mempool for dBFT proposal verification (#466, #476)
+
+Bugs fixed:
+ * panic in encrypted transactions pool on attempt to remove expired transaction (#447)
+ * empty pending consensus list on new epoch start in Governance contract (#460)
+ * DKG routine is not synchronized with miner interruption (#475)
+ * panic on dBFT payload processing during miner node shutdown (#467)
+ * non-canonical format of TPKE block signature (#463)
+ * panic in dBFT on PreBlock verification (#473)
+ * consensus doesn't work on single-node privnet (#315)
+ * inability to retrieve ZK version from old KeyManagement implementation (#478)
+
 ## 0.3.2 "Ionization" (20 Mar 2025)
 
 This is an urgent patch-release fixing a panic happened on primary CN during decrypted
