@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
 	zkdkg "github.com/bane-labs/zk-dkg"
 	"github.com/bane-labs/zk-dkg/circuit"
@@ -993,6 +994,10 @@ func getZKVersion(backend *ethapi.Backend, state *state.StateDB, header *types.H
 	err := readFromContract(&result, backend, systemcontracts.KeyManagementProxyHash, systemcontracts.KeyManagementABIBasic,
 		state, header, "ZK_VERSION")
 	if err != nil {
+		if strings.Contains(err.Error(), "abi: attempting to unmarshal an empty string while arguments are expected") {
+			// Old KeyManagement version doesn't contain ZK_VERSION method in fact, so treat this error as zero version.
+			return 0, nil
+		}
 		return 0, err
 	}
 	return result.Uint64(), nil
