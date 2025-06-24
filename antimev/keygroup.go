@@ -9,10 +9,11 @@ import (
 )
 
 var (
-	ErrDKGSecret            = errors.New("invalid dkg secret")
-	ErrNoSecretToReshare    = errors.New("no secret to reshare")
+	ErrInvalidSecret = errors.New("invalid dkg secret")
+	ErrInvalidPVSS   = errors.New("invalid dkg pvss")
+
+	ErrSecretNotFound       = errors.New("secret not found")
 	ErrInvalidRecover       = errors.New("invalid recover")
-	ErrInvalidMessageKey    = errors.New("invalid message key")
 	ErrSecretShareNotEnough = errors.New("secret share not enough")
 )
 
@@ -86,7 +87,7 @@ func (tkg *thresholdKeyGroup) confirmSecret(pvss *tpke.PVSS) error {
 			return nil
 		}
 	}
-	return ErrDKGSecret
+	return ErrSecretNotFound
 }
 
 // aggregate aggregates received secrets and commitments to get global
@@ -131,7 +132,7 @@ func (tkg *thresholdKeyGroup) recover(secretIndexs []int) ([]*big.Int, error) {
 func (tkg *thresholdKeyGroup) reshare(size int) ([]*big.Int, *tpke.PVSS, error) {
 	// Check if has a local secret
 	if tkg.localSecret == nil {
-		return nil, nil, ErrNoSecretToReshare
+		return nil, nil, ErrSecretNotFound
 	}
 	// Generate and encrypt messages to share the secret
 	ss, pvss := generateShares(tkg.localSecret.Renovate(), size)
@@ -176,7 +177,7 @@ func (tkg *thresholdKeyGroup) receiveShareMessage(fromIndex int, ss *big.Int, pv
 	arrIndex := fromIndex - 1
 	// Verify with pvss
 	if !pvss.VerifySecret(selfIndex-1, ss) {
-		return ErrDKGSecret
+		return ErrInvalidSecret
 	}
 	// Store ss for local secret key generation
 	tkg.receivedSecrets[arrIndex] = ss
@@ -191,7 +192,7 @@ func (tkg *thresholdKeyGroup) receiveReshareMessage(fromIndex int, rs *big.Int, 
 	arrIndex := fromIndex - 1
 	// Verify with pvss
 	if !pvss.VerifySecret(selfIndex-1, rs) {
-		return ErrDKGSecret
+		return ErrInvalidSecret
 	}
 	// Store ss for local secret key generation
 	tkg.receivedSecrets[arrIndex] = rs
@@ -206,7 +207,7 @@ func (tkg *thresholdKeyGroup) receiveRecoverMessage(fromIndex int, rs *big.Int, 
 	arrIndex := fromIndex - 1
 	// Verify with pvss
 	if !pvss.VerifySecret(arrIndex, rs) {
-		return ErrDKGSecret
+		return ErrInvalidSecret
 	}
 	// Store rs for local secret key recovery
 	tkg.receivedSecrets[arrIndex] = rs

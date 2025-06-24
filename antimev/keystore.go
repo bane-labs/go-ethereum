@@ -18,16 +18,13 @@ import (
 )
 
 var (
-	ErrInvalidLength     = errors.New("invalid array length")
 	ErrInvalidThreshold  = errors.New("invalid threshold")
-	ErrInvalidDKGPVSS    = errors.New("invalid dkg pvss")
 	ErrKeyGroupNotExists = errors.New("required keygroup not found")
-	ErrNoNeedToRecover   = errors.New("no need to recover")
 	ErrUnrecoverable     = errors.New("unrecoverable sharing")
 	ErrMessageDecryption = errors.New("message decryption failed")
 
-	ErrKeystoreEncryption = errors.New("could not encrypt keystore")
-	ErrKeystoreDecryption = errors.New("could not decrypt keystore")
+	ErrKeystoreEncryption = errors.New("can not encrypt keystore")
+	ErrKeystoreDecryption = errors.New("can not decrypt keystore")
 )
 
 // KeyStore is the container of all useful dkg information.
@@ -318,7 +315,7 @@ func (ks *KeyStore) aggregateShare(selfPvss []byte, aggregatedCmt []byte, isPart
 	if isParticipant {
 		p, err := new(tpke.PVSS).Decode(selfPvss, ks.size, ks.threshold)
 		if err != nil {
-			return ErrInvalidDKGPVSS
+			return ErrInvalidPVSS
 		}
 		err = ks.sharing.confirmSecret(p)
 		if err != nil {
@@ -346,12 +343,12 @@ func (ks *KeyStore) ReceiveSecretShare(selfIndex int, fromIndex int, ess [][]byt
 	}
 	// Check if the secret share has a valid length
 	if len(ess) < ks.size {
-		return ErrDKGSecret
+		return ErrInvalidSecret
 	}
 	// Decode PVSS
 	p, err := new(tpke.PVSS).Decode(pvss, ks.size, ks.threshold)
 	if err != nil {
-		return ErrInvalidDKGPVSS
+		return ErrInvalidPVSS
 	}
 	// Decrypt and accept the sharing message
 	ss, err := ks.decryptShareMessage(ess[selfIndex-1])
@@ -374,12 +371,12 @@ func (ks *KeyStore) ReceiveSecretReshare(selfIndex int, fromIndex int, ers [][]b
 	}
 	// Check if the secret share has a valid length
 	if len(ers) < ks.size {
-		return ErrDKGSecret
+		return ErrInvalidSecret
 	}
 	// Decode PVSS
 	p, err := new(tpke.PVSS).Decode(pvss, ks.size, ks.threshold)
 	if err != nil {
-		return ErrInvalidDKGPVSS
+		return ErrInvalidPVSS
 	}
 	// Decrypt and accept the resharing message
 	ss, err := ks.decryptShareMessage(ers[selfIndex-1])
@@ -403,7 +400,7 @@ func (ks *KeyStore) ReceiveRecoverShare(selfIndex int, fromIndex int, ers []byte
 	// Decode PVSS
 	p, err := new(tpke.PVSS).Decode(pvss, ks.size, ks.threshold)
 	if err != nil {
-		return ErrInvalidDKGPVSS
+		return ErrInvalidPVSS
 	}
 	// Decrypt and accept the recovering message
 	ss, err := ks.decryptShareMessage(ers)
