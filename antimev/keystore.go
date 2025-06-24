@@ -237,7 +237,7 @@ func (ks *KeyStore) DKGShare() ([]*big.Int, []byte, error) {
 		return nil, nil, ErrKeyGroupNotExists
 	}
 	// Generate sharing secrets and pvss
-	ss, sPvss := ks.sharing.prepare(ks.size, ks.threshold)
+	ss, sPvss := ks.sharing.share(ks.size, ks.threshold)
 	return ss, sPvss.Encode(), nil
 }
 
@@ -282,10 +282,7 @@ func (ks *KeyStore) OnEpochChange(selfPvss []byte, aggregatedCmt []byte, isMembe
 		ks.RevertRound()
 		return nil
 	}
-	if isMemberOfNewGroup && len(selfPvss) == 0 {
-		return ErrLengthMismatch
-	}
-	if !isMemberOfNewGroup && len(selfPvss) > 0 {
+	if (isMemberOfNewGroup && len(selfPvss) == 0) || (!isMemberOfNewGroup && len(selfPvss) > 0) {
 		return ErrLengthMismatch
 	}
 	// If code reaches here, then dkg is successful in contract
@@ -383,7 +380,7 @@ func (ks *KeyStore) ReceiveSecretReshare(selfIndex int, fromIndex int, ers [][]b
 	if err != nil {
 		return ErrMessageDecryption
 	}
-	err = ks.resharing.receiveReshareMessage(fromIndex, ss, p, selfIndex)
+	err = ks.resharing.receiveShareMessage(fromIndex, ss, p, selfIndex)
 	if err != nil {
 		return err
 	}
@@ -407,7 +404,7 @@ func (ks *KeyStore) ReceiveRecoverShare(selfIndex int, fromIndex int, ers []byte
 	if err != nil {
 		return ErrMessageDecryption
 	}
-	err = ks.recovering.receiveRecoverMessage(fromIndex, ss, p, selfIndex)
+	err = ks.recovering.receiveRecoverMessage(fromIndex, ss, p)
 	if err != nil {
 		return err
 	}

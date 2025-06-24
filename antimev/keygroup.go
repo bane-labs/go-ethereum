@@ -70,15 +70,6 @@ func (tkg *thresholdKeyGroup) copy() *thresholdKeyGroup {
 	return res
 }
 
-// prepare generates local secrets and returns sharing messages.
-func (tkg *thresholdKeyGroup) prepare(size int, threshold int) ([]*big.Int, *tpke.PVSS) {
-	// Generate local secret
-	secret := tpke.RandomSecret(threshold)
-	tkg.pendingSecrets = append(tkg.pendingSecrets, secret)
-	// Generate and encrypt messages to share the secret
-	return generateShares(secret, size)
-}
-
 // confirmSecret requires the final contract-received PVSS to confirm the secret.
 func (tkg *thresholdKeyGroup) confirmSecret(pvss *tpke.PVSS) error {
 	for _, secret := range tkg.pendingSecrets {
@@ -127,7 +118,16 @@ func (tkg *thresholdKeyGroup) recover(secretIndexs []int) ([]*big.Int, error) {
 	return ss, nil
 }
 
-// reshare does almost the same as dkgPrepare, but local secret is reused to
+// share generates local secrets and returns sharing messages.
+func (tkg *thresholdKeyGroup) share(size int, threshold int) ([]*big.Int, *tpke.PVSS) {
+	// Generate local secret
+	secret := tpke.RandomSecret(threshold)
+	tkg.pendingSecrets = append(tkg.pendingSecrets, secret)
+	// Generate and encrypt messages to share the secret
+	return generateShares(secret, size)
+}
+
+// reshare does almost the same as share, but local secret is reused to
 // produce the same global public key.
 func (tkg *thresholdKeyGroup) reshare(size int) ([]*big.Int, *tpke.PVSS, error) {
 	// Check if has a local secret
@@ -169,9 +169,9 @@ func generateShares(secret *tpke.Secret, size int) ([]*big.Int, *tpke.PVSS) {
 	return ss, pvss
 }
 
-// receiveShareMessage verifies received sharing messages. It verifies shared
-// secret if is a member, otherwise only the pvss. Received data will be stored
-// in thresholdKeyGroup for further aggregation.
+// receiveShareMessage verifies received sharing/resharing messages. It verifies
+// shared secret if is a member, otherwise only the pvss. Received data will be
+// stored in thresholdKeyGroup for further aggregation.
 func (tkg *thresholdKeyGroup) receiveShareMessage(fromIndex int, ss *big.Int, pvss *tpke.PVSS, selfIndex int) error {
 	// Transform dkg index to array index
 	arrIndex := fromIndex - 1
@@ -184,25 +184,10 @@ func (tkg *thresholdKeyGroup) receiveShareMessage(fromIndex int, ss *big.Int, pv
 	return nil
 }
 
-// receiveReshareMessage verifies received resharing messages. It verifies shared
-// secret if is a member, otherwise only the pvss. Received data will be stored
-// in thresholdKeyGroup for further aggregation.
-func (tkg *thresholdKeyGroup) receiveReshareMessage(fromIndex int, rs *big.Int, pvss *tpke.PVSS, selfIndex int) error {
-	// Transform dkg index to array index
-	arrIndex := fromIndex - 1
-	// Verify with pvss
-	if !pvss.VerifySecret(selfIndex-1, rs) {
-		return ErrInvalidSecret
-	}
-	// Store ss for local secret key generation
-	tkg.receivedSecrets[arrIndex] = rs
-	return nil
-}
-
 // receiveRecoverMessage verifies received recovering messages. It verifies shared
 // secret if is a member, with the existing pvss. Received data will be stored
 // in thresholdKeyGroup for further aggregation.
-func (tkg *thresholdKeyGroup) receiveRecoverMessage(fromIndex int, rs *big.Int, pvss *tpke.PVSS, selfIndex int) error {
+func (tkg *thresholdKeyGroup) receiveRecoverMessage(fromIndex int, rs *big.Int, pvss *tpke.PVSS) error {
 	// Transform dkg index to array index
 	arrIndex := fromIndex - 1
 	// Verify with pvss
