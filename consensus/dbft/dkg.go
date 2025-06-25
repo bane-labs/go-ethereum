@@ -130,11 +130,7 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 	// If there is an ongoing round and it's time to epoch change.
 	if snapshot.initDone && currentHeight >= snapshot.EpochStartHeight+epochDuration {
 		indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
-		ready, err := isShareReady(c.backend, state, h)
-		if err != nil {
-			return fmt.Errorf("failed to check if sharing is ready: %v", err)
-		}
-		if ready && indexOfSharing > 0 {
+		if indexOfSharing > 0 {
 			if err := c.syncThisRoundSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync sharing DKG, err: %v", err)
 			}
@@ -289,18 +285,11 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 			return fmt.Errorf("failed to check if sharing is ready: %v", err)
 		}
 		if ready {
-			// If share is ready, pending consensus nodes should ReceiveSecretShare.
-			indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
-			if indexOfSharing > 0 {
-				if err := c.syncThisRoundSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
-					return fmt.Errorf("failed to sync sharing DKG, err: %v", err)
-				}
-			}
 			snapshot.IndexNeedRecover, err = getIndexCurrentNeedRecovering(c.backend, state, h)
 			if err != nil {
 				return fmt.Errorf("failed to fetch index need recovering, err: %v", err)
 			}
-			// If the period finished, then skip sending a transaction.
+			// If no recover is required, then skip sending a transaction.
 			if len(snapshot.IndexNeedRecover) > 0 {
 				// Only indexesNeedRecover <= (consensusSize - threshold) can recover.
 				threshold := consensusSize - (consensusSize-1)/3
@@ -718,17 +707,20 @@ func (c *DBFT) syncThisRoundSecrets(snap *snapshot, keystore *antimev.KeyStore, 
 // downloadAndReceiveShare downloads DKG messages and related PVSS in sharing, and sends to keystore.
 func (c *DBFT) downloadAndReceiveShare(keystore *antimev.KeyStore, round uint64, fromIndex int, selfIndex int, state *state.StateDB, header *types.Header) error {
 	// Call ReceiveSecretShare
-	shareMsgs, err := getShareMsgs(c.backend, round, uint64(fromIndex), state, header)
-	if err != nil {
-		return err
-	}
 	spvss, err := getSharePVSS(c.backend, round, uint64(fromIndex), state, header)
 	if err != nil {
 		return err
 	}
-	err = keystore.ReceiveSecretShare(selfIndex, fromIndex, shareMsgs, spvss)
-	if err != nil {
-		return err
+	// Only receive share has value
+	if len(spvss) > 0 {
+		shareMsgs, err := getShareMsgs(c.backend, round, uint64(fromIndex), state, header)
+		if err != nil {
+			return err
+		}
+		err = keystore.ReceiveSecretShare(selfIndex, fromIndex, shareMsgs, spvss)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
