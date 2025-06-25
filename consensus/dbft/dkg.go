@@ -149,7 +149,11 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 		if err != nil {
 			return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
 		}
-		err = keystore.OnEpochChange(selfPvss, aggregatedCommitment, indexOfSharing > 0)
+		lastCommitment, err := getAggregatedCommitment(c.backend, snapshot.Round-1, state, h)
+		if err != nil {
+			return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
+		}
+		err = keystore.OnEpochChange(selfPvss, aggregatedCommitment, lastCommitment, indexOfSharing > 0)
 		if err != nil {
 			return fmt.Errorf("failed to change keystore epoch, err: %v", err)
 		}
@@ -202,7 +206,8 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 		}
 		// If keystore is in a sharing state already, then regard it has a valid secret.
 		if !keystore.IsSharing() {
-			keystore.OnSharePeriodStart()
+			// Enforce to init an empty resharing when necessary.
+			keystore.OnSharePeriodStart(snapshot.Round > 2)
 		}
 		// If is a member of current consensus, then try sync secrets.
 		indexOfSharing := slices.Index(snapshot.CurrentCNs, amevAddress) + 1
@@ -225,7 +230,14 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 		if err != nil {
 			return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
 		}
-		if err := keystore.OnEpochChange(selfPvss, aggregatedCommitment, indexOfSharing > 0); err != nil {
+		var lastCommitment []byte
+		if snapshot.Round > 2 {
+			lastCommitment, err = getAggregatedCommitment(c.backend, snapshot.Round-2, state, h)
+			if err != nil {
+				return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
+			}
+		}
+		if err := keystore.OnEpochChange(selfPvss, aggregatedCommitment, lastCommitment, indexOfSharing > 0); err != nil {
 			return fmt.Errorf("failed to sync shared DKG, err: %v", err)
 		}
 		if !suspended {
@@ -242,24 +254,24 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 		}
 		// Prepare and start a DKG.
 		if !keystore.IsSharing() {
-			keystore.OnSharePeriodStart()
+			keystore.OnSharePeriodStart(false)
 		}
 		// If the period finished, then skip sending a transaction.
 		if !suspended && currentHeight < recoverStartHeight {
 			// If is a member of current consensus, try reshare but give up if error.
 			indexOfResharing := slices.Index(snapshot.CurrentCNs, amevAddress) + 1
 			receiverMessageKeys, err := getMessagePubkeys(c.backend, snapshot.PendingCNs, state, h)
+			if err != nil {
+				return fmt.Errorf("failed to get message keys, err: %v", err)
+			}
 			if indexOfResharing > 0 && snapshot.Round > 1 {
 				err = taskList.taskReshare(keystore, receiverMessageKeys, zkVersion, currentHeight, recoverStartHeight)
 				if err != nil {
-					return fmt.Errorf("failed to task DKG reshare, err: %v", err)
+					log.Error("Failed to task DKG reshare", "err", err)
 				}
 			}
 			// If is a member of pending consensus.
 			indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
-			if err != nil {
-				return fmt.Errorf("failed to get message keys, err: %v", err)
-			}
 			if indexOfSharing > 0 {
 				err = taskList.taskShare(keystore, receiverMessageKeys, zkVersion, currentHeight, recoverStartHeight)
 				if err != nil {
@@ -681,7 +693,7 @@ func (c *DBFT) syncLastRoundSecrets(snap *snapshot, keystore *antimev.KeyStore, 
 		if err := c.downloadAndReceiveShare(keystore, snap.Round-1, i+1, selfIndex, state, header); err != nil {
 			return err
 		}
-		if snap.Round > 1 {
+		if snap.Round > 2 {
 			if err := c.downloadAndReceiveReshare(keystore, snap.Round-1, i+1, selfIndex, state, header); err != nil {
 				return err
 			}
@@ -692,12 +704,10 @@ func (c *DBFT) syncLastRoundSecrets(snap *snapshot, keystore *antimev.KeyStore, 
 
 // syncThisRoundSecrets synchronizes DKG data in this round to update the local anti-mev keystore for the first stage.
 func (c *DBFT) syncThisRoundSecrets(snap *snapshot, keystore *antimev.KeyStore, selfIndex int, state *state.StateDB, header *types.Header) error {
-	for i := range snap.PendingCNs {
+	for i := range snap.CurrentCNs {
 		if err := c.downloadAndReceiveShare(keystore, snap.Round, i+1, selfIndex, state, header); err != nil {
 			return err
 		}
-	}
-	for i := range snap.CurrentCNs {
 		if err := c.downloadAndReceiveReshare(keystore, snap.Round, i+1, selfIndex, state, header); err != nil {
 			return err
 		}

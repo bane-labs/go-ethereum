@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/google/uuid"
 	keystorev4 "github.com/wealdtech/go-eth2-wallet-encryptor-keystorev4"
 )
@@ -200,10 +201,13 @@ func (ks *KeyStore) IsRecovering() bool {
 
 // OnValidatorList initializes sharing and resharing, should be called
 // when the key group members are determined. It initializes 1 or 2 key groups.
-func (ks *KeyStore) OnSharePeriodStart() {
+func (ks *KeyStore) OnSharePeriodStart(forceInitReshare bool) {
 	// Set up groups for dkg resharing
 	if ks.shared != nil {
 		ks.resharing = ks.shared.newTemplateForReshare(ks.size)
+	}
+	if ks.resharing == nil && forceInitReshare {
+		ks.resharing = newThresholdKeyGroup(ks.size)
 	}
 	// Set groups for dkg sharing
 	ks.sharing = newThresholdKeyGroup(ks.size)
@@ -276,7 +280,7 @@ func (ks *KeyStore) RevertRound() {
 
 // OnEpochChange checks and settles the results of sharing and resharing, will
 // revert both of them of any of them is not successful.
-func (ks *KeyStore) OnEpochChange(selfPvss []byte, aggregatedCmt []byte, isMemberOfNewGroup bool) error {
+func (ks *KeyStore) OnEpochChange(selfPvss []byte, aggregatedCmt []byte, lastRoundCmt []byte, isMemberOfNewGroup bool) error {
 	// Revert dkg if contract doesn't give a aggregated commitment
 	if len(aggregatedCmt) == 0 {
 		ks.RevertRound()
@@ -286,7 +290,7 @@ func (ks *KeyStore) OnEpochChange(selfPvss []byte, aggregatedCmt []byte, isMembe
 		return ErrLengthMismatch
 	}
 	// If code reaches here, then dkg is successful in contract
-	if err := ks.aggregateReshare(isMemberOfNewGroup); err != nil {
+	if err := ks.aggregateReshare(lastRoundCmt, isMemberOfNewGroup); err != nil {
 		return err
 	}
 	if err := ks.aggregateShare(selfPvss, aggregatedCmt, isMemberOfNewGroup); err != nil {
@@ -316,19 +320,19 @@ func (ks *KeyStore) aggregateShare(selfPvss []byte, aggregatedCmt []byte, isPart
 		}
 		err = ks.sharing.confirmSecret(p)
 		if err != nil {
-			return err
+			log.Error("Failed to confirm secret share", "error", err)
 		}
 	}
 	return ks.sharing.aggregate(ks.scaler, aggregatedCmt, isParticipant)
 }
 
 // aggregateReshare tries to check if resharing is successful and settle the result
-func (ks *KeyStore) aggregateReshare(isReceiver bool) error {
+func (ks *KeyStore) aggregateReshare(aggregatedCmt []byte, isReceiver bool) error {
 	// Check if resharing is successful and aggregate keys
 	if ks.resharing == nil {
 		return nil
 	}
-	return ks.resharing.aggregate(ks.scaler, nil, isReceiver)
+	return ks.resharing.aggregate(ks.scaler, aggregatedCmt, isReceiver)
 }
 
 // ReceiveSecretShare tries to verify a sharing message array and store their data.

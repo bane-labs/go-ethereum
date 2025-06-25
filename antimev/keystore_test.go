@@ -106,7 +106,7 @@ func TestShare(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		kss[i].OnSharePeriodStart()
+		kss[i].OnSharePeriodStart(false)
 		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
 		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
@@ -117,9 +117,7 @@ func TestShare(t *testing.T) {
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
 			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 		}
 	}
 	// Aggregate pvss manually
@@ -133,7 +131,7 @@ func TestShare(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// Try finish DKG without resharing
-		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), nil, true)
 		require.NoError(t, err)
 	}
 }
@@ -162,7 +160,7 @@ func TestReshare(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		kss[i].OnSharePeriodStart()
+		kss[i].OnSharePeriodStart(false)
 		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
 		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
@@ -173,9 +171,7 @@ func TestReshare(t *testing.T) {
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
 			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 		}
 	}
 	// Aggregate pvss manually
@@ -189,12 +185,12 @@ func TestReshare(t *testing.T) {
 	}
 	// Finalize dkg
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), nil, true)
 		require.NoError(t, err)
 	}
 	// Execute resharing this time
 	for i := 0; i < size; i++ {
-		kss[i].OnSharePeriodStart()
+		kss[i].OnSharePeriodStart(false)
 		rss, rPvss, err := kss[i].DKGReshare()
 		require.NoError(t, err)
 		ss, sPvss, err := kss[i].DKGShare()
@@ -210,13 +206,9 @@ func TestReshare(t *testing.T) {
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
 			err := kss[i].ReceiveSecretReshare(i+1, j+1, contract.reshareMsgs[j], contract.resharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 			err = kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 		}
 	}
 	// Aggregate pvss manually
@@ -230,7 +222,7 @@ func TestReshare(t *testing.T) {
 	}
 	// Check sharing and resharing
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), nil, true)
 		require.NoError(t, err)
 	}
 }
@@ -259,7 +251,7 @@ func TestGroupChange(t *testing.T) {
 	}
 	for i := 0; i < len(addrs); i++ {
 		// No resharing to handle
-		kss[i].OnSharePeriodStart()
+		kss[i].OnSharePeriodStart(false)
 		// Sharing members, i ranges from 0 to 6
 		if i < size {
 			ss, pvss, err := kss[i].DKGShare()
@@ -288,14 +280,14 @@ func TestGroupChange(t *testing.T) {
 	}
 	// Finalize dkg
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), nil, true)
 		require.NoError(t, err)
 	}
-	err := kss[7].OnEpochChange(nil, encodePointG1(cmt), false)
+	err := kss[7].OnEpochChange(nil, encodePointG1(cmt), nil, false)
 	require.NoError(t, err)
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
-		kss[i].OnSharePeriodStart()
+		kss[i].OnSharePeriodStart(false)
 		// Resharing members
 		if i < size {
 			rss, rPvss, err := kss[i].DKGReshare()
@@ -324,19 +316,19 @@ func TestGroupChange(t *testing.T) {
 		}
 	}
 	// Aggregate pvss manually
-	cmt = new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
+	newCmt := new(bls12381.G1Affine).ScalarMultiplicationBase(big.NewInt(0))
 	for i := 0; i < size; i++ {
 		p, err := new(tpke.PVSS).Decode(contract.sharePVSSes[i], size, threshold)
 		require.NoError(t, err)
 		pg1, err := decodePointG1(p.GetCommitment().Encode()[:128])
 		require.NoError(t, err)
-		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
+		newCmt = new(bls12381.G1Affine).Add(newCmt, pg1)
 	}
 	// Check sharing and resharing
-	err = kss[0].OnEpochChange(nil, encodePointG1(cmt), false)
+	err = kss[0].OnEpochChange(nil, encodePointG1(newCmt), encodePointG1(cmt), false)
 	require.NoError(t, err)
 	for i := 1; i <= size; i++ {
-		err := kss[i].OnEpochChange(contract.sharePVSSes[i-1], encodePointG1(cmt), i != 0)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i-1], encodePointG1(newCmt), encodePointG1(cmt), i != 0)
 		require.NoError(t, err)
 	}
 }
@@ -366,7 +358,7 @@ func TestRecover(t *testing.T) {
 	}
 	for i := 0; i < len(addrs); i++ {
 		// No resharing to handle
-		kss[i].OnSharePeriodStart()
+		kss[i].OnSharePeriodStart(false)
 		// Sharing members, i ranges from 0 to 6
 		if i < size {
 			ss, pvss, err := kss[i].DKGShare()
@@ -395,14 +387,14 @@ func TestRecover(t *testing.T) {
 	}
 	// Finalize dkg
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), nil, true)
 		require.NoError(t, err)
 	}
-	err := kss[7].OnEpochChange(nil, encodePointG1(cmt), false)
+	err := kss[7].OnEpochChange(nil, encodePointG1(cmt), nil, false)
 	require.NoError(t, err)
 	// Execute resharing this time
 	for i := 0; i < len(addrs); i++ {
-		kss[i].OnSharePeriodStart()
+		kss[i].OnSharePeriodStart(false)
 		// Resharing members
 		if i < size {
 			rss, rPvss, err := kss[i].DKGReshare()
@@ -448,7 +440,7 @@ func TestRecover(t *testing.T) {
 	}
 	// Only check resharing
 	for i := 0; i < len(addrs); i++ {
-		err := kss[i].aggregateReshare(i != 0)
+		err := kss[i].aggregateReshare(encodePointG1(cmt), i != 0)
 		require.NoError(t, err)
 	}
 }
