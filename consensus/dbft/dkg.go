@@ -344,7 +344,7 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 			if err != nil {
 				return fmt.Errorf("failed to fecth message keys, err: %v", err)
 			}
-			err = taskList.taskReshareRecover(keystore, receiverMessageKeys, currentHeight, zkVersion, targetHeight)
+			err = taskList.taskReshareRecover(keystore, receiverMessageKeys, zkVersion, currentHeight, targetHeight)
 			if err != nil {
 				return fmt.Errorf("failed to task DKG reshare recover, err: %v", err)
 			}
