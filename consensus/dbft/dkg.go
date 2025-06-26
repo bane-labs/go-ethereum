@@ -404,12 +404,16 @@ executeLoop:
 						panic(fmt.Errorf("%s task array mismatch: secrets %d, keys %d", task.Method, len(ss), len(pubs)))
 					}
 					// Convert types.
-					fis := make([]fr.Element, len(ss))
+					fis := make([]*fr.Element, len(ss))
 					for i, s := range ss {
-						fis[i].SetBigInt(s)
+						fis[i] = new(fr.Element).SetBigInt(s)
 					}
 					// Compute necessary inputs for circuit.
-					fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs := circuit.PrepareEncryptedKeyShares(pubs, fis)
+					fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs, err := circuit.PrepareEncryptedKeyShares(pubs, fis)
+					if err != nil {
+						log.Error("failed to prepare encrypted key shares", "err", err, "method", task.Method)
+						continue
+					}
 					// Update the task parameters for sending a transaction.
 					msgs := encodeMessages(encryptedFis, bigRs, nonces)
 					// Send transactions based on ZK settings.
@@ -475,16 +479,20 @@ executeLoop:
 						panic(fmt.Errorf("%s task array mismatch: indexes %d, secrets %d, keys %d", task.Method, len(indexes), len(ss), len(pubs)))
 					}
 					// Convert types.
-					fis := make([]fr.Element, len(ss))
+					fis := make([]*fr.Element, len(ss))
 					idxsBigInt := make([]*big.Int, len(indexes))
 					for i, s := range ss {
-						fis[i].SetBigInt(s)
+						fis[i] = new(fr.Element).SetBigInt(s)
 					}
 					for i, idx := range indexes {
 						idxsBigInt[i] = big.NewInt(int64(idx))
 					}
 					// Compute necessary inputs for circuit.
-					fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs := circuit.PrepareEncryptedKeyShares(pubs, fis)
+					fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs, err := circuit.PrepareEncryptedKeyShares(pubs, fis)
+					if err != nil {
+						log.Error("failed to prepare encrypted key shares", "err", err, "method", task.Method)
+						continue
+					}
 					// Update the task parameters for sending a transaction.
 					msgs := encodeMessages(encryptedFis, bigRs, nonces)
 					// Send transactions based on ZK settings.
@@ -1064,7 +1072,7 @@ func sendTransactionToKeyManagement(api *ethapi.TransactionAPI, signer common.Ad
 }
 
 // encodeMessages encodes the output from message encryption.
-func encodeMessages(encryptedFis [][]byte, bigRs []secp256k1.G1Affine, nonces [][]byte) [][]byte {
+func encodeMessages(encryptedFis [][]byte, bigRs []*secp256k1.G1Affine, nonces [][]byte) [][]byte {
 	result := make([][]byte, 0)
 	for i := range encryptedFis {
 		bigRBytes := bigRs[i].RawBytes()

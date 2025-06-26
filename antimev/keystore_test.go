@@ -109,7 +109,8 @@ func TestShare(t *testing.T) {
 		kss[i].OnSharePeriodStart()
 		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
-		contract.shareMsgs[i] = encryptShareMessages(pubs, ss)
+		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
+		require.NoError(t, err)
 		contract.sharePVSSes[i] = pvss
 	}
 	// Send secret sharing messages
@@ -164,7 +165,8 @@ func TestReshare(t *testing.T) {
 		kss[i].OnSharePeriodStart()
 		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
-		contract.shareMsgs[i] = encryptShareMessages(pubs, ss)
+		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
+		require.NoError(t, err)
 		contract.sharePVSSes[i] = pvss
 	}
 	// Send secret sharing messages
@@ -197,9 +199,11 @@ func TestReshare(t *testing.T) {
 		require.NoError(t, err)
 		ss, sPvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
-		contract.shareMsgs[i] = encryptShareMessages(pubs, ss)
+		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
+		require.NoError(t, err)
 		contract.sharePVSSes[i] = sPvss
-		contract.reshareMsgs[i] = encryptShareMessages(pubs, rss)
+		contract.reshareMsgs[i], err = encryptShareMessages(pubs, rss)
+		require.NoError(t, err)
 		contract.resharePVSSes[i] = rPvss
 	}
 	// Send resharing messages
@@ -260,7 +264,8 @@ func TestGroupChange(t *testing.T) {
 		if i < size {
 			ss, pvss, err := kss[i].DKGShare()
 			require.NoError(t, err)
-			contract.shareMsgs[i] = encryptShareMessages(pubs[:size], ss)
+			contract.shareMsgs[i], err = encryptShareMessages(pubs[:size], ss)
+			require.NoError(t, err)
 			contract.sharePVSSes[i] = pvss
 		}
 		// Not a member, do nothing, i is 7
@@ -295,13 +300,15 @@ func TestGroupChange(t *testing.T) {
 		if i < size {
 			rss, rPvss, err := kss[i].DKGReshare()
 			require.NoError(t, err)
-			contract.reshareMsgs[i] = encryptShareMessages(pubs[1:], rss)
+			contract.reshareMsgs[i], err = encryptShareMessages(pubs[1:], rss)
+			require.NoError(t, err)
 			contract.resharePVSSes[i] = rPvss
 		}
 		if i > 0 {
 			ss, sPvss, err := kss[i].DKGShare()
 			require.NoError(t, err)
-			contract.shareMsgs[i-1] = encryptShareMessages(pubs[1:], ss)
+			contract.shareMsgs[i-1], err = encryptShareMessages(pubs[1:], ss)
+			require.NoError(t, err)
 			contract.sharePVSSes[i-1] = sPvss
 		}
 	}
@@ -364,7 +371,8 @@ func TestRecover(t *testing.T) {
 		if i < size {
 			ss, pvss, err := kss[i].DKGShare()
 			require.NoError(t, err)
-			contract.shareMsgs[i] = encryptShareMessages(pubs[:size], ss)
+			contract.shareMsgs[i], err = encryptShareMessages(pubs[:size], ss)
+			require.NoError(t, err)
 			contract.sharePVSSes[i] = pvss
 		}
 		// Not a member, do nothing, i is 7
@@ -399,7 +407,8 @@ func TestRecover(t *testing.T) {
 		if i < size {
 			rss, rPvss, err := kss[i].DKGReshare()
 			require.NoError(t, err)
-			contract.reshareMsgs[i] = encryptShareMessages(pubs[1:], rss)
+			contract.reshareMsgs[i], err = encryptShareMessages(pubs[1:], rss)
+			require.NoError(t, err)
 			contract.resharePVSSes[i] = rPvss
 		}
 	}
@@ -419,7 +428,8 @@ func TestRecover(t *testing.T) {
 		if i < 7 {
 			ss, err := kss[i].DKGRecover(rIdxs)
 			require.NoError(t, err)
-			contract.recoverMsgs[i] = encryptShareMessages(rPubs, ss)
+			contract.recoverMsgs[i], err = encryptShareMessages(rPubs, ss)
+			require.NoError(t, err)
 		}
 	}
 	// Send recover messages, broadcast to all nodes
@@ -430,7 +440,8 @@ func TestRecover(t *testing.T) {
 	// Recover the lost resharing messages
 	ss, pvss, err := kss[7].TryRecoverReshare()
 	require.NoError(t, err)
-	msgs := encryptShareMessages(pubs[1:], ss)
+	msgs, err := encryptShareMessages(pubs[1:], ss)
+	require.NoError(t, err)
 	for i := 1; i < len(addrs); i++ {
 		err := kss[i].ReceiveSecretReshare(i, 7, msgs, pvss)
 		require.NoError(t, err)
@@ -487,24 +498,31 @@ func decodeBLS12381FieldElement(in []byte) (fp.Element, error) {
 	return fp.BigEndian.Element(&res)
 }
 
-func encryptShareMessages(pubs []*ecies.PublicKey, shares []*big.Int) [][]byte {
+func encryptShareMessages(pubs []*ecies.PublicKey, shares []*big.Int) ([][]byte, error) {
 	if len(pubs) != len(shares) {
 		panic("implementation bug")
 	}
 	msgs := make([][]byte, len(pubs))
+	var err error
 	for i, s := range shares {
-		msgs[i] = encryptShareMessage(pubs[i], s)
+		msgs[i], err = encryptShareMessage(pubs[i], s)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return msgs
+	return msgs, nil
 }
 
-func encryptShareMessage(pub *ecies.PublicKey, share *big.Int) []byte {
-	nonce, ess, _, bigR := encryption.ECIESEncrypt(pub, share.Bytes())
+func encryptShareMessage(pub *ecies.PublicKey, share *big.Int) ([]byte, error) {
+	nonce, ess, _, bigR, err := encryption.ECIESEncrypt(pub, share.Bytes())
+	if err != nil {
+		return nil, err
+	}
 	bigRBytes := bigR.RawBytes()
 	// len(message)=64+12+len(ess)
 	msg := make([]byte, 0)
 	msg = append(msg, bigRBytes[:]...)
 	msg = append(msg, nonce...)
 	msg = append(msg, ess...)
-	return msg
+	return msg, nil
 }

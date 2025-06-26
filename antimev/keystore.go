@@ -422,7 +422,7 @@ func (ks *KeyStore) decryptShareMessage(msg []byte) (*big.Int, error) {
 	if len(msg) <= 76 {
 		return nil, errors.New("invalid message length")
 	}
-	var bigR secp256k1.G1Affine
+	bigR := new(secp256k1.G1Affine)
 	_, err := bigR.SetBytes(msg[:64])
 	if err != nil {
 		return nil, err
