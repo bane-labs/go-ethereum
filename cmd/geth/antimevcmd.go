@@ -122,15 +122,16 @@ changing your password is only possible interactively.
 
 Reset the existing antimev keystore.
 
-The keystore is reset to the initial state, all DKG data are deleted to recover
-from a stuck epoch change.
+The keystore is reset to the initial state before any DKG round, but the message
+key, identity address and basic DKG parameters are reserved.
 
 For non-interactive use, password can be specified with --antimev.password flag:
 
     geth antimev reset [options]
 
-Note, this is meant to be used for emergency only, it is a bad idea to reset your
-keystore when everything runs correctly.
+Note, you can use this command to recycle your keystore for Privnet or other
+networks, but it is a bad idea to reset an in-use one when everything runs
+correctly.
 `,
 			},
 		},

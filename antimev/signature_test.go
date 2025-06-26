@@ -81,7 +81,7 @@ func TestThresholdSignature(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		kss[i].OnSharePeriodStart()
+		kss[i].OnSharePeriodStart(false)
 		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
 		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
@@ -92,9 +92,7 @@ func TestThresholdSignature(t *testing.T) {
 	for i := 0; i < size; i++ {
 		for j := 0; j < size; j++ {
 			err := kss[i].ReceiveSecretShare(i+1, j+1, contract.shareMsgs[j], contract.sharePVSSes[j])
-			if err != nil {
-				t.Fatalf(err.Error())
-			}
+			require.NoError(t, err)
 		}
 	}
 	// Aggregate pvss manually
@@ -107,7 +105,7 @@ func TestThresholdSignature(t *testing.T) {
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), nil, true)
 		require.NoError(t, err)
 	}
 

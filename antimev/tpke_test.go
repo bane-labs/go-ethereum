@@ -47,7 +47,7 @@ func TestTPKE(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		kss[i].OnSharePeriodStart()
+		kss[i].OnSharePeriodStart(false)
 		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
 		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
@@ -71,7 +71,7 @@ func TestTPKE(t *testing.T) {
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), nil, true)
 		require.NoError(t, err)
 	}
 
@@ -281,7 +281,7 @@ func TestBenchmark(t *testing.T) {
 	}
 	for i := 0; i < size; i++ {
 		// No reshare to handle
-		kss[i].OnSharePeriodStart()
+		kss[i].OnSharePeriodStart(false)
 		ss, pvss, err := kss[i].DKGShare()
 		require.NoError(t, err)
 		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
@@ -305,7 +305,7 @@ func TestBenchmark(t *testing.T) {
 		cmt = new(bls12381.G1Affine).Add(cmt, pg1)
 	}
 	for i := 0; i < size; i++ {
-		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), true)
+		err := kss[i].OnEpochChange(contract.sharePVSSes[i], encodePointG1(cmt), nil, true)
 		require.NoError(t, err)
 	}
 
