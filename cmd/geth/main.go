@@ -127,7 +127,7 @@ var (
 		utils.MinerEtherbaseFlag,
 		utils.MinerExtraDataFlag,
 		utils.MinerRecommitIntervalFlag,
-		utils.MinerNewPayloadTimeout,
+		utils.MinerNewPayloadTimeoutFlag, // deprecated
 		utils.AntiMEVKeyStoreFlag,
 		utils.AntiMEVEnforceECDSABlockSignatureSchemeFlag,
 		utils.AntiMEVPasswordFlag,

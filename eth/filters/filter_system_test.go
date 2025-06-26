@@ -49,7 +49,6 @@ type testBackend struct {
 	txFeed          event.Feed
 	logsFeed        event.Feed
 	rmLogsFeed      event.Feed
-	pendingLogsFeed event.Feed
 	chainFeed       event.Feed
 	pendingBlock    *types.Block
 	pendingReceipts types.Receipts
@@ -126,8 +125,8 @@ func (b *testBackend) GetLogs(ctx context.Context, hash common.Hash, number uint
 	return logs, nil
 }
 
-func (b *testBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	return b.pendingBlock, b.pendingReceipts
+func (b *testBackend) Pending() (*types.Block, types.Receipts, *state.StateDB) {
+	return b.pendingBlock, b.pendingReceipts, nil
 }
 
 func (b *testBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
@@ -140,10 +139,6 @@ func (b *testBackend) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent)
 
 func (b *testBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
 	return b.logsFeed.Subscribe(ch)
-}
-
-func (b *testBackend) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Subscription {
-	return b.pendingLogsFeed.Subscribe(ch)
 }
 
 func (b *testBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
@@ -186,6 +181,20 @@ func (b *testBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.Blo
 	return nil, header, err
 }
 
+func (b *testBackend) setPending(block *types.Block, receipts types.Receipts) {
+	b.pendingBlock = block
+	b.pendingReceipts = receipts
+}
+
+func (b *testBackend) notifyPending(logs []*types.Log) {
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+	}
+	_, blocks, _ := core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 2, func(i int, b *core.BlockGen) {})
+	b.setPending(blocks[1], []*types.Receipt{{Logs: logs}})
+	b.chainFeed.Send(core.ChainEvent{Block: blocks[0]})
+}
+
 func newTestFilterSystem(t testing.TB, db ethdb.Database, cfg Config) (*testBackend, *FilterSystem) {
 	backend := &testBackend{db: db}
 	sys := NewFilterSystem(backend, cfg)
@@ -209,7 +218,7 @@ func TestBlockSubscription(t *testing.T) {
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
 		_, chain, _ = core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
-		chainEvents = []core.ChainEvent{}
+		chainEvents []core.ChainEvent
 	)
 
 	for _, blk := range chain {
@@ -392,7 +401,7 @@ func TestLogFilterCreation(t *testing.T) {
 			{FilterCriteria{FromBlock: big.NewInt(rpc.PendingBlockNumber.Int64()), ToBlock: big.NewInt(100)}, false},
 			// from block "higher" than to block
 			{FilterCriteria{FromBlock: big.NewInt(rpc.PendingBlockNumber.Int64()), ToBlock: big.NewInt(rpc.LatestBlockNumber.Int64())}, false},
-			// topics more then 4
+			// topics more than 4
 			{FilterCriteria{Topics: [][]common.Hash{{}, {}, {}, {}, {}}}, false},
 		}
 	)
@@ -552,9 +561,9 @@ func TestLogFilter(t *testing.T) {
 	if nsend := backend.logsFeed.Send(allLogs); nsend == 0 {
 		t.Fatal("Logs event not delivered")
 	}
-	if nsend := backend.pendingLogsFeed.Send(allLogs); nsend == 0 {
-		t.Fatal("Pending logs event not delivered")
-	}
+
+	// set pending logs
+	backend.notifyPending(allLogs)
 
 	for i, tt := range testCases {
 		var fetched []*types.Log
@@ -760,10 +769,12 @@ func TestPendingLogsSubscription(t *testing.T) {
 		}()
 	}
 
-	// raise events
-	for _, ev := range allLogs {
-		backend.pendingLogsFeed.Send(ev)
+	// set pending logs
+	var flattenLogs []*types.Log
+	for _, logs := range allLogs {
+		flattenLogs = append(flattenLogs, logs...)
 	}
+	backend.notifyPending(flattenLogs)
 
 	for i := range testCases {
 		err := <-testCases[i].err

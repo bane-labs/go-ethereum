@@ -732,10 +732,6 @@ web3._extend({
 			call: 'miner_setRecommitInterval',
 			params: 1,
 		}),
-		new web3._extend.Method({
-			name: 'getHashrate',
-			call: 'miner_getHashrate'
-		}),
 	],
 	properties: []
 });

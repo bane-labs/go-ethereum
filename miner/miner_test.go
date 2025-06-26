@@ -20,6 +20,7 @@ package miner
 import (
 	"errors"
 	"math/big"
+	"sync"
 	"testing"
 	"time"
 
@@ -320,11 +321,12 @@ func createMiner(t *testing.T) (*Miner, *event.TypeMux, func(skipMiner bool)) {
 	pool := legacypool.New(testTxPoolConfig, blockchain)
 	txpool, _ := txpool.New(testTxPoolConfig.PriceLimit, blockchain, []txpool.SubPool{pool})
 
+	// Create Miner
 	backend := NewMockBackend(bc, txpool)
 	// Create event Mux
 	mux := new(event.TypeMux)
 	// Create Miner
-	miner := New(backend, &config, chainConfig, mux, engine, nil)
+	miner := New(backend, &config, chainConfig, mux, engine)
 	cleanup := func(skipMiner bool) {
 		bc.Stop()
 		engine.Close()

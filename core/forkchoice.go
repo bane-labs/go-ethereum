@@ -107,7 +107,10 @@ func (f *ForkChoice) ReorgNeeded(current *types.Header, extern *types.Header) (b
 		if f.preserve != nil {
 			currentPreserve, externPreserve = f.preserve(current), f.preserve(extern)
 		}
-		reorg = !currentPreserve && (externPreserve || f.rand.Float64() < 0.5)
+		choiceRules := func() bool {
+			return !(extern.Coinbase == current.Coinbase)
+		}
+		reorg = !currentPreserve && (externPreserve || choiceRules())
 	}
 	return reorg, nil
 }

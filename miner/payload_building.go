@@ -46,7 +46,6 @@ type BuildPayloadArgs struct {
 
 // Id computes an 8-byte identifier by hashing the components of the payload arguments.
 func (args *BuildPayloadArgs) Id() engine.PayloadID {
-	// Hash
 	hasher := sha256.New()
 	hasher.Write(args.Parent[:])
 	binary.Write(hasher, binary.BigEndian, args.Timestamp)

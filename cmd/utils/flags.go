@@ -476,12 +476,6 @@ var (
 		Value:    ethconfig.Defaults.Miner.Recommit,
 		Category: flags.MinerCategory,
 	}
-	MinerNewPayloadTimeout = &cli.DurationFlag{
-		Name:     "miner.newpayload-timeout",
-		Usage:    "Specify the maximum time allowance for creating a new payload",
-		Value:    ethconfig.Defaults.Miner.NewPayloadTimeout,
-		Category: flags.MinerCategory,
-	}
 
 	// Account settings
 	UnlockedAccountFlag = &cli.StringFlag{
@@ -1603,8 +1597,9 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 	if ctx.IsSet(MinerRecommitIntervalFlag.Name) {
 		cfg.Recommit = ctx.Duration(MinerRecommitIntervalFlag.Name)
 	}
-	if ctx.IsSet(MinerNewPayloadTimeout.Name) {
-		cfg.NewPayloadTimeout = ctx.Duration(MinerNewPayloadTimeout.Name)
+	if ctx.IsSet(MinerNewPayloadTimeoutFlag.Name) {
+		log.Warn("The flag --miner.newpayload-timeout is deprecated and will be removed, please use --miner.recommit")
+		cfg.Recommit = ctx.Duration(MinerNewPayloadTimeoutFlag.Name)
 	}
 }
 
