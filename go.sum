@@ -97,8 +97,8 @@ github.com/aws/aws-sdk-go-v2/service/sts v1.23.2/go.mod h1:Eows6e1uQEsc4ZaHANmsP
 github.com/aws/smithy-go v1.15.0 h1:PS/durmlzvAFpQHDs4wi4sNNP9ExsqZh6IlfdHXgKK8=
 github.com/aws/smithy-go v1.15.0/go.mod h1:Tg+OJXh4MB2R/uN61Ko2f6hTZwB/ZYGOtib8J3gBHzA=
 github.com/aymerick/raymond v2.0.3-0.20180322193309-b565731e1464+incompatible/go.mod h1:osfaiScAUVup+UC9Nfq76eWqDhXlp+4UYaA8uhTBO6g=
-github.com/bane-labs/zk-dkg v0.2.1 h1:vWBIp72DtZu8ZJv8N9MIxA+T8V8FyEVtMP2cOVd8CNg=
-github.com/bane-labs/zk-dkg v0.2.1/go.mod h1:rvkAhMuGYi5ZbMTNTDUb5rlb3SmglH8wyYKbJ3g0PXc=
+github.com/bane-labs/zk-dkg v0.2.2 h1:W2eeafyFYTaIRE6O/VgFJ4+e/3zDZ7DC0vem4hd7WYA=
+github.com/bane-labs/zk-dkg v0.2.2/go.mod h1:rvkAhMuGYi5ZbMTNTDUb5rlb3SmglH8wyYKbJ3g0PXc=
 github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24TaqPxmxbtue+5NUziq4I4S80YR8gNf3Q=
 github.com/beorn7/perks v1.0.0/go.mod h1:KWe93zE9D1o94FZ5RNwFwVgaQK1VOXiVxmqh+CedLV8=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
