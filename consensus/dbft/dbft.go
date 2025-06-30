@@ -508,7 +508,7 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
 	}
 	dbftBlock.header.Extra = append(dbftBlock.header.Extra, witness...) // Extra version isn't changed, validators addresses and signatures are added.
 	state := dbftBlock.state.Copy()
-	res := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
+	res := types.NewBlockWithHeader(dbftBlock.header).WithBody(types.Body{Transactions: dbftBlock.transactions, Uncles: nil, Withdrawals: dbftBlock.withdrawals})
 
 	// Firstly, notify chain about new block.
 	if err := c.blockQueue.PutBlock(res, dbftBlock.state, dbftBlock.receipts); err != nil {
@@ -971,7 +971,7 @@ func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash]) bool {
 			return false
 		}
 
-		ethBlock := types.NewBlockWithHeader(dbftBlock.header).WithBody(dbftBlock.transactions, nil).WithWithdrawals(dbftBlock.withdrawals)
+		ethBlock := types.NewBlockWithHeader(dbftBlock.header).WithBody(types.Body{Transactions: dbftBlock.transactions, Uncles: nil, Withdrawals: dbftBlock.withdrawals})
 		state, receipts, _, err := c.chain.VerifyBlock(ethBlock, true)
 		if err != nil {
 			log.Warn("proposed block verification failed",
@@ -2044,7 +2044,7 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 
 	// Assemble and return the final block for sealing.
-	b := types.NewBlockWithWithdrawals(header, body.Transactions, nil, receipts, body.Withdrawals, trie.NewStackTrie(nil))
+	b := types.NewBlock(header, body, receipts, trie.NewStackTrie(nil))
 	return b, nil
 }
 

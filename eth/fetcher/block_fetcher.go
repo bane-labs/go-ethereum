@@ -601,7 +601,7 @@ func (f *BlockFetcher) loop() {
 
 							block := types.NewBlockWithHeader(header)
 							if header.WithdrawalsHash != nil {
-								block = block.WithWithdrawals([]*types.Withdrawal{})
+								block = block.WithBody(types.Body{Withdrawals: []*types.Withdrawal{}})
 							}
 							block.ReceivedAt = task.time
 
@@ -686,11 +686,15 @@ func (f *BlockFetcher) loop() {
 						// Mark the body matched, reassemble if still unknown
 						matched = true
 						if f.getBlock(hash) == nil {
-							block := types.NewBlockWithHeader(announce.header).WithBody(task.transactions[i], task.uncles[i])
+							body := types.Body{
+								Transactions: task.transactions[i],
+								Uncles:       task.uncles[i],
+							}
 							if announce.header.WithdrawalsHash != nil && *announce.header.WithdrawalsHash == types.EmptyWithdrawalsHash {
 								// Only empty withdrawals are supported in case of pre-merge dBFT with Shanghai enabled.
-								block = block.WithWithdrawals([]*types.Withdrawal{})
+								body.Withdrawals = []*types.Withdrawal{}
 							}
+							block := types.NewBlockWithHeader(announce.header).WithBody(body)
 							block.ReceivedAt = task.time
 							blocks = append(blocks, block)
 						} else {
