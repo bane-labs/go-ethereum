@@ -464,6 +464,9 @@ func TestAncientStorage(t *testing.T) {
 	if blob := ReadReceiptsRLP(db, hash, number); len(blob) > 0 {
 		t.Fatalf("non existent receipts returned")
 	}
+	if blob := ReadCanonicalReceiptsRLP(db, number, &hash); len(blob) > 0 {
+		t.Fatalf("non existent receipts returned")
+	}
 	if blob := ReadTdRLP(db, hash, number); len(blob) > 0 {
 		t.Fatalf("non existent td returned")
 	}
@@ -478,6 +481,9 @@ func TestAncientStorage(t *testing.T) {
 		t.Fatalf("no body returned")
 	}
 	if blob := ReadReceiptsRLP(db, hash, number); len(blob) == 0 {
+		t.Fatalf("no receipts returned")
+	}
+	if blob := ReadCanonicalReceiptsRLP(db, number, &hash); len(blob) == 0 {
 		t.Fatalf("no receipts returned")
 	}
 	if blob := ReadTdRLP(db, hash, number); len(blob) == 0 {
