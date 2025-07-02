@@ -20,7 +20,6 @@ package miner
 import (
 	"errors"
 	"math/big"
-	"sync"
 	"testing"
 	"time"
 
