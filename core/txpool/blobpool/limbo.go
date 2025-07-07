@@ -122,7 +122,7 @@ func (l *limbo) finalize(final *types.Header, current *types.Header) {
 		last = final.Number.Uint64()
 	} else {
 		if current == nil {
-			log.Error("Nil finalized and current block cannot evict old blobs")
+			log.Warn("Nil finalized and current block cannot evict old blobs")
 			return
 		}
 		if current.Number.Uint64() > 128 {
@@ -149,11 +149,11 @@ func (l *limbo) push(tx *types.Transaction, block uint64) error {
 	// If the blobs are already tracked by the limbo, consider it a programming
 	// error. There's not much to do against it, but be loud.
 	if _, ok := l.index[tx.Hash()]; ok {
-		log.Error("Limbo cannot push already tracked blobs", "tx", tx)
+		log.Error("Limbo cannot push already tracked blobs", "tx", tx.Hash())
 		return errors.New("already tracked blob transaction")
 	}
 	if err := l.setAndIndex(tx, block); err != nil {
-		log.Error("Failed to set and index limboed blobs", "tx", tx, "err", err)
+		log.Error("Failed to set and index limboed blobs", "tx", tx.Hash(), "err", err)
 		return err
 	}
 	return nil
