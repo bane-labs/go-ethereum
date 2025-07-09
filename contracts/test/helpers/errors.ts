@@ -21,4 +21,10 @@ export const ERRORS = {
     CANDIDATE_WITHDRAW_NOT_ALLOWED: 'CandidateWithdrawNotAllowed()',
     MULTIPLE_VOTE_NOT_ALLOWED: 'MultipleVoteNotAllowed()',
     NO_VOTE: 'NoVote()',
+    INVALID_ROUND_NUMBER: 'InvalidRoundNumber()',
+    NOT_SHARE_MEMBER: 'NotShareMember()',
+    PERIOD_NOT_STARTED: 'PeriodNotStarted()',
+    PERIOD_ENDED: 'PeriodEnded()',
+    INVALID_PVSS: 'InvalidPVSS()',
+    INVALID_MESSAGE_AMOUNT: 'InvalidMessageAmount()',
 };

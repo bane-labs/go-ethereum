@@ -47,7 +47,6 @@ library Errors {
     error PeriodNotStarted();
     error PeriodEnded();
     error NoNeedForRecover();
-    error InvalidBLS12381Input();
     error InvalidPVSS();
     error InvalidMessageAmount();
     error IndexOutOfRange();
