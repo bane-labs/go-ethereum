@@ -181,6 +181,8 @@ const (
 
 	HistoryServeWindow = 8192 // Number of blocks to serve historical block hashes for, EIP-2935.
 
+	MaxBlockSize = 8_388_608 // maximum size of an RLP-encoded block
+
 	BlocksPerEthEpoch = 32 // Number of blocks in each epoch, this is a mock parameter simulate Eth PoS.
 )
 
