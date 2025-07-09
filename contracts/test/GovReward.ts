@@ -1,6 +1,5 @@
-import { ethers } from "hardhat";
 import { expect } from "chai";
-import { SYS_SETTINGS, allocGenesis } from "./helpers/setup";
+import { SYS_SETTINGS, ethers, allocGenesis } from "./helpers/setup.js";
 
 describe("GovReward", function () {
 
@@ -8,7 +7,7 @@ describe("GovReward", function () {
         await allocGenesis();
     });
 
-    describe("envelope call", function () {
+    describe("fallback", function () {
         let Mock: any;
 
         beforeEach(async function () {
@@ -18,19 +17,19 @@ describe("GovReward", function () {
         it("Should revert if the selector is not 0xffffffff", async function () {
             await expect(
                 Mock.call_fallback(SYS_SETTINGS.REWARD_PROXY, "0xfffffffe")
-            ).to.be.reverted;
+            ).to.be.reverted(ethers);
         });
 
         it("Should revert if the declared gaslimit is lower than 21000", async function () {
             await expect(
                 Mock.call_fallback(SYS_SETTINGS.REWARD_PROXY, "0xffffffff")
-            ).to.be.reverted;
+            ).to.be.reverted(ethers);
         });
 
         it("Should consume gas as expected", async function () {
             await expect(
                 Mock.call_fallback(SYS_SETTINGS.REWARD_PROXY, "0xffffffff0000000000005208")
-            ).not.to.be.reverted;
+            ).not.to.be.reverted(ethers);
         });
     });
 });

@@ -1,12 +1,21 @@
 {
   "name": "neox-governance",
-  "scripts": {
-    "compile": "npx hardhat compile",
-    "test": "npx hardhat test"
-  },
+  "type": "module",
+  "version": "1.0.0",
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
-    "hardhat": "^2.22.3"
+    "@nomicfoundation/hardhat-ethers": "^4.0.0-next.21",
+    "@nomicfoundation/hardhat-ignition": "^3.0.0-next.21",
+    "@nomicfoundation/hardhat-toolbox-mocha-ethers": "^3.0.0-next.21",
+    "@types/chai": "^4.3.20",
+    "@types/chai-as-promised": "^8.0.2",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.16.0",
+    "chai": "^5.2.0",
+    "ethers": "^6.15.0",
+    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "hardhat": "^3.0.0-next.21",
+    "mocha": "^11.7.1",
+    "typescript": "~5.8.0"
   },
   "dependencies": {
     "@openzeppelin/contracts-upgradeable": "^5.0.2"

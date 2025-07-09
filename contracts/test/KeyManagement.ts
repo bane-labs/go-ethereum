@@ -1,6 +1,8 @@
-import { ethers } from "hardhat";
+import { network } from "hardhat";
 import { expect } from "chai";
-import { SYS_SETTINGS } from "./helpers/setup";
+import { SYS_SETTINGS } from "./helpers/setup.js";
+
+const { ethers } = await network.connect();
 
 describe("KeyManagement", function () {
     // No runnable test in Hardhat on BLS12381 yet, so only use a mock contract to test zk verification
@@ -31,9 +33,7 @@ describe("KeyManagement", function () {
         // Copy Bytecode to native address
         const keymanagement_code = await ethers.provider.send("eth_getCode", [keymanagement_deploy.target]);
         await ethers.provider.send("hardhat_setCode", [SYS_SETTINGS.KEYMANAGEMENT_PROXY, keymanagement_code]);
-
-        const contract = require("../artifacts/solidity/test/MockDKGVerifier.sol/MockDKGVerifier.json");
-        KeyManagement = new ethers.Contract(SYS_SETTINGS.KEYMANAGEMENT_PROXY, contract.abi, signers[0]);
+        KeyManagement = await ethers.getContractAt("MockDKGVerifier", SYS_SETTINGS.KEYMANAGEMENT_PROXY, signers[0]);
     });
 
     describe("ZK_VERSION", function () {
@@ -84,7 +84,7 @@ describe("KeyManagement", function () {
             for (let i = 0; i < pubkeys.length; i++) {
                 await expect(
                     KeyManagement.mockMessageKey(SYS_SETTINGS.STANDBY_VALIDATORS[i], pubkeys[i])
-                ).not.to.be.reverted;
+                ).not.to.be.reverted(ethers);
             }
             await KeyManagement.verifyShareProof(
                 pvss,
@@ -127,7 +127,7 @@ describe("KeyManagement", function () {
             for (let i = 0; i < pubkeys.length; i++) {
                 await expect(
                     KeyManagement.mockMessageKey(SYS_SETTINGS.STANDBY_VALIDATORS[i], pubkeys[i])
-                ).not.to.be.reverted;
+                ).not.to.be.reverted(ethers);
             }
             await KeyManagement.mockPVSS(
                 [1],
@@ -177,7 +177,7 @@ describe("KeyManagement", function () {
             for (let i = 0; i < pubkeys.length; i++) {
                 await expect(
                     KeyManagement.mockMessageKey(SYS_SETTINGS.STANDBY_VALIDATORS[i], pubkeys[i])
-                ).not.to.be.reverted;
+                ).not.to.be.reverted(ethers);
             }
             await KeyManagement.mockPVSS(
                 [1, 2],

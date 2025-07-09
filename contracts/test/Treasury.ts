@@ -1,7 +1,6 @@
-import { ethers } from "hardhat";
 import { expect } from "chai";
-import { ERRORS } from "./helpers/errors";
-import { SYS_SETTINGS, allocGenesis } from "./helpers/setup";
+import { ERRORS } from "./helpers/errors.js";
+import { ethers, SYS_SETTINGS, allocGenesis } from "./helpers/setup.js";
 
 describe("Treasury", function () {
 
@@ -24,8 +23,7 @@ describe("Treasury", function () {
             // Copy Bytecode to native address
             const mock_code = await ethers.provider.send("eth_getCode", [mock_deploy.target]);
             await ethers.provider.send("hardhat_setCode", [SYS_SETTINGS.BRIDGE_PROXY, mock_code]);
-            const mock_contract = require("../artifacts/solidity/test/MockBridge.sol/MockBridge.json");
-            Mock = new ethers.Contract(SYS_SETTINGS.BRIDGE_PROXY, mock_contract.abi, signers[0]);
+            Mock = await ethers.getContractAt("MockBridge", SYS_SETTINGS.BRIDGE_PROXY, signers[0]);
 
             await ethers.provider.send("hardhat_setStorageAt", [SYS_SETTINGS.BRIDGE_PROXY, "0x0", ethers.toBeHex(Treasury.target, 32)]);
             await ethers.provider.send("hardhat_setBalance", [Treasury.target, ethers.toBeHex(ethers.parseEther("1"), 32)]);
@@ -34,7 +32,7 @@ describe("Treasury", function () {
         it("Should not release GAS when threshold is not met", async function () {
             await expect(
                 Treasury.connect(signers[0]).fundBridge(ethers.parseEther("1"))
-            ).not.to.be.reverted;
+            ).not.to.be.reverted(ethers);
 
             expect(await ethers.provider.getBalance(Mock.target)).to.eq(0);
         });
@@ -43,7 +41,7 @@ describe("Treasury", function () {
             for (let i = 0; i < 4; i++) {
                 await expect(
                     Treasury.connect(signers[i]).fundBridge(ethers.parseEther("1"))
-                ).not.to.be.reverted;
+                ).not.to.be.reverted(ethers);
             }
 
             expect(await ethers.provider.getBalance(Mock.target)).to.eq(ethers.parseEther("1"));
@@ -53,7 +51,7 @@ describe("Treasury", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Treasury.connect(signers[i]).fundBridge(ethers.parseEther("10"))
-                ).not.to.be.reverted;
+                ).not.to.be.reverted(ethers);
             }
 
             await expect(
@@ -65,7 +63,7 @@ describe("Treasury", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Treasury.connect(signers[i]).fundBridge(ethers.parseEther("1"))
-                ).not.to.be.reverted;
+                ).not.to.be.reverted(ethers);
             }
 
             await expect(

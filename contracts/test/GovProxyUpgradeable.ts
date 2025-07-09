@@ -1,10 +1,12 @@
-import { ethers } from "hardhat";
+import { network } from "hardhat";
 import { expect } from "chai";
+
+const { ethers } = await network.connect();
 
 describe("GovProxyUpgradeable", function () {
     it("Should prevent implementation contract from initialization", async function () {
         const mockGovProxyUpgradeable = await ethers.deployContract("MockGovProxyUpgradeable");
-        await expect(mockGovProxyUpgradeable.initialize()).to.be.reverted;
+        await expect(mockGovProxyUpgradeable.initialize()).to.be.reverted(ethers);
         expect(
             await ethers.provider.send("eth_getStorageAt", [
                 await mockGovProxyUpgradeable.getAddress(),
@@ -16,7 +18,7 @@ describe("GovProxyUpgradeable", function () {
 
     it("Should prevent implementation contract from reinitialization", async function () {
         const mockGovProxyUpgradeable = await ethers.deployContract("MockGovProxyUpgradeable");
-        await expect(mockGovProxyUpgradeable.reinitialize()).to.be.reverted;
+        await expect(mockGovProxyUpgradeable.reinitialize()).to.be.reverted(ethers);
         expect(
             await ethers.provider.send("eth_getStorageAt", [
                 await mockGovProxyUpgradeable.getAddress(),
