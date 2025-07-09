@@ -1,4 +1,6 @@
-import { ethers } from "hardhat";
+import { network } from "hardhat";
+
+export const { ethers, networkHelpers, provider } = await network.connect();
 
 export const SYS_SETTINGS = {
     // NATIVE ADDRESSES
@@ -57,14 +59,10 @@ export const allocGenesis = async () => {
     const keymanagement_code = await ethers.provider.send("eth_getCode", [keymanagement_deploy.target]);
     await ethers.provider.send("hardhat_setCode", [SYS_SETTINGS.KEYMANAGEMENT_PROXY, keymanagement_code]);
 
-    const governance_contract = require("../../artifacts/solidity/Governance.sol/Governance.json");
-    const governance_instance = new ethers.Contract(SYS_SETTINGS.GOV_PROXY, governance_contract.abi, signers[0]);
-    const reward_contract = require("../../artifacts/solidity/GovReward.sol/GovReward.json");
-    const reward_instance = new ethers.Contract(SYS_SETTINGS.REWARD_PROXY, reward_contract.abi, signers[0]);
-    const policy_contract = require("../../artifacts/solidity/Policy.sol/Policy.json");
-    const policy_instance = new ethers.Contract(SYS_SETTINGS.POLICY_PROXY, policy_contract.abi, signers[0]);
-    const keymanagement_contract = require("../../artifacts/solidity/KeyManagementV0.sol/KeyManagementV0.json");
-    const keymanagement_instance = new ethers.Contract(SYS_SETTINGS.KEYMANAGEMENT_PROXY, keymanagement_contract.abi, signers[0]);
+    const governance_instance = await ethers.getContractAt("Governance", SYS_SETTINGS.GOV_PROXY, signers[0]);
+    const reward_instance = await ethers.getContractAt("GovReward", SYS_SETTINGS.REWARD_PROXY, signers[0]);
+    const policy_instance = await ethers.getContractAt("Policy", SYS_SETTINGS.POLICY_PROXY, signers[0]);
+    const keymanagement_instance = await ethers.getContractAt("KeyManagementV0", SYS_SETTINGS.KEYMANAGEMENT_PROXY, signers[0]);
 
     // Write Governance config to storage
     await ethers.provider.send("hardhat_setStorageAt", [SYS_SETTINGS.GOV_PROXY, "0x1", ethers.toBeHex(SYS_SETTINGS.CONSENSUS_SIZE, 32)]);

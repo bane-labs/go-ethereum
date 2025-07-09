@@ -1,7 +1,6 @@
-import { ethers } from "hardhat";
 import { expect } from "chai";
-import { ERRORS } from "./helpers/errors";
-import { allocGenesis } from "./helpers/setup";
+import { ERRORS } from "./helpers/errors.js";
+import { ethers, allocGenesis } from "./helpers/setup.js";
 
 describe("GovernanceVote", function () {
 
@@ -28,7 +27,7 @@ describe("GovernanceVote", function () {
         it("Should not execute method when threshold is not met", async function () {
             await expect(
                 Mock.connect(signers[0]).changeV(1)
-            ).not.to.be.reverted;
+            ).not.to.be.reverted(ethers);
 
             expect(await Mock.v()).to.eq(0);
         });
@@ -37,13 +36,13 @@ describe("GovernanceVote", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Mock.connect(signers[i]).changeV(1)
-                ).not.to.be.reverted;
+                ).not.to.be.reverted(ethers);
             }
             expect(await Mock.v()).to.eq(0);
 
             await expect(
                 Mock.connect(signers[3]).changeV(1)
-            ).not.to.be.reverted;
+            ).not.to.be.reverted(ethers);
             expect(await Mock.v()).to.eq(1);
         });
 
@@ -51,17 +50,17 @@ describe("GovernanceVote", function () {
             for (let i = 0; i < 6; i++) {
                 await expect(
                     Mock.connect(signers[i]).changeV(i % 2)
-                ).not.to.be.reverted;
+                ).not.to.be.reverted(ethers);
             }
 
             await expect(
                 Mock.connect(signers[6]).changeV(1)
-            ).not.to.be.reverted;
+            ).not.to.be.reverted(ethers);
             expect(await Mock.v()).to.eq(1);
 
             await expect(
                 Mock.connect(signers[6]).changeV(0)
-            ).not.to.be.reverted;
+            ).not.to.be.reverted(ethers);
             expect(await Mock.v()).to.eq(1);
         });
 
@@ -75,7 +74,7 @@ describe("GovernanceVote", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Mock.connect(signers[i]).changeV(1)
-                ).not.to.be.reverted;
+                ).not.to.be.reverted(ethers);
             }
 
             await expect(

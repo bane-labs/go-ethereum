@@ -1,7 +1,6 @@
-import { ethers } from "hardhat";
 import { expect } from "chai";
-import { ERRORS } from "./helpers/errors";
-import { allocGenesis } from "./helpers/setup";
+import { ERRORS } from "./helpers/errors.js";
+import { ethers, allocGenesis } from "./helpers/setup.js";
 
 describe("CommitteeMultiSig", function () {
 
@@ -29,7 +28,7 @@ describe("CommitteeMultiSig", function () {
         it("Should not execute method when threshold is not met", async function () {
             await expect(
                 MultiSig.connect(signers[0]).execute(Mock.target, "0xa1b2ca7d0000000000000000000000000000000000000000000000000000000000000001")
-            ).not.to.be.reverted;
+            ).not.to.be.reverted(ethers);
 
             expect(await Mock.v()).to.eq(0);
         });
@@ -38,13 +37,13 @@ describe("CommitteeMultiSig", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     MultiSig.connect(signers[i]).execute(Mock.target, "0xa1b2ca7d0000000000000000000000000000000000000000000000000000000000000001")
-                ).not.to.be.reverted;
+                ).not.to.be.reverted(ethers);
             }
             expect(await Mock.v()).to.eq(0);
 
             await expect(
                 MultiSig.connect(signers[3]).execute(Mock.target, "0xa1b2ca7d0000000000000000000000000000000000000000000000000000000000000001")
-            ).not.to.be.reverted;
+            ).not.to.be.reverted(ethers);
             expect(await Mock.v()).to.eq(1);
         });
     });
