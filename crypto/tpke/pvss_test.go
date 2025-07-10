@@ -5,11 +5,13 @@ import (
 	"testing"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPVSSEncoding(t *testing.T) {
 	_, _, g1, g2 := bls12381.Generators()
-	poly := randomPoly(2)
+	poly, err := randomPoly(2)
+	require.NoError(t, err)
 	comm := poly.commitment()
 	bigf := make([]*bls12381.G1Affine, 3)
 	bigf[0] = comm.evaluate(big.NewInt(1))
@@ -23,9 +25,7 @@ func TestPVSSEncoding(t *testing.T) {
 	}
 	b := pvss.Encode()
 	result, err := new(PVSS).Decode(b, 3, 2)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	require.NoError(t, err)
 	for i, pg1 := range pvss.commitment.coeff {
 		if !pg1.Equal(result.commitment.coeff[i]) {
 			t.Fatalf("commitment mismatch.")

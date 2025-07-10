@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCipherTextEncoding(t *testing.T) {
@@ -16,9 +17,7 @@ func TestCipherTextEncoding(t *testing.T) {
 	}
 	b := ct.ToBytes()
 	result, err := new(CipherText).FromBytes(b)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
+	require.NoError(t, err)
 	if !ct.cMsg.Equal(result.cMsg) {
 		t.Fatalf("cMsg mismatch.")
 	}

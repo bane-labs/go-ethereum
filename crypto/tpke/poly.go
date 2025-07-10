@@ -10,16 +10,19 @@ type Poly struct {
 	coeff []*big.Int
 }
 
-func randomPoly(degree int) *Poly {
+func randomPoly(degree int) (*Poly, error) {
 	coeff := make([]*big.Int, degree)
 
 	for i := range coeff {
-		fr := randScalar()
+		fr, err := randScalar()
+		if err != nil {
+			return nil, err
+		}
 		coeff[i] = fr
 	}
 	return &Poly{
 		coeff: coeff,
-	}
+	}, nil
 }
 
 func (p *Poly) evaluate(x *big.Int) *big.Int {

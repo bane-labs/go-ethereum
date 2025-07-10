@@ -24,7 +24,10 @@ func (ks *KeyStore) Encrypt(msg []byte) (*tpke.CipherText, []byte, error) {
 		return nil, nil, ErrNoPubKey
 	}
 	// Random AES key
-	aesKey := randPG1()
+	aesKey, err := randPG1()
+	if err != nil {
+		return nil, nil, err
+	}
 	// Encrypt the key
 	encryptedKey, err := ks.shared.encrypt(aesKey)
 	if err != nil {
@@ -125,7 +128,7 @@ func (tkg *thresholdKeyGroup) encrypt(msg *bls12381.G1Affine) (*tpke.CipherText,
 	if tkg.globalPubKey == nil {
 		return nil, ErrNoPubKey
 	}
-	return tkg.globalPubKey.Encrypt(msg), nil
+	return tkg.globalPubKey.Encrypt(msg)
 }
 
 // decryptShare generates decryption shares for an array of encrypted aes keys.
