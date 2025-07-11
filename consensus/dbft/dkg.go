@@ -269,7 +269,7 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 			// If is a member of pending consensus.
 			indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
 			if indexOfSharing > 0 {
-				err = taskList.taskShare(keystore, receiverMessageKeys, zkVersion, currentHeight, recoverStartHeight)
+				err = taskList.taskShare(keystore, (*c.backend).ChainConfig().ChainID, receiverMessageKeys, zkVersion, currentHeight, recoverStartHeight)
 				if err != nil {
 					return fmt.Errorf("failed to task DKG share, err: %v", err)
 				}
@@ -768,8 +768,8 @@ func (c *DBFT) syncRecoveredSecrets(snap *snapshot, keystore *antimev.KeyStore, 
 }
 
 // taskShare tries to prepare necessary inputs for a contract calling for DKG share.
-func (t *taskList) taskShare(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, zkVersion uint64, start uint64, end uint64) error {
-	secrets, sPvss, err := keystore.DKGShare()
+func (t *taskList) taskShare(keystore *antimev.KeyStore, networkId *big.Int, receiverMessageKeys []*ecies.PublicKey, zkVersion uint64, start uint64, end uint64) error {
+	secrets, sPvss, err := keystore.DKGShare(networkId)
 	if err != nil {
 		return err
 	}

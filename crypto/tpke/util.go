@@ -3,6 +3,7 @@ package tpke
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"math/big"
 
@@ -17,6 +18,40 @@ var (
 	ErrTPKEFieldElementDecoding = errors.New("crypto/tpke: invalid fe decoding")
 	ErrTPKEScalarDecoding       = errors.New("crypto/tpke: invalid scalar decoding")
 )
+
+// predictableRandScalar generates predictable random number based on a secret source
+// for privacy and a public source for replay protection. At least 1 seed is required
+// for randomness.
+func predictableRandScalar(secret []byte, public []byte, seeds ...byte) *big.Int {
+	if len(secret) < 1 {
+		panic("invalid privacy source")
+	}
+	if len(public) < 1 {
+		panic("invalid replay protection")
+	}
+	if len(seeds) < 1 {
+		panic("invalid randomness")
+	}
+	source := append(secret, public...)
+	source = append(source, seeds...)
+
+	max := ecc.BLS12_381.ScalarField() // The byte length of max is 32
+	var k *big.Int
+	for {
+		seed := sha256.Sum256(source) // The length of seed is 32 as well
+		k = new(big.Int).SetBytes(seed[:])
+		if k.Cmp(max) > 0 {
+			k = new(big.Int).Mod(k, max)
+		}
+		// It's almost impossible to get a zero hash and fill it into the result
+		// But if it happens, then append a zero byte to source and compute again
+		if k.Sign() > 0 {
+			break
+		}
+		source = append(source, byte(0))
+	}
+	return k
+}
 
 // randScalar returns a random big int
 func randScalar() (*big.Int, error) {
