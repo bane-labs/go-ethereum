@@ -262,7 +262,7 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 			keystore.OnSharePeriodStart(false)
 		}
 		// If the period finished, then skip sending a transaction.
-		if !suspended && currentHeight < recoverStartHeight {
+		if !suspended {
 			// If is a member of current consensus, try reshare but give up if error.
 			indexOfResharing := slices.Index(snapshot.CurrentCNs, amevAddress) + 1
 			receiverMessageKeys, err := getMessagePubkeys(c.backend, snapshot.PendingCNs, state, h)
@@ -306,7 +306,7 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 					if !keystore.IsRecovering() {
 						keystore.OnRecoverPeriodStart()
 					}
-					if !suspended && currentHeight < recoverCheckHeight {
+					if !suspended {
 						// Send recover tx from current consensus node.
 						indexOfResharing := slices.Index(snapshot.CurrentCNs, amevAddress) + 1
 						if indexOfResharing > 0 {
@@ -334,7 +334,7 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 		// Send reshareRecovered at height recoverStartHeigh+c.shareDuration/2.
 		// Only index in indexsNeedRecover and pending consensus node need to call reshareRecovered.
 		indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
-		if !suspended && indexOfSharing > 0 && currentHeight < targetHeight && slices.Contains(snapshot.IndexNeedRecover, uint64(indexOfSharing)) {
+		if !suspended && indexOfSharing > 0 && slices.Contains(snapshot.IndexNeedRecover, uint64(indexOfSharing)) {
 			if err := c.syncRecoveredSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync recovering DKG, err: %v", err)
 			}
@@ -778,9 +778,14 @@ func (c *DBFT) syncRecoveredSecrets(snap *snapshot, keystore *antimev.KeyStore, 
 
 // taskShare tries to prepare necessary inputs for a contract calling for DKG share.
 func (t *taskList) taskShare(keystore *antimev.KeyStore, networkId *big.Int, receiverMessageKeys []*ecies.PublicKey, zkVersion uint64, start uint64, end uint64) error {
+	// Generate or regenerate the local secrets.
 	secrets, sPvss, err := keystore.DKGShare(networkId)
 	if err != nil {
 		return err
+	}
+	// Call keystore to share before skip, in case there is a synchronization.
+	if start >= end {
+		return nil
 	}
 	// Set up a new task with keystore outputs.
 	*t = append(*t, &task{SendHeight: start, EndHeight: end, Method: "share", ZKVersion: zkVersion, Params: []interface{}{secrets, sPvss, receiverMessageKeys}})
@@ -789,6 +794,10 @@ func (t *taskList) taskShare(keystore *antimev.KeyStore, networkId *big.Int, rec
 
 // taskReshare tries to prepare necessary inputs for a contract calling for DKG reshare.
 func (t *taskList) taskReshare(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, zkVersion uint64, start uint64, end uint64) error {
+	// If is later than the period deadline, skip.
+	if start >= end {
+		return nil
+	}
 	secrets, rPvss, err := keystore.DKGReshare()
 	if err != nil {
 		return err
@@ -800,6 +809,10 @@ func (t *taskList) taskReshare(keystore *antimev.KeyStore, receiverMessageKeys [
 
 // taskRecover tries to prepare necessary inputs for a contract calling for DKG recover.
 func (t *taskList) taskRecover(keystore *antimev.KeyStore, indexesNeedRecover []uint64, receiverMessageKeys []*ecies.PublicKey, zkVersion uint64, start uint64, end uint64) error {
+	// If is later than the target deadline, skip.
+	if start >= end {
+		return nil
+	}
 	var idxsInt []int
 	for _, idx := range indexesNeedRecover {
 		idxsInt = append(idxsInt, int(idx))
@@ -815,6 +828,10 @@ func (t *taskList) taskRecover(keystore *antimev.KeyStore, indexesNeedRecover []
 
 // taskReshareRecover tries to prepare necessary inputs for a contract calling for DKG reshare after recover.
 func (t *taskList) taskReshareRecover(keystore *antimev.KeyStore, receiverMessageKeys []*ecies.PublicKey, zkVersion uint64, start uint64, end uint64) error {
+	// If is later than the period deadline, skip.
+	if start >= end {
+		return nil
+	}
 	// Recover the lost resharing messages.
 	secrets, pvss, err := keystore.TryRecoverReshare()
 	if err != nil {
