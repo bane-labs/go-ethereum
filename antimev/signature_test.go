@@ -17,7 +17,8 @@ import (
 )
 
 func TestSingleSignature(t *testing.T) {
-	sk := tpke.RandomPrivateKey()
+	sk, err := tpke.RandomPrivateKey()
+	require.NoError(t, err)
 	pk := sk.GetPublicKey()
 
 	msg := []byte("pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza pizza")

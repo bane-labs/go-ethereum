@@ -11,11 +11,14 @@ type PrivateKey struct {
 	fr *big.Int // A secret number aggregated from DKG sharing
 }
 
-func RandomPrivateKey() *PrivateKey {
-	fr := randScalar()
+func RandomPrivateKey() (*PrivateKey, error) {
+	fr, err := randScalar()
+	if err != nil {
+		return nil, err
+	}
 	return &PrivateKey{
 		fr: fr,
-	}
+	}, nil
 }
 
 // NewPrivateKey returns a tpke private key for threshold decryption

@@ -13,15 +13,28 @@ import (
 )
 
 // randPG1 returns a random bls12381 g1 point
-func randPG1() *bls12381.G1Affine {
-	r := randScalar()
-	return new(bls12381.G1Affine).ScalarMultiplicationBase(r)
+func randPG1() (*bls12381.G1Affine, error) {
+	r, err := randScalar()
+	if err != nil {
+		return nil, err
+	}
+	return new(bls12381.G1Affine).ScalarMultiplicationBase(r), nil
 }
 
 // randScalar returns a random big int
-func randScalar() *big.Int {
-	a, _ := rand.Int(rand.Reader, ecc.BLS12_381.ScalarField())
-	return a
+func randScalar() (*big.Int, error) {
+	var k *big.Int
+	var err error
+	for {
+		k, err = rand.Int(rand.Reader, ecc.BLS12_381.ScalarField())
+		if err != nil {
+			return nil, err
+		}
+		if k.Sign() > 0 {
+			break
+		}
+	}
+	return k, nil
 }
 
 // getScaler returns a scaler factor for public key, works under size 7,

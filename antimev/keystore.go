@@ -241,7 +241,10 @@ func (ks *KeyStore) DKGShare() ([]*big.Int, []byte, error) {
 		return nil, nil, ErrKeyGroupNotExists
 	}
 	// Generate sharing secrets and pvss
-	ss, sPvss := ks.sharing.share(ks.size, ks.threshold)
+	ss, sPvss, err := ks.sharing.share(ks.size, ks.threshold)
+	if err != nil {
+		return nil, nil, err
+	}
 	return ss, sPvss.Encode(), nil
 }
 

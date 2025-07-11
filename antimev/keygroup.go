@@ -119,9 +119,12 @@ func (tkg *thresholdKeyGroup) recover(secretIndexs []int) ([]*big.Int, error) {
 }
 
 // share generates local secrets and returns sharing messages.
-func (tkg *thresholdKeyGroup) share(size int, threshold int) ([]*big.Int, *tpke.PVSS) {
+func (tkg *thresholdKeyGroup) share(size int, threshold int) ([]*big.Int, *tpke.PVSS, error) {
 	// Generate local secret
-	secret := tpke.RandomSecret(threshold)
+	secret, err := tpke.RandomSecret(threshold)
+	if err != nil {
+		return nil, nil, err
+	}
 	tkg.pendingSecrets = append(tkg.pendingSecrets, secret)
 	// Generate and encrypt messages to share the secret
 	return generateShares(secret, size)
@@ -134,9 +137,12 @@ func (tkg *thresholdKeyGroup) reshare(size int) ([]*big.Int, *tpke.PVSS, error) 
 	if tkg.localSecret == nil {
 		return nil, nil, ErrSecretNotFound
 	}
+	secret, err := tkg.localSecret.Renovate()
+	if err != nil {
+		return nil, nil, err
+	}
 	// Generate and encrypt messages to share the secret
-	ss, pvss := generateShares(tkg.localSecret.Renovate(), size)
-	return ss, pvss, nil
+	return generateShares(secret, size)
 }
 
 // reshareRecovered tries to recover a dkg secret, and returns an error if
@@ -161,12 +167,14 @@ func (tkg *thresholdKeyGroup) reshareRecovered(size int, threshold int) ([]*big.
 
 // generateShares generates shares from a secret.
 // Secret shares can be decrypted by specific receivers, but pvss is public.
-func generateShares(secret *tpke.Secret, size int) ([]*big.Int, *tpke.PVSS) {
+func generateShares(secret *tpke.Secret, size int) ([]*big.Int, *tpke.PVSS, error) {
 	// Random value for pvss generation
-	randR := randScalar()
+	randR, err := randScalar()
+	if err != nil {
+		return nil, nil, err
+	}
 	pvss, ss := tpke.GenerateSecretShares(randR, size, secret)
-
-	return ss, pvss
+	return ss, pvss, nil
 }
 
 // receiveShareMessage verifies received sharing/resharing messages. It verifies

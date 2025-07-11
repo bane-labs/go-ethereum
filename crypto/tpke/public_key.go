@@ -91,8 +91,11 @@ func (pk *PublicKey) Equal(opk *PublicKey) bool {
 }
 
 // Encrypt returns an encrypted point with encryption commitment.
-func (pk *PublicKey) Encrypt(msg *bls12381.G1Affine) *CipherText {
-	r := randScalar()
+func (pk *PublicKey) Encrypt(msg *bls12381.G1Affine) (*CipherText, error) {
+	r, err := randScalar()
+	if err != nil {
+		return nil, err
+	}
 
 	// C=M+rpk, R1=rG1, R2=-rG2
 	_, _, _, g2 := bls12381.Generators()
@@ -107,7 +110,7 @@ func (pk *PublicKey) Encrypt(msg *bls12381.G1Affine) *CipherText {
 		cMsg:       cMsg,
 		bigR:       bigR1,
 		commitment: bigR2,
-	}
+	}, nil
 }
 
 // VerifySigShare verifies a signature in form of a single signature.

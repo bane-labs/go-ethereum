@@ -9,10 +9,14 @@ type Secret struct {
 }
 
 // RandomSecret returns a random polynomial with zero δ
-func RandomSecret(threshold int) *Secret {
-	return &Secret{
-		poly: randomPoly(threshold),
+func RandomSecret(threshold int) (*Secret, error) {
+	p, err := randomPoly(threshold)
+	if err != nil {
+		return nil, err
 	}
+	return &Secret{
+		poly: p,
+	}, nil
 }
 
 // RecoverSecret tries to recover a polynomial with (x,fx) array
@@ -41,12 +45,15 @@ func (s *Secret) FromBigIntArray(arr []*big.Int) {
 }
 
 // Renovate returns a new secret random a1..an-1 expect a0
-func (s *Secret) Renovate() *Secret {
-	poly := randomPoly(len(s.poly.coeff))
+func (s *Secret) Renovate() (*Secret, error) {
+	poly, err := randomPoly(len(s.poly.coeff))
+	if err != nil {
+		return nil, err
+	}
 	poly.coeff[0].Set(s.poly.coeff[0])
 	return &Secret{
 		poly: poly,
-	}
+	}, nil
 }
 
 func (s *Secret) Commitment() *Commitment {

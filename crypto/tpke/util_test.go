@@ -3,10 +3,13 @@ package tpke
 import (
 	"math/big"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestRecover(t *testing.T) {
-	s := randomPoly(5)
+	s, err := randomPoly(5)
+	require.NoError(t, err)
 	p := polyRecover([]int{1, 2, 3, 4, 5}, []*big.Int{s.evaluate(big.NewInt(1)), s.evaluate(big.NewInt(2)), s.evaluate(big.NewInt(3)), s.evaluate(big.NewInt(4)), s.evaluate(big.NewInt(5))})
 	if p[0].Cmp(s.coeff[0]) != 0 || p[1].Cmp(s.coeff[1]) != 0 || p[2].Cmp(s.coeff[2]) != 0 || p[3].Cmp(s.coeff[3]) != 0 || p[4].Cmp(s.coeff[4]) != 0 {
 		t.Fatalf("recover failed.")
