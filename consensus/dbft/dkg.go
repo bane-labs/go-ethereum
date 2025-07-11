@@ -210,10 +210,19 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 		if indexOfSharing > 0 {
 			// Only a warning here, since it doesn't destroy dBFT and anti-mev,
 			// a new DKG can perform and the next reshare is recoverable.
-			// But it is dangerous if more than 1/3 CNs reinit their keystores
-			// or change their message key.
+			// But it is dangerous if more than 1/3 CNs change their message key.
 			if err := c.syncLastRoundSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
 				log.Warn("failed to sync shared DKG", "err", err)
+			} else {
+				// If the message synchronization succeeds, then the message key remains the same.
+				// It means the local secret is also recoverable. Here we just do share with the
+				// same network id and round number, then we should get the same result.
+				// The result will be checked in epoch change, log an error message if no secret
+				// can not be confirmed in committed PVSS.
+				_, _, err := keystore.DKGShare((*c.backend).ChainConfig().ChainID)
+				if err != nil {
+					return fmt.Errorf("failed to replay sharing, err: %v", err)
+				}
 			}
 		}
 		// If indexOfSharing is 0, then selfPvss should be nil.
