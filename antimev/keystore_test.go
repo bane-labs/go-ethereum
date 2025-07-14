@@ -107,7 +107,7 @@ func TestShare(t *testing.T) {
 	for i := 0; i < size; i++ {
 		// No reshare to handle
 		kss[i].OnSharePeriodStart(false)
-		ss, pvss, err := kss[i].DKGShare()
+		ss, pvss, err := kss[i].DKGShare(big.NewInt(1))
 		require.NoError(t, err)
 		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
 		require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestReshare(t *testing.T) {
 	for i := 0; i < size; i++ {
 		// No reshare to handle
 		kss[i].OnSharePeriodStart(false)
-		ss, pvss, err := kss[i].DKGShare()
+		ss, pvss, err := kss[i].DKGShare(big.NewInt(1))
 		require.NoError(t, err)
 		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
 		require.NoError(t, err)
@@ -193,7 +193,7 @@ func TestReshare(t *testing.T) {
 		kss[i].OnSharePeriodStart(false)
 		rss, rPvss, err := kss[i].DKGReshare()
 		require.NoError(t, err)
-		ss, sPvss, err := kss[i].DKGShare()
+		ss, sPvss, err := kss[i].DKGShare(big.NewInt(1))
 		require.NoError(t, err)
 		contract.shareMsgs[i], err = encryptShareMessages(pubs, ss)
 		require.NoError(t, err)
@@ -254,7 +254,7 @@ func TestGroupChange(t *testing.T) {
 		kss[i].OnSharePeriodStart(false)
 		// Sharing members, i ranges from 0 to 6
 		if i < size {
-			ss, pvss, err := kss[i].DKGShare()
+			ss, pvss, err := kss[i].DKGShare(big.NewInt(1))
 			require.NoError(t, err)
 			contract.shareMsgs[i], err = encryptShareMessages(pubs[:size], ss)
 			require.NoError(t, err)
@@ -297,7 +297,7 @@ func TestGroupChange(t *testing.T) {
 			contract.resharePVSSes[i] = rPvss
 		}
 		if i > 0 {
-			ss, sPvss, err := kss[i].DKGShare()
+			ss, sPvss, err := kss[i].DKGShare(big.NewInt(1))
 			require.NoError(t, err)
 			contract.shareMsgs[i-1], err = encryptShareMessages(pubs[1:], ss)
 			require.NoError(t, err)
@@ -361,7 +361,7 @@ func TestRecover(t *testing.T) {
 		kss[i].OnSharePeriodStart(false)
 		// Sharing members, i ranges from 0 to 6
 		if i < size {
-			ss, pvss, err := kss[i].DKGShare()
+			ss, pvss, err := kss[i].DKGShare(big.NewInt(1))
 			require.NoError(t, err)
 			contract.shareMsgs[i], err = encryptShareMessages(pubs[:size], ss)
 			require.NoError(t, err)

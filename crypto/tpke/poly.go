@@ -25,6 +25,16 @@ func randomPoly(degree int) (*Poly, error) {
 	}, nil
 }
 
+func predictablePoly(degree int, secret []byte, public []byte, round int) *Poly {
+	coeff := make([]*big.Int, degree)
+	for i := range coeff {
+		coeff[i] = predictableRandScalar(secret, public, byte(round), byte(i))
+	}
+	return &Poly{
+		coeff: coeff,
+	}
+}
+
 func (p *Poly) evaluate(x *big.Int) *big.Int {
 	i := len(p.coeff) - 1
 	result := new(big.Int).Set(p.coeff[i])

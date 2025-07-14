@@ -2,6 +2,8 @@ package tpke
 
 import (
 	"math/big"
+
+	"github.com/ethereum/go-ethereum/crypto/ecies"
 )
 
 type Secret struct {
@@ -9,14 +11,10 @@ type Secret struct {
 }
 
 // RandomSecret returns a random polynomial with zero δ
-func RandomSecret(threshold int) (*Secret, error) {
-	p, err := randomPoly(threshold)
-	if err != nil {
-		return nil, err
-	}
+func RandomSecret(threshold int, secret *ecies.PrivateKey, public []byte, round int) *Secret {
 	return &Secret{
-		poly: p,
-	}, nil
+		poly: predictablePoly(threshold, secret.D.Bytes(), public, round),
+	}
 }
 
 // RecoverSecret tries to recover a polynomial with (x,fx) array

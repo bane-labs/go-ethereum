@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
 )
 
@@ -118,13 +119,11 @@ func (tkg *thresholdKeyGroup) recover(secretIndexs []int) ([]*big.Int, error) {
 	return ss, nil
 }
 
-// share generates local secrets and returns sharing messages.
-func (tkg *thresholdKeyGroup) share(size int, threshold int) ([]*big.Int, *tpke.PVSS, error) {
+// share generates local secrets and returns sharing messages. Network id,
+// keystore key and round number is required for predictable randomness.
+func (tkg *thresholdKeyGroup) share(networkId *big.Int, ethPrvKey *ecies.PrivateKey, size int, threshold int, round int) ([]*big.Int, *tpke.PVSS, error) {
 	// Generate local secret
-	secret, err := tpke.RandomSecret(threshold)
-	if err != nil {
-		return nil, nil, err
-	}
+	secret := tpke.RandomSecret(threshold, ethPrvKey, networkId.Bytes(), round)
 	tkg.pendingSecrets = append(tkg.pendingSecrets, secret)
 	// Generate and encrypt messages to share the secret
 	return generateShares(secret, size)

@@ -7,6 +7,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPredictableRandScalar(t *testing.T) {
+	r := predictableRandScalar([]byte{0}, []byte{0}, byte(0))
+	if r.Cmp(predictableRandScalar([]byte{0}, []byte{0}, byte(0))) != 0 {
+		t.Fatalf("random number not predictable")
+	}
+	if r.Cmp(predictableRandScalar([]byte{0}, []byte{0}, byte(1))) == 0 {
+		t.Fatalf("random number not random")
+	}
+}
+
 func TestRecover(t *testing.T) {
 	s, err := randomPoly(5)
 	require.NoError(t, err)

@@ -235,13 +235,16 @@ func (ks *KeyStore) DKGReshare() ([]*big.Int, []byte, error) {
 	return rss, rPvss.Encode(), nil
 }
 
-// DKGShare generates and returns sharing secrets and pvss.
-func (ks *KeyStore) DKGShare() ([]*big.Int, []byte, error) {
+// DKGShare generates and returns sharing secrets and pvss. Different from
+// DKGReshare, the secret generation here is predictable based on message
+// decryption key, network id and DKG round number. Network id is used for
+// replay protection.
+func (ks *KeyStore) DKGShare(networkId *big.Int) ([]*big.Int, []byte, error) {
 	if ks.sharing == nil {
 		return nil, nil, ErrKeyGroupNotExists
 	}
 	// Generate sharing secrets and pvss
-	ss, sPvss, err := ks.sharing.share(ks.size, ks.threshold)
+	ss, sPvss, err := ks.sharing.share(networkId, ks.ethPrvKey, ks.size, ks.threshold, ks.round+1)
 	if err != nil {
 		return nil, nil, err
 	}
