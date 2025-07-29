@@ -44,11 +44,10 @@ var (
 	MaxSkeletonSize = 128 // Number of header fetches needed for a skeleton assembly
 	MaxReceiptFetch = 256 // Number of transaction receipts to allow fetching per request
 
-	maxQueuedHeaders            = 32 * 1024                         // [eth/62] Maximum number of headers to queue for import (DOS protection)
-	maxHeadersProcess           = 2048                              // Number of header download results to import at once into the chain
-	maxResultsProcess           = 2048                              // Number of content download results to import at once into the chain
-	fullMaxForkAncestry  uint64 = params.FullImmutabilityThreshold  // Maximum chain reorganisation (locally redeclared so tests can reduce it)
-	lightMaxForkAncestry uint64 = params.LightImmutabilityThreshold // Maximum chain reorganisation (locally redeclared so tests can reduce it)
+	maxQueuedHeaders           = 32 * 1024                        // [eth/62] Maximum number of headers to queue for import (DOS protection)
+	maxHeadersProcess          = 2048                             // Number of header download results to import at once into the chain
+	maxResultsProcess          = 2048                             // Number of content download results to import at once into the chain
+	fullMaxForkAncestry uint64 = params.FullImmutabilityThreshold // Maximum chain reorganisation (locally redeclared so tests can reduce it)
 
 	reorgProtThreshold   = 48 // Threshold number of recent blocks to disable mini reorg protection
 	reorgProtHeaderDelay = 2  // Number of headers to delay delivering to cover mini reorgs
