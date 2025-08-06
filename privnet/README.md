@@ -304,8 +304,6 @@ based on the specifications mentioned above:
 
 ### Setup with Docker
 
-We currently need to pass a Github token in to compile correctly, replace the `GITHUB_TOKEN` environment variable in the `.docker/.env` file.
-
 1. Ensure that ports 30305, 30306, and 30307 are not in use on your 
    localhost (127.0.0.1). Also, ensure that RPC ports 8552 and 8553 are 
    not being used.
@@ -348,8 +346,7 @@ If you encounter the following error while building the image,
 ```
 you can try to build it manually.
 ```
-docker build --build-arg=GITHUB_TOKEN=YOUR_PERSONAL_TOKEN
- --network=host -f Dockerfile.alltools -t neox_node .
+docker build --network=host -f Dockerfile.alltools -t neox_node .
 ```
 
 ## Commands in JavaScript console

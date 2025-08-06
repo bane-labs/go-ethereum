@@ -15,8 +15,6 @@ services:
     build:
       context: ../
       dockerfile: ./Dockerfile.alltools
-      args:
-        - GITHUB_TOKEN=${GITHUB_TOKEN}
     command: "bootnode -nodekey ${FOUR_DIR}/bootnode/bootnode.key -addr :30304 -verbosity 5"
     volumes:
       - ../privnet:/privnet
