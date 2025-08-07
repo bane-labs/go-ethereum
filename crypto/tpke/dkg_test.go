@@ -17,15 +17,15 @@ import (
 func TestReplayPVSS(t *testing.T) {
 	size := 7
 	// Recover the secret
-	p0, err := hex.DecodeString("31ff9af01cfd6d526e78f8be2d9f0cf40f54335f05f590b622d74367e867ff10")
+	p0, err := hex.DecodeString("2310dcf245532896eb4edbb8606652ad68a35dda6f59c4d5563dc0f59de3da25")
 	require.NoError(t, err)
-	p1, err := hex.DecodeString("5a2e5b78ade250b2bbafe80e1ccef39b05f247e5bfedb667af4a7f2c8e361dd2")
+	p1, err := hex.DecodeString("563d28632595036cc16849ca2dac9680676a3d1191ce632ef8d6f848fa97fe98")
 	require.NoError(t, err)
-	p2, err := hex.DecodeString("09a1fcaa49592faf00e90b58b80d696dc01893b3efa0c1ba182b7701ce288573")
+	p2, err := hex.DecodeString("53432267ec5f295cc8a11b357a85f8fe38f6e10297958dca1cf3db66926e518f")
 	require.NoError(t, err)
-	p3, err := hex.DecodeString("452ebaa9cbe98485a9daf3b0b75975db8e30460a4b6b1c5685f80541f46fb343")
+	p3, err := hex.DecodeString("015d482fc85fccb573963895bf074ccbebb3f867f2728ee7be39832390556179")
 	require.NoError(t, err)
-	p4, err := hex.DecodeString("3052727d10e97e12e9bbc7d63ca99e246db38dc209b86725c32b404163f0877a")
+	p4, err := hex.DecodeString("51d24f8098760707c0ef8f51330d2ebbb8c7091d18a51ebcc63ce76da5a68a46")
 	require.NoError(t, err)
 	secret := &Secret{
 		&Poly{
@@ -168,27 +168,23 @@ func TestReplayPubHash(t *testing.T) {
 		secp256k1G1ByteLength := secp256k1.SizeOfG1AffineUncompressed
 		bls12381G1ByteLength := bls12381.SizeOfG1AffineUncompressed
 		bigRBytes := messages[index][:64]
-		rawBigR := make([]byte, secp256k1G1ByteLength*8)
+		rawBigR := make([]byte, secp256k1G1ByteLength)
 		for i := 0; i < secp256k1G1ByteLength; i++ {
-			for j := 0; j < 8; j++ {
-				rawBigR[i*8+j] = (bigRBytes[i] >> (7 - j)) & 1
-			}
+			rawBigR[i] = bigRBytes[i] // bytes
 		}
 		pubBytes := pub.RawBytes()
-		rawPub := make([]byte, secp256k1G1ByteLength*8)
+		rawPub := make([]byte, secp256k1G1ByteLength)
 		for i := 0; i < secp256k1G1ByteLength; i++ {
-			for j := 0; j < 8; j++ {
-				rawPub[i*8+j] = (pubBytes[i] >> (7 - j)) & 1
-			}
+			rawPub[i] = pubBytes[i] // bytes
 		}
-		bigFisBytes := bigf[index].RawBytes()
-		rawBigFis := make([]byte, bls12381G1ByteLength*8)
+		bigFiBytes := bigf[index].RawBytes()
+		rawBigFi := make([]byte, bls12381G1ByteLength)
 		for i := 0; i < bls12381G1ByteLength; i++ {
-			for j := 0; j < 8; j++ {
-				rawBigFis[i*8+j] = (bigFisBytes[i] >> (7 - j)) & 1
-			}
+			rawBigFi[i] = bigFiBytes[i] // bytes
 		}
-		rawPubInputs = append(rawPubInputs, append(append(append(append(append(rawBigR, rawPub...), rawBigFis...), messages[index][64:76]...), 2), messages[index][76:]...)...)
+		singleHash := helper.GetHash(append(append(append(append(append(rawBigR, rawPub...), rawBigFi...), messages[index][64:76]...), 2), messages[index][76:]...))
+		t.Log(hex.EncodeToString(append(append(append(append(append(rawBigR, rawPub...), rawBigFi...), messages[index][64:76]...), 2), messages[index][76:]...)))
+		rawPubInputs = append(rawPubInputs, singleHash...)
 	}
 	sumHash := helper.GetHash(rawPubInputs)
 	t.Log(hex.EncodeToString(sumHash))

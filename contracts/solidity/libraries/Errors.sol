@@ -48,7 +48,9 @@ library Errors {
     error PeriodEnded();
     error NoNeedForRecover();
     error InvalidPVSS();
+    error InvalidMessage();
     error InvalidMessageAmount();
     error IndexOutOfRange();
     error MessageExists();
+    error PubHashAlreadyUsed();
 }
