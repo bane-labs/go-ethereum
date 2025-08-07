@@ -10,6 +10,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/secp256k1"
 	"github.com/consensys/gnark-crypto/ecc/secp256k1/fp"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 )
@@ -61,6 +62,7 @@ func TestReplayPVSS(t *testing.T) {
 
 func TestReplayPubHash(t *testing.T) {
 	size := 7
+	sender := common.HexToAddress("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
 	// Recover the secret
 	p0, err := hex.DecodeString("704e6038571bcd1c8cfac37e821fa49b8f6eee724b00156a229fd69975e30933")
 	require.NoError(t, err)
@@ -152,8 +154,12 @@ func TestReplayPubHash(t *testing.T) {
 	}
 
 	// Compute allHash
+	hashDomain := "DKG_BATCH_HASH_V1"
 	batch := 7
 	rawPubInputs := make([]byte, 0)
+	rawPubInputs = append(rawPubInputs, hashDomain...)
+	rawPubInputs = append(rawPubInputs, sender[:]...)
+	rawPubInputs = append(rawPubInputs, byte(batch))
 	for index := 0; index < batch; index++ {
 		// Format data
 		var px fp.Element
@@ -182,10 +188,10 @@ func TestReplayPubHash(t *testing.T) {
 		for i := 0; i < bls12381G1ByteLength; i++ {
 			rawBigFi[i] = bigFiBytes[i] // bytes
 		}
-		singleHash := helper.GetHash(append(append(append(append(append(rawBigR, rawPub...), rawBigFi...), messages[index][64:76]...), 2), messages[index][76:]...))
-		t.Log(hex.EncodeToString(append(append(append(append(append(rawBigR, rawPub...), rawBigFi...), messages[index][64:76]...), 2), messages[index][76:]...)))
-		rawPubInputs = append(rawPubInputs, singleHash...)
+		innerHash := helper.GetHash(append(append(append(append(append(rawBigR, rawPub...), rawBigFi...), messages[index][64:76]...), 2), messages[index][76:]...))
+		rawPubInputs = append(rawPubInputs, byte(index), byte(len(innerHash)))
+		rawPubInputs = append(rawPubInputs, innerHash[:]...)
 	}
 	sumHash := helper.GetHash(rawPubInputs)
-	t.Log(hex.EncodeToString(sumHash))
+	t.Log(hex.EncodeToString(sumHash[:]))
 }
