@@ -10,6 +10,7 @@ import (
 	"github.com/bane-labs/zk-dkg/encryption"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
+	"github.com/consensys/gnark-crypto/ecc/secp256k1"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
@@ -506,11 +507,11 @@ func encryptShareMessages(pubs []*ecies.PublicKey, shares []*big.Int) ([][]byte,
 }
 
 func encryptShareMessage(pub *ecies.PublicKey, share *big.Int) ([]byte, error) {
-	nonce, ess, _, bigR, err := encryption.ECIESEncrypt(pub, share.Bytes())
+	nonce, ess, r, err := encryption.ECIESEncrypt(pub, share.Bytes())
 	if err != nil {
 		return nil, err
 	}
-	bigRBytes := bigR.RawBytes()
+	bigRBytes := new(secp256k1.G1Affine).ScalarMultiplicationBase(r).RawBytes()
 	// len(message)=64+12+len(ess)
 	msg := make([]byte, 0)
 	msg = append(msg, bigRBytes[:]...)

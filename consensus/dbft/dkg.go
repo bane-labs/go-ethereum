@@ -401,6 +401,9 @@ executeLoop:
 				sevenMsgR1CS constraint.ConstraintSystem
 				sevenMsgPK   *groth16.ProvingKey
 			)
+			c.lock.RLock()
+			sender := c.amevKeystore.Address()
+			c.lock.RUnlock()
 
 			// Handle new tasks immediately but one by one.
 			for _, task := range *pendingList {
@@ -419,13 +422,13 @@ executeLoop:
 						fis[i] = new(fr.Element).SetBigInt(s)
 					}
 					// Compute necessary inputs for circuit.
-					fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs, err := circuit.PrepareEncryptedKeyShares(pubs, fis)
+					fisInts, nonces, encryptedFis, rs, err := circuit.PrepareEncryptedKeyShares(pubs, fis)
 					if err != nil {
 						log.Error("failed to prepare encrypted key shares", "err", err, "method", task.Method)
 						continue
 					}
 					// Update the task parameters for sending a transaction.
-					msgs := encodeMessages(encryptedFis, bigRs, nonces)
+					msgs := encodeMessages(encryptedFis, rs, nonces)
 					// Send transactions based on ZK settings.
 					switch task.ZKVersion {
 					case 0:
@@ -445,7 +448,7 @@ executeLoop:
 						}
 						var err error
 						if sevenMsgR1CS == nil {
-							sevenMsgR1CS, err = helper.ReadCSS(c.zkFiles.sevenMsgR1CSPath)
+							sevenMsgR1CS, err = helper.ReadCCS(c.zkFiles.sevenMsgR1CSPath)
 							if err != nil {
 								log.Error("invalid r1cs file", "file", c.zkFiles.sevenMsgR1CSPath, "err", err)
 								continue
@@ -459,7 +462,7 @@ executeLoop:
 							}
 						}
 						// Compute zk proof.
-						proof, _, err := zkdkg.ProveMultipleKeyShareEncryption(sevenMsgR1CS, sevenMsgPK, pubs, rs, bigRs, fisBytes, fisInts, bigFis, encryptedFis, nonces)
+						proof, _, err := zkdkg.ProveMultipleKeyShareEncryption(sevenMsgR1CS, sevenMsgPK, sender, pubs, rs, fisInts, encryptedFis, nonces)
 						if err != nil {
 							log.Error("failed to prove DKG", "method", task.Method)
 							continue
@@ -498,13 +501,13 @@ executeLoop:
 						idxsBigInt[i] = big.NewInt(int64(idx))
 					}
 					// Compute necessary inputs for circuit.
-					fisBytes, fisInts, bigFis, nonces, encryptedFis, rs, bigRs, err := circuit.PrepareEncryptedKeyShares(pubs, fis)
+					fisInts, nonces, encryptedFis, rs, err := circuit.PrepareEncryptedKeyShares(pubs, fis)
 					if err != nil {
 						log.Error("failed to prepare encrypted key shares", "err", err, "method", task.Method)
 						continue
 					}
 					// Update the task parameters for sending a transaction.
-					msgs := encodeMessages(encryptedFis, bigRs, nonces)
+					msgs := encodeMessages(encryptedFis, rs, nonces)
 					// Send transactions based on ZK settings.
 					switch task.ZKVersion {
 					case 0:
@@ -526,7 +529,7 @@ executeLoop:
 						)
 						switch len(indexes) {
 						case 1:
-							r1cs, err = helper.ReadCSS(c.zkFiles.oneMsgR1CSPath)
+							r1cs, err = helper.ReadCCS(c.zkFiles.oneMsgR1CSPath)
 							if err != nil {
 								log.Error("invalid r1cs file", "file", c.zkFiles.oneMsgR1CSPath, "err", err)
 								continue
@@ -537,7 +540,7 @@ executeLoop:
 								continue
 							}
 						case 2:
-							r1cs, err = helper.ReadCSS(c.zkFiles.twoMsgR1CSPath)
+							r1cs, err = helper.ReadCCS(c.zkFiles.twoMsgR1CSPath)
 							if err != nil {
 								log.Error("invalid r1cs file", "file", c.zkFiles.twoMsgR1CSPath, "err", err)
 								continue
@@ -551,7 +554,7 @@ executeLoop:
 							// The circuit setup is limited for proofs of 1-or-2-message tasks, other cases shouldn't happen.
 							panic(fmt.Errorf("invalid number of %s message inputs: expect 1 or 2, get %d", task.Method, len(fis)))
 						}
-						proof, _, err := zkdkg.ProveMultipleKeyShareEncryption(r1cs, provingKey, pubs, rs, bigRs, fisBytes, fisInts, bigFis, encryptedFis, nonces)
+						proof, _, err := zkdkg.ProveMultipleKeyShareEncryption(r1cs, provingKey, sender, pubs, rs, fisInts, encryptedFis, nonces)
 						if err != nil {
 							log.Error("failed to prove DKG", "method", task.Method)
 							continue
@@ -1100,10 +1103,10 @@ func sendTransactionToKeyManagement(api *ethapi.TransactionAPI, signer common.Ad
 }
 
 // encodeMessages encodes the output from message encryption.
-func encodeMessages(encryptedFis [][]byte, bigRs []*secp256k1.G1Affine, nonces [][]byte) [][]byte {
+func encodeMessages(encryptedFis [][]byte, rs []*big.Int, nonces [][]byte) [][]byte {
 	result := make([][]byte, 0)
 	for i := range encryptedFis {
-		bigRBytes := bigRs[i].RawBytes()
+		bigRBytes := new(secp256k1.G1Affine).ScalarMultiplicationBase(rs[i]).RawBytes()
 		prefix := append(bigRBytes[:], nonces[i]...)
 		result = append(result, append(prefix, encryptedFis[i]...))
 	}
