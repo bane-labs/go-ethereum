@@ -45,6 +45,8 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
     // the scaler is used for speed up decryption, and not cool to be computed in contract.
     // ref https://github.com/bane-labs/go-ethereum/blob/a07310bd9a3a117ae0876ad69bbe8b6ed624aaa5/core/antimev/util.go#L27
     mapping(uint => bytes) public aggregatedCommitments;
+    // hash=>used, this is used to prevent reusing and uploading the same public input
+    mapping(bytes32 => bool) public isPubHashUsed;
 
     // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
     // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
@@ -108,7 +110,7 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
         // verify pvss
         _verifyPVSS(n, t, pvss);
 
-        // verify zk proof
+        // verify public input hash
         bytes32 pubHash = _computeVerifierHashInputForShareOrReshare(
             n,
             t,
@@ -116,6 +118,10 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
             messages,
             IGovernance(GOV).getPendingConsensus()
         );
+        if (isPubHashUsed[pubHash]) revert Errors.PubHashAlreadyUsed();
+        isPubHashUsed[pubHash] = true;
+
+        // verify zk proof
         uint[32] memory input;
         for (uint i = 0; i < 32; i++) {
             input[i] = uint8(pubHash[i]);
@@ -158,7 +164,7 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
         // verify pvss
         _verifyPVSS(n, t, pvss);
 
-        // verify zk proof
+        // verify public input hash
         bytes32 pubHash = _computeVerifierHashInputForShareOrReshare(
             n,
             t,
@@ -166,6 +172,10 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
             messages,
             IGovernance(GOV).getPendingConsensus()
         );
+        if (isPubHashUsed[pubHash]) revert Errors.PubHashAlreadyUsed();
+        isPubHashUsed[pubHash] = true;
+
+        // verify zk proof
         uint[32] memory input;
         for (uint i = 0; i < 32; i++) {
             input[i] = uint8(pubHash[i]);
@@ -210,7 +220,8 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
         uint round = roundNumber + 1;
         if (round < 2) revert Errors.InvalidRoundNumber();
 
-        // verify zk proof
+        // verify zk proof, public hash of a recover input is allowed to be reused,
+        // and the contract doesn't behave based on the recover messages
         (uint n, uint t) = numberAndThreshold();
         bytes32 pubHash = _computeVerifierHashInputForRecover(
             index,
@@ -283,7 +294,7 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
         // verify pvss
         _verifyPVSS(n, t, pvss);
 
-        // verify zk proof
+        // verify public input hash
         bytes32 pubHash = _computeVerifierHashInputForShareOrReshare(
             n,
             t,
@@ -291,6 +302,10 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
             messages,
             IGovernance(GOV).getPendingConsensus()
         );
+        if (isPubHashUsed[pubHash]) revert Errors.PubHashAlreadyUsed();
+        isPubHashUsed[pubHash] = true;
+
+        // verify zk proof
         uint[32] memory input;
         for (uint i = 0; i < 32; i++) {
             input[i] = uint8(pubHash[i]);
@@ -410,51 +425,44 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
         bytes[] calldata messages,
         address[] memory participants
     ) internal view returns (bytes32) {
-        // compute zk public input, n*(2*256+2*256+2*384+12+1+48)
-        bytes memory pubInput = new bytes(n * 1853);
-        uint pos = 0;
+        // compute zk public input, 17+20+1+n*hash(64+64+96+12+1+48)
+        bytes memory sumInput = bytes.concat("DKG_BATCH_HASH_V1", abi.encodePacked(msg.sender, bytes1(bytes32(n)[31])));
         for (uint i = 0; i < n; i++) {
+            bytes memory input = new bytes(285);
             bytes memory pubKey = messagePubkeys[participants[i]];
+            bytes memory message = messages[i];
+            if (message.length != 124) revert Errors.InvalidMessage();
             uint bigFiStart = (t + 1) *
                 BLS12381.G1_SIZE +
                 BLS12381.G2_SIZE +
                 i *
                 BLS12381.G1_SIZE;
-            bytes memory bigFi = bytes.concat(
-                pvss[bigFiStart + 16:bigFiStart + 64],
-                pvss[bigFiStart + 80:bigFiStart + 128]
-            );
-            for (uint j = 0; j < 96; j++) {
-                for (uint k = 0; k < 8; k++) {
-                    if (j < 64) {
-                        // bigR bits (512)
-                        pubInput[pos + j * 8 + k] =
-                            (messages[i][j] >> (7 - k)) &
-                            0x01;
-                        // message key bits (512)
-                        pubInput[pos + 512 + j * 8 + k] =
-                            (pubKey[j + 1] >> (7 - k)) &
-                            0x01;
-                    }
-                    // bigFi bits (768)
-                    pubInput[pos + 1024 + j * 8 + k] =
-                        (bigFi[j] >> (7 - k)) &
-                        0x01;
-                }
-            }
-            // nonce bytes (12)
-            for (uint j = 0; j < 12; j++) {
-                pubInput[pos + 1792 + j] = messages[i][64 + j];
+            assembly {
+                // bigR bytes (64)
+                mcopy(add(input, 32), add(message, 32), 64)
+                // pubkey bytes (64)
+                mcopy(add(input, 96), add(pubKey, 33), 64)
+                // bigFi bytes (96)
+                calldatacopy(
+                    add(input, 160),
+                    add(pvss.offset, add(bigFiStart, 16)),
+                    48
+                )
+                calldatacopy(
+                    add(input, 208),
+                    add(pvss.offset, add(bigFiStart, 80)),
+                    48
+                )
+                // nonce bytes (12)
+                mcopy(add(input, 256), add(message, 96), 12)
+                // encryptedFi bytes (48), gap 1 byte
+                mcopy(add(input, 269), add(message, 108), 48)
             }
             // value 2 as byte (1)
-            pubInput[pos + 1804] = 0x02;
-            // encryptedFi bytes (48)
-            for (uint j = 0; j < 48; j++) {
-                pubInput[pos + 1805 + j] = messages[i][76 + j];
-            }
-            pos += 1853;
+            input[236] = 0x02;
+            sumInput = bytes.concat(sumInput, abi.encodePacked(bytes1(bytes32(i)[31]), bytes1(uint8(32))), sha256(input));
         }
-        return sha256(pubInput);
+        return sha256(sumInput);
     }
 
     function _computeVerifierHashInputForRecover(
@@ -465,55 +473,38 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
         bytes[] calldata messages, // len(messages) == len(indexes)
         address[] memory participants // len(receivers) == n
     ) internal view returns (bytes32) {
-        // compute zk public input, amount*(2*256+2*256+2*384+12+1+48)
-        bytes memory pubInput = new bytes(indexes.length * 1853);
-        uint pos = 0;
+        // compute zk public input, 17+20+1+amount*hash(64+64+96+12+1+48)
+        bytes memory sumInput = bytes.concat("DKG_BATCH_HASH_V1", abi.encodePacked(msg.sender, bytes1(bytes32(indexes.length)[31])));
         for (uint i = 0; i < indexes.length; i++) {
+            bytes memory input = new bytes(285);
             bytes memory pubKey = messagePubkeys[participants[indexes[i] - 1]];
             // compute bigFi from spvss commitment, bigFi = pvss.cmt.evaluate(indexes[i])
             bytes memory pvss = spvsses[round - 1][indexes[i]];
-            bytes memory bigFi = new bytes(96);
+            bytes memory message = messages[i];
+            if (message.length != 124) revert Errors.InvalidMessage();
             uint bigFiStart = (t + 1) *
                 BLS12381.G1_SIZE +
                 BLS12381.G2_SIZE +
                 (selfIndex - 1) *
                 BLS12381.G1_SIZE;
-            // cut slice from 128 to 96 with MCOPY
             assembly {
-                mcopy(add(bigFi, 32), add(pvss, add(48, bigFiStart)), 48)
-                mcopy(add(bigFi, 80), add(pvss, add(112, bigFiStart)), 48)
-            }
-            for (uint j = 0; j < 96; j++) {
-                for (uint k = 0; k < 8; k++) {
-                    if (j < 64) {
-                        // bigR bits (512)
-                        pubInput[pos + j * 8 + k] =
-                            (messages[i][j] >> (7 - k)) &
-                            0x01;
-                        // message key bits (512)
-                        pubInput[pos + 512 + j * 8 + k] =
-                            (pubKey[j + 1] >> (7 - k)) &
-                            0x01;
-                    }
-                    // bigFi bits (768)
-                    pubInput[pos + 1024 + j * 8 + k] =
-                        (bigFi[j] >> (7 - k)) &
-                        0x01;
-                }
-            }
-            // nonce bytes (12)
-            for (uint j = 0; j < 12; j++) {
-                pubInput[pos + 1792 + j] = messages[i][64 + j];
+                // bigR bytes (64)
+                mcopy(add(input, 32), add(message, 32), 64)
+                // pubkey bytes (64)
+                mcopy(add(input, 96), add(pubKey, 33), 64)
+                // bigFi bytes (96)
+                mcopy(add(input, 160), add(pvss, add(48, bigFiStart)), 48)
+                mcopy(add(input, 208), add(pvss, add(112, bigFiStart)), 48)
+                // nonce bytes (12)
+                mcopy(add(input, 256), add(message, 96), 12)
+                // encryptedFi bytes (48), gap 1 byte
+                mcopy(add(input, 269), add(message, 108), 48)
             }
             // value 2 as byte (1)
-            pubInput[pos + 1804] = 0x02;
-            // encryptedFi bytes (48)
-            for (uint j = 0; j < 48; j++) {
-                pubInput[pos + 1805 + j] = messages[i][76 + j];
-            }
-            pos += 1853;
+            input[236] = 0x02;
+            sumInput = bytes.concat(sumInput, abi.encodePacked(bytes1(bytes32(i)[31]), bytes1(uint8(32))), sha256(input));
         }
-        return sha256(pubInput);
+        return sha256(sumInput);
     }
 
     function numberAndThreshold() public view returns (uint, uint) {
