@@ -92,7 +92,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		ProcessParentBlockHash(block.ParentHash(), vmenv, tracingStateDB)
 	}
 	if p.config.DBFT != nil {
-		err := ProcessOnPersist(vmenv, statedb)
+		err := ProcessOnPersist(vmenv, tracingStateDB)
 		if err != nil {
 			return nil, fmt.Errorf("could not apply OnPersist [%v]: %w", block.Hash().Hex(), err)
 		}
@@ -351,7 +351,16 @@ func ParseDepositLogs(logs []*types.Log, config *params.ChainConfig) ([]byte, er
 }
 
 // ProcessOnPersist applies a system call to the governance contract.
-func ProcessOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
+func ProcessOnPersist(vmenv *vm.EVM, statedb vm.StateDB) error {
+	if tracer := vmenv.Config.Tracer; tracer != nil {
+		if tracer.OnSystemCallStart != nil {
+			tracer.OnSystemCallStart()
+		}
+		if tracer.OnSystemCallEnd != nil {
+			defer tracer.OnSystemCallEnd()
+		}
+	}
+
 	if err := processKeyManagementOnPersist(vmenv, statedb); err != nil {
 		return err
 	}
@@ -361,7 +370,7 @@ func ProcessOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
 	return nil
 }
 
-func processGovernanceOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
+func processGovernanceOnPersist(vmenv *vm.EVM, statedb vm.StateDB) error {
 	var (
 		data []byte
 		err  error
@@ -380,7 +389,7 @@ func processGovernanceOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
 	return applyLocalSystemCall(systemcontracts.GovernanceProxyHash, data, vmenv, statedb)
 }
 
-func processKeyManagementOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
+func processKeyManagementOnPersist(vmenv *vm.EVM, statedb vm.StateDB) error {
 	if !vmenv.ChainConfig().IsNeoXDKG(vmenv.Context.BlockNumber) {
 		return nil
 	}
@@ -391,7 +400,7 @@ func processKeyManagementOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error 
 	return applyLocalSystemCall(systemcontracts.KeyManagementProxyHash, data, vmenv, statedb)
 }
 
-func applyLocalSystemCall(to common.Address, data []byte, vmenv *vm.EVM, statedb *state.StateDB) error {
+func applyLocalSystemCall(to common.Address, data []byte, vmenv *vm.EVM, statedb vm.StateDB) error {
 	msg := &Message{
 		From:      params.SystemAddress,
 		GasLimit:  30_000_000,
