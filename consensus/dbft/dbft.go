@@ -43,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
@@ -1771,24 +1772,27 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if header.GasLimit > params.MaxGasLimit {
 		return fmt.Errorf("invalid gasLimit: have %v, max %v", header.GasLimit, params.MaxGasLimit)
 	}
+	// Verify existence / non-existence of withdrawalsHash.
 	shanghai := chain.Config().IsShanghai(header.Number, header.Time)
-	if shanghai {
-		if header.WithdrawalsHash == nil {
-			return errors.New("missing withdrawalsHash")
-		}
-		// For now, only empty withdrawals are supported. Once non-empty withdrawals are allowed,
-		// we need to ensure that withdrawals hash matches withdrawals, it's done at the level of
-		// WithVerifyBlock dBFT callback during the consensus process and at the blockchain level
-		// for real (accepted) blocks.
-		if header.WithdrawalsHash.Cmp(types.EmptyWithdrawalsHash) != 0 {
-			return errors.New("dBFT supports only empty withdrawals")
-		}
+	if shanghai && header.WithdrawalsHash == nil {
+		return errors.New("missing withdrawalsHash")
+	}
+	if shanghai && header.WithdrawalsHash.Cmp(types.EmptyWithdrawalsHash) != 0 {
+		return fmt.Errorf("invalid withdrawalsHash: have %x, expected %x", header.WithdrawalsHash, &types.EmptyWithdrawalsHash)
 	}
 	if !shanghai && header.WithdrawalsHash != nil {
 		return fmt.Errorf("invalid withdrawalsHash: have %x, expected nil", header.WithdrawalsHash)
 	}
-	if chain.Config().IsCancun(header.Number, header.Time) {
-		return errors.New("dbft does not support cancun fork")
+	// Verify existence / non-existence of parentBeaconRoot.
+	cancun := chain.Config().IsCancun(header.Number, header.Time)
+	if cancun && header.ParentBeaconRoot == nil {
+		return errors.New("missing parentBeaconRoot")
+	}
+	if cancun && header.ParentBeaconRoot.Cmp(types.EmptyRootHash) != 0 {
+		return fmt.Errorf("invalid parentBeaconRoot: have %x, expected %x", *header.ParentBeaconRoot, &types.EmptyRootHash)
+	}
+	if !cancun && header.ParentBeaconRoot != nil {
+		return fmt.Errorf("invalid parentBeaconRoot, have %x, expected nil", header.ParentBeaconRoot)
 	}
 	// All basic checks passed, verify cascading fields
 	return c.verifyCascadingFields(chain, header, parents, isSealed)
@@ -1811,9 +1815,7 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 	} else {
 		parent = chain.GetHeader(header.ParentHash, number-1)
 	}
-	if parent == nil ||
-		parent.Number.Uint64() != number-1 ||
-		(isSealed && parent.Hash() != header.ParentHash) {
+	if parent == nil || parent.Number.Uint64() != number-1 || (isSealed && parent.Hash() != header.ParentHash) {
 		return consensus.ErrUnknownAncestor
 	}
 	if parent.Time > header.Time {
@@ -1833,6 +1835,19 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 		}
 	} else if err := eip1559.VerifyEIP1559Header(chain.Config(), parent, header); err != nil {
 		// Verify the header's EIP-1559 attributes.
+		return err
+	}
+	if !chain.Config().IsCancun(header.Number, header.Time) {
+		switch {
+		case header.ExcessBlobGas != nil:
+			return fmt.Errorf("invalid excessBlobGas: have %d, expected nil", header.ExcessBlobGas)
+		case header.BlobGasUsed != nil:
+			return fmt.Errorf("invalid blobGasUsed: have %d, expected nil", header.BlobGasUsed)
+		case header.ParentBeaconRoot != nil:
+			return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected nil", header.ParentBeaconRoot)
+		}
+	} else if err := eip4844.VerifyEIP4844Header(parent, header); err != nil {
+		// Verify cancun-specific header fields
 		return err
 	}
 	// This check forces Coinbase to be the same among all consensus nodes.
@@ -2035,6 +2050,17 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 	} else {
 		if len(body.Withdrawals) > 0 {
 			return nil, errors.New("withdrawals set before Shanghai activation")
+		}
+	}
+	cancun := chain.Config().IsCancun(header.Number, header.Time)
+	if cancun {
+		// All headers after Cancun must include a beacon root.
+		if header.ParentBeaconRoot == nil {
+			header.ParentBeaconRoot = &types.EmptyRootHash
+		}
+	} else {
+		if header.ParentBeaconRoot != nil {
+			return nil, errors.New("parentBeaconRoot set before Cancun activation")
 		}
 	}
 
@@ -2703,6 +2729,18 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 	}
 	if header.WithdrawalsHash != nil {
 		enc = append(enc, header.WithdrawalsHash)
+	}
+	if header.BlobGasUsed != nil {
+		enc = append(enc, header.BlobGasUsed)
+	}
+	if header.ExcessBlobGas != nil {
+		enc = append(enc, header.ExcessBlobGas)
+	}
+	if header.ParentBeaconRoot != nil {
+		enc = append(enc, header.ParentBeaconRoot)
+	}
+	if header.RequestsHash != nil {
+		enc = append(enc, header.RequestsHash)
 	}
 	if err := rlp.Encode(w, enc); err != nil {
 		panic("can't encode: " + err.Error())
