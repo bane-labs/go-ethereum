@@ -52,6 +52,8 @@ on how you can run your own `geth` instance.
 
 ### Hardware Requirements
 
+#### Member Node
+
 Minimum:
 
 * CPU with 2+ cores
@@ -66,6 +68,22 @@ Recommended:
 * High-performance SSD with at least 1TB of free space
 * 25+ MBit/sec download Internet service
 
+#### Consensus Node
+
+Minimum:
+
+* Fast CPU with 2+ cores
+* 24GB RAM
+* 200GB free storage space to sync the Testnet
+* 8 MBit/sec download Internet service
+
+Recommended:
+
+* Fast CPU with 4+ cores
+* 32GB+ RAM
+* High-performance SSD with at least 1TB of free space
+* 25+ MBit/sec download Internet service
+
 ### Full node on the Testnet Neo X network
 
 To run a full node on the Neo X Testnet network follow the steps below.
@@ -77,22 +95,23 @@ To run a full node on the Neo X Testnet network follow the steps below.
    ```
 2. Download the corresponding Neo X Testnet configuration from the
    [GitHub repository](https://github.com/bane-labs/go-ethereum/blob/bane-main/config/genesis_testnet.json). 
-3. Initialize node database with the downloaded Neo X testnet genesis configuration:
+3. Download 3 pairs of R1CS files and proving key files from [Neo X MPC ceremony](https://github.com/bane-labs/mpc) for participanting ZK-DKG.
+4. Initialize node database with the downloaded Neo X testnet genesis configuration:
    ```shell
    ./geth init --datadir ./nodes/node1 ./genesis_testnet.json
    ```
-4. Create an account for the node operation or use an existing one. The following
+5. Create an account for the node operation or use an existing one. The following
    command may be used to create a new account (you'll be prompted for a password):
    ```shell
    ./geth --datadir ./nodes/node1 account new
    ```
-5. Create an antimev keystore for participanting AMEV-dBFT or use an existing one.
+6. Create an antimev keystore for participanting AMEV-dBFT or use an existing one.
    The following command may be used to create a new keystore for your miner account
    (you'll be prompted for a password):
    ```shell
    ./geth --datadir ./nodes/node1 antimev init <address>
    ```
-6. Run the node either as a consensus member or as a seed node.
+7. Run the node either as a consensus member or as a seed node.
    1. **Running a seed node.** Seed node is a network member that does not take part
       in a consensus process. This node may be used to interact with the Neo X
       network: create accounts; transfer funds; deploy and interact with contracts;
@@ -180,6 +199,12 @@ To run a full node on the Neo X Testnet network follow the steps below.
       --unlock $miner \
       --password $node/password.txt \
       --antimev.password $node/password.txt \
+      --dkg.one-msg-r1cs=$node/r1cs/one_message.ccs \
+      --dkg.two-msg-r1cs=$node/r1cs/two_message.ccs \
+      --dkg.seven-msg-r1cs=$node/r1cs/seven_message.ccs \
+      --dkg.one-msg-pk=$node/pk/one_message.pk \
+      --dkg.two-msg-pk=$node/pk/two_message.pk \
+      --dkg.seven-msg-pk=$node/pk/seven_message.pk \
       --authrpc.port $rpcport \
       --identity=$node \
       --maxpeers=50 \
