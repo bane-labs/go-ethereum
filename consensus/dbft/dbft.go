@@ -1846,7 +1846,7 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 		case header.ParentBeaconRoot != nil:
 			return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected nil", header.ParentBeaconRoot)
 		}
-	} else if err := eip4844.VerifyEIP4844Header(parent, header); err != nil {
+	} else if err := eip4844.VerifyEIP4844Header(chain.Config(), parent, header); err != nil {
 		// Verify cancun-specific header fields
 		return err
 	}
