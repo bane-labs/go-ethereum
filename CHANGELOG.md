@@ -2,6 +2,83 @@
 
 This document outlines major changes between releases.
 
+## 0.4.1 "Liberalization" (19 Aug 2025)
+
+This patch-release supports recovery from out-of-date or lost anti-MEV keystore
+and introduces an enhanced version of ZK-based DKG process. The results of MPC
+ceremony for ZK-DKG setup conducted by NGD, NSPCC, AxLabs and Lazynode are
+published to the https://github.com/bane-labs/mpc repository and integrated to
+the verifier system contracts. This release schedules `NeoXEthSig`, `NeoXDKG`
+and `NeoXAMEV` forks for MainNet with ZK-based DKG version.
+
+This version is fully compatible with v0.4.0 and does not require node
+resynchronization. For TestNet nodes no configuration changes are required on
+upgrade (comparing to v0.4.0). For MainNet nodes the DB reinitialization is
+required with the updated genesis configuration since `NeoXEthSig`, `NeoXDKG`
+and `NeoXAMEV` forks are enabled. Follow the instructions below to upgrade your
+node from v0.4.0 to v0.4.1:
+
+1. Download new binary and new genesis configuration file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. For MainNet nodes only: don't remove DB; reinitialize DB using new binary and
+   new genesis configuration file with the following command:
+   ```
+   ./geth init --datadir ./node-datadir ./config/genesis.json
+   ```
+5. For consensus nodes only: prepare for participation in ZK-based DKG process
+   following the steps below:
+      1. Download 3 pairs of R1CS files and proving key files from the
+         [Neo X MPC ceremony page](https://github.com/bane-labs/mpc?tab=readme-ov-file#seal-result)
+         using [NeoFS CLI](https://github.com/nspcc-dev/neofs-node/releases/tag/v0.48.3):
+         ```
+         mkdir ./r1cs
+         ./neofs-cli-linux-amd64 object get --cid 411d8vuzogogMxXJqTQcu61btgQ6rL2VNYUYnH7r4kE3 --oid 8f6m4RUvgNDyo7gdFhEJQEAqkdaTzEj4oYuLVxfRJP4S -r grpc://st3.storage.fs.neo.org:8080 --timeout 1000s --file ./r1cs/one_message.ccs
+         ./neofs-cli-linux-amd64 object get --cid 411d8vuzogogMxXJqTQcu61btgQ6rL2VNYUYnH7r4kE3 --oid Fqzn6PvAhmmYWVBRV8dVRWwAL3T8JHgycBfjS7A18z6f -r grpc://st3.storage.fs.neo.org:8080 --timeout 1000s --file ./r1cs/two_message.ccs
+         ./neofs-cli-linux-amd64 object get --cid 411d8vuzogogMxXJqTQcu61btgQ6rL2VNYUYnH7r4kE3 --oid 2jNd8acKHBb5s6matnED49MCo36vTMWXbfjocT7Xcub7 -r grpc://st3.storage.fs.neo.org:8080 --timeout 1000s --file ./r1cs/seven_message.ccs
+         mkdir ./pk
+         ./neofs-cli-linux-amd64 object get --cid 411d8vuzogogMxXJqTQcu61btgQ6rL2VNYUYnH7r4kE3 --oid HZVzrU7348zztWvgBTM3xkpvZ6BNNJMGDrKyeDDTHZLw -r grpc://st3.storage.fs.neo.org:8080 --timeout 1000s --file ./pk/one_message.pk
+         ./neofs-cli-linux-amd64 object get --cid 411d8vuzogogMxXJqTQcu61btgQ6rL2VNYUYnH7r4kE3 --oid HKEeCskBjnL5yJGXYP4EfakVaDsw3aAJ64FXavDhpv4E -r grpc://st3.storage.fs.neo.org:8080 --timeout 1000s --file ./pk/two_message.pk
+         ./neofs-cli-linux-amd64 object get --cid 411d8vuzogogMxXJqTQcu61btgQ6rL2VNYUYnH7r4kE3 --oid A1DTHYvdnzrgEJP14yzt2T8AXsuM3YaNDoe3LoMWXepT -r grpc://st3.storage.fs.neo.org:8080 --timeout 1000s --file ./pk/seven_message.pk
+         ```
+      2. Specify paths to the downloaded files to the node's run command via
+         the following flags:
+          ```
+          --dkg.one-msg-r1cs=./r1cs/one_message.ccs \
+          --dkg.two-msg-r1cs=./r1cs/two_message.ccs \
+          --dkg.seven-msg-r1cs=./r1cs/seven_message.ccs \
+          --dkg.one-msg-pk=./pk/one_message.pk \
+          --dkg.two-msg-pk=./pk/two_message.pk \
+          --dkg.seven-msg-pk=./pk/seven_message.pk \
+          ```
+      3. Ensure that `--antimev.password` flag is provided to the node's
+         run command and the node has access to its anti-MEV keystore.
+      4. Ensure that your node meets the hardware requirements mentioned in the
+         [README](https://github.com/bane-labs/go-ethereum?tab=readme-ov-file#consensus-node)
+         since ZK-based DKG process significantly increases node's RAM
+         consumption. If not, then migrate your node to the suitable machine.
+6. Start the node.
+
+New features:
+ * the results of MPC ceremony are integrated into verifier contracts (#494)
+
+Behaviour changes:
+ * BLS12-381 precompiles are updated to Prague-compatible version (#488, #495)
+ * `NeoXDKG` fork is enabled at height `3689280` of MainNet (#497)
+ * `NeoXEthSig` fork is enabled at height `3810240` of MainNet (#497)
+ * `NeoXAMEV` fork is enabled at height `3810240` of MainNet (#497)
+
+Improvements:
+ * support out-of-date or lost anti-MEV keystore recovery (#480, #491)
+ * an upgrade to optimized `zk-dkg` v0.3.0 (#492)
+ * ZK-related KeyManagement system contract updates (#489)
+
+Bugs fixed:
+ * panic on ZK-based DKG message recovery (#485)
+ * disabled shares phase check during DKG epoch transition (#480)
+ * improper ZK version is used during reshare recovery (#480)
+ * zero random scalar is possible in anti-MEV related operations (#490)
+
 ## 0.4.0 "Karstification" (20 Jun 2025)
 
 This version introduces a preview of ZK-based DKG signature verification added to
