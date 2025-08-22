@@ -41,15 +41,6 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
         }
     }
 
-    // Only for Policy upgrading for the new Envelope transactions
-    function setInitialEnvelopeLimits(
-        uint256 _maxEnvelopesPerBlock,
-        uint256 _maxEnvelopeGasLimit
-    ) external onlyAdmin {
-        maxEnvelopesPerBlock = _maxEnvelopesPerBlock;
-        maxEnvelopeGasLimit = _maxEnvelopeGasLimit;
-    }
-
     function addBlackList(
         address _addr
     )
