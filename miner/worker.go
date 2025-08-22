@@ -365,12 +365,6 @@ func (w *worker) isRunning() bool {
 	return w.running.Load()
 }
 
-// isSyncing returns an indicator whether the node is in the sync process
-// from the worker PoW.
-func (w *worker) isSyncing() bool {
-	return w.syncing.Load()
-}
-
 // close terminates all background threads maintained by the worker.
 // Note the worker does not support being closed multiple times.
 func (w *worker) close() {
