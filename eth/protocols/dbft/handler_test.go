@@ -24,14 +24,18 @@ func (t *testBC) BlockNumber() hexutil.Uint64 {
 	return t.height
 }
 
+func (t *testBC) IsAddressAllowed(addr common.Address) error {
+	return nil
+}
+
 func TestHandling(t *testing.T) {
 	var (
 		key, _         = crypto.GenerateKey()
 		addr           = crypto.PubkeyToAddress(key.PublicKey)
 		bc             = &testBC{height: 10}
-		s1             = New(bc, nil, func(u uint64, address common.Address) error { return nil })
-		s2             = New(bc, nil, func(u uint64, address common.Address) error { return nil })
-		s3             = New(bc, nil, func(u uint64, address common.Address) error { return nil })
+		s1             = New(bc, nil)
+		s2             = New(bc, nil)
+		s3             = New(bc, nil)
 		p1             = p2p.NewPeer(enode.ID{1}, "peer1", nil)
 		p2             = p2p.NewPeer(enode.ID{2}, "peer2", nil)
 		p3             = p2p.NewPeer(enode.ID{3}, "peer3", nil)
