@@ -1388,7 +1388,11 @@ func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transa
 
 	// Ensure the gasprice is high enough to replace the envelope transaction
 	baseFee := head.BaseFee
-	if decryptedTx.EffectiveGasTipCmp(envelope, baseFee) < 0 {
+	base := new(uint256.Int)
+	if baseFee != nil {
+		base.SetFromBig(baseFee)
+	}
+	if decryptedTx.EffectiveGasTipCmp(envelope, base) < 0 {
 		return errDecryptedUnderpriced
 	}
 
