@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -1540,6 +1541,14 @@ func (c *DBFT) WithTxPool(pool txPool) {
 // will be used in different cases, e.g. r1cs1 and pk1 for 1 message encryption, r1cs7
 // and pk7 for 7 message encryption. Ref https://github.com/bane-labs/zk-dkg.
 func (c *DBFT) WithZKFiles(r1cs1, r1cs2, r1cs7, pk1, pk2, pk7 string) error {
+	for _, path := range []string{r1cs1, r1cs2, r1cs7, pk1, pk2, pk7} {
+		if len(path) > 0 {
+			_, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("failed to stat %s: %w", path, err)
+			}
+		}
+	}
 	c.zkFiles = &zkFiles{
 		oneMsgR1CSPath:         r1cs1,
 		twoMsgR1CSPath:         r1cs2,
