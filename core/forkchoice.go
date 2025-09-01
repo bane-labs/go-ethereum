@@ -30,8 +30,7 @@ import (
 )
 
 // ChainReader defines a small collection of methods needed to access the local
-// blockchain during header verification. It's implemented by both blockchain
-// and lightchain.
+// blockchain during header verification. It's implemented by both blockchain.
 type ChainReader interface {
 	// Config retrieves the header chain's chain configuration.
 	Config() *params.ChainConfig
@@ -108,7 +107,7 @@ func (f *ForkChoice) ReorgNeeded(current *types.Header, extern *types.Header) (b
 			currentPreserve, externPreserve = f.preserve(current), f.preserve(extern)
 		}
 		choiceRules := func() bool {
-			return !(extern.Coinbase == current.Coinbase)
+			return extern.Coinbase != current.Coinbase
 		}
 		reorg = !currentPreserve && (externPreserve || choiceRules())
 	}

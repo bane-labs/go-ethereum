@@ -178,6 +178,11 @@ func (h *Header) EmptyReceipts() bool {
 	return h.ReceiptHash == EmptyReceiptsHash
 }
 
+// EmptyWithdrawalsHash returns true if the WithdrawalsHash is EmptyWithdrawalsHash.
+func (h *Header) EmptyWithdrawalsHash() bool {
+	return h.WithdrawalsHash != nil && *h.WithdrawalsHash == EmptyWithdrawalsHash
+}
+
 // Primary returns index of the node that authored Header's proposal.
 func (h *Header) Primary() uint8 {
 	return uint8(binary.BigEndian.Uint64(h.Nonce[:]))
@@ -513,6 +518,21 @@ func (b *Block) WithBody(body Body) *Block {
 	}
 	for i := range body.Uncles {
 		block.uncles[i] = CopyHeader(body.Uncles[i])
+	}
+	return block
+}
+
+// WithWithdrawals returns a copy of the block containing the given withdrawals.
+func (b *Block) WithWithdrawals(withdrawals []*Withdrawal) *Block {
+	block := &Block{
+		header:       b.header,
+		transactions: b.transactions,
+		uncles:       b.uncles,
+		witness:      b.witness,
+	}
+	if withdrawals != nil {
+		block.withdrawals = make([]*Withdrawal, len(withdrawals))
+		copy(block.withdrawals, withdrawals)
 	}
 	return block
 }
