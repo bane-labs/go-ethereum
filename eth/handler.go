@@ -227,8 +227,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 		return h.chain.InsertChain(blocks)
 	}
-	h.blockFetcher = fetcher.NewBlockFetcher(false, nil, h.chain.GetBlockByHash, validator, h.BroadcastBlock,
-		heighter, finalizeHeighter, nil, inserter, h.removePeer)
+	h.blockFetcher = fetcher.NewBlockFetcher(h.chain.GetBlockByHash, validator, h.BroadcastBlock,
+		heighter, finalizeHeighter, inserter, h.removePeer)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := h.peers.peer(peer)
