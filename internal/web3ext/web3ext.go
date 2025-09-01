@@ -652,6 +652,11 @@ web3._extend({
 			call: 'eth_getBlobSidecarByTxHash',
 			params: 1,
 		}),
+		new web3._extend.Method({
+			name: 'config',
+			call: 'eth_config',
+			params: 0,
+		})
 	],
 	properties: [
 		new web3._extend.Property({
