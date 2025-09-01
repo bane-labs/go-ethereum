@@ -224,7 +224,7 @@ func processGovernanceOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
 		data []byte
 		err  error
 	)
-	if vmenv.ChainConfig().IsNeoXDKG(vmenv.Context.BlockNumber) {
+	if vmenv.ChainConfig().IsNeoXDKG(vmenv.Context.BlockNumber, vmenv.Context.Time) {
 		data, err = systemcontracts.GovernanceABI.Pack("onPersistV2")
 		if err != nil {
 			return fmt.Errorf("failed to pack Governance onPersistV2 call: %w", err)
@@ -239,7 +239,7 @@ func processGovernanceOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
 }
 
 func processKeyManagementOnPersist(vmenv *vm.EVM, statedb *state.StateDB) error {
-	if !vmenv.ChainConfig().IsNeoXDKG(vmenv.Context.BlockNumber) {
+	if !vmenv.ChainConfig().IsNeoXDKG(vmenv.Context.BlockNumber, vmenv.Context.Time) {
 		return nil
 	}
 	data, err := systemcontracts.KeyManagementABIBasic.Pack("onPersistV2")

@@ -247,7 +247,6 @@ type DBFT struct {
 // config represents Engine configuration.
 type config struct {
 	*params.DBFTConfig
-	dkgEnablingHeight      int64
 	antiMEVEnablingHeight  int64
 	enforceECDSASignatures bool
 	logLevel               *zap.AtomicLevel
@@ -270,7 +269,6 @@ type zkFiles struct {
 func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg StatisticsConfig) (*DBFT, error) {
 	cfg := &config{
 		DBFTConfig:            chainCfg.DBFT,
-		dkgEnablingHeight:     -1,
 		antiMEVEnablingHeight: -1,
 		statisticsConfig:      DefaultStatistics,
 	}
@@ -300,9 +298,6 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 	slices.SortFunc(bftCfg.StandByValidators, common.Address.Cmp)
 	cfg.DBFTConfig = &bftCfg
 
-	if chainCfg.NeoXDKGBlock != nil {
-		cfg.dkgEnablingHeight = chainCfg.NeoXDKGBlock.Int64()
-	}
 	if chainCfg.NeoXAMEVBlock != nil {
 		cfg.antiMEVEnablingHeight = chainCfg.NeoXAMEVBlock.Int64()
 	}
@@ -1580,7 +1575,7 @@ func (c *DBFT) postBlock(h *types.Header, state *state.StateDB) {
 		}
 
 		// handle DKG
-		if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
+		if c.chain.Config().IsNeoXDKG(big.NewInt(int64(c.lastIndex)), c.lastTimestamp) {
 			c.lock.RLock()
 			ks := c.amevKeystore
 			c.lock.RUnlock()
@@ -2112,7 +2107,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 					"hash", c.lastBlockHash,
 					"error", err)
 			}
-			if c.lastIndex >= uint64(c.config.dkgEnablingHeight) {
+			if c.chain.Config().IsNeoXDKG(big.NewInt(int64(c.lastIndex)), c.lastTimestamp) {
 				c.lock.RLock()
 				ks := c.amevKeystore
 				c.lock.RUnlock()

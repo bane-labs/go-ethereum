@@ -349,7 +349,7 @@ type ChainConfig struct {
 	// Fork scheduling was switched from blocks to timestamps here
 
 	ShanghaiTime    *uint64  `json:"shanghaiTime,omitempty"`    // Shanghai switch time (nil = no fork, 0 = already on shanghai)
-	NeoXDKGBlock    *big.Int `json:"neoXDKGBlock,omitempty"`    // Block-based switch to DKG related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
+	NeoXDKGTime     *uint64  `json:"neoXDKGTime,omitempty"`     // Timestamp-based switch to DKG related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
 	NeoXAMEVBlock   *big.Int `json:"neoXAMEVBlock,omitempty"`   // Block-based switch to anti-MEV related logic for dBFT (nil = no fork, 0 = already activated)
 	NeoXEthSigBlock *big.Int `json:"neoXEthSigBlock,omitempty"` // Block-based switch to fix block signature from NeoXAMEVBlock (nil = no fork, 0 = already activated)
 	CancunTime      *uint64  `json:"cancunTime,omitempty"`      // Cancun switch time (nil = no fork, 0 = already on cancun)
@@ -484,8 +484,8 @@ func (c *ChainConfig) Description() string {
 	if c.ShanghaiTime != nil {
 		banner += fmt.Sprintf(" - Shanghai:                    @%-10v (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/shanghai.md)\n", *c.ShanghaiTime)
 	}
-	if c.NeoXDKGBlock != nil {
-		banner += fmt.Sprintf(" - NeoXDKG:                     #%-8v\n", c.NeoXDKGBlock)
+	if c.NeoXDKGTime != nil {
+		banner += fmt.Sprintf(" - NeoXDKG:                     @%-10v\n", *c.NeoXDKGTime)
 	}
 	if c.NeoXAMEVBlock != nil {
 		banner += fmt.Sprintf(" - NeoXAMEV:                    #%-8v\n", c.NeoXAMEVBlock)
@@ -591,8 +591,8 @@ func (c *ChainConfig) IsShanghai(num *big.Int, time uint64) bool {
 }
 
 // IsNeoXDKG returns whether num is either equal to the NeoXDKG fork block or greater.
-func (c ChainConfig) IsNeoXDKG(num *big.Int) bool {
-	return c.IsLondon(num) && isBlockForked(c.NeoXDKGBlock, num)
+func (c ChainConfig) IsNeoXDKG(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.NeoXDKGTime, time)
 }
 
 // IsNeoXAMEV returns whether num is either equal to the NeoXAMEV fork block or greater.
@@ -672,7 +672,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "grayGlacierBlock", block: c.GrayGlacierBlock, optional: true},
 		{name: "mergeNetsplitBlock", block: c.MergeNetsplitBlock, optional: true},
 		{name: "shanghaiTime", timestamp: c.ShanghaiTime},
-		{name: "neoXDKGBlock", block: c.NeoXDKGBlock, optional: true},
+		{name: "neoXDKGTime", timestamp: c.NeoXDKGTime, optional: true},
 		{name: "neoXAMEVBlock", block: c.NeoXAMEVBlock, optional: true},
 		{name: "neoXEthSigBlock", block: c.NeoXEthSigBlock, optional: true},
 		{name: "cancunTime", timestamp: c.CancunTime, optional: true},
@@ -775,8 +775,8 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkTimestampIncompatible(c.ShanghaiTime, newcfg.ShanghaiTime, headTimestamp) {
 		return newTimestampCompatError("Shanghai fork timestamp", c.ShanghaiTime, newcfg.ShanghaiTime)
 	}
-	if isForkBlockIncompatible(c.NeoXDKGBlock, newcfg.NeoXDKGBlock, headNumber) {
-		return newBlockCompatError("NeoXDKG fork block", c.NeoXDKGBlock, newcfg.NeoXDKGBlock)
+	if isForkTimestampIncompatible(c.NeoXDKGTime, newcfg.NeoXDKGTime, headTimestamp) {
+		return newTimestampCompatError("NeoXDKG fork timestamp", c.NeoXDKGTime, newcfg.NeoXDKGTime)
 	}
 	if isForkBlockIncompatible(c.NeoXAMEVBlock, newcfg.NeoXAMEVBlock, headNumber) {
 		return newBlockCompatError("NeoXAMEV fork block", c.NeoXAMEVBlock, newcfg.NeoXAMEVBlock)
@@ -1002,7 +1002,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsLondon:         c.IsLondon(num),
 		IsMerge:          isMerge,
 		IsShanghai:       c.IsShanghai(num, timestamp),
-		IsNeoXDKG:        c.IsNeoXDKG(num),
+		IsNeoXDKG:        c.IsNeoXDKG(num, timestamp),
 		IsCancun:         c.IsCancun(num, timestamp),
 		IsPrague:         c.IsPrague(num, timestamp),
 		IsVerkle:         c.IsVerkle(num, timestamp),
