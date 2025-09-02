@@ -16,8 +16,8 @@
     "grayGlacierBlock": 0,
     "shanghaiTime": 0,
     "neoXDKGBlock": 0,
-    "neoXAMEVBlock": 5,
-    "neoXEthSigBlock": 5,
+    "neoXAMEVBlock": 0,
+    "neoXEthSigBlock": 0,
     "dbft": {
       "period": 5,
       "standbyValidators": [
@@ -34,6 +34,8 @@
   },
   "difficulty": "1",
   "gasLimit": "30000000",
+  "extraData": "0x02013e48bc8f2eb502267b1eae6bded2ece31a29829cdf94afb44f37688702643e43b834b2d7ab6f0f7d851df60910a32d9972e7cf0bc27e1bb9505e134c77280a0bfac47cfe88577a5a1c0ec4c7455752a5c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "mixHash": "0x24da17ffef015dc6b698465e23143678ca6dd992beab918f86eb4947d4180da3",
   "alloc": {
     "0x5e6D9680428e6fe62a09BBb6AC23Df5bFE069AE8": {
       "balance": "1000000000000000000000"
