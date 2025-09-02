@@ -86,7 +86,7 @@ define run_bootnode
 endef
 
 define run_miner_node_with_zk_dkg
-	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)" --antimev.password=$(1)/$(7)/password.txt --dkg.one-msg-r1cs=$(1)/r1cs/R1CS_1 --dkg.two-msg-r1cs=$(1)/r1cs/R1CS_2 --dkg.seven-msg-r1cs=$(1)/r1cs/R1CS_7 --dkg.one-msg-pk=$(1)/provingkey/PK_1 --dkg.two-msg-pk=$(1)/provingkey/PK_2 --dkg.seven-msg-pk=$(1)/provingkey/PK_7)
+	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)" --antimev.password=$(1)/$(7)/password.txt --dkg.one-msg-r1cs=$(1)/r1cs/one_message.ccs --dkg.two-msg-r1cs=$(1)/r1cs/two_message.ccs --dkg.seven-msg-r1cs=$(1)/r1cs/seven_message.ccs --dkg.one-msg-pk=$(1)/provingkey/one_message.pk --dkg.two-msg-pk=$(1)/provingkey/two_message.pk --dkg.seven-msg-pk=$(1)/provingkey/seven_message.pk)
 endef
 
 define run_miner_node
