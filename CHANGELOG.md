@@ -2,6 +2,40 @@
 
 This document outlines major changes between releases.
 
+## 0.4.2 "Mutualization" (2 Sep 2025)
+
+A couple of ZK-based DKG rounds passed on TestNet, hence it may be safely
+enabled on MainNet. This version reschedules NeoXDKG, NeoXAMEV and NeoXEthSig
+forks to enable them earlier than planned initially. This version also adds an
+availability check for DKG-related files on node bootstrap.
+
+This version is fully compatible with v0.4.1 and does not require node
+resynchronization. For TestNet nodes no configuration changes are required on
+upgrade (comparing to v0.4.1). For MainNet nodes the DB reinitialization is
+required with the updated genesis configuration since `NeoXEthSig`, `NeoXDKG`
+and `NeoXAMEV` forks are rescheduled. Follow the instructions below to upgrade
+your node from v0.4.1 to v0.4.2:
+
+1. Download new binary and new genesis configuration file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. For MainNet nodes only: don't remove DB; reinitialize DB using new binary and
+   new genesis configuration file with the following command:
+   ```
+   ./geth init --datadir ./node-datadir ./config/genesis.json
+   ```
+5. Start the node.
+
+Behaviour changes:
+ * NeoXDKG, NeoXAMEV and NeoXEthSig forks of MainNet are rescheduled to 3623040,
+   3689280 and 3689280 blocks correspondingly (#512)
+ * reschedule NeoXDKG fork for PrivNet setups (#502)
+
+Improvements:
+ * check DKG-related files are available on node startup (#503)
+ * remove compatibility code from system contracts (#506)
+ * update ZK-PrivNet documentation (#511)
+
 ## 0.4.1 "Liberalization" (19 Aug 2025)
 
 This patch-release supports recovery from out-of-date or lost anti-MEV keystore
