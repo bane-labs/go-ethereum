@@ -2,9 +2,12 @@
 
 We use [Consensys/gnark](https://github.com/Consensys/gnark) for ZK proving, and the circuit implementation can be found at [bane-labs/zk-dkg](https://github.com/bane-labs/zk-dkg).
 
-Currently this privnet is using an experimental MPC ceremony as setup. You can download its output from the following links.
-- https://neochain1.blob.core.windows.net/fileshare/mengyu20250408.zip (R1CS_1 and PK_1)
-- https://neochain1.blob.core.windows.net/fileshare/mengyu20250409.zip (R1CS_2 and PK_2)
-- https://neochain1.blob.core.windows.net/fileshare/mengyu20250401.zip (R1CS_7 and PK_7)
+Now this privnet uses the same MPC ceremony as in production. You can download the required files from the following links.
 
-Please extract and rename the R1CS files in this folder, as defined in the Makefile.
+- https://zkstorage.blob.core.windows.net/zk-blob/one_message.ccs
+- https://zkstorage.blob.core.windows.net/zk-blob/two_message.ccs
+- https://zkstorage.blob.core.windows.net/zk-blob/seven_message.ccs
+
+Or, if you're familiar with NeoFS, you can also download them as described in [bane-labs/mpc](https://github.com/bane-labs/mpc).
+
+Please put the R1CS files in this folder, as defined in the Makefile.
