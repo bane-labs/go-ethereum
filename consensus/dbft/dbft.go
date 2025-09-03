@@ -1749,7 +1749,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 		}
 
 		// Ensure that the mix digest is not zero.
-		if !isV1Extra && header.MixDigest == (common.Hash{}) {
+		if !isV1Extra && !isV2Extra && header.MixDigest == (common.Hash{}) {
 			return errInvalidMixDigest
 		}
 	}

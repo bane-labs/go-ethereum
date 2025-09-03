@@ -493,27 +493,42 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *triedb.Database) (*types.Blo
 	if config.DBFT != nil {
 		var (
 			n     = len(config.DBFT.StandByValidators)
-			m     = crypto.GetBFTHonestNodeCount(n)
 			extra = block.Extra()
 		)
 		switch extra[0] {
 		case byte(dbftutil.ExtraV0):
-			if len(extra) < dbftutil.HashableExtraV0Len+n*common.AddressLength+m*crypto.SignatureLength {
-				return nil, errors.New("can't start dBFT chain without validators addresses/signatures set in the genesis")
-			}
-			vals := make([]common.Address, n)
-			for i := range vals {
-				offset := dbftutil.HashableExtraV0Len + i*common.AddressLength
-				vals[i] = common.BytesToAddress(extra[offset : offset+common.AddressLength])
+			vals, _, err := dbftutil.Extra(extra).ECDSASigners(n)
+			if err != nil {
+				return nil, fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
 			}
 			expected := dbftutil.GetNextConsensusHash(vals)
 			if block.MixDigest() != expected {
 				return nil, fmt.Errorf("inconsistent MixHash (NextConsensus) genesis block setting: expected %s, got %s", expected, block.MixDigest())
 			}
+		case byte(dbftutil.ExtraV1), byte(dbftutil.ExtraV2):
+			switch extra[1] {
+			case byte(dbftutil.ExtraV1ECDSAScheme):
+				vals, _, err := dbftutil.Extra(extra).ECDSASigners(n)
+				if err != nil {
+					return nil, fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
+				}
+				expected := dbftutil.GetNextConsensusHash(vals)
+				if block.MixDigest() != expected {
+					return nil, fmt.Errorf("inconsistent MixHash (NextConsensus) genesis block setting: expected %s, got %s", expected, block.MixDigest())
+				}
+			case byte(dbftutil.ExtraV1ThresholdScheme):
+				pub, _, err := dbftutil.Extra(extra).ThresholdSigners()
+				if err != nil {
+					return nil, fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
+				}
+				expected := dbftutil.GetNextConsensusHash([]dbftutil.Encodable{pub})
+				if block.MixDigest() != expected {
+					return nil, fmt.Errorf("inconsistent MixHash (NextConsensus) genesis block setting: expected %s, got %s", expected, block.MixDigest())
+				}
+			default:
+				return nil, fmt.Errorf("can't validate Extra genesis field: unexpected signature scheme: %d", extra[1])
+			}
 		default:
-			// We explicitly don't support TPKE-based genesis block Extra (dbftutil.ExtraV1) because there's no way to
-			// verify public key based on validators multisignature public keys. All NeoX public networks use V0-based
-			// signing scheme for genesis block.
 			return nil, fmt.Errorf("can't validate Extra genesis field: unexpected Extra version: %d", extra[0])
 		}
 	}
