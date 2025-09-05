@@ -41,14 +41,15 @@ import (
 )
 
 type testBackend struct {
-	db              ethdb.Database
-	sections        uint64
-	txFeed          event.Feed
-	logsFeed        event.Feed
-	rmLogsFeed      event.Feed
-	chainFeed       event.Feed
-	pendingBlock    *types.Block
-	pendingReceipts types.Receipts
+	db                  ethdb.Database
+	sections            uint64
+	txFeed              event.Feed
+	logsFeed            event.Feed
+	rmLogsFeed          event.Feed
+	chainFeed           event.Feed
+	finalizedHeaderFeed event.Feed
+	pendingBlock        *types.Block
+	pendingReceipts     types.Receipts
 }
 
 func (b *testBackend) ChainConfig() *params.ChainConfig {
@@ -136,6 +137,10 @@ func (b *testBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscript
 
 func (b *testBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
 	return b.chainFeed.Subscribe(ch)
+}
+
+func (b *testBackend) SubscribeFinalizedHeaderEvent(ch chan<- core.FinalizedHeaderEvent) event.Subscription {
+	return b.finalizedHeaderFeed.Subscribe(ch)
 }
 
 func (b *testBackend) BloomStatus() (uint64, uint64) {

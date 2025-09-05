@@ -18,7 +18,7 @@
     "neoXDKGBlock": 0,
     "neoXAMEVBlock": 0,
     "neoXEthSigBlock": 0,
-    "terminalTotalDifficulty": 9454784,
+    "cancunTime": 0,
     "dbft": {
       "period": 5,
       "standbyValidators": [

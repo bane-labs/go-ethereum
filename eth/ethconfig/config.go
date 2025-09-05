@@ -187,19 +187,19 @@ type Config struct {
 // Clique is allowed for now to live standalone, but ethash is forbidden and can
 // only exist on already merged networks.
 func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, statisticsCfg dbft.StatisticsConfig) (consensus.Engine, error) {
+	if config.DBFT != nil {
+		bft, err := dbft.New(config, db, statisticsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create dBFT engine: %w", err)
+		}
+		return bft, nil
+	}
 	if config.TerminalTotalDifficulty == nil {
 		return nil, fmt.Errorf("only PoS networks are supported, please transition old ones with Geth v1.13.x")
 	}
 	// If proof-of-authority is requested, set it up
 	if config.Clique != nil {
 		return beacon.New(clique.New(config.Clique, db)), nil
-	}
-	if config.DBFT != nil {
-		bft, err := dbft.New(config, db, statisticsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create dBFT engine: %w", err)
-		}
-		return beacon.New(bft), nil
 	}
 	return beacon.New(ethash.NewFaker()), nil
 }
