@@ -73,7 +73,7 @@ Recommended:
 Minimum:
 
 * Fast CPU with 2+ cores
-* 24GB RAM
+* 16GB RAM
 * 200GB free storage space to sync the Testnet
 * 8 MBit/sec download Internet service
 
