@@ -16,8 +16,8 @@
     "grayGlacierBlock": 0,
     "shanghaiTime": 0,
     "neoXDKGBlock": 3623040,
-    "neoXEthSigBlock": 3689280,
-    "neoXAMEVBlock": 3689280,
+    "neoXEthSigBlock": 3749760,
+    "neoXAMEVBlock": 3749760,
     "dbft": {
       "period": 5,
       "standbyValidators": [
