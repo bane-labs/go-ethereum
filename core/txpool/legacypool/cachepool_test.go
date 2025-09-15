@@ -10,8 +10,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -36,7 +36,7 @@ func setupCachePool() (*CachePool, *ecdsa.PrivateKey) {
 }
 
 func setupCachePoolWithConfig(config *params.ChainConfig) (*CachePool, *ecdsa.PrivateKey) {
-	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	blockchain := newTestBlockChain(config, 10000000, statedb, new(event.Feed))
 
 	key, _ := crypto.GenerateKey()
@@ -64,7 +64,7 @@ func validateCachePoolInternals(pool *CachePool) error {
 
 func testCachePoolAddBalance(pool *CachePool, addr common.Address, amount *big.Int) {
 	pool.mu.Lock()
-	pool.currentState.AddBalance(addr, uint256.MustFromBig(amount))
+	pool.currentState.AddBalance(addr, uint256.MustFromBig(amount), tracing.BalanceChangeUnspecified)
 	pool.mu.Unlock()
 }
 
@@ -73,7 +73,7 @@ func TestCachePool(t *testing.T) {
 	t.Parallel()
 
 	// init pool
-	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
 	config := testCachePoolConfig
@@ -252,8 +252,8 @@ func TestCachePoolChainFork(t *testing.T) {
 
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 	resetState := func() {
-		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-		statedb.AddBalance(addr, uint256.NewInt(100000000000000))
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+		statedb.AddBalance(addr, uint256.NewInt(100000000000000), tracing.BalanceChangeUnspecified)
 
 		pool.chain = newTestBlockChain(pool.chainconfig, 1000000, statedb, new(event.Feed))
 		<-pool.requestReset(nil, nil)
@@ -279,7 +279,7 @@ func TestCacheTimeLimiting(t *testing.T) {
 	evictionInterval = time.Millisecond * 100
 
 	// Create the pool to test the non-expiration enforcement
-	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
 	config := testCachePoolConfig
@@ -380,7 +380,7 @@ func TestCachePoolCapClearsFromAll(t *testing.T) {
 	t.Parallel()
 
 	// Create the pool to test the limit enforcement with
-	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
 	config := testCachePoolConfig
@@ -413,7 +413,7 @@ func TestCachePoolStatusCheck(t *testing.T) {
 	t.Parallel()
 
 	// Create the pool to test the status retrievals with
-	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
 	pool := NewCache(testCachePoolConfig, blockchain)

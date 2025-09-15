@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/forkid"
@@ -109,7 +108,6 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 			Database:   dbNoFork,
 			Chain:      chainNoFork,
 			TxPool:     newTestTxPool(),
-			Merger:     consensus.NewMerger(rawdb.NewMemoryDatabase()),
 			Network:    1,
 			Sync:       downloader.FullSync,
 			BloomCache: 1,
@@ -118,7 +116,6 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 			Database:   dbProFork,
 			Chain:      chainProFork,
 			TxPool:     newTestTxPool(),
-			Merger:     consensus.NewMerger(rawdb.NewMemoryDatabase()),
 			Network:    1,
 			Sync:       downloader.FullSync,
 			BloomCache: 1,
@@ -393,8 +390,6 @@ func testTransactionPropagation(t *testing.T, protocol uint) {
 	}
 	// Interconnect all the sink handlers with the source handler
 	for i, sink := range sinks {
-		sink := sink // Closure for gorotuine below
-
 		sourcePipe, sinkPipe := p2p.MsgPipe()
 		defer sourcePipe.Close()
 		defer sinkPipe.Close()
@@ -641,7 +636,7 @@ func testBroadcastMalformedBlock(t *testing.T, protocol uint) {
 
 	// Try to broadcast all malformations and ensure they all get discarded
 	for _, header := range []*types.Header{malformedUncles, malformedTransactions, malformedEverything} {
-		block := types.NewBlockWithHeader(header).WithBody(block.Transactions(), block.Uncles())
+		block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: block.Transactions(), Uncles: block.Uncles()})
 		if err := src.SendNewBlock(block, big.NewInt(131136)); err != nil {
 			t.Fatalf("failed to broadcast block: %v", err)
 		}

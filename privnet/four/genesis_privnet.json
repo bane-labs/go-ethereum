@@ -18,6 +18,7 @@
     "neoXDKGBlock": 0,
     "neoXAMEVBlock": 0,
     "neoXEthSigBlock": 0,
+    "cancunTime": 0,
     "dbft": {
       "period": 5,
       "standbyValidators": [

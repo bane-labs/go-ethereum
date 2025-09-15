@@ -20,6 +20,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,6 +46,7 @@ import (
 
 	// Force-load the tracer engines to trigger registration
 	_ "github.com/ethereum/go-ethereum/eth/tracers/js"
+	_ "github.com/ethereum/go-ethereum/eth/tracers/live"
 	_ "github.com/ethereum/go-ethereum/eth/tracers/native"
 
 	"github.com/urfave/cli/v2"
@@ -56,7 +58,7 @@ const (
 
 var (
 	// flags that configure the node
-	nodeFlags = flags.Merge([]cli.Flag{
+	nodeFlags = slices.Concat([]cli.Flag{
 		utils.IdentityFlag,
 		utils.UnlockedAccountFlag,
 		utils.PasswordFileFlag,
@@ -69,7 +71,7 @@ var (
 		utils.SmartCardDaemonPathFlag,
 		utils.OverrideCancun,
 		utils.OverrideVerkle,
-		utils.EnablePersonal,
+		utils.EnablePersonal, // deprecated
 		utils.TxPoolLocalsFlag,
 		utils.TxPoolNoLocalsFlag,
 		utils.TxPoolJournalFlag,
@@ -127,7 +129,7 @@ var (
 		utils.MinerEtherbaseFlag,
 		utils.MinerExtraDataFlag,
 		utils.MinerRecommitIntervalFlag,
-		utils.MinerNewPayloadTimeout,
+		utils.MinerNewPayloadTimeoutFlag, // deprecated
 		utils.AntiMEVKeyStoreFlag,
 		utils.AntiMEVEnforceECDSABlockSignatureSchemeFlag,
 		utils.AntiMEVPasswordFlag,
@@ -151,6 +153,8 @@ var (
 		utils.DeveloperGasLimitFlag,
 		utils.DeveloperPeriodFlag,
 		utils.VMEnableDebugFlag,
+		utils.VMTraceFlag,
+		utils.VMTraceJsonConfigFlag,
 		utils.NetworkIdFlag,
 		utils.EthStatsURLFlag,
 		utils.NoCompactionFlag,
@@ -161,6 +165,14 @@ var (
 		configFileFlag,
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
+		utils.BeaconApiFlag,
+		utils.BeaconApiHeaderFlag,
+		utils.BeaconThresholdFlag,
+		utils.BeaconNoFilterFlag,
+		utils.BeaconConfigFlag,
+		utils.BeaconGenesisRootFlag,
+		utils.BeaconGenesisTimeFlag,
+		utils.BeaconCheckpointFlag,
 	}, utils.NetworkFlags, utils.DatabaseFlags)
 
 	rpcFlags = []cli.Flag{
@@ -258,7 +270,7 @@ func init() {
 	}
 	sort.Sort(cli.CommandsByName(app.Commands))
 
-	app.Flags = flags.Merge(
+	app.Flags = slices.Concat(
 		nodeFlags,
 		rpcFlags,
 		consoleFlags,
@@ -295,9 +307,6 @@ func main() {
 func prepare(ctx *cli.Context) {
 	// If we're running a known preset, log it for convenience.
 	switch {
-	case ctx.IsSet(utils.GoerliFlag.Name):
-		log.Info("Starting Geth on Görli testnet...")
-
 	case ctx.IsSet(utils.SepoliaFlag.Name):
 		log.Info("Starting Geth on Sepolia testnet...")
 
@@ -330,7 +339,6 @@ func prepare(ctx *cli.Context) {
 		// Make sure we're not on any supported preconfigured testnet either
 		if !ctx.IsSet(utils.HoleskyFlag.Name) &&
 			!ctx.IsSet(utils.SepoliaFlag.Name) &&
-			!ctx.IsSet(utils.GoerliFlag.Name) &&
 			!ctx.IsSet(utils.DeveloperFlag.Name) {
 			// Nope, we're really on mainnet. Bump that cache up!
 			log.Info("Bumping default cache on mainnet", "provided", ctx.Int(utils.CacheFlag.Name), "updated", 4096)

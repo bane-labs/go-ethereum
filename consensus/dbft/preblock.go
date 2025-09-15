@@ -156,8 +156,6 @@ func (b *PreBlock) SetTransactions(txx []dbft.Transaction[common.Hash]) {
 
 // ToEthBlock converts [dbft.PreBlock] to [types.Block].
 func (b *PreBlock) ToEthBlock() *types.Block {
-	res := types.NewBlockWithHeader(b.header)
 	// Uncles are always nil in dBFT-like consensus.
-	res = res.WithBody(b.transactions, nil).WithWithdrawals(b.withdrawals)
-	return res
+	return types.NewBlockWithHeader(b.header).WithBody(types.Body{Transactions: b.transactions, Withdrawals: b.withdrawals})
 }

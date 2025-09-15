@@ -19,7 +19,7 @@ type ChainHeaderReader interface {
 	GetBlockByNumber(uint64) *types.Block
 	StateAt(root common.Hash) (*state.StateDB, error)
 	VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, types.Receipts, uint64, error)
-	ProcessState(block *types.Block, statedb *state.StateDB) (*state.StateDB, types.Receipts, []*types.Log, uint64, error)
+	ProcessState(block *types.Block, statedb *state.StateDB) (*state.StateDB, *core.ProcessResult, error)
 }
 
 // ChainHeaderWriter is a Blockchain API abstraction needed for proper blockQueue

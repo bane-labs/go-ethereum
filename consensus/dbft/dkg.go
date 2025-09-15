@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 
@@ -1062,7 +1063,7 @@ func readFromContract(res interface{}, backend *ethapi.Backend, contract common.
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel when we are finished consuming integers.
 	defer cancel()
-	result, err := ethapi.DoCallAtState(ctx, *backend, txArgs, state, header, nil, nil, 0, 0)
+	result, err := ethapi.DoCallAtState(ctx, *backend, txArgs, state, header, nil, nil, 0, math.MaxUint64)
 	if err != nil {
 		return fmt.Errorf("failed to call at state '%s': %v", method, err)
 	}

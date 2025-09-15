@@ -54,13 +54,29 @@ func (bc *BlockChain) CurrentSnapBlock() *types.Header {
 // CurrentFinalBlock retrieves the current finalized block of the canonical
 // chain. The block is retrieved from the blockchain's internal cache.
 func (bc *BlockChain) CurrentFinalBlock() *types.Header {
-	return bc.currentFinalBlock.Load()
+	if p, ok := bc.engine.(consensus.PoS); ok {
+		currentHeader := bc.CurrentHeader()
+		if currentHeader == nil {
+			return nil
+		}
+		return p.GetFinalizedHeader(bc, currentHeader)
+	}
+
+	return nil
 }
 
 // CurrentSafeBlock retrieves the current safe block of the canonical
 // chain. The block is retrieved from the blockchain's internal cache.
 func (bc *BlockChain) CurrentSafeBlock() *types.Header {
-	return bc.currentSafeBlock.Load()
+	if p, ok := bc.engine.(consensus.PoS); ok {
+		currentHeader := bc.CurrentHeader()
+		if currentHeader == nil {
+			return nil
+		}
+		return p.GetFinalizedHeader(bc, currentHeader)
+	}
+
+	return nil
 }
 
 // HasHeader checks if a block header is present in the database or not, caching
@@ -266,6 +282,9 @@ func (bc *BlockChain) GetAncestor(hash common.Hash, number, ancestor uint64, max
 // transaction indexing is already finished. The transaction is not existent
 // from the node's perspective.
 func (bc *BlockChain) GetTransactionLookup(hash common.Hash) (*rawdb.LegacyTxLookupEntry, *types.Transaction, error) {
+	bc.txLookupLock.RLock()
+	defer bc.txLookupLock.RUnlock()
+
 	// Short circuit if the txlookup already in the cache, retrieve otherwise
 	if item, exist := bc.txLookupCache.Get(hash); exist {
 		return item.lookup, item.transaction, nil
@@ -305,7 +324,7 @@ func (bc *BlockChain) GetTd(hash common.Hash, number uint64) *big.Int {
 
 // HasState checks if state trie is fully present in the database or not.
 func (bc *BlockChain) HasState(hash common.Hash) bool {
-	_, err := bc.stateCache.OpenTrie(hash)
+	_, err := bc.statedb.OpenTrie(hash)
 	return err == nil
 }
 
@@ -338,12 +357,9 @@ func (bc *BlockChain) stateRecoverable(root common.Hash) bool {
 // If the code doesn't exist in the in-memory cache, check the storage with
 // new code scheme.
 func (bc *BlockChain) ContractCodeWithPrefix(hash common.Hash) ([]byte, error) {
-	type codeReader interface {
-		ContractCodeWithPrefix(address common.Address, codeHash common.Hash) ([]byte, error)
-	}
 	// TODO(rjl493456442) The associated account address is also required
 	// in Verkle scheme. Fix it once snap-sync is supported for Verkle.
-	return bc.stateCache.(codeReader).ContractCodeWithPrefix(common.Address{}, hash)
+	return bc.statedb.ContractCodeWithPrefix(common.Address{}, hash)
 }
 
 // State returns a new mutable state based on the current HEAD block.
@@ -353,7 +369,7 @@ func (bc *BlockChain) State() (*state.StateDB, error) {
 
 // StateAt returns a new mutable state based on a particular point in time.
 func (bc *BlockChain) StateAt(root common.Hash) (*state.StateDB, error) {
-	return state.New(root, bc.stateCache, bc.snaps)
+	return state.New(root, bc.statedb)
 }
 
 // Config retrieves the chain's fork configuration.
@@ -379,7 +395,7 @@ func (bc *BlockChain) Processor() Processor {
 
 // StateCache returns the caching database underpinning the blockchain instance.
 func (bc *BlockChain) StateCache() state.Database {
-	return bc.stateCache
+	return bc.statedb
 }
 
 // GasLimit returns the gas limit of the current HEAD block.
@@ -430,11 +446,6 @@ func (bc *BlockChain) SubscribeChainHeadEvent(ch chan<- ChainHeadEvent) event.Su
 	return bc.scope.Track(bc.chainHeadFeed.Subscribe(ch))
 }
 
-// SubscribeChainSideEvent registers a subscription of ChainSideEvent.
-func (bc *BlockChain) SubscribeChainSideEvent(ch chan<- ChainSideEvent) event.Subscription {
-	return bc.scope.Track(bc.chainSideFeed.Subscribe(ch))
-}
-
 // SubscribeLogsEvent registers a subscription of []*types.Log.
 func (bc *BlockChain) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
 	return bc.scope.Track(bc.logsFeed.Subscribe(ch))
@@ -444,4 +455,9 @@ func (bc *BlockChain) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscript
 // block processing has started while false means it has stopped.
 func (bc *BlockChain) SubscribeBlockProcessingEvent(ch chan<- bool) event.Subscription {
 	return bc.scope.Track(bc.blockProcFeed.Subscribe(ch))
+}
+
+// SubscribeFinalizedHeaderEvent registers a subscription of FinalizedHeaderEvent.
+func (bc *BlockChain) SubscribeFinalizedHeaderEvent(ch chan<- FinalizedHeaderEvent) event.Subscription {
+	return bc.scope.Track(bc.finalizedHeaderFeed.Subscribe(ch))
 }
