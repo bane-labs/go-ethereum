@@ -545,7 +545,7 @@ func TestWriteAncientHeaderChain(t *testing.T) {
 			t.Fatalf("unexpected body returned")
 		}
 		if blob := ReadReceiptsRLP(db, header.Hash(), header.Number.Uint64()); len(blob) != 0 {
-			t.Fatalf("unexpected body returned")
+			t.Fatalf("unexpected receipts returned")
 		}
 		if blob := ReadTdRLP(db, header.Hash(), header.Number.Uint64()); len(blob) == 0 {
 			t.Fatalf("unexpected td returned")
