@@ -779,6 +779,13 @@ func testFastVsFullChains(t *testing.T, scheme string) {
 	fast, _ := NewBlockChain(fastDb, DefaultCacheConfigWithScheme(scheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
 	defer fast.Stop()
 
+	headers := make([]*types.Header, len(blocks))
+	for i, block := range blocks {
+		headers[i] = block.Header()
+	}
+	if n, err := fast.InsertHeaderChain(headers); err != nil {
+		t.Fatalf("failed to insert header %d: %v", n, err)
+	}
 	if n, err := fast.InsertReceiptChain(blocks, receipts, 0); err != nil {
 		t.Fatalf("failed to insert receipt %d: %v", n, err)
 	}
@@ -792,6 +799,9 @@ func testFastVsFullChains(t *testing.T, scheme string) {
 	ancient, _ := NewBlockChain(ancientDb, DefaultCacheConfigWithScheme(scheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
 	defer ancient.Stop()
 
+	if n, err := ancient.InsertHeaderChain(headers); err != nil {
+		t.Fatalf("failed to insert header %d: %v", n, err)
+	}
 	if n, err := ancient.InsertReceiptChain(blocks, receipts, uint64(len(blocks)/2)); err != nil {
 		t.Fatalf("failed to insert receipt %d: %v", n, err)
 	}
@@ -922,6 +932,13 @@ func testLightVsFastVsFullChainHeads(t *testing.T, scheme string) {
 	fast, _ := NewBlockChain(fastDb, DefaultCacheConfigWithScheme(scheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
 	defer fast.Stop()
 
+	headers := make([]*types.Header, len(blocks))
+	for i, block := range blocks {
+		headers[i] = block.Header()
+	}
+	if n, err := fast.InsertHeaderChain(headers); err != nil {
+		t.Fatalf("failed to insert header %d: %v", n, err)
+	}
 	if n, err := fast.InsertReceiptChain(blocks, receipts, 0); err != nil {
 		t.Fatalf("failed to insert receipt %d: %v", n, err)
 	}
@@ -935,6 +952,9 @@ func testLightVsFastVsFullChainHeads(t *testing.T, scheme string) {
 	ancient, _ := NewBlockChain(ancientDb, DefaultCacheConfigWithScheme(scheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
 	defer ancient.Stop()
 
+	if n, err := ancient.InsertHeaderChain(headers); err != nil {
+		t.Fatalf("failed to insert header %d: %v", n, err)
+	}
 	if n, err := ancient.InsertReceiptChain(blocks, receipts, uint64(3*len(blocks)/4)); err != nil {
 		t.Fatalf("failed to insert receipt %d: %v", n, err)
 	}
@@ -948,11 +968,6 @@ func testLightVsFastVsFullChainHeads(t *testing.T, scheme string) {
 	// Import the chain as a light node and ensure all pointers are updated
 	lightDb := makeDb()
 	defer lightDb.Close()
-
-	headers := make([]*types.Header, len(blocks))
-	for i, block := range blocks {
-		headers[i] = block.Header()
-	}
 	light, _ := NewBlockChain(lightDb, DefaultCacheConfigWithScheme(scheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
 	if n, err := light.InsertHeaderChain(headers); err != nil {
 		t.Fatalf("failed to insert header %d: %v", n, err)
@@ -1256,7 +1271,7 @@ func testSideLogRebirth(t *testing.T, scheme string) {
 	}
 	checkLogEvents(t, newLogCh, rmLogsCh, 0, 0)
 
-	// Generate side chain with lower difficulty
+	// Generate side chain with lower difficulty, after the merge, the chain will be accepted even if it is lower difficulty
 	genDb, sideChain, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 2, func(i int, gen *BlockGen) {
 		if i == 1 {
 			tx, err := types.SignTx(types.NewContractCreation(gen.TxNonce(addr1), new(big.Int), 1000000, gen.header.BaseFee, logCode), signer, key1)
@@ -1271,7 +1286,7 @@ func testSideLogRebirth(t *testing.T, scheme string) {
 	}
 	checkLogEvents(t, newLogCh, rmLogsCh, 0, 0)
 
-	// Generate a new block based on side chain.
+	// Generate a new block based on side chain. Should not emit any events anymore.
 	newBlocks, _ := GenerateChain(gspec.Config, sideChain[len(sideChain)-1], ethash.NewFaker(), genDb, 1, func(i int, gen *BlockGen) {})
 	if _, err := blockchain.InsertChain(newBlocks); err != nil {
 		t.Fatalf("failed to insert forked chain: %v", err)
@@ -1693,8 +1708,8 @@ func testLargeReorgTrieGC(t *testing.T, scheme string) {
 	if chain.HasState(shared[len(shared)-1].Root()) {
 		t.Fatalf("common-but-old ancestor still cache")
 	}
-	// Import the competitor chain without exceeding the canonical's TD and ensure
-	// we have not processed any of the blocks (protection against malicious blocks)
+	// Import the competitor chain without exceeding the canonical's TD.
+	// Post-merge the side chain should be executed
 	if _, err := chain.InsertChain(competitor[:len(competitor)-2]); err != nil {
 		t.Fatalf("failed to insert competitor chain: %v", err)
 	}
@@ -1703,8 +1718,7 @@ func testLargeReorgTrieGC(t *testing.T, scheme string) {
 			t.Fatalf("competitor %d: low TD chain became processed", i)
 		}
 	}
-	// Import the head of the competitor chain, triggering the reorg and ensure we
-	// successfully reprocess all the stashed away blocks.
+	// Import the head of the competitor chain.
 	if _, err := chain.InsertChain(competitor[len(competitor)-2:]); err != nil {
 		t.Fatalf("failed to finalize competitor chain: %v", err)
 	}
@@ -1750,6 +1764,13 @@ func testBlockchainRecovery(t *testing.T, scheme string) {
 	defer ancientDb.Close()
 	ancient, _ := NewBlockChain(ancientDb, DefaultCacheConfigWithScheme(scheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
 
+	headers := make([]*types.Header, len(blocks))
+	for i, block := range blocks {
+		headers[i] = block.Header()
+	}
+	if n, err := ancient.InsertHeaderChain(headers); err != nil {
+		t.Fatalf("failed to insert header %d: %v", n, err)
+	}
 	if n, err := ancient.InsertReceiptChain(blocks, receipts, uint64(3*len(blocks)/4)); err != nil {
 		t.Fatalf("failed to insert receipt %d: %v", n, err)
 	}
@@ -1877,6 +1898,7 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 
 		// Set the terminal total difficulty in the config
 		gspec.Config.TerminalTotalDifficulty = big.NewInt(0)
+		chain.Config().TerminalTotalDifficulty = gspec.Config.TerminalTotalDifficulty
 	}
 	genDb, blocks, _ := GenerateChainWithGenesis(gspec, engine, 2*state.TriesInMemory, func(i int, gen *BlockGen) {
 		tx, err := types.SignTx(types.NewTransaction(nonce, common.HexToAddress("deadbeef"), big.NewInt(100), 21000, big.NewInt(int64(i+1)*params.GWei), nil), signer, key)
@@ -1912,6 +1934,7 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 		ttd := big.NewInt(int64(len(blocks)))
 		ttd.Mul(ttd, params.GenesisDifficulty)
 		gspec.Config.TerminalTotalDifficulty = ttd
+		chain.Config().TerminalTotalDifficulty = gspec.Config.TerminalTotalDifficulty
 		mergeBlock = len(blocks)
 	}
 
@@ -2045,6 +2068,14 @@ func testInsertKnownChainData(t *testing.T, typ string, scheme string) {
 		}
 	} else if typ == "receipts" {
 		inserter = func(blocks []*types.Block, receipts []types.Receipts) error {
+			headers := make([]*types.Header, 0, len(blocks))
+			for _, block := range blocks {
+				headers = append(headers, block.Header())
+			}
+			_, err := chain.InsertHeaderChain(headers)
+			if err != nil {
+				return err
+			}
 			_, err = chain.InsertReceiptChain(blocks, receipts, 0)
 			return err
 		}
@@ -2211,6 +2242,14 @@ func testInsertKnownChainDataWithMerging(t *testing.T, typ string, mergeHeight i
 		}
 	} else if typ == "receipts" {
 		inserter = func(blocks []*types.Block, receipts []types.Receipts) error {
+			headers := make([]*types.Header, 0, len(blocks))
+			for _, block := range blocks {
+				headers = append(headers, block.Header())
+			}
+			i, err := chain.InsertHeaderChain(headers)
+			if err != nil {
+				return fmt.Errorf("index %d: %w", i, err)
+			}
 			_, err = chain.InsertReceiptChain(blocks, receipts, 0)
 			return err
 		}
@@ -2583,7 +2622,6 @@ func testSideImportPrunedBlocks(t *testing.T, scheme string) {
 	if !chain.HasBlockAndState(firstNonPrunedBlock.Hash(), firstNonPrunedBlock.NumberU64()) {
 		t.Errorf("Block %d pruned", firstNonPrunedBlock.NumberU64())
 	}
-	// Now re-import some old blocks
 	blockToReimport := blocks[5:8]
 	_, err = chain.InsertChain(blockToReimport)
 	if err != nil {

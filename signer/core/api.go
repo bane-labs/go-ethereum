@@ -184,6 +184,8 @@ func StartClefAccountManager(ksLocation string, nousb, lightKDF bool, scpath str
 			}
 		}
 	}
+
+	// Clef doesn't allow insecure http account unlock.
 	return accounts.NewManager(nil, backends...)
 }
 

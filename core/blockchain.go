@@ -1375,7 +1375,8 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		start = time.Now()
 		size  = int64(0)
 	)
-	// updateHead updates the head header and head snap block flags.
+	// updateHead updates the head snap sync block if the inserted blocks are better
+	// and returns an indicator whether the inserted blocks are canonical.
 	updateHead := func(header *types.Header) error {
 		reorg, err := bc.forker.ReorgNeeded(bc.CurrentSnapBlock(), header)
 		if err != nil {
@@ -1384,7 +1385,6 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		} else if !reorg {
 			return nil
 		}
-
 		batch := bc.db.NewBatch()
 		hash := header.Hash()
 		rawdb.WriteHeadHeaderHash(batch, hash)
@@ -1417,12 +1417,11 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			}
 		}
 		// Write all chain data to ancients.
-		first := blockChain[0]
-		ptd := bc.GetTd(first.ParentHash(), first.NumberU64()-1)
+		ptd := bc.GetTd(blockChain[0].ParentHash(), blockChain[0].NumberU64()-1)
 		if ptd == nil {
 			return 0, consensus.ErrUnknownAncestor
 		}
-		td := new(big.Int).Add(ptd, first.Difficulty())
+		td := new(big.Int).Add(ptd, blockChain[0].Difficulty())
 		writeSize, err := rawdb.WriteAncientBlocks(bc.db, blockChain, receiptChain, td)
 		if err != nil {
 			log.Error("Error importing chain data to ancients", "err", err)
@@ -1461,7 +1460,13 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			skipPresenceCheck = false
 			batch             = bc.db.NewBatch()
 		)
+		ptd := bc.GetTd(blockChain[0].ParentHash(), blockChain[0].NumberU64()-1)
+		if ptd == nil {
+			return 0, consensus.ErrUnknownAncestor
+		}
+		tdSum := new(big.Int).Set(ptd)
 		for i, block := range blockChain {
+			tdSum.Add(tdSum, block.Difficulty())
 			// Short circuit insertion if shutting down or processing failed
 			if bc.insertStopped() {
 				return 0, errInsertionInterrupted
@@ -1479,6 +1484,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 				}
 			}
 			// Write all the data out into the database
+			rawdb.WriteTd(batch, block.Hash(), block.NumberU64(), tdSum)
 			rawdb.WriteCanonicalHash(batch, block.Hash(), block.NumberU64())
 			rawdb.WriteBlock(batch, block)
 			rawdb.WriteReceipts(batch, block.Hash(), block.NumberU64(), receiptChain[i])
@@ -1681,6 +1687,8 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 		return NonStatTy, err
 	}
 	currentBlock := bc.CurrentBlock()
+
+	// Reorganise the chain if the parent is not the head block
 	reorg, err := bc.forker.ReorgNeeded(currentBlock, block.Header())
 	if err != nil {
 		return NonStatTy, err
@@ -1696,6 +1704,7 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 	} else {
 		status = SideStatTy
 	}
+
 	// Set new head.
 	if status == CanonStatTy {
 		bc.writeHeadBlock(block)
@@ -2108,7 +2117,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 			stats.queued++
 		}
 	}
-
 	stats.ignored += it.remaining()
 
 	return witness, it.index, err
@@ -2834,13 +2842,11 @@ func (bc *BlockChain) InsertHeadersBeforeCutoff(headers []*types.Header) (int, e
 
 	// Initialize the ancient store with genesis block if it's empty.
 	var (
-		frozen, _   = bc.db.Ancients()
-		first       = headers[0].Number.Uint64()
-		firstHeader = headers[0]
+		frozen, _ = bc.db.Ancients()
+		first     = headers[0].Number.Uint64()
 	)
 	if first == 1 && frozen == 0 {
-		td := bc.genesisBlock.Difficulty()
-		_, err := rawdb.WriteAncientBlocks(bc.db, []*types.Block{bc.genesisBlock}, []types.Receipts{nil}, td)
+		_, err := rawdb.WriteAncientBlocks(bc.db, []*types.Block{bc.genesisBlock}, []types.Receipts{nil}, bc.genesisBlock.Difficulty())
 		if err != nil {
 			log.Error("Error writing genesis to ancients", "err", err)
 			return 0, err
@@ -2852,7 +2858,7 @@ func (bc *BlockChain) InsertHeadersBeforeCutoff(headers []*types.Header) (int, e
 
 	// Write headers to the ancient store, with block bodies and receipts set to nil
 	// to ensure consistency across tables in the freezer.
-	ptd := bc.GetTd(firstHeader.ParentHash, firstHeader.Number.Uint64()-1)
+	ptd := bc.GetTd(headers[0].ParentHash, headers[0].Number.Uint64()-1)
 	if ptd == nil {
 		return 0, consensus.ErrUnknownAncestor
 	}

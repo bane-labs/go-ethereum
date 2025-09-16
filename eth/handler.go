@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/core"
@@ -200,6 +201,20 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	// Construct the downloader (long sync)
 	h.downloader = downloader.New(config.Database, h.eventMux, h.chain, h.removePeer, h.enableSyncedFeatures)
+	if ttd := h.chain.Config().TerminalTotalDifficulty; ttd != nil {
+		head := h.chain.CurrentBlock()
+		if td := h.chain.GetTd(head.Hash(), head.Number.Uint64()); td.Cmp(ttd) >= 0 {
+			log.Info("Chain post-TTD, sync via beacon client")
+		} else {
+			log.Warn("Chain pre-merge, sync via PoW (ensure beacon client is ready)")
+		}
+	} else {
+		if _, ok := h.chain.Engine().(consensus.PoS); ok {
+			log.Info("Chain configured with PoS engine but no TTD.")
+		} else {
+			log.Error("Chain configured without TTD. Are you debugging sync?")
+		}
+	}
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {
 		// Reject all the PoS style headers in the first place. No matter

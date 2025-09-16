@@ -796,13 +796,12 @@ func writeAncientBlock(op ethdb.AncientWriteOp, block *types.Block, header *type
 // WriteAncientHeaderChain writes the supplied headers along with nil block
 // bodies and receipts into the ancient store. It's supposed to be used for
 // storing chain segment before the chain cutoff.
-// !!! ptd is the td of the parent block of headers[0]
-func WriteAncientHeaderChain(db ethdb.AncientWriter, headers []*types.Header, ptd *big.Int) (int64, error) {
-	var tdSum = new(big.Int).Set(ptd)
-
+func WriteAncientHeaderChain(db ethdb.AncientWriter, headers []*types.Header, td *big.Int) (int64, error) {
 	return db.ModifyAncients(func(op ethdb.AncientWriteOp) error {
+		tdSum := new(big.Int).Set(td)
 		for _, header := range headers {
 			num := header.Number.Uint64()
+			tdSum.Add(tdSum, header.Difficulty)
 			if err := op.AppendRaw(ChainFreezerHashTable, num, header.Hash().Bytes()); err != nil {
 				return fmt.Errorf("can't add block %d hash: %v", num, err)
 			}
@@ -816,7 +815,7 @@ func WriteAncientHeaderChain(db ethdb.AncientWriter, headers []*types.Header, pt
 				return fmt.Errorf("can't append block %d receipts: %v", num, err)
 			}
 			if err := op.Append(ChainFreezerDifficultyTable, num, tdSum); err != nil {
-				return fmt.Errorf("can't append block %d td: %v", num, err)
+				return fmt.Errorf("can't append block %d total difficulty: %v", num, err)
 			}
 		}
 		return nil

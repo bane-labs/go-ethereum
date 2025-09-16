@@ -75,8 +75,6 @@ func TestSupplyOmittedFields(t *testing.T) {
 		}
 	)
 
-	gspec.Config.TerminalTotalDifficulty = big.NewInt(0)
-
 	out, _, err := testSupplyTracer(t, gspec, func(b *core.BlockGen) {
 		b.SetPoS()
 	})

@@ -294,6 +294,7 @@ func minerTestGenesisBlock(period uint64, gasLimit uint64, faucet common.Address
 		},
 	}
 }
+
 func createMiner(t *testing.T) (*Miner, *event.TypeMux, func(skipMiner bool)) {
 	// Create Ethash config
 	config := Config{
@@ -325,7 +326,7 @@ func createMiner(t *testing.T) (*Miner, *event.TypeMux, func(skipMiner bool)) {
 	// Create event Mux
 	mux := new(event.TypeMux)
 	// Create Miner
-	miner := New(backend, &config, chainConfig, mux, engine)
+	miner := New(backend, &config, mux, engine)
 	cleanup := func(skipMiner bool) {
 		bc.Stop()
 		engine.Close()
