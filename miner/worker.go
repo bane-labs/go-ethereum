@@ -846,6 +846,10 @@ func (w *worker) prepareWork(genParams *generateParams, witness bool) (*environm
 		header.BlobGasUsed = new(uint64)
 		header.ExcessBlobGas = &excessBlobGas
 		header.ParentBeaconRoot = genParams.beaconRoot
+
+		if w.chainConfig.IsPrague(header.Number, header.Time) {
+			header.RequestsHash = &types.EmptyRequestsHash
+		}
 	}
 	// Could potentially happen if starting to mine in an odd state.
 	// Note genParams.coinbase can be different with header.Coinbase
