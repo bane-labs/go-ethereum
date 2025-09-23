@@ -73,16 +73,6 @@ func New(ethone consensus.Engine) *Beacon {
 	return &Beacon{ethone: ethone}
 }
 
-// isPostMerge reports whether the given block number is assumed to be post-merge.
-// Here we check the MergeNetsplitBlock to allow configuring networks with a PoW or
-// PoA chain for unit testing purposes.
-func isPostMerge(config *params.ChainConfig, blockNum uint64, timestamp uint64) bool {
-	mergedAtGenesis := config.TerminalTotalDifficulty != nil && config.TerminalTotalDifficulty.Sign() == 0
-	return mergedAtGenesis ||
-		config.MergeNetsplitBlock != nil && blockNum >= config.MergeNetsplitBlock.Uint64() ||
-		config.ShanghaiTime != nil && timestamp >= *config.ShanghaiTime
-}
-
 // Author implements consensus.Engine, returning the verified author of the block.
 func (beacon *Beacon) Author(header *types.Header) (common.Address, error) {
 	if !beacon.IsPoSHeader(header) {
@@ -449,7 +439,7 @@ func (beacon *Beacon) SealHash(header *types.Header) common.Hash {
 // the difficulty that a new block should have when created at time
 // given the parent block's time and difficulty.
 func (beacon *Beacon) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
-	if !isPostMerge(chain.Config(), parent.Number.Uint64()+1, time) {
+	if !chain.Config().IsPostMerge(parent.Number.Uint64()+1, time) {
 		return beacon.ethone.CalcDifficulty(chain, time, parent)
 	}
 	return beaconDifficulty
