@@ -586,7 +586,7 @@ func (b testBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.R
 func (b testBackend) BlobSidecarByRoot(ctx context.Context, hash common.Hash, index uint64) (*types.BlobTxSidecar, error) {
 	panic("implement me")
 }
-func (b testBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {
+func (b testBackend) GetTd(hash common.Hash, number uint64) *big.Int {
 	if b.pending != nil && hash == b.pending.Hash() {
 		return nil
 	}

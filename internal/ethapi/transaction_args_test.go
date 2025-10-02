@@ -382,7 +382,7 @@ func (b *backendMock) GetCanonicalReceipt(tx *types.Transaction, blockHash commo
 func (b *backendMock) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
 	return nil, nil
 }
-func (b *backendMock) GetTd(ctx context.Context, hash common.Hash) *big.Int { return nil }
+func (b *backendMock) GetTd(hash common.Hash, number uint64) *big.Int { return nil }
 func (b *backendMock) GetEVM(ctx context.Context, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
 	return nil
 }

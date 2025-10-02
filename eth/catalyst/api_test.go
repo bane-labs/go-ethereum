@@ -1909,7 +1909,7 @@ func newGetBlobEnv(t *testing.T, version byte) (*node.Node, *ConsensusAPI) {
 	tx1 := makeMultiBlobTx(&config, 0, 2, 0, key1, version) // blob[0, 2)
 	tx2 := makeMultiBlobTx(&config, 0, 2, 2, key2, version) // blob[2, 4)
 	tx3 := makeMultiBlobTx(&config, 0, 2, 4, key3, version) // blob[4, 6)
-	ethServ.TxPool().Add([]*types.Transaction{tx1, tx2, tx3}, true)
+	ethServ.TxPool().Add([]*types.Transaction{tx1, tx2, tx3}, true, true)
 
 	api := newConsensusAPIWithoutHeartbeat(ethServ)
 	return n, api

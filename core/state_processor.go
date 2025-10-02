@@ -37,16 +37,19 @@ import (
 //
 // StateProcessor implements Processor.
 type StateProcessor struct {
-	config *params.ChainConfig // Chain configuration options
-	chain  *HeaderChain        // Canonical header chain
+	chain ChainContext // Chain context interface
 }
 
 // NewStateProcessor initialises a new StateProcessor.
-func NewStateProcessor(config *params.ChainConfig, chain *HeaderChain) *StateProcessor {
+func NewStateProcessor(chain ChainContext) *StateProcessor {
 	return &StateProcessor{
-		config: config,
-		chain:  chain,
+		chain: chain,
 	}
+}
+
+// chainConfig returns the chain configuration.
+func (p *StateProcessor) chainConfig() *params.ChainConfig {
+	return p.chain.Config()
 }
 
 // Process processes the state changes according to the Ethereum rules by running
@@ -58,6 +61,7 @@ func NewStateProcessor(config *params.ChainConfig, chain *HeaderChain) *StatePro
 // transactions failed to execute due to insufficient gas it will return an error.
 func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (*ProcessResult, error) {
 	var (
+		config        = p.chainConfig()
 		receipts      types.Receipts
 		usedGas       = new(uint64)
 		envelopeCount = uint64(0)
@@ -69,12 +73,12 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	)
 
 	// Mutate the block and state according to any hard-fork specs
-	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
+	if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(statedb)
 	}
 	var (
 		context             vm.BlockContext
-		signer              = types.MakeSigner(p.config, header.Number, header.Time)
+		signer              = types.MakeSigner(config, header.Number, header.Time)
 		envelopeNumberLimit = statedb.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMaxEnvelopesPerBlockStateHash()).Big().Uint64()
 	)
 
@@ -84,15 +88,15 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		tracingStateDB = state.NewHookedState(statedb, hooks)
 	}
 	context = NewEVMBlockContext(header, p.chain, nil)
-	evm := vm.NewEVM(context, tracingStateDB, p.config, cfg)
+	evm := vm.NewEVM(context, tracingStateDB, config, cfg)
 
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
 		ProcessBeaconBlockRoot(*beaconRoot, evm)
 	}
-	if p.config.IsPrague(block.Number(), block.Time()) || p.config.IsVerkle(block.Number(), block.Time()) {
+	if config.IsPrague(block.Number(), block.Time()) || config.IsVerkle(block.Number(), block.Time()) {
 		ProcessParentBlockHash(block.ParentHash(), evm)
 	}
-	if p.config.DBFT != nil {
+	if config.DBFT != nil {
 		err := ProcessOnPersist(evm)
 		if err != nil {
 			return nil, fmt.Errorf("could not apply OnPersist [%v]: %w", block.Hash().Hex(), err)
@@ -102,7 +106,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		// Check against envelope number policy
-		if p.chain.config.IsNeoXAMEV(blockNumber) && antimev.IsEnvelope(tx) {
+		if p.chain.Config().IsNeoXAMEV(blockNumber) && antimev.IsEnvelope(tx) {
 			if envelopeCount >= envelopeNumberLimit {
 				return nil, fmt.Errorf("could not apply tx %d [%v]: %w, envelope limit %v", i, tx.Hash().Hex(),
 					ErrEnvelopeNumberLimitReached, envelopeNumberLimit)
@@ -124,10 +128,10 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	}
 	// Read requests if Prague is enabled.
 	var requests [][]byte
-	if p.config.IsPrague(block.Number(), block.Time()) {
+	if config.IsPrague(block.Number(), block.Time()) {
 		requests = [][]byte{}
 		// EIP-6110
-		if err := ParseDepositLogs(&requests, allLogs, p.config); err != nil {
+		if err := ParseDepositLogs(&requests, allLogs, config); err != nil {
 			return nil, fmt.Errorf("failed to parse deposit logs: %w", err)
 		}
 		// EIP-7002
@@ -141,7 +145,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	}
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.chain.engine.Finalize(p.chain, header, tracingStateDB, block.Body())
+	p.chain.Engine().Finalize(p.chain, header, tracingStateDB, block.Body())
 
 	return &ProcessResult{
 		Receipts: receipts,

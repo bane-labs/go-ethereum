@@ -559,3 +559,7 @@ type dummyChain struct {
 func (d *dummyChain) Engine() consensus.Engine                        { return nil }
 func (d *dummyChain) GetHeader(h common.Hash, n uint64) *types.Header { return nil }
 func (d *dummyChain) Config() *params.ChainConfig                     { return d.config }
+func (d *dummyChain) CurrentHeader() *types.Header                    { return nil }
+func (d *dummyChain) GetHeaderByNumber(n uint64) *types.Header        { return nil }
+func (d *dummyChain) GetHeaderByHash(h common.Hash) *types.Header     { return nil }
+func (d *dummyChain) GetTd(hash common.Hash, number uint64) *big.Int  { return nil }
