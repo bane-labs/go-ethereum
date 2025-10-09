@@ -155,6 +155,7 @@ func (api *FilterAPI) NewPendingTransactionFilter(fullTx *bool) rpc.ID {
 				api.filtersMu.Lock()
 				delete(api.filters, pendingTxSub.ID)
 				api.filtersMu.Unlock()
+				pendingTxSub.Unsubscribe()
 				return
 			}
 		}
