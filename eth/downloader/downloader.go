@@ -468,6 +468,23 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 		if err != nil {
 			return err
 		}
+		if d.blockchain.TrieDB().Scheme() == rawdb.PathScheme && mode == SnapSync {
+			// Ensure the pivot is above the minimum full block threshold
+			pivotNumber := uint64(0)
+			if pivot != nil {
+				pivotNumber = pivot.Number.Uint64()
+			}
+			if pivotNumber < uint64(fsMinFullBlocks) {
+				block := d.blockchain.CurrentBlock()
+				if err = d.blockchain.TrieDB().Enable(block.Root); err != nil {
+					return fmt.Errorf("failed to enable trie db: %v", err)
+				}
+				log.Info("Disabling snap sync of the db on the path scheme due to the pivot header being positioned too low",
+					"pivot", pivotNumber)
+				<-time.After(3 * time.Second)
+				return errCanceled
+			}
+		}
 	} else {
 		// In beacon mode, use the skeleton chain to retrieve the headers from
 		latest, _, final, err = d.skeleton.Bounds()
