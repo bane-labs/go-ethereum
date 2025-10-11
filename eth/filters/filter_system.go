@@ -67,7 +67,6 @@ type Backend interface {
 	ChainConfig() *params.ChainConfig
 	SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription
 	SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription
-	SubscribeFinalizedHeaderEvent(ch chan<- core.FinalizedHeaderEvent) event.Subscription
 	SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription
 	SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription
 
@@ -160,8 +159,6 @@ const (
 	BlocksSubscription
 	// LastIndexSubscription keeps track of the last index
 	LastIndexSubscription
-	// FinalizedHeadersSubscription queries hashes for finalized headers that are reached
-	FinalizedHeadersSubscription
 )
 
 const (
@@ -174,8 +171,6 @@ const (
 	logsChanSize = 10
 	// chainEvChanSize is the size of channel listening to ChainEvent.
 	chainEvChanSize = 10
-	// finalizedHeaderEvChanSize is the size of channel listening to FinalizedHeaderEvent.
-	finalizedHeaderEvChanSize = 10
 )
 
 type subscription struct {
@@ -197,20 +192,18 @@ type EventSystem struct {
 	sys     *FilterSystem
 
 	// Subscriptions
-	txsSub             event.Subscription // Subscription for new transaction event
-	logsSub            event.Subscription // Subscription for new log event
-	rmLogsSub          event.Subscription // Subscription for removed log event
-	chainSub           event.Subscription // Subscription for new chain event
-	finalizedHeaderSub event.Subscription // Subscription for new finalized header
+	txsSub    event.Subscription // Subscription for new transaction event
+	logsSub   event.Subscription // Subscription for new log event
+	rmLogsSub event.Subscription // Subscription for removed log event
+	chainSub  event.Subscription // Subscription for new chain event
 
 	// Channels
-	install           chan *subscription             // install filter for event notification
-	uninstall         chan *subscription             // remove filter for event notification
-	txsCh             chan core.NewTxsEvent          // Channel to receive new transactions event
-	logsCh            chan []*types.Log              // Channel to receive new log event
-	rmLogsCh          chan core.RemovedLogsEvent     // Channel to receive removed log event
-	chainCh           chan core.ChainEvent           // Channel to receive new chain event
-	finalizedHeaderCh chan core.FinalizedHeaderEvent // Channel to receive new finalized header event
+	install   chan *subscription         // install filter for event notification
+	uninstall chan *subscription         // remove filter for event notification
+	txsCh     chan core.NewTxsEvent      // Channel to receive new transactions event
+	logsCh    chan []*types.Log          // Channel to receive new log event
+	rmLogsCh  chan core.RemovedLogsEvent // Channel to receive removed log event
+	chainCh   chan core.ChainEvent       // Channel to receive new chain event
 }
 
 // NewEventSystem creates a new manager that listens for event on the given mux,
@@ -221,15 +214,14 @@ type EventSystem struct {
 // or by stopping the given mux.
 func NewEventSystem(sys *FilterSystem) *EventSystem {
 	m := &EventSystem{
-		sys:               sys,
-		backend:           sys.backend,
-		install:           make(chan *subscription),
-		uninstall:         make(chan *subscription),
-		txsCh:             make(chan core.NewTxsEvent, txChanSize),
-		logsCh:            make(chan []*types.Log, logsChanSize),
-		rmLogsCh:          make(chan core.RemovedLogsEvent, rmLogsChanSize),
-		chainCh:           make(chan core.ChainEvent, chainEvChanSize),
-		finalizedHeaderCh: make(chan core.FinalizedHeaderEvent, finalizedHeaderEvChanSize),
+		sys:       sys,
+		backend:   sys.backend,
+		install:   make(chan *subscription),
+		uninstall: make(chan *subscription),
+		txsCh:     make(chan core.NewTxsEvent, txChanSize),
+		logsCh:    make(chan []*types.Log, logsChanSize),
+		rmLogsCh:  make(chan core.RemovedLogsEvent, rmLogsChanSize),
+		chainCh:   make(chan core.ChainEvent, chainEvChanSize),
 	}
 
 	// Subscribe events
@@ -237,14 +229,10 @@ func NewEventSystem(sys *FilterSystem) *EventSystem {
 	m.logsSub = m.backend.SubscribeLogsEvent(m.logsCh)
 	m.rmLogsSub = m.backend.SubscribeRemovedLogsEvent(m.rmLogsCh)
 	m.chainSub = m.backend.SubscribeChainEvent(m.chainCh)
-	m.finalizedHeaderSub = m.backend.SubscribeFinalizedHeaderEvent(m.finalizedHeaderCh)
 
 	// Make sure none of the subscriptions are empty
 	if m.txsSub == nil || m.logsSub == nil || m.rmLogsSub == nil || m.chainSub == nil {
 		log.Crit("Subscribe for event system failed")
-	}
-	if m.finalizedHeaderSub == nil {
-		log.Warn("Subscribe for finalized header event failed")
 	}
 
 	go m.eventLoop()
@@ -368,22 +356,6 @@ func (es *EventSystem) SubscribeNewHeads(headers chan *types.Header) *Subscripti
 	return es.subscribe(sub)
 }
 
-// SubscribeNewFinalizedHeaders creates a subscription that writes the finalized header of a block that is
-// reached recently.
-func (es *EventSystem) SubscribeNewFinalizedHeaders(headers chan *types.Header) *Subscription {
-	sub := &subscription{
-		id:        rpc.NewID(),
-		typ:       FinalizedHeadersSubscription,
-		created:   time.Now(),
-		logs:      make(chan []*types.Log),
-		txs:       make(chan []*types.Transaction),
-		headers:   headers,
-		installed: make(chan struct{}),
-		err:       make(chan error),
-	}
-	return es.subscribe(sub)
-}
-
 // SubscribePendingTxs creates a subscription that writes transactions for
 // transactions that enter the transaction pool.
 func (es *EventSystem) SubscribePendingTxs(txs chan []*types.Transaction) *Subscription {
@@ -425,11 +397,6 @@ func (es *EventSystem) handleChainEvent(filters filterIndex, ev core.ChainEvent)
 		f.headers <- ev.Header
 	}
 }
-func (es *EventSystem) handleFinalizedHeaderEvent(filters filterIndex, ev core.FinalizedHeaderEvent) {
-	for _, f := range filters[FinalizedHeadersSubscription] {
-		f.headers <- ev.Header
-	}
-}
 
 // eventLoop (un)installs filters and processes mux events.
 func (es *EventSystem) eventLoop() {
@@ -439,7 +406,6 @@ func (es *EventSystem) eventLoop() {
 		es.logsSub.Unsubscribe()
 		es.rmLogsSub.Unsubscribe()
 		es.chainSub.Unsubscribe()
-		es.finalizedHeaderSub.Unsubscribe()
 	}()
 
 	index := make(filterIndex)
@@ -457,8 +423,6 @@ func (es *EventSystem) eventLoop() {
 			es.handleLogs(index, ev.Logs)
 		case ev := <-es.chainCh:
 			es.handleChainEvent(index, ev)
-		case ev := <-es.finalizedHeaderCh:
-			es.handleFinalizedHeaderEvent(index, ev)
 
 		case f := <-es.install:
 			index[f.typ][f.id] = f
@@ -476,8 +440,6 @@ func (es *EventSystem) eventLoop() {
 		case <-es.rmLogsSub.Err():
 			return
 		case <-es.chainSub.Err():
-			return
-		case <-es.finalizedHeaderSub.Err():
 			return
 		}
 	}

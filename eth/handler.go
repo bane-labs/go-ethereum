@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/core"
@@ -209,11 +208,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			log.Warn("Chain pre-merge, sync via PoW (ensure beacon client is ready)")
 		}
 	} else {
-		if _, ok := h.chain.Engine().(consensus.PoS); ok {
-			log.Info("Chain configured with PoS engine but no TTD.")
-		} else {
-			log.Error("Chain configured without TTD. Are you debugging sync?")
-		}
+		log.Error("Chain configured without TTD")
 	}
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {

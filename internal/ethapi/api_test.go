@@ -600,9 +600,6 @@ func (b testBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscr
 func (b testBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
 	panic("implement me")
 }
-func (b testBackend) SubscribeFinalizedHeaderEvent(ch chan<- core.FinalizedHeaderEvent) event.Subscription {
-	panic("implement me")
-}
 func (b testBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
 	panic("implement me")
 }

@@ -99,17 +99,6 @@ func NewHeaderChain(chainDb ethdb.Database, config *params.ChainConfig, engine c
 	return hc, nil
 }
 
-// GetFinalizedNumber returns the highest finalized number before the specific block.
-func (hc *HeaderChain) GetFinalizedNumber(header *types.Header) uint64 {
-	if p, ok := hc.engine.(consensus.PoS); ok {
-		if finalizedHeader := p.GetFinalizedHeader(hc, header); finalizedHeader != nil {
-			return finalizedHeader.Number.Uint64()
-		}
-	}
-
-	return 0
-}
-
 // GetBlockNumber retrieves the block number belonging to the given hash
 // from the cache or database
 func (hc *HeaderChain) GetBlockNumber(hash common.Hash) *uint64 {

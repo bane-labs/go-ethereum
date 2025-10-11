@@ -386,9 +386,6 @@ func (b *backendMock) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subsc
 func (b *backendMock) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
 	return nil
 }
-func (b *backendMock) SubscribeFinalizedHeaderEvent(ch chan<- core.FinalizedHeaderEvent) event.Subscription {
-	return nil
-}
 func (b *backendMock) SendTx(ctx context.Context, signedTx *types.Transaction) error { return nil }
 func (b *backendMock) GetTransaction(txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64) {
 	return false, nil, [32]byte{}, 0, 0
