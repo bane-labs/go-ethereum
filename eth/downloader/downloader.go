@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -121,6 +122,12 @@ type Downloader struct {
 	committed       atomic.Bool
 	ancientLimit    uint64 // The maximum block number which can be regarded as ancient data.
 
+	// The cutoff block number and hash before which chain segments (bodies
+	// and receipts) are skipped during synchronization. 0 means the entire
+	// chain segment is aimed for synchronization.
+	chainCutoffNumber uint64
+	chainCutoffHash   common.Hash
+
 	// Channels
 	headerProcCh chan *headerTask // Channel to feed the header processor new tasks
 
@@ -193,6 +200,10 @@ type BlockChain interface {
 	// SnapSyncCommitHead directly commits the head block to a certain entity.
 	SnapSyncCommitHead(common.Hash) error
 
+	// InsertHeadersBeforeCutoff inserts a batch of headers before the configured
+	// chain cutoff into the ancient store.
+	InsertHeadersBeforeCutoff([]*types.Header) (int, error)
+
 	// InsertChain inserts a batch of blocks into the local chain.
 	InsertChain(types.Blocks) (int, error)
 
@@ -205,22 +216,29 @@ type BlockChain interface {
 	// TrieDB retrieves the low level trie database used for interacting
 	// with trie nodes.
 	TrieDB() *triedb.Database
+
+	// HistoryPruningCutoff returns the configured history pruning point.
+	// Block bodies along with the receipts will be skipped for synchronization.
+	HistoryPruningCutoff() (uint64, common.Hash)
 }
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
 func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer peerDropFn, success func()) *Downloader {
+	cutoffNumber, cutoffHash := chain.HistoryPruningCutoff()
 	dl := &Downloader{
-		stateDB:        stateDb,
-		mux:            mux,
-		queue:          newQueue(blockCacheMaxItems, blockCacheInitialItems),
-		peers:          newPeerSet(),
-		blockchain:     chain,
-		dropPeer:       dropPeer,
-		headerProcCh:   make(chan *headerTask, 1),
-		quitCh:         make(chan struct{}),
-		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme()),
-		stateSyncStart: make(chan *stateSync),
-		syncStartBlock: chain.CurrentSnapBlock().Number.Uint64(),
+		stateDB:           stateDb,
+		mux:               mux,
+		queue:             newQueue(blockCacheMaxItems, blockCacheInitialItems),
+		peers:             newPeerSet(),
+		blockchain:        chain,
+		chainCutoffNumber: cutoffNumber,
+		chainCutoffHash:   cutoffHash,
+		dropPeer:          dropPeer,
+		headerProcCh:      make(chan *headerTask, 1),
+		quitCh:            make(chan struct{}),
+		SnapSyncer:        snap.NewSyncer(stateDb, chain.TrieDB().Scheme()),
+		stateSyncStart:    make(chan *stateSync),
+		syncStartBlock:    chain.CurrentSnapBlock().Number.Uint64(),
 	}
 	// Create the post-merge skeleton syncer and start the process
 	dl.skeleton = newSkeleton(stateDb, dl.peers, dropPeer, newBeaconBackfiller(dl, success))
@@ -599,6 +617,12 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 				d.ancientLimit = 0
 			}
 		}
+		// Extend the ancient chain segment range if the ancient limit is even
+		// below the pre-configured chain cutoff.
+		if d.chainCutoffNumber != 0 && d.chainCutoffNumber > d.ancientLimit {
+			d.ancientLimit = d.chainCutoffNumber
+			log.Info("Extend the ancient range with configured cutoff", "cutoff", d.chainCutoffNumber)
+		}
 		frozen, _ := d.stateDB.Ancients() // Ignore the error here since light client can also hit here.
 
 		// If a part of blockchain data has already been written into active store,
@@ -617,8 +641,17 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 			log.Info("Truncated excess ancient chain segment", "oldhead", frozen-1, "newhead", origin)
 		}
 	}
+	// Skip ancient chain segments if Geth is running with a configured chain cutoff.
+	// These segments are not guaranteed to be available in the network.
+	chainOffset := origin + 1
+	if mode == SnapSync && d.chainCutoffNumber != 0 {
+		if chainOffset < d.chainCutoffNumber {
+			chainOffset = d.chainCutoffNumber
+			log.Info("Skip chain segment before cutoff", "origin", origin, "cutoff", d.chainCutoffNumber)
+		}
+	}
 	// Initiate the sync using a concurrent header and content retrieval algorithm
-	d.queue.Prepare(origin+1, mode)
+	d.queue.Prepare(chainOffset, mode)
 	if d.syncInitHook != nil {
 		d.syncInitHook(origin, height)
 	}
@@ -632,8 +665,8 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 	}
 	fetchers := []func() error{
 		headerFetcher, // Headers are always retrieved
-		func() error { return d.fetchBodies(origin+1, beaconMode) },   // Bodies are retrieved during normal and snap sync
-		func() error { return d.fetchReceipts(origin+1, beaconMode) }, // Receipts are retrieved during snap sync
+		func() error { return d.fetchBodies(chainOffset, beaconMode) },   // Bodies are retrieved during normal and snap sync
+		func() error { return d.fetchReceipts(chainOffset, beaconMode) }, // Receipts are retrieved during snap sync
 		func() error { return d.processHeaders(origin+1, td, ttd, beaconMode) },
 	}
 	if mode == SnapSync {
@@ -1307,7 +1340,7 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 				return nil
 			}
 			// Otherwise split the chunk of headers into batches and process them
-			headers, hashes := task.headers, task.hashes
+			headers, hashes, scheduled := task.headers, task.hashes, false
 
 			gotHeaders = true
 			for len(headers) > 0 {
@@ -1325,10 +1358,25 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 				chunkHeaders := headers[:limit]
 				chunkHashes := hashes[:limit]
 
-				// In case of header only syncing, validate the chunk immediately
+				// Split the headers around the chain cutoff
+				var cutoff int
+				if mode == SnapSync && d.chainCutoffNumber != 0 {
+					cutoff = sort.Search(len(chunkHeaders), func(i int) bool {
+						return chunkHeaders[i].Number.Uint64() >= d.chainCutoffNumber
+					})
+				}
+				// Insert the header chain into the ancient store (with block bodies and
+				// receipts set to nil) if they fall before the cutoff.
 				if mode == SnapSync {
-					if len(chunkHeaders) > 0 {
-						if n, err := d.blockchain.InsertHeaderChain(chunkHeaders); err != nil {
+					if cutoff != 0 {
+						if n, err := d.blockchain.InsertHeadersBeforeCutoff(chunkHeaders[:cutoff]); err != nil {
+							log.Warn("Failed to insert ancient header chain", "number", chunkHeaders[n].Number, "hash", chunkHashes[n], "parent", chunkHeaders[n].ParentHash, "err", err)
+							return fmt.Errorf("%w: %v", errInvalidChain, err)
+						}
+						log.Debug("Inserted headers before cutoff", "number", chunkHeaders[cutoff-1].Number, "hash", chunkHashes[cutoff-1])
+					}
+					if len(chunkHeaders[cutoff:]) > 0 {
+						if n, err := d.blockchain.InsertHeaderChain(chunkHeaders[cutoff:]); err != nil {
 							log.Warn("Invalid header encountered", "number", chunkHeaders[n].Number, "hash", chunkHashes[n], "parent", chunkHeaders[n].ParentHash, "err", err)
 							return fmt.Errorf("%w: %v", errInvalidChain, err)
 						}
@@ -1343,12 +1391,21 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 					case <-timer.C:
 					}
 				}
-				// Otherwise insert the headers for content retrieval
-				inserts := d.queue.Schedule(chunkHeaders, chunkHashes, origin)
-				if inserts != len(chunkHeaders) {
-					return fmt.Errorf("%w: stale headers", errBadPeer)
+				// Otherwise, schedule the headers for content retrieval (block bodies and
+				// potentially receipts in snap sync).
+				//
+				// Skip the bodies/receipts retrieval scheduling before the cutoff in snap
+				// sync if chain pruning is configured.
+				if mode == SnapSync && cutoff != 0 {
+					chunkHeaders = chunkHeaders[cutoff:]
+					chunkHashes = chunkHashes[cutoff:]
 				}
-
+				if len(chunkHeaders) > 0 {
+					scheduled = true
+					if d.queue.Schedule(chunkHeaders, chunkHashes, origin+uint64(cutoff)) != len(chunkHeaders) {
+						return fmt.Errorf("%w: stale headers", errBadPeer)
+					}
+				}
 				headers = headers[limit:]
 				hashes = hashes[limit:]
 				origin += uint64(limit)
@@ -1360,11 +1417,13 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 			}
 			d.syncStatsLock.Unlock()
 
-			// Signal the content downloaders of the availability of new tasks
-			for _, ch := range []chan bool{d.queue.blockWakeCh, d.queue.receiptWakeCh} {
-				select {
-				case ch <- true:
-				default:
+			// Signal the downloader of the availability of new tasks
+			if scheduled {
+				for _, ch := range []chan bool{d.queue.blockWakeCh, d.queue.receiptWakeCh} {
+					select {
+					case ch <- true:
+					default:
+					}
 				}
 			}
 		}
@@ -1724,9 +1783,19 @@ func (d *Downloader) reportSnapSyncProgress(force bool) {
 		header = d.blockchain.CurrentHeader()
 		block  = d.blockchain.CurrentSnapBlock()
 	)
-	syncedBlocks := block.Number.Uint64() - d.syncStartBlock
-	if syncedBlocks == 0 {
+	// Prevent reporting if nothing has been synchronized yet
+	if block.Number.Uint64() <= d.syncStartBlock {
 		return
+	}
+	// Prevent reporting noise if the actual chain synchronization (headers
+	// and bodies) hasn't started yet. Inserting the ancient header chain is
+	// fast enough and would introduce significant bias if included in the count.
+	if d.chainCutoffNumber != 0 && block.Number.Uint64() <= d.chainCutoffNumber {
+		return
+	}
+	fetchedBlocks := block.Number.Uint64() - d.syncStartBlock
+	if d.chainCutoffNumber != 0 && d.chainCutoffNumber > d.syncStartBlock {
+		fetchedBlocks = block.Number.Uint64() - d.chainCutoffNumber
 	}
 	// Retrieve the current chain head and calculate the ETA
 	latest, _, _, err := d.skeleton.Bounds()
@@ -1742,7 +1811,7 @@ func (d *Downloader) reportSnapSyncProgress(force bool) {
 	}
 	var (
 		left = latest.Number.Uint64() - block.Number.Uint64()
-		eta  = time.Since(d.syncStartTime) / time.Duration(syncedBlocks) * time.Duration(left)
+		eta  = time.Since(d.syncStartTime) / time.Duration(fetchedBlocks) * time.Duration(left)
 
 		progress = fmt.Sprintf("%.2f%%", float64(block.Number.Uint64())*100/float64(latest.Number.Uint64()))
 		headers  = fmt.Sprintf("%v@%v", log.FormatLogfmtUint64(header.Number.Uint64()), common.StorageSize(headerBytes).TerminalString())
