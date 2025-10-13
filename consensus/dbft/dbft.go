@@ -2959,15 +2959,3 @@ func unpackContractExecutionResult(res interface{}, result *core.ExecutionResult
 	}
 	return contractAbi.UnpackIntoInterface(&res, method, result.Return())
 }
-
-// GetFinalizedHeader returns highest finalized block header.
-func (c *DBFT) GetFinalizedHeader(chain consensus.ChainHeaderReader, header *types.Header) *types.Header {
-	if chain == nil || header == nil {
-		return nil
-	}
-	if !chain.Config().IsNeoXDKG(header.Number) || header.Number.Uint64() < 1 {
-		return chain.GetHeaderByNumber(0)
-	}
-
-	return chain.GetHeaderByNumber(header.Number.Uint64() - 1)
-}
