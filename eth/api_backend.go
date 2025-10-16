@@ -529,6 +529,14 @@ func (b *EthAPIBackend) StateAtTransaction(ctx context.Context, block *types.Blo
 	return b.eth.stateAtTransaction(ctx, block, txIndex, reexec)
 }
 
+func (b *EthAPIBackend) RPCTxSyncDefaultTimeout() time.Duration {
+	return b.eth.config.TxSyncDefaultTimeout
+}
+
+func (b *EthAPIBackend) RPCTxSyncMaxTimeout() time.Duration {
+	return b.eth.config.TxSyncMaxTimeout
+}
+
 func (b *EthAPIBackend) BlobSidecarByRoot(ctx context.Context, hash common.Hash, index uint64) (*types.BlobTxSidecar, error) {
 	blobs := b.eth.filesystem.GetBlobTxSidecar(hash, index)
 	if blobs != nil {
