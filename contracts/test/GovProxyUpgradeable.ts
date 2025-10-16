@@ -4,12 +4,18 @@ import { expect } from "chai";
 const { ethers } = await network.connect();
 
 describe("GovProxyUpgradeable", function () {
+
+    let Mock: any;
+
+    before(async function () {
+        Mock = await ethers.deployContract("MockGovProxyUpgradeable");
+    });
+
     it("Should prevent implementation contract from initialization", async function () {
-        const mockGovProxyUpgradeable = await ethers.deployContract("MockGovProxyUpgradeable");
-        await expect(mockGovProxyUpgradeable.initialize()).to.be.reverted(ethers);
+        await expect(Mock.initialize()).to.be.revert(ethers);
         expect(
             await ethers.provider.send("eth_getStorageAt", [
-                await mockGovProxyUpgradeable.getAddress(),
+                await Mock.getAddress(),
                 "0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00",
                 "latest"]
             )
@@ -17,11 +23,10 @@ describe("GovProxyUpgradeable", function () {
     });
 
     it("Should prevent implementation contract from reinitialization", async function () {
-        const mockGovProxyUpgradeable = await ethers.deployContract("MockGovProxyUpgradeable");
-        await expect(mockGovProxyUpgradeable.reinitialize()).to.be.reverted(ethers);
+        await expect(Mock.reinitialize()).to.be.revert(ethers);
         expect(
             await ethers.provider.send("eth_getStorageAt", [
-                await mockGovProxyUpgradeable.getAddress(),
+                await Mock.getAddress(),
                 "0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00",
                 "latest"]
             )

@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ERRORS } from "./helpers/errors.js";
-import { SYS_SETTINGS, ethers, networkHelpers, provider, allocGenesis } from "./helpers/setup.js";
+import { SYS_SETTINGS, ethers, networkHelpers, allocGenesis } from "./helpers/setup.js";
 
 // MOCK PUBKEYS
 const PUBKEY = "0x04a8c8762d32477f5bd0ccff58d35a7b7ace2fbbd0c0d61874bd405bc0af415690d16f585bcec5f51d1fdddfd0d4543cb0a9d40f0447b62a7c4b1a0f24c45ccb01";
@@ -9,17 +9,23 @@ describe("Governance", function () {
 
     let Governance: any, GovReward: any, Policy: any, KeyManagement: any;
     let MockSysCall: any;
-    let signers: any;
+    let signers: any, snapshot: any;
 
-    beforeEach(async function () {
+    before(async function () {
         signers = await ethers.getSigners();
         [Governance, GovReward, Policy, KeyManagement] = await allocGenesis();
 
         // Deploy Mock SYS_CALL
-        const deploy_mock = await ethers.deployContract("MockSysCall");
-        const code_mock = await ethers.provider.send("eth_getCode", [deploy_mock.target]);
-        await ethers.provider.send("hardhat_setCode", [SYS_SETTINGS.SYS_CALL, code_mock]);
+        const mock = await ethers.deployContract("MockSysCall");
+        const code = await ethers.provider.send("eth_getCode", [mock.target]);
+        await ethers.provider.send("hardhat_setCode", [SYS_SETTINGS.SYS_CALL, code]);
         MockSysCall = await ethers.getContractAt("MockSysCall", SYS_SETTINGS.SYS_CALL, signers[0]);
+
+        snapshot = await networkHelpers.takeSnapshot();
+    });
+
+    afterEach(async function () {
+        await snapshot.restore();
     });
 
     describe("genesis", function () {
@@ -95,7 +101,7 @@ describe("Governance", function () {
         it("Should register a new candidate if all conditions are met", async function () {
             await expect(
                 Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             const candidates = await Governance.getCandidates();
             expect(candidates.length).to.equal(1);
@@ -120,11 +126,11 @@ describe("Governance", function () {
         it("Should remove a candidate if all conditions are met", async function () {
             await expect(
                 Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             await expect(
                 Governance.exitCandidate()
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             const candidates = await Governance.getCandidates();
             expect(candidates.length).to.equal(0);
@@ -133,13 +139,13 @@ describe("Governance", function () {
         it("Should decrease total votes if exited candidates received votes", async function () {
             await expect(
                 Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
             await expect(
                 Governance.exitCandidate()
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             expect(await Governance.totalVotes()).to.equal(0);
         });
@@ -147,7 +153,7 @@ describe("Governance", function () {
         it("Should emit an event when a candidate exits", async function () {
             await expect(
                 Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             await expect(
                 Governance.exitCandidate()
@@ -165,7 +171,7 @@ describe("Governance", function () {
         it("Should revert if the sender has not exited", async function () {
             await expect(
                 Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             await expect(
                 Governance.withdrawRegisterFee()
@@ -175,10 +181,10 @@ describe("Governance", function () {
         it("Should revert if the sender has not waited for 2 epochs", async function () {
             await expect(
                 Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
             await expect(
                 Governance.exitCandidate()
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             await expect(
                 Governance.withdrawRegisterFee()
@@ -188,25 +194,25 @@ describe("Governance", function () {
         it("Should transfer back register fee if all conditions are met", async function () {
             await expect(
                 Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
             await expect(
                 Governance.exitCandidate()
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             await networkHelpers.mine(2 * SYS_SETTINGS.EPOCH_DURATION);
 
             await expect(
                 await Governance.withdrawRegisterFee()
-            ).to.changeEtherBalance(provider, signers[0], SYS_SETTINGS.REGISTER_FEE * 50n / 100n);
+            ).to.changeEtherBalance(ethers, signers[0], SYS_SETTINGS.REGISTER_FEE * 50n / 100n);
         });
 
         it("Should emit an event when a candidate withdraw register fee", async function () {
             await expect(
                 Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
             await expect(
                 Governance.exitCandidate()
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             await networkHelpers.mine(2 * SYS_SETTINGS.EPOCH_DURATION);
 
@@ -229,13 +235,13 @@ describe("Governance", function () {
                 await Governance.connect(signers[i]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
                 await Governance.connect(signers[i]).vote(signers[i], { value: SYS_SETTINGS.VOTE_TARGET_AMOUNT });
             }
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await MockSysCall.call_onPersist(Governance);
 
             for (let i = 0; i < 4; i++) {
                 await expect(
                     Policy.connect(signers[i]).addBlackList(signers[0])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
 
             expect(await Governance.blacklistedCandidates()).to.equal(1);
@@ -259,19 +265,19 @@ describe("Governance", function () {
                 await Governance.connect(signers[i]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
                 await Governance.connect(signers[i]).vote(signers[i], { value: SYS_SETTINGS.VOTE_TARGET_AMOUNT });
             }
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await MockSysCall.call_onPersist(Governance);
 
             for (let i = 0; i < 4; i++) {
                 await expect(
                     Policy.connect(signers[i]).addBlackList(signers[0])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
 
             for (let i = 0; i < 4; i++) {
                 await expect(
                     Policy.connect(signers[i]).removeBlackList(signers[0])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
 
             expect(await Governance.blacklistedCandidates()).to.equal(0);
@@ -336,12 +342,12 @@ describe("Governance", function () {
         });
 
         it("Should allow SYS_CALL", async function () {
-            expect(await MockSysCall.call_onPersist(Governance)).not.to.be.reverted(ethers);
+            expect(await MockSysCall.call_onPersist(Governance)).not.to.be.revert(ethers);
         });
 
         it("Should update currentEpochStartHeight on Epoch change", async function () {
             expect(await Governance.currentEpochStartHeight()).to.equal(0);
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await expect(
                 MockSysCall.call_onPersist(Governance)
             ).emit(Governance, "Persist");
@@ -355,7 +361,7 @@ describe("Governance", function () {
             for (let i = 0; i < SYS_SETTINGS.CONSENSUS_SIZE; i++) {
                 await Governance.connect(signers[i]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
             }
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await MockSysCall.call_onPersist(Governance);
 
             expect(await Governance.getCurrentConsensus()).to.deep.equal(SYS_SETTINGS.STANDBY_VALIDATORS);
@@ -365,7 +371,7 @@ describe("Governance", function () {
             // Register only 1 candidate but vote
             await Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
             await Governance.vote(signers[0], { value: SYS_SETTINGS.VOTE_TARGET_AMOUNT });
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await MockSysCall.call_onPersist(Governance);
 
             expect(await Governance.getCurrentConsensus()).to.deep.equal(SYS_SETTINGS.STANDBY_VALIDATORS);
@@ -376,7 +382,7 @@ describe("Governance", function () {
                 await Governance.connect(signers[i]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
                 await Governance.connect(signers[i]).vote(signers[i], { value: SYS_SETTINGS.VOTE_TARGET_AMOUNT });
             }
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await MockSysCall.call_onPersist(Governance);
 
             expect(await Governance.getCurrentConsensus()).to.not.deep.equal(SYS_SETTINGS.STANDBY_VALIDATORS);
@@ -390,7 +396,7 @@ describe("Governance", function () {
             await tx.wait();
             await expect(
                 await MockSysCall.call_onPersist(Governance)
-            ).to.changeEtherBalance(provider, signers[0], 1000000000000000000n);
+            ).to.changeEtherBalance(ethers, signers[0], 1000000000000000000n);
         });
     });
 
@@ -415,7 +421,7 @@ describe("Governance", function () {
             // Vote to the first
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             // Vote to the second
             await expect(
@@ -427,7 +433,7 @@ describe("Governance", function () {
             await Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             expect(await Governance.receivedVotes(signers[0])).to.eq(SYS_SETTINGS.MIN_VOTE_AMOUNT);
             expect(await Governance.votedTo(signers[0])).to.eq(signers[0].address);
@@ -455,12 +461,12 @@ describe("Governance", function () {
 
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             const balanceBefore = await ethers.provider.getBalance(signers[0]);
             await expect(
                 Governance.revokeVote(SYS_SETTINGS.MIN_VOTE_AMOUNT)
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
             const balanceAfter = await ethers.provider.getBalance(signers[0]);
             expect(balanceAfter).to.gt(balanceBefore);
             expect(balanceAfter).to.lt(balanceBefore + SYS_SETTINGS.MIN_VOTE_AMOUNT);
@@ -470,10 +476,10 @@ describe("Governance", function () {
             await Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
             await expect(
                 Governance.revokeVote(SYS_SETTINGS.MIN_VOTE_AMOUNT)
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             expect(await Governance.receivedVotes(signers[0])).to.eq(0);
             expect(await Governance.votedTo(signers[0])).to.eq(ethers.ZeroAddress);
@@ -484,7 +490,7 @@ describe("Governance", function () {
             await Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
             await expect(
                 Governance.revokeVote(SYS_SETTINGS.MIN_VOTE_AMOUNT)
             ).emit(Governance, "Revoke");
@@ -502,7 +508,7 @@ describe("Governance", function () {
             await Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             await expect(
                 Governance.transferVote(signers[0])
@@ -513,7 +519,7 @@ describe("Governance", function () {
             await Governance.registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             await expect(
                 Governance.transferVote(signers[1])
@@ -525,11 +531,11 @@ describe("Governance", function () {
             await Governance.connect(signers[1]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             await expect(
                 Governance.transferVote(signers[1])
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             expect(await Governance.receivedVotes(signers[0])).to.eq(0);
             expect(await Governance.receivedVotes(signers[1])).to.eq(SYS_SETTINGS.MIN_VOTE_AMOUNT);
@@ -542,15 +548,15 @@ describe("Governance", function () {
             await Governance.connect(signers[1]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
             await expect(
                 Governance.exitCandidate()
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             expect(await Governance.totalVotes()).to.equal(0);
             await expect(
                 Governance.transferVote(signers[1])
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
             expect(await Governance.totalVotes()).to.equal(SYS_SETTINGS.MIN_VOTE_AMOUNT);
         });
 
@@ -559,7 +565,7 @@ describe("Governance", function () {
             await Governance.connect(signers[1]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
             await expect(
                 Governance.vote(signers[0], { value: SYS_SETTINGS.MIN_VOTE_AMOUNT })
-            ).not.to.be.reverted(ethers);
+            ).not.to.be.revert(ethers);
 
             await expect(
                 Governance.transferVote(signers[1])
@@ -580,7 +586,7 @@ describe("Governance", function () {
                 await Governance.connect(signers[i]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
                 await Governance.connect(signers[i]).vote(signers[i], { value: SYS_SETTINGS.VOTE_TARGET_AMOUNT });
             }
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await MockSysCall.call_onPersist(Governance);
 
             // Send GAS as governance reward and persist it
@@ -607,7 +613,7 @@ describe("Governance", function () {
             for (let i = 1; i < SYS_SETTINGS.CONSENSUS_SIZE; i++) {
                 await Governance.connect(signers[i]).vote(signers[i], { value: SYS_SETTINGS.VOTE_TARGET_AMOUNT });
             }
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await MockSysCall.call_onPersist(Governance);
 
             // Send GAS as governance reward and persist it
@@ -618,7 +624,7 @@ describe("Governance", function () {
             await tx.wait();
             await expect(
                 MockSysCall.call_onPersist(Governance)
-            ).to.be.not.reverted(ethers);
+            ).to.be.not.revert(ethers);
         });
 
         it("Should transfer back correct reward if all conditions are met", async function () {
@@ -627,7 +633,7 @@ describe("Governance", function () {
                 await Governance.connect(signers[i]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
                 await Governance.connect(signers[i]).vote(signers[i], { value: SYS_SETTINGS.VOTE_TARGET_AMOUNT });
             }
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await MockSysCall.call_onPersist(Governance);
 
             // Send GAS as governance reward and persist it
@@ -640,7 +646,7 @@ describe("Governance", function () {
 
             await expect(
                 await Governance.claimReward()
-            ).to.changeEtherBalance(provider, signers[0], 499999999999998000n);
+            ).to.changeEtherBalance(ethers, signers[0], 499999999999998000n);
         });
 
         it("Should emit an event when a voter claims", async function () {
@@ -649,7 +655,7 @@ describe("Governance", function () {
                 await Governance.connect(signers[i]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
                 await Governance.connect(signers[i]).vote(signers[i], { value: SYS_SETTINGS.VOTE_TARGET_AMOUNT });
             }
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await MockSysCall.call_onPersist(Governance);
 
             // Send GAS as governance reward and persist it
@@ -673,7 +679,7 @@ describe("Governance", function () {
                 await Governance.connect(signers[i]).registerCandidate(500, PUBKEY, { value: SYS_SETTINGS.REGISTER_FEE });
                 await Governance.connect(signers[i]).vote(signers[i], { value: SYS_SETTINGS.VOTE_TARGET_AMOUNT });
             }
-            await networkHelpers.mine(SYS_SETTINGS.EPOCH_DURATION);
+            await networkHelpers.mineUpTo(SYS_SETTINGS.EPOCH_DURATION);
             await MockSysCall.call_onPersist(Governance);
 
             // Send GAS as governance reward and persist it

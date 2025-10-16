@@ -37,9 +37,6 @@ export const allocGenesis = async () => {
     // Signers
     const signers = await ethers.getSigners();
 
-    // Reset blockchain state
-    await ethers.provider.send("hardhat_reset");
-
     // Deploy Governance contract
     const governance_deploy = await ethers.deployContract("Governance");
     const reward_deploy = await ethers.deployContract("GovReward");
