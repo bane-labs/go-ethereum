@@ -5,10 +5,9 @@ import {Errors} from "./libraries/Errors.sol";
 import {Bytes} from "./libraries/Bytes.sol";
 import {IGovReward} from "./interfaces/IGovReward.sol";
 import {IGovernance} from "./interfaces/IGovernance.sol";
-import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
+import {GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 
 contract GovReward is IGovReward, GovProxyUpgradeable {
-    address public constant SELF = 0x1212100000000000000000000000000000000003;
     // governance contact
     address public constant GOV = 0x1212000000000000000000000000000000000001;
 
@@ -34,26 +33,6 @@ contract GovReward is IGovReward, GovProxyUpgradeable {
     modifier onlyGov() {
         if (msg.sender != GOV) revert Errors.NotGovernance();
         _;
-    }
-
-    // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
-    // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
-    function _checkProxy() internal view virtual override {
-        if (
-            address(this) == SELF || // Must be called through delegatecall
-            ERC1967Utils.getImplementation() != SELF // Must be called through an active proxy
-        ) {
-            revert UUPSUnauthorizedCallContext();
-        }
-    }
-
-    // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
-    // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
-    function _checkNotDelegated() internal view virtual override {
-        if (address(this) != SELF) {
-            // Must not be called through delegatecall
-            revert UUPSUnauthorizedCallContext();
-        }
     }
 
     function getMiners() external view override returns (address[] memory) {
