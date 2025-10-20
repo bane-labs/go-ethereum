@@ -614,7 +614,7 @@ func (c *DBFT) getTxCb(h common.Hash) dbft.Transaction[common.Hash] {
 	// expects a pure nil.
 	if tx != nil {
 		return &Transaction{
-			Tx: tx,
+			Tx: tx.WithoutBlobTxSidecar(),
 		}
 	}
 
