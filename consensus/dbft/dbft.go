@@ -926,13 +926,19 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	}
 	ethBlock := dbftBlock.ToEthBlock()
 
-	errs := c.staticPool.Add(dbftBlock.transactions, false)
+	// Only take legacy pool transactions.
+	legacyTxs := make(types.Transactions, 0, len(dbftBlock.transactions))
+	for _, tx := range dbftBlock.transactions {
+		if tx.Type() != types.BlobTxType {
+			legacyTxs = append(legacyTxs, tx)
+		}
+	}
+	errs := c.staticPool.Add(legacyTxs, false)
 	c.staticPool.ResetStatic()
 	for i, err := range errs {
 		if err != nil {
 			log.Warn("proposed PreBlock has invalid transaction",
-				"index", i,
-				"hash", dbftBlock.transactions[i].Hash(),
+				"hash", legacyTxs[i].Hash(),
 				"error", err,
 			)
 			return false
@@ -1144,15 +1150,17 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 						"envelope index", i,
 						"reason", reason)
 				}
-				errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false)
-				if errs[0] != nil {
-					log.Info("Falling back to original set of transactions",
-						"envelope hash", pre.transactions[i].Hash(),
-						"envelope index", i,
-						"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
-					txx = pre.transactions
-					hasDecryptedTxs = false
-					return false
+				if pre.transactions[i].Type() != types.BlobTxType {
+					errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false)
+					if errs[0] != nil {
+						log.Info("Falling back to original set of transactions",
+							"envelope hash", pre.transactions[i].Hash(),
+							"envelope index", i,
+							"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
+						txx = pre.transactions
+						hasDecryptedTxs = false
+						return false
+					}
 				}
 				txx[i] = pre.transactions[i]
 				if incrementJ {
@@ -1295,6 +1303,11 @@ func (c *DBFT) initStaticPool(parent *types.Header, state *state.StateDB) error 
 
 // validateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
 func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transaction, envelope *types.Transaction, envelopeReceipt *types.Receipt) error {
+	// Make sure the transaction type is supported by legacy tx pool
+	if decryptedTx.Type() == types.BlobTxType {
+		return fmt.Errorf("decryptedTx has unsupported type: %v", decryptedTx.Type())
+	}
+
 	// Make sure the transaction is signed properly and has the same sender and nonce with envelope
 	if decryptedTx.Nonce() != envelope.Nonce() {
 		return fmt.Errorf("decryptedTx nonce mismatch: decryptedNonce %v, envelopeNonce %v", decryptedTx.Nonce(), envelope.Nonce())
