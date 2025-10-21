@@ -49,6 +49,23 @@ func TestBlockchain(t *testing.T) {
 	// using 4.6 TGas
 	bt.skipLoad(`.*randomStatetest94.json.*`)
 
+	// After the merge we would accept side chains as canonical even if they have lower td
+	bt.skipLoad(`.*bcMultiChainTest/ChainAtoChainB_difficultyB.json`)
+	bt.skipLoad(`.*bcMultiChainTest/CallContractFromNotBestBlock.json`)
+	bt.skipLoad(`.*bcTotalDifficultyTest/uncleBlockAtBlock3afterBlock4.json`)
+	bt.skipLoad(`.*bcTotalDifficultyTest/lotsOfBranchesOverrideAtTheMiddle.json`)
+	bt.skipLoad(`.*bcTotalDifficultyTest/sideChainWithMoreTransactions.json`)
+	bt.skipLoad(`.*bcForkStressTest/ForkStressTest.json`)
+	bt.skipLoad(`.*bcMultiChainTest/lotsOfLeafs.json`)
+	bt.skipLoad(`.*bcFrontierToHomestead/blockChainFrontierWithLargerTDvsHomesteadBlockchain.json`)
+	bt.skipLoad(`.*bcFrontierToHomestead/blockChainFrontierWithLargerTDvsHomesteadBlockchain2.json`)
+
+	// With chain history removal, TDs become unavailable, this transition tests based on TTD are unrunnable
+	bt.skipLoad(`.*bcArrowGlacierToParis/powToPosBlockRejection.json`)
+
+	// This directory contains no test.
+	bt.skipLoad(`.*\.meta/.*`)
+
 	bt.walk(t, blockTestDir, func(t *testing.T, name string, test *BlockTest) {
 		execBlockTest(t, bt, test)
 	})

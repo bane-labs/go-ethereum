@@ -118,11 +118,3 @@ type Engine interface {
 	// Close terminates any background threads maintained by the consensus engine.
 	Close() error
 }
-
-// PoS consensus engine.
-type PoS interface {
-	Engine
-
-	// GetFinalizedHeader retrieves the finalized header for a given header.
-	GetFinalizedHeader(chain ChainHeaderReader, header *types.Header) *types.Header
-}

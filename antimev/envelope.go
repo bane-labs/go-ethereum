@@ -51,7 +51,7 @@ var (
 // IsEnvelope checks whether a transaction is an Envelope transaction. The criteria
 // include receiver's address, data prefix and data length check.
 func IsEnvelope(tx *types.Transaction) bool {
-	return IsEnvelopeToAddress(tx.To()) && IsEnvelopeData(tx.Data())
+	return (tx.Type() != types.BlobTxType && tx.Type() != types.SetCodeTxType) && IsEnvelopeToAddress(tx.To()) && IsEnvelopeData(tx.Data())
 }
 
 // IsEnvelopeToAddress checks whether an address pointer has the expected value for

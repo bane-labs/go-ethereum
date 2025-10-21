@@ -71,6 +71,14 @@ type txPool interface {
 	// tx hash.
 	Get(hash common.Hash) *types.Transaction
 
+	// GetRLP retrieves the RLP-encoded transaction from local txpool
+	// with given tx hash.
+	GetRLP(hash common.Hash) []byte
+
+	// GetMetadata returns the transaction type and transaction size with the
+	// given transaction hash.
+	GetMetadata(hash common.Hash) *txpool.TxMetadata
+
 	// Add should add the given transactions to the pool.
 	Add(txs []*types.Transaction, local bool, sync bool) []error
 
@@ -192,6 +200,16 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	// Construct the downloader (long sync)
 	h.downloader = downloader.New(config.Database, h.eventMux, h.chain, h.removePeer, h.enableSyncedFeatures)
+	if ttd := h.chain.Config().TerminalTotalDifficulty; ttd != nil {
+		head := h.chain.CurrentBlock()
+		if td := h.chain.GetTd(head.Hash(), head.Number.Uint64()); td.Cmp(ttd) >= 0 {
+			log.Info("Chain post-TTD, sync via beacon client")
+		} else {
+			log.Warn("Chain pre-merge, sync via PoW (ensure beacon client is ready)")
+		}
+	} else {
+		log.Error("Chain configured without TTD")
+	}
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {
 		// Reject all the PoS style headers in the first place. No matter
@@ -431,7 +449,7 @@ func (h *handler) runSnapExtension(peer *snap.Peer, handler snap.Handler) error 
 	defer h.decHandlers()
 
 	if err := h.peers.registerSnapExtension(peer); err != nil {
-		if metrics.Enabled {
+		if metrics.Enabled() {
 			if peer.Inbound() {
 				snap.IngressRegistrationErrorMeter.Mark(1)
 			} else {
@@ -465,7 +483,7 @@ func (h *handler) unregisterPeer(id string) {
 	// Abort if the peer does not exist
 	peer := h.peers.peer(id)
 	if peer == nil {
-		logger.Error("Ethereum peer removal failed", "err", errPeerNotRegistered)
+		logger.Warn("Ethereum peer removal failed", "err", errPeerNotRegistered)
 		return
 	}
 	// Remove the `eth` peer if it exists
@@ -593,7 +611,7 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 	total := new(big.Int).Exp(direct, big.NewInt(2), nil) // Stabilise total peer count a bit based on sqrt peers
 
 	var (
-		signer = types.LatestSignerForChainID(h.chain.Config().ChainID) // Don't care about chain status, we just need *a* sender
+		signer = types.LatestSigner(h.chain.Config()) // Don't care about chain status, we just need *a* sender
 		hasher = crypto.NewKeccakState()
 		hash   = make([]byte, 32)
 	)

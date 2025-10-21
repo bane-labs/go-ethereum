@@ -15,7 +15,7 @@ published at https://github.com/bane-labs/go-ethereum/releases.
 
 For prerequisites and detailed build instructions please read the [Installation Instructions](https://docs.banelabs.org/development/running-a-node-in-testnet).
 
-Building `geth` requires both a Go (version 1.22 or later) and a C compiler. You can install
+Building `geth` requires both a Go (version 1.23 or later) and a C compiler. You can install
 them using your favourite package manager. Once the dependencies are installed, run
 
 ```shell
@@ -303,7 +303,7 @@ HTTP based JSON-RPC API options:
   * `--http.addr` HTTP-RPC server listening interface (default: `localhost`)
   * `--http.port` HTTP-RPC server listening port (default: `8545`)
   * `--http.api` API's offered over the HTTP-RPC interface (default: `eth,net,web3`)
-  * `--http.corsdomain` Comma separated list of domains from which to accept cross origin requests (browser enforced)
+  * `--http.corsdomain` Comma separated list of domains from which to accept cross-origin requests (browser enforced)
   * `--ws` Enable the WS-RPC server
   * `--ws.addr` WS-RPC server listening interface (default: `localhost`)
   * `--ws.port` WS-RPC server listening port (default: `8546`)

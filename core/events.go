@@ -32,9 +32,6 @@ type NewMinedBlockEvent struct{ Block *types.Block }
 // RemovedLogsEvent is posted when a reorg happens
 type RemovedLogsEvent struct{ Logs []*types.Log }
 
-// FinalizedHeaderEvent is posted when a finalized header is reached.
-type FinalizedHeaderEvent struct{ Header *types.Header }
-
 type ChainEvent struct {
 	Header *types.Header
 }

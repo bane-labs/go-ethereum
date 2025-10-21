@@ -55,7 +55,7 @@ type Config struct {
 
 // DefaultConfig contains default settings for miner.
 var DefaultConfig = Config{
-	GasCeil:  30_000_000,
+	GasCeil:  36_000_000,
 	GasPrice: big.NewInt(params.GWei),
 
 	// The default recommit time is chosen as two seconds since
@@ -69,7 +69,6 @@ var DefaultConfig = Config{
 // engine and gathering the sealing result.
 type Miner struct {
 	mux     *event.TypeMux
-	eth     Backend
 	engine  consensus.Engine
 	exitCh  chan struct{}
 	startCh chan struct{}
@@ -79,15 +78,14 @@ type Miner struct {
 	wg sync.WaitGroup
 }
 
-func New(eth Backend, config *Config, chainConfig *params.ChainConfig, mux *event.TypeMux, engine consensus.Engine) *Miner {
+func New(eth Backend, config *Config, mux *event.TypeMux, engine consensus.Engine) *Miner {
 	miner := &Miner{
 		mux:     mux,
-		eth:     eth,
 		engine:  engine,
 		exitCh:  make(chan struct{}),
 		startCh: make(chan struct{}),
 		stopCh:  make(chan struct{}),
-		worker:  newWorker(config, chainConfig, engine, eth, mux, true),
+		worker:  newWorker(config, engine, eth, mux, true),
 	}
 	miner.wg.Add(1)
 	go miner.update()
@@ -199,16 +197,17 @@ func (miner *Miner) SetExtra(extra []byte) error {
 	return nil
 }
 
-func (miner *Miner) SetGasTip(tip *big.Int) error {
-	miner.worker.setGasTip(tip)
-	return nil
-}
-
 // SetRecommitInterval sets the interval for sealing work resubmitting.
 func (miner *Miner) SetRecommitInterval(interval time.Duration) {
 	miner.worker.setRecommitInterval(interval)
 }
 
+// SetPrioAddresses sets a list of addresses to prioritize for transaction inclusion.
+func (miner *Miner) SetPrioAddresses(prio []common.Address) {
+	miner.worker.setPrioAddresses(prio)
+}
+
+// SetEtherbase sets the etherbase address for the miner.
 func (miner *Miner) SetEtherbase(addr common.Address) {
 	miner.worker.setEtherbase(addr)
 }
@@ -219,6 +218,12 @@ func (miner *Miner) SetGasCeil(ceil uint64) {
 	miner.worker.setGasCeil(ceil)
 }
 
+// SetGasTip sets the minimum gas tip for inclusion.
+func (miner *Miner) SetGasTip(tip *big.Int) error {
+	miner.worker.setGasTip(tip)
+	return nil
+}
+
 // SubscribePendingLogs starts delivering logs from pending transactions
 // to the given channel.
 func (miner *Miner) SubscribePendingLogs(ch chan<- []*types.Log) event.Subscription {
@@ -227,5 +232,5 @@ func (miner *Miner) SubscribePendingLogs(ch chan<- []*types.Log) event.Subscript
 
 // BuildPayload builds the payload according to the provided parameters.
 func (miner *Miner) BuildPayload(args *BuildPayloadArgs, witness bool) (*Payload, error) {
-	return miner.worker.buildPayload(args, witness)
+	return miner.worker.buildPayload(args)
 }

@@ -37,6 +37,7 @@ profile.cov
 
 # IdeaIDE
 .idea
+*.iml
 
 # VS Code
 .vscode
@@ -58,3 +59,16 @@ node_modules
 /contracts/coverage.json
 /contracts/ignition
 /contracts/package-lock.json
+
+# binaries
+cmd/abidump/abidump
+cmd/abigen/abigen
+cmd/blsync/blsync
+cmd/clef/clef
+cmd/devp2p/devp2p
+cmd/era/era
+cmd/ethkey/ethkey
+cmd/evm/evm
+cmd/geth/geth
+cmd/rlpdump/rlpdump
+cmd/workload/workload

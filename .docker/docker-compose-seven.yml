@@ -20,6 +20,9 @@ services:
       - ../privnet:/privnet
     ports:
       - 30304:30304
+    networks:
+      default:
+        ipv4_address: 172.200.0.1
   miner0:
     image: neox_node
     container_name: miner0
@@ -32,7 +35,7 @@ services:
         geth init --datadir ${SEVEN_NODE0_DIR} ${SEVEN_DIR}/genesis_privnet.json
         geth --datadir ${SEVEN_NODE0_DIR} \
         --port 30305 \
-        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@bootnode:0?discport=30304" \
+        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@172.200.0.1:0?discport=30304" \
         --networkid "$$(cat ${SEVEN_DIR}/networkid.txt)" \
         --unlock 0x"$$(cat ${SEVEN_NODE0_DIR}/node_address.txt)" \
         --authrpc.port 8551 \
@@ -73,7 +76,7 @@ services:
         geth init --datadir ${SEVEN_NODE1_DIR} ${SEVEN_DIR}/genesis_privnet.json
         geth --datadir ${SEVEN_NODE1_DIR} \
         --port 30306 \
-        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@bootnode:0?discport=30304" \
+        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@172.200.0.1:0?discport=30304" \
         --networkid "$$(cat ${SEVEN_DIR}/networkid.txt)" \
         --unlock 0x"$$(cat ${SEVEN_NODE1_DIR}/node_address.txt)" \
         --authrpc.port 8552 \
@@ -114,7 +117,7 @@ services:
         geth init --datadir ${SEVEN_NODE2_DIR} ${SEVEN_DIR}/genesis_privnet.json
         geth --datadir ${SEVEN_NODE2_DIR} \
         --port 30307 \
-        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@bootnode:0?discport=30304" \
+        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@172.200.0.1:0?discport=30304" \
         --networkid "$$(cat ${SEVEN_DIR}/networkid.txt)" \
         --unlock 0x"$$(cat ${SEVEN_NODE2_DIR}/node_address.txt)" \
         --authrpc.port 8553 \
@@ -155,7 +158,7 @@ services:
         geth init --datadir ${SEVEN_NODE3_DIR} ${SEVEN_DIR}/genesis_privnet.json
         geth --datadir ${SEVEN_NODE3_DIR} \
         --port 30308 \
-        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@bootnode:0?discport=30304" \
+        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@172.200.0.1:0?discport=30304" \
         --networkid "$$(cat ${SEVEN_DIR}/networkid.txt)" \
         --unlock 0x"$$(cat ${SEVEN_NODE3_DIR}/node_address.txt)" \
         --authrpc.port 8554 \
@@ -196,7 +199,7 @@ services:
         geth init --datadir ${SEVEN_NODE4_DIR} ${SEVEN_DIR}/genesis_privnet.json
         geth --datadir ${SEVEN_NODE4_DIR} \
         --port 30309 \
-        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@bootnode:0?discport=30304" \
+        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@172.200.0.1:0?discport=30304" \
         --networkid "$$(cat ${SEVEN_DIR}/networkid.txt)" \
         --unlock 0x"$$(cat ${SEVEN_NODE4_DIR}/node_address.txt)" \
         --authrpc.port 8555 \
@@ -237,7 +240,7 @@ services:
         geth init --datadir ${SEVEN_NODE5_DIR} ${SEVEN_DIR}/genesis_privnet.json
         geth --datadir ${SEVEN_NODE5_DIR} \
         --port 30310 \
-        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@bootnode:0?discport=30304" \
+        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@172.200.0.1:0?discport=30304" \
         --networkid "$$(cat ${SEVEN_DIR}/networkid.txt)" \
         --unlock 0x"$$(cat ${SEVEN_NODE5_DIR}/node_address.txt)" \
         --authrpc.port 8556 \
@@ -278,7 +281,7 @@ services:
         geth init --datadir ${SEVEN_NODE6_DIR} ${SEVEN_DIR}/genesis_privnet.json
         geth --datadir ${SEVEN_NODE6_DIR} \
         --port 30311 \
-        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@bootnode:0?discport=30304" \
+        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@172.200.0.1:0?discport=30304" \
         --networkid "$$(cat ${SEVEN_DIR}/networkid.txt)" \
         --unlock 0x"$$(cat ${SEVEN_NODE6_DIR}/node_address.txt)" \
         --authrpc.port 8557 \
@@ -319,7 +322,7 @@ services:
         geth init --datadir ${SEVEN_NODE7_DIR} ${SEVEN_DIR}/genesis_privnet.json
         geth --datadir ${SEVEN_NODE7_DIR} \
         --port 30312 \
-        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@bootnode:0?discport=30304" \
+        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@172.200.0.1:0?discport=30304" \
         --networkid "$$(cat ${SEVEN_DIR}/networkid.txt)" \
         --unlock 0x"$$(cat ${SEVEN_NODE7_DIR}/node_address.txt)" \
         --authrpc.port 8558 \
@@ -360,7 +363,7 @@ services:
         geth init --datadir ${SEVEN_NODE8_DIR} ${SEVEN_DIR}/genesis_privnet.json
         geth --datadir ${SEVEN_NODE8_DIR} \
         --port 30313 \
-        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@bootnode:0?discport=30304" \
+        --bootnodes "enode://$$(cat ${SEVEN_DIR}/bootnode/bootnode_address.txt)@172.200.0.1:0?discport=30304" \
         --networkid "$$(cat ${SEVEN_DIR}/networkid.txt)" \
         --unlock 0x"$$(cat ${SEVEN_NODE8_DIR}/node_address.txt)" \
         --authrpc.port 8559 \

@@ -3,7 +3,6 @@ package legacypool
 import (
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -105,10 +104,9 @@ type CachePool struct {
 	currentHead  atomic.Pointer[types.Header] // Current head of the blockchain
 	currentState *state.StateDB               // Current state in the blockchain head
 
-	reserve txpool.AddressReserver       // Address reserver to ensure exclusivity across subpools
-	cached  map[common.Address]*list     // All currently cached transactions
-	beats   map[common.Address]time.Time // Last heartbeat from each known account
-	all     *lookup                      // All transactions to allow lookups
+	cached map[common.Address]*list     // All currently cached transactions
+	beats  map[common.Address]time.Time // Last heartbeat from each known account
+	all    *lookup                      // All transactions to allow lookups
 
 	reqResetCh      chan *txpoolResetRequest
 	reorgDoneCh     chan chan struct{}
@@ -175,10 +173,7 @@ func (pool *CachePool) FilterAdd(tx *types.Transaction, local bool) bool {
 // Init sets the gas price needed to keep a transaction in the pool and the chain
 // head to allow balance / nonce checks. The internal goroutines will be spun up
 // and the pool deemed operational afterwards.
-func (pool *CachePool) Init(gasTip uint64, head *types.Header, reserve txpool.AddressReserver) error {
-	// No need for address reserver processing.
-	pool.reserve = func(addr common.Address, reserve bool) error { return nil }
-
+func (pool *CachePool) Init(gasTip uint64, head *types.Header, _ txpool.Reserver) error {
 	// Set the basic pool parameters
 	pool.gasTip.Store(uint256.NewInt(gasTip))
 
@@ -361,18 +356,11 @@ func (pool *CachePool) Pending(filter txpool.PendingFilter) map[common.Address][
 	return make(map[common.Address][]*txpool.LazyTransaction)
 }
 
-// Locals retrieves the accounts currently considered local by the pool.
-//
-// There is no notion of local accounts in the cache pool.
-func (pool *CachePool) Locals() []common.Address {
-	return []common.Address{}
-}
-
-// validateTxBasics checks whether a transaction is valid according to the consensus
+// ValidateTxBasics checks whether a transaction is valid according to the consensus
 // rules, but does not check state-dependent validation such as sufficient balance.
 // This check is meant as an early check which only needs to be performed once,
 // and does not require the pool mutex to be held.
-func (pool *CachePool) validateTxBasics(tx *types.Transaction, local bool) error {
+func (pool *CachePool) ValidateTxBasics(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptions{
 		Config: pool.chainconfig,
 		Accept: 0 |
@@ -382,13 +370,7 @@ func (pool *CachePool) validateTxBasics(tx *types.Transaction, local bool) error
 		MaxSize: txMaxSize,
 		MinTip:  pool.gasTip.Load().ToBig(),
 	}
-	if local {
-		opts.MinTip = new(big.Int)
-	}
-	if err := txpool.ValidateTransaction(tx, pool.currentHead.Load(), pool.signer, opts); err != nil {
-		return err
-	}
-	return nil
+	return txpool.ValidateTransaction(tx, pool.currentHead.Load(), pool.signer, opts)
 }
 
 // validateTx checks whether a transaction is valid according to the consensus
@@ -397,14 +379,8 @@ func (pool *CachePool) validateTx(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptionsWithState{
 		State: pool.currentState,
 
-		FirstNonceGap: nil, // Pool allows arbitrary arrival order, don't invalidate nonce gaps
-		UsedAndLeftSlots: func(addr common.Address) (int, int) {
-			var have int
-			if list := pool.cached[addr]; list != nil {
-				have += list.Len()
-			}
-			return have, math.MaxInt
-		},
+		FirstNonceGap:    nil, // Pool allows arbitrary arrival order, don't invalidate nonce gaps
+		UsedAndLeftSlots: nil, // Pool has own mechanism to limit the number of transactions
 		ExistingExpenditure: func(addr common.Address) *big.Int {
 			if list := pool.cached[addr]; list != nil {
 				return list.totalcost.ToBig()
@@ -447,29 +423,6 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 	// already validated by this point
 	from, _ := types.Sender(pool.signer, tx)
 
-	// If the address is not yet known, request exclusivity to track the account
-	// only by this subpool until all transactions are evicted
-	var (
-		_, hasCached = pool.cached[from]
-	)
-	if !hasCached {
-		if err := pool.reserve(from, true); err != nil {
-			return false, err
-		}
-		defer func() {
-			// If the transaction is rejected by some post-validation check, remove
-			// the lock on the reservation set.
-			//
-			// Note, `err` here is the named error return, which will be initialized
-			// by a return statement before running deferred methods. Take care with
-			// removing or subscoping err as it will break this clause.
-			//
-			// This error "ErrTxPoolCached" indicates successful caching, so it needs to be excluded.
-			if err != nil && !errors.Is(err, ErrTxPoolCached) {
-				pool.reserve(from, false)
-			}
-		}()
-	}
 	// If the cache pool is full, discard underpriced transactions
 	if uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots {
 		// We're about to replace a transaction. The reorg does a more thorough
@@ -508,7 +461,7 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 		// Nothing was replaced, bump the queued counter
 		cachedGauge.Inc(1)
 	}
-	pool.all.Add(tx, true)
+	pool.all.Add(tx)
 	log.Trace("Pooled new executable cached transaction", "hash", hash, "from", from, "to", tx.To())
 
 	// Successful promotion, bump the heartbeat
@@ -519,27 +472,11 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 	return true, err
 }
 
-// addLocals enqueues a batch of transactions into the pool if they are valid, marking the
-// senders as local ones, ensuring they go around the local pricing constraints.
-//
-// This method is used to add transactions from the RPC API and performs synchronous pool
-// reorganization and event propagation.
-func (pool *CachePool) addLocals(txs []*types.Transaction) []error {
-	return pool.Add(txs, true, true)
-}
-
-// addLocal enqueues a single local transaction into the pool if it is valid. This is
-// a convenience wrapper around addLocals.
-func (pool *CachePool) addLocal(tx *types.Transaction) error {
-	return pool.addLocals([]*types.Transaction{tx})[0]
-}
-
-// Add enqueues a batch of transactions into the pool if they are valid. Depending
-// on the local flag, full pricing constraints will or will not be applied.
+// Add enqueues a batch of transactions into the pool if they are valid.
 //
 // If sync is set, the method will block until all internal maintenance related
 // to the add is finished. Only use this during tests for determinism!
-func (pool *CachePool) Add(txs []*types.Transaction, local, sync bool) []error {
+func (pool *CachePool) Add(txs []*types.Transaction, sync bool) []error {
 	// Filter out known ones without obtaining the pool lock or recovering signatures
 	var (
 		errs = make([]error, len(txs))
@@ -555,7 +492,7 @@ func (pool *CachePool) Add(txs []*types.Transaction, local, sync bool) []error {
 		// Exclude transactions with basic errors, e.g invalid signatures and
 		// insufficient intrinsic gas as soon as possible and cache senders
 		// in transactions before obtaining lock
-		if err := pool.validateTxBasics(tx, local); err != nil {
+		if err := pool.ValidateTxBasics(tx); err != nil {
 			errs[i] = err
 			log.Trace("Discarding invalid transaction", "hash", tx.Hash(), "err", err)
 			invalidCachedTxMeter.Mark(1)
@@ -611,6 +548,21 @@ func (pool *CachePool) Get(hash common.Hash) *types.Transaction {
 	return nil
 }
 
+// GetRLP returns a RLP-encoded transaction if it is contained in the pool.
+//
+// For the cache pool, this method will return nothing for now.
+func (pool *CachePool) GetRLP(hash common.Hash) []byte {
+	return nil
+}
+
+// GetMetadata returns the transaction type and transaction size with the
+// given transaction hash.
+//
+// For the cache pool, this method will return nothing for now.
+func (pool *CachePool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
+	return nil
+}
+
 // GetBlobs is not supported by the cache pool, it is just here to
 // implement the txpool.SubPool interface.
 func (pool *CachePool) GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg4844.Proof) {
@@ -641,19 +593,6 @@ func (pool *CachePool) removeTx(hash common.Hash, outofbound bool, unreserve boo
 	}
 	addr, _ := types.Sender(pool.signer, tx) // already validated during insertion
 
-	// If after deletion there are no more transactions belonging to this account,
-	// relinquish the address reservation. It's a bit convoluted do this, via a
-	// defer, but it's safer vs. the many return pathways.
-	if unreserve {
-		defer func() {
-			var (
-				_, hasCached = pool.cached[addr]
-			)
-			if !hasCached {
-				pool.reserve(addr, false)
-			}
-		}()
-	}
 	// Remove it from the list of known transactions
 	pool.all.Remove(hash)
 	// Remove the transaction from the cached lists and reset the account nonce
@@ -888,7 +827,6 @@ func (pool *CachePool) demoteUnexecutables() {
 		if list.Empty() {
 			delete(pool.cached, addr)
 			delete(pool.beats, addr)
-			pool.reserve(addr, false)
 		}
 	}
 }

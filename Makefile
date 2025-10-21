@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth android ios evm all test clean privnet_nodes_stop privnet_bootnode_stop privnet_stop privnet_clean privnet_start privnet_start_four privnet_start_seven
+.PHONY: geth all test lint fmt clean devtools help privnet_nodes_stop privnet_bootnode_stop privnet_stop privnet_clean privnet_start privnet_start_four privnet_start_seven
 
 GETHBIN = ./build/bin
 GO ?= latest
@@ -86,7 +86,7 @@ define run_bootnode
 endef
 
 define run_miner_node_with_zk_dkg
-	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)" --antimev.password=$(1)/$(7)/password.txt --dkg.one-msg-r1cs=$(1)/r1cs/one_message.ccs --dkg.two-msg-r1cs=$(1)/r1cs/two_message.ccs --dkg.seven-msg-r1cs=$(1)/r1cs/seven_message.ccs --dkg.one-msg-pk=$(1)/provingkey/one_message.pk --dkg.two-msg-pk=$(1)/provingkey/two_message.pk --dkg.seven-msg-pk=$(1)/provingkey/seven_message.pk)
+	$(call run_node,$(1),$(2),$(3),$(4),$(5),$(6),--mine --miner.etherbase="0x$$(cat $(1)/$(7)/node_address.txt)" --antimev.password=$(1)/$(7)/password.txt --dkg.one-msg-r1cs=$(1)/r1cs/R1CS_1 --dkg.two-msg-r1cs=$(1)/r1cs/R1CS_2 --dkg.seven-msg-r1cs=$(1)/r1cs/R1CS_7 --dkg.one-msg-pk=$(1)/provingkey/PK_1 --dkg.two-msg-pk=$(1)/provingkey/PK_2 --dkg.seven-msg-pk=$(1)/provingkey/PK_7)
 endef
 
 define run_miner_node
@@ -120,25 +120,29 @@ define init_node
     @$(GETHBIN)/geth init --datadir $(1)/$(2) $(1)/$(GENESIS_WORK_JSON) > $(1)/$(2)/geth_init.log 2>&1
 endef
 
-#? geth: Build geth
+#? geth: Build geth.
 geth:
 	$(GORUN) build/ci.go install ./cmd/geth
 	@echo "Done building."
 	@echo "Run \"$(GETHBIN)/geth\" to launch geth."
 
-#? all: Build all packages and executables
+#? all: Build all packages and executables.
 all:
 	$(GORUN) build/ci.go install
 
-#? test: Run the tests
+#? test: Run the tests.
 test: all
 	$(GORUN) build/ci.go test
 
-#? lint: Run certain pre-selected linters
+#? lint: Run certain pre-selected linters.
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
 
-#? clean: Clean go cache, built executables, and the auto generated folder
+#? fmt: Ensure consistent code formatting.
+fmt:
+	gofmt -s -w $(shell find . -name "*.go")
+
+#? clean: Clean go cache, built executables, and the auto generated folder.
 clean:
 	go clean -cache
 	rm -fr build/_workspace/pkg/ $(GETHBIN)/*
@@ -155,8 +159,16 @@ devtools:
 	@type "solc" 2> /dev/null || echo 'Please install solc'
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'
 
-# Privnet targets
+#? help: Get more info on make commands.
+help: Makefile
+	@echo ''
+	@echo 'Usage:'
+	@echo '  make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@sed -n 's/^#?//p' $< | column -t -s ':' |  sort | sed -e 's/^/ /'
 
+# Privnet targets
 privnet_nodes_stop:
 	@echo "Killing nodes processes"
 	@killall -w -v -INT geth || :
@@ -347,9 +359,3 @@ docker_privnet_stop_seven:
 
 docker_clean_node_img:
 	docker rmi neox_node
-
-#? help: Get more info on make commands.
-help: Makefile
-	@echo " Choose a command run in go-ethereum:"
-	@sed -n 's/^#?//p' $< | column -t -s ':' |  sort | sed -e 's/^/ /'
-.PHONY: help

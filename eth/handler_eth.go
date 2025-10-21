@@ -65,7 +65,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		return h.handleBlockAnnounces(peer, hashes, numbers)
 
 	case *eth.NewBlockPacket:
-		return h.handleBlockBroadcast(peer, packet.Block, packet.TD)
+		return h.handleBlockBroadcast(peer, packet)
 
 	case *eth.NewPooledTransactionHashesPacket:
 		return h.txFetcher.Notify(peer.ID(), packet.Types, packet.Sizes, packet.Hashes)
@@ -79,6 +79,19 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		return h.txFetcher.Enqueue(peer.ID(), *packet, false)
 
 	case *eth.PooledTransactionsResponse:
+		// If we receive any blob transactions missing sidecars, or with
+		// sidecars that don't correspond to the versioned hashes reported
+		// in the header, disconnect from the sending peer.
+		for _, tx := range *packet {
+			if tx.Type() == types.BlobTxType {
+				if tx.BlobTxSidecar() == nil {
+					return errors.New("received sidecar-less blob transaction")
+				}
+				if err := tx.BlobTxSidecar().ValidateBlobCommitmentHashes(tx.BlobHashes()); err != nil {
+					return err
+				}
+			}
+		}
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
 
 	default:
@@ -108,7 +121,10 @@ func (h *ethHandler) handleBlockAnnounces(peer *eth.Peer, hashes []common.Hash, 
 
 // handleBlockBroadcast is invoked from a peer's message handler when it transmits a
 // block broadcast for the local node to process.
-func (h *ethHandler) handleBlockBroadcast(peer *eth.Peer, block *types.Block, td *big.Int) error {
+func (h *ethHandler) handleBlockBroadcast(peer *eth.Peer, packet *eth.NewBlockPacket) error {
+	block := packet.Block
+	td := packet.TD
+
 	// Schedule the block for import
 	h.blockFetcher.Enqueue(peer.ID(), block)
 

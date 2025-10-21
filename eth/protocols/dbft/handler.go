@@ -70,7 +70,7 @@ func (s *Service) HandleMessage(peer *Peer) error {
 	defer msg.Discard()
 	start := time.Now()
 	// Track the amount of time it takes to serve the request and run the handler
-	if metrics.Enabled {
+	if metrics.Enabled() {
 		h := fmt.Sprintf("%s/%s/%#02x", p2p.HandleHistName, ProtocolName, msg.Code)
 		defer func(start time.Time) {
 			sampler := func() metrics.Sample {

@@ -48,7 +48,7 @@ type limbo struct {
 }
 
 // newLimbo opens and indexes a set of limboed blob transactions.
-func newLimbo(datadir string) (*limbo, error) {
+func newLimbo(datadir string, maxBlobsPerTransaction int) (*limbo, error) {
 	l := &limbo{
 		index:  make(map[common.Hash]uint64),
 		groups: make(map[uint64]map[uint64]common.Hash),
@@ -60,7 +60,7 @@ func newLimbo(datadir string) (*limbo, error) {
 			fails = append(fails, id)
 		}
 	}
-	store, err := billy.Open(billy.Options{Path: datadir, Repair: true}, newSlotter(), index)
+	store, err := billy.Open(billy.Options{Path: datadir, Repair: true}, newSlotter(maxBlobsPerTransaction), index)
 	if err != nil {
 		return nil, err
 	}
@@ -112,15 +112,25 @@ func (l *limbo) parseBlob(id uint64, data []byte) error {
 }
 
 // finalize evicts all blobs belonging to a recently finalized block or older.
-func (l *limbo) finalize(final *types.Header) {
+func (l *limbo) finalize(final *types.Header, current *types.Header) {
 	// Just in case there's no final block yet (network not yet merged, weird
-	// restart, sethead, etc), fail gracefully.
-	if final == nil {
-		log.Error("Nil finalized block cannot evict old blobs")
-		return
+	// restart, sethead, etc), take 128 blocks ago as fallback.
+	// TODO: Remove this fallback once there is a stable source of finality.
+	// 128 is an impossible reorg depth, for about 10 mins under 5s block time.
+	last := uint64(0)
+	if final != nil {
+		last = final.Number.Uint64()
+	} else {
+		if current == nil {
+			log.Error("Nil finalized and current block cannot evict old blobs")
+			return
+		}
+		if current.Number.Uint64() > 128 {
+			last = current.Number.Uint64() - 128
+		}
 	}
 	for block, ids := range l.groups {
-		if block > final.Number.Uint64() {
+		if block > last {
 			continue
 		}
 		for id, owner := range ids {

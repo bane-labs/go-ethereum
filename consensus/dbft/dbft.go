@@ -614,7 +614,7 @@ func (c *DBFT) getTxCb(h common.Hash) dbft.Transaction[common.Hash] {
 	// expects a pure nil.
 	if tx != nil {
 		return &Transaction{
-			Tx: tx,
+			Tx: tx.WithoutBlobTxSidecar(),
 		}
 	}
 
@@ -926,13 +926,19 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	}
 	ethBlock := dbftBlock.ToEthBlock()
 
-	errs := c.staticPool.Add(dbftBlock.transactions, false, false)
+	// Only take legacy pool transactions.
+	legacyTxs := make(types.Transactions, 0, len(dbftBlock.transactions))
+	for _, tx := range dbftBlock.transactions {
+		if tx.Type() != types.BlobTxType {
+			legacyTxs = append(legacyTxs, tx)
+		}
+	}
+	errs := c.staticPool.Add(legacyTxs, false)
 	c.staticPool.ResetStatic()
 	for i, err := range errs {
 		if err != nil {
 			log.Warn("proposed PreBlock has invalid transaction",
-				"index", i,
-				"hash", dbftBlock.transactions[i].Hash(),
+				"hash", legacyTxs[i].Hash(),
 				"error", err,
 			)
 			return false
@@ -1144,15 +1150,17 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 						"envelope index", i,
 						"reason", reason)
 				}
-				errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false, false)
-				if errs[0] != nil {
-					log.Info("Falling back to original set of transactions",
-						"envelope hash", pre.transactions[i].Hash(),
-						"envelope index", i,
-						"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
-					txx = pre.transactions
-					hasDecryptedTxs = false
-					return false
+				if pre.transactions[i].Type() != types.BlobTxType {
+					errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false)
+					if errs[0] != nil {
+						log.Info("Falling back to original set of transactions",
+							"envelope hash", pre.transactions[i].Hash(),
+							"envelope index", i,
+							"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
+						txx = pre.transactions
+						hasDecryptedTxs = false
+						return false
+					}
 				}
 				txx[i] = pre.transactions[i]
 				if incrementJ {
@@ -1209,7 +1217,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 					break
 				}
 			}
-			errs := c.staticPool.Add([]*types.Transaction{decryptedTx}, false, false)
+			errs := c.staticPool.Add([]*types.Transaction{decryptedTx}, false)
 			if errs[0] != nil {
 				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction has pool conflicts: %s", errs[0].Error())) {
 					continue
@@ -1290,11 +1298,16 @@ func newStaticPool(chain ChainHeaderReader) *legacypool.LegacyPool {
 
 // initStaticPool initializes the static pool with the provided parent header.
 func (c *DBFT) initStaticPool(parent *types.Header, state *state.StateDB) error {
-	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, state, func(addr common.Address, reserve bool) error { return nil }, false)
+	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, state, &txpool.EmptyReservationHandle{}, false)
 }
 
 // validateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
 func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transaction, envelope *types.Transaction, envelopeReceipt *types.Receipt) error {
+	// Make sure the transaction type is supported by legacy tx pool
+	if decryptedTx.Type() == types.BlobTxType {
+		return fmt.Errorf("decryptedTx has unsupported type: %v", decryptedTx.Type())
+	}
+
 	// Make sure the transaction is signed properly and has the same sender and nonce with envelope
 	if decryptedTx.Nonce() != envelope.Nonce() {
 		return fmt.Errorf("decryptedTx nonce mismatch: decryptedNonce %v, envelopeNonce %v", decryptedTx.Nonce(), envelope.Nonce())
@@ -1794,6 +1807,17 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if !cancun && header.ParentBeaconRoot != nil {
 		return fmt.Errorf("invalid parentBeaconRoot, have %x, expected nil", header.ParentBeaconRoot)
 	}
+
+	prague := chain.Config().IsPrague(header.Number, header.Time)
+	if !prague {
+		if header.RequestsHash != nil {
+			return fmt.Errorf("invalid RequestsHash, have %#x, expected nil", header.RequestsHash)
+		}
+	} else {
+		if header.RequestsHash == nil {
+			return errors.New("header has nil RequestsHash after Prague")
+		}
+	}
 	// All basic checks passed, verify cascading fields
 	return c.verifyCascadingFields(chain, header, parents, isSealed)
 }
@@ -1846,7 +1870,7 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 		case header.ParentBeaconRoot != nil:
 			return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected nil", header.ParentBeaconRoot)
 		}
-	} else if err := eip4844.VerifyEIP4844Header(parent, header); err != nil {
+	} else if err := eip4844.VerifyEIP4844Header(chain.Config(), parent, header); err != nil {
 		// Verify cancun-specific header fields
 		return err
 	}
@@ -2947,16 +2971,4 @@ func unpackContractExecutionResult(res interface{}, result *core.ExecutionResult
 		}
 	}
 	return contractAbi.UnpackIntoInterface(&res, method, result.Return())
-}
-
-// GetFinalizedHeader returns highest finalized block header.
-func (c *DBFT) GetFinalizedHeader(chain consensus.ChainHeaderReader, header *types.Header) *types.Header {
-	if chain == nil || header == nil {
-		return nil
-	}
-	if !chain.Config().IsNeoXDKG(header.Number) || header.Number.Uint64() < 1 {
-		return chain.GetHeaderByNumber(0)
-	}
-
-	return chain.GetHeaderByNumber(header.Number.Uint64() - 1)
 }

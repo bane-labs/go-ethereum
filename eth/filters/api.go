@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
+	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
@@ -92,7 +93,11 @@ func (api *FilterAPI) timeoutLoop(timeout time.Duration) {
 	ticker := time.NewTicker(timeout)
 	defer ticker.Stop()
 	for {
-		<-ticker.C
+		select {
+		case <-ticker.C:
+		case <-api.events.chainSub.Err():
+			return
+		}
 		api.filtersMu.Lock()
 		for id, f := range api.filters {
 			select {
@@ -269,65 +274,6 @@ func (api *FilterAPI) NewHeads(ctx context.Context) (*rpc.Subscription, error) {
 	return rpcSub, nil
 }
 
-// NewFinalizedHeaderFilter creates a filter that fetches finalized headers that are reached.
-func (api *FilterAPI) NewFinalizedHeaderFilter() rpc.ID {
-	var (
-		headers   = make(chan *types.Header)
-		headerSub = api.events.SubscribeNewFinalizedHeaders(headers)
-	)
-
-	api.filtersMu.Lock()
-	api.filters[headerSub.ID] = &filter{typ: FinalizedHeadersSubscription, deadline: time.NewTimer(api.timeout), hashes: make([]common.Hash, 0), s: headerSub}
-	api.filtersMu.Unlock()
-
-	go func() {
-		for {
-			select {
-			case h := <-headers:
-				api.filtersMu.Lock()
-				if f, found := api.filters[headerSub.ID]; found {
-					f.hashes = append(f.hashes, h.Hash())
-				}
-				api.filtersMu.Unlock()
-			case <-headerSub.Err():
-				api.filtersMu.Lock()
-				delete(api.filters, headerSub.ID)
-				api.filtersMu.Unlock()
-				return
-			}
-		}
-	}()
-
-	return headerSub.ID
-}
-
-// NewFinalizedHeaders send a notification each time a new finalized header is reached.
-func (api *FilterAPI) NewFinalizedHeaders(ctx context.Context) (*rpc.Subscription, error) {
-	notifier, supported := rpc.NotifierFromContext(ctx)
-	if !supported {
-		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
-	}
-
-	rpcSub := notifier.CreateSubscription()
-
-	go func() {
-		headers := make(chan *types.Header)
-		headersSub := api.events.SubscribeNewFinalizedHeaders(headers)
-		defer headersSub.Unsubscribe()
-
-		for {
-			select {
-			case h := <-headers:
-				notifier.Notify(rpcSub.ID, h)
-			case <-rpcSub.Err():
-				return
-			}
-		}
-	}()
-
-	return rpcSub, nil
-}
-
 // Logs creates a subscription that fires for all new log that match the given filter criteria.
 func (api *FilterAPI) Logs(ctx context.Context, crit FilterCriteria) (*rpc.Subscription, error) {
 	notifier, supported := rpc.NotifierFromContext(ctx)
@@ -428,8 +374,12 @@ func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*type
 		if crit.ToBlock != nil {
 			end = crit.ToBlock.Int64()
 		}
+		// Block numbers below 0 are special cases.
 		if begin > 0 && end > 0 && begin > end {
 			return nil, errInvalidBlockRange
+		}
+		if begin > 0 && begin < int64(api.events.backend.HistoryPruningCutoff()) {
+			return nil, &history.PrunedHistoryError{}
 		}
 		// Construct the range filter
 		filter = api.sys.NewRangeFilter(begin, end, crit.Addresses, crit.Topics)

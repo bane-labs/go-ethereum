@@ -459,7 +459,7 @@ func newGQLService(t *testing.T, stack *node.Node, shanghai bool, gspec *core.Ge
 	}
 	var engine consensus.Engine = ethash.NewFaker()
 	if shanghai {
-		engine = beacon.NewFaker()
+		engine = beacon.New(ethash.NewFaker())
 		gspec.Config.TerminalTotalDifficulty = common.Big0
 		// GenerateChain will increment timestamps by 10.
 		// Shanghai upgrade at block 1.

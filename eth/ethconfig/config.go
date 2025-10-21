@@ -28,11 +28,13 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -49,10 +51,12 @@ var FullNodeGPO = gasprice.Config{
 
 // Defaults contains default settings for use on the Ethereum main net.
 var Defaults = Config{
+	HistoryMode:        history.KeepAll,
 	SyncMode:           downloader.SnapSync,
 	NetworkId:          0, // enable auto configuration of networkID == chainID
 	TxLookupLimit:      2350000,
 	TransactionHistory: 2350000,
+	LogHistory:         2350000,
 	StateHistory:       params.FullImmutabilityThreshold,
 	DatabaseCache:      512,
 	TrieCleanCache:     154,
@@ -82,6 +86,9 @@ type Config struct {
 	NetworkId uint64
 	SyncMode  downloader.SyncMode
 
+	// HistoryMode configures chain history retention.
+	HistoryMode history.HistoryMode
+
 	// This can be set to list of enrtree:// URLs which will be queried for
 	// nodes to connect to.
 	EthDiscoveryURLs  []string
@@ -94,8 +101,11 @@ type Config struct {
 	// Deprecated: use 'TransactionHistory' instead.
 	TxLookupLimit uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
 
-	TransactionHistory uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
-	StateHistory       uint64 `toml:",omitempty"` // The maximum number of blocks from head whose state histories are reserved.
+	TransactionHistory   uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
+	LogHistory           uint64 `toml:",omitempty"` // The maximum number of blocks from head where a log search index is maintained.
+	LogNoHistory         bool   `toml:",omitempty"` // No log search index is maintained.
+	LogExportCheckpoints string // export log index checkpoints to file
+	StateHistory         uint64 `toml:",omitempty"` // The maximum number of blocks from head whose state histories are reserved.
 
 	// State scheme represents the scheme used to store ethereum states and trie
 	// nodes on top. It can be 'hash', 'path', or none which means use the scheme
@@ -149,8 +159,8 @@ type Config struct {
 	// send-transaction variants. The unit is ether.
 	RPCTxFeeCap float64
 
-	// OverrideCancun (TODO: remove after the fork)
-	OverrideCancun *uint64 `toml:",omitempty"`
+	// OverridePrague (TODO: remove after the fork)
+	OverridePrague *uint64 `toml:",omitempty"`
 
 	// OverrideVerkle (TODO: remove after the fork)
 	OverrideVerkle *uint64 `toml:",omitempty"`
@@ -187,6 +197,7 @@ type Config struct {
 // Clique is allowed for now to live standalone, but ethash is forbidden and can
 // only exist on already merged networks.
 func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, statisticsCfg dbft.StatisticsConfig) (consensus.Engine, error) {
+	// TODO: config TTD correctly and move this check back after Clique
 	if config.DBFT != nil {
 		bft, err := dbft.New(config, db, statisticsCfg)
 		if err != nil {
@@ -195,7 +206,8 @@ func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, statis
 		return bft, nil
 	}
 	if config.TerminalTotalDifficulty == nil {
-		return nil, fmt.Errorf("only PoS networks are supported, please transition old ones with Geth v1.13.x")
+		log.Error("Geth only supports PoS networks. Please transition legacy networks using Geth v1.13.x.")
+		return nil, fmt.Errorf("'terminalTotalDifficulty' is not set in genesis block")
 	}
 	// If proof-of-authority is requested, set it up
 	if config.Clique != nil {
