@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ERRORS } from "./helpers/errors.js";
-import { SYS_SETTINGS, ethers, allocGenesis } from "./helpers/setup.js";
+import { SYS_SETTINGS, ethers, networkHelpers, allocGenesis } from "./helpers/setup.js";
 
 // MOCK PUBKEYS
 const PUBKEY = "0x04a8c8762d32477f5bd0ccff58d35a7b7ace2fbbd0c0d61874bd405bc0af415690d16f585bcec5f51d1fdddfd0d4543cb0a9d40f0447b62a7c4b1a0f24c45ccb01";
@@ -8,11 +8,16 @@ const PUBKEY = "0x04a8c8762d32477f5bd0ccff58d35a7b7ace2fbbd0c0d61874bd405bc0af41
 describe("Policy", function () {
 
     let Policy: any, Governance: any;
-    let signers: any;
+    let signers: any, snapshot: any;
 
-    beforeEach(async function () {
+    before(async function () {
         signers = await ethers.getSigners();
         [Governance, , Policy,] = await allocGenesis();
+        snapshot = await networkHelpers.takeSnapshot();
+    });
+    
+    afterEach(async function () {
+        await snapshot.restore();
     });
 
     describe("genesis", function () {
@@ -39,7 +44,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).addBlackList(signers[0])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).addBlackList(signers[0])
@@ -50,7 +55,7 @@ describe("Policy", function () {
             for (let i = 0; i < 4; i++) {
                 await expect(
                     Policy.connect(signers[i]).addBlackList(signers[0])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             expect(await Policy.isBlackListed(signers[0])).to.eq(true);
         });
@@ -59,7 +64,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).addBlackList(signers[0])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).addBlackList(signers[0])
@@ -71,7 +76,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).addBlackList(signers[7])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).addBlackList(signers[7])
@@ -90,7 +95,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).removeBlackList(signers[0])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).removeBlackList(signers[0])
@@ -102,7 +107,7 @@ describe("Policy", function () {
             for (let i = 0; i < 4; i++) {
                 await expect(
                     Policy.connect(signers[i]).removeBlackList(signers[0])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             expect(await Policy.isBlackListed(signers[0])).to.eq(false);
         });
@@ -112,7 +117,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).removeBlackList(signers[0])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).removeBlackList(signers[0])
@@ -124,7 +129,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).addBlackList(signers[7])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).addBlackList(signers[7])
@@ -133,7 +138,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).removeBlackList(signers[7])
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).removeBlackList(signers[7])
@@ -152,7 +157,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).setMinGasTipCap(0)
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).setMinGasTipCap(0)
@@ -163,7 +168,7 @@ describe("Policy", function () {
             for (let i = 0; i < 4; i++) {
                 await expect(
                     Policy.connect(signers[i]).setMinGasTipCap(ethers.parseEther("1"))
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             expect(await Policy.minGasTipCap()).to.eq(ethers.parseEther("1"));
         });
@@ -172,7 +177,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).setMinGasTipCap(ethers.parseEther("1"))
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).setMinGasTipCap(ethers.parseEther("1"))
@@ -191,7 +196,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).setBaseFee(0)
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).setBaseFee(0)
@@ -202,7 +207,7 @@ describe("Policy", function () {
             for (let i = 0; i < 4; i++) {
                 await expect(
                     Policy.connect(signers[i]).setBaseFee(ethers.parseEther("1"))
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             expect(await Policy.baseFee()).to.eq(ethers.parseEther("1"));
         });
@@ -211,7 +216,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).setBaseFee(ethers.parseEther("1"))
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).setBaseFee(ethers.parseEther("1"))
@@ -230,7 +235,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).setCandidateLimit(6)
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).setCandidateLimit(6)
@@ -241,7 +246,7 @@ describe("Policy", function () {
             for (let i = 0; i < 4; i++) {
                 await expect(
                     Policy.connect(signers[i]).setCandidateLimit(2001)
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             expect(await Policy.getCandidateLimit()).to.eq(2001);
         });
@@ -250,7 +255,7 @@ describe("Policy", function () {
             for (let i = 0; i < 3; i++) {
                 await expect(
                     Policy.connect(signers[i]).setCandidateLimit(2001)
-                ).not.to.be.reverted(ethers);
+                ).not.to.be.revert(ethers);
             }
             await expect(
                 Policy.connect(signers[3]).setCandidateLimit(2001)

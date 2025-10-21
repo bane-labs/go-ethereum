@@ -9,10 +9,9 @@ import {SevenMessageVerifier} from "./libraries/SevenMessageVerifier.sol";
 import {IGovernance} from "./interfaces/IGovernance.sol";
 import {IKeyManagement} from "./interfaces/IKeyManagement.sol";
 import {IZKDKGV1} from "./interfaces/IZKDKGV1.sol";
-import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
+import {GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 
 contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
-    address public constant SELF = 0x1212100000000000000000000000000000000008;
     // governance contact
     address public constant GOV = 0x1212000000000000000000000000000000000001;
     address public constant SYS_CALL =
@@ -47,26 +46,6 @@ contract KeyManagementV1 is GovProxyUpgradeable, IKeyManagement, IZKDKGV1 {
     mapping(uint => bytes) public aggregatedCommitments;
     // hash=>used, this is used to prevent reusing and uploading the same public input
     mapping(bytes32 => bool) public isPubHashUsed;
-
-    // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
-    // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
-    function _checkProxy() internal view virtual override {
-        if (
-            address(this) == SELF || // Must be called through delegatecall
-            ERC1967Utils.getImplementation() != SELF // Must be called through an active proxy
-        ) {
-            revert UUPSUnauthorizedCallContext();
-        }
-    }
-
-    // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
-    // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
-    function _checkNotDelegated() internal view virtual override {
-        if (address(this) != SELF) {
-            // Must not be called through delegatecall
-            revert UUPSUnauthorizedCallContext();
-        }
-    }
 
     function registerMessageKey(
         address candidate,

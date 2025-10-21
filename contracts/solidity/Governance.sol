@@ -6,14 +6,13 @@ import {IGovReward} from "./interfaces/IGovReward.sol";
 import {IKeyManagement} from "./interfaces/IKeyManagement.sol";
 import {IGovernance} from "./interfaces/IGovernance.sol";
 import {IPolicy} from "./interfaces/IPolicy.sol";
-import {ERC1967Utils, GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
+import {GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     using EnumerableSet for EnumerableSet.AddressSet;
 
-    address public constant SELF = 0x1212100000000000000000000000000000000001;
     // Policy contract
     address public constant POLICY = 0x1212000000000000000000000000000000000002;
     // GovReward contract
@@ -75,26 +74,6 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     uint public sharePeriodDuration;
     // the pending group of block validators
     address[] public pendingConsensus;
-
-    // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
-    // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
-    function _checkProxy() internal view virtual override {
-        if (
-            address(this) == SELF || // Must be called through delegatecall
-            ERC1967Utils.getImplementation() != SELF // Must be called through an active proxy
-        ) {
-            revert UUPSUnauthorizedCallContext();
-        }
-    }
-
-    // Only for precompiled uups implementation in genesis file, need to be removed when upgrading the contract.
-    // This override is added because "immutable __self" in UUPSUpgradeable is not avaliable in precompiled contract.
-    function _checkNotDelegated() internal view virtual override {
-        if (address(this) != SELF) {
-            // Must not be called through delegatecall
-            revert UUPSUnauthorizedCallContext();
-        }
-    }
 
     receive() external payable nonReentrant {
         if (msg.sender != GOV_REWARD) revert Errors.SideCallNotAllowed();
