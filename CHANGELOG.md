@@ -2,6 +2,46 @@
 
 This document outlines major changes between releases.
 
+## 0.5.0 "Neutralization‌" (23 Oct 2025)
+
+This version introduces the support for two Ethereum major upgrades: Cancun and
+Prague. Since this repository starts from and still is an Execution Layer (EL),
+this upgrade is only a part of Dencun and Pectra. As a result, the proposal of
+EIP-4844 (Shard Blob Transactions) are not fully implemented. Currently, blob
+data is only very short-lived in the network, and doesn't have any API to get
+properly accessed.
+
+Follow the instructions below to upgrade your node from v0.4.2 to v0.5.0:
+
+1. Download new binary and new genesis configuration file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. For TestNet nodes only: reinitialize DB using new binary and
+   new genesis configuration file with the following command:
+   ```
+   ## If you are running a full node, don't remove DB.
+   ./geth init --state.scheme hash --datadir ./node-datadir ./config/genesis.json
+
+   ## If you are running a snap node, you can reserve the DB by reiniting with 
+   ## "--state.scheme hash". Or, remove existing DB and init a new one with 
+   ## "--state.scheme path" as default.
+   ./geth removedb --datadir ./node-datadir
+   ./geth init --datadir ./node-datadir ./config/genesis.json
+   ```
+5. Start the node with `--state.scheme` set to `hash` or `path` (default)
+   correspondingly.
+
+Behaviour changes:
+ * `Cancun` fork is enabled at timestamp `1761600000` on TestNet (#522)
+ * `Prague` fork is enabled at timestamp `1761600000` on TestNet (#522)
+
+Improvements:
+ * base Geth source code is updated to v1.14.13 (#487)
+ * base Geth source code is updated to v1.15.11 (#499)
+ * reschedule `NeoXAMEV` and `NeoXEthSig` forks for PrivNet setups (#510)
+ * update hardware requirement documentation (#514)
+ * remove proxy checks from system contracts and upgrade hardhat (#519)
+
 ## 0.4.2 "Mutualization" (2 Sep 2025)
 
 A couple of ZK-based DKG rounds passed on TestNet, hence it may be safely
@@ -27,9 +67,9 @@ your node from v0.4.1 to v0.4.2:
 5. Start the node.
 
 Behaviour changes:
- * NeoXDKG, NeoXAMEV and NeoXEthSig forks of MainNet are rescheduled to 3623040,
+ * `NeoXDKG`, `NeoXAMEV` and `NeoXEthSig` forks of MainNet are rescheduled to 3623040,
    3689280 and 3689280 blocks correspondingly (#512)
- * reschedule NeoXDKG fork for PrivNet setups (#502)
+ * reschedule `NeoXDKG` fork for PrivNet setups (#502)
 
 Improvements:
  * check DKG-related files are available on node startup (#503)

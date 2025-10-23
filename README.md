@@ -98,7 +98,7 @@ To run a full node on the Neo X Testnet network follow the steps below.
 3. Download 3 pairs of R1CS files and proving key files from [Neo X MPC ceremony](https://github.com/bane-labs/mpc) for participanting ZK-DKG.
 4. Initialize node database with the downloaded Neo X testnet genesis configuration:
    ```shell
-   ./geth init --datadir ./nodes/node1 ./genesis_testnet.json
+   ./geth init --state.scheme hash --datadir ./nodes/node1 ./genesis_testnet.json
    ```
 5. Create an account for the node operation or use an existing one. The following
    command may be used to create a new account (you'll be prompted for a password):
@@ -140,8 +140,8 @@ To run a full node on the Neo X Testnet network follow the steps below.
       --nat extip:10.148.0.2 \
       --port $port \
       --authrpc.port $rpcport \
-      --identity=$node \
-      --maxpeers=50 \
+      --identity $node \
+      --maxpeers 50 \
       --syncmode full \
       --gcmode archive \
       --datadir $node \
@@ -195,19 +195,19 @@ To run a full node on the Neo X Testnet network follow the steps below.
       --networkid 12227332 \
       --nat extip:10.148.0.2 \
       --port $port \
-      --mine --miner.etherbase=$miner \
+      --mine --miner.etherbase $miner \
       --unlock $miner \
       --password $node/password.txt \
       --antimev.password $node/password.txt \
-      --dkg.one-msg-r1cs=$node/r1cs/one_message.ccs \
-      --dkg.two-msg-r1cs=$node/r1cs/two_message.ccs \
-      --dkg.seven-msg-r1cs=$node/r1cs/seven_message.ccs \
-      --dkg.one-msg-pk=$node/pk/one_message.pk \
-      --dkg.two-msg-pk=$node/pk/two_message.pk \
-      --dkg.seven-msg-pk=$node/pk/seven_message.pk \
+      --dkg.one-msg-r1cs $node/r1cs/one_message.ccs \
+      --dkg.two-msg-r1cs $node/r1cs/two_message.ccs \
+      --dkg.seven-msg-r1cs $node/r1cs/seven_message.ccs \
+      --dkg.one-msg-pk $node/pk/one_message.pk \
+      --dkg.two-msg-pk $node/pk/two_message.pk \
+      --dkg.seven-msg-pk $node/pk/seven_message.pk \
       --authrpc.port $rpcport \
-      --identity=$node \
-      --maxpeers=50 \
+      --identity $node \
+      --maxpeers 50 \
       --syncmode full \
       --gcmode archive \
       --datadir $node \

@@ -18,6 +18,20 @@
     "neoXDKGBlock": 1990080,
     "neoXAMEVBlock": 2088000,
     "neoXEthSigBlock": 3750000,
+    "cancunTime": 1761600000,
+    "pragueTime": 1761600000,
+    "blobSchedule": {
+      "cancun": {
+        "target": 3,
+        "max": 6,
+        "baseFeeUpdateFraction": 3338477
+      },
+      "prague": {
+        "target": 6,
+        "max": 9,
+        "baseFeeUpdateFraction": 5007716
+      }
+    },
     "dbft": {
       "period": 5,
       "standbyValidators": [
