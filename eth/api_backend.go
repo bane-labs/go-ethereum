@@ -61,7 +61,12 @@ func (b *EthAPIBackend) ChainConfig() *params.ChainConfig {
 }
 
 func (b *EthAPIBackend) CurrentBlock() *types.Header {
-	return b.eth.blockchain.CurrentBlock()
+	numberAfterDelay := new(big.Int).Sub(b.eth.blockchain.CurrentBlock().Number, big.NewInt(int64(b.eth.config.RPCStateDelay)))
+	if numberAfterDelay.Sign() > 0 {
+		return b.eth.blockchain.GetHeaderByNumber(numberAfterDelay.Uint64())
+	} else {
+		return b.eth.blockchain.GetHeaderByNumber(0)
+	}
 }
 
 func (b *EthAPIBackend) SetHead(number uint64) {
@@ -72,29 +77,22 @@ func (b *EthAPIBackend) SetHead(number uint64) {
 func (b *EthAPIBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
 	// Pending block is only known by the miner
 	if number == rpc.PendingBlockNumber {
-		block, _, _ := b.eth.miner.Pending()
-		if block == nil {
-			return nil, errors.New("pending block is not available")
-		}
-		return block.Header(), nil
+		return nil, errors.New("pending block is not available")
 	}
 	// Otherwise resolve and return the block
 	if number == rpc.LatestBlockNumber {
-		return b.eth.blockchain.CurrentBlock(), nil
+		numberAfterDelay := new(big.Int).Sub(b.eth.blockchain.CurrentBlock().Number, big.NewInt(int64(b.eth.config.RPCStateDelay)))
+		if numberAfterDelay.Sign() > 0 {
+			return b.eth.blockchain.GetHeaderByNumber(numberAfterDelay.Uint64()), nil
+		} else {
+			return b.eth.blockchain.GetHeaderByNumber(0), nil
+		}
 	}
 	if number == rpc.FinalizedBlockNumber {
-		block := b.eth.blockchain.CurrentFinalBlock()
-		if block == nil {
-			return nil, errors.New("finalized block not found")
-		}
-		return block, nil
+		return nil, errors.New("finalized block not found")
 	}
 	if number == rpc.SafeBlockNumber {
-		block := b.eth.blockchain.CurrentSafeBlock()
-		if block == nil {
-			return nil, errors.New("safe block not found")
-		}
-		return block, nil
+		return nil, errors.New("safe block not found")
 	}
 	var bn uint64
 	if number == rpc.EarliestBlockNumber {
@@ -129,30 +127,24 @@ func (b *EthAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*ty
 func (b *EthAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
 	// Pending block is only known by the miner
 	if number == rpc.PendingBlockNumber {
-		block, _, _ := b.eth.miner.Pending()
-		if block == nil {
-			return nil, errors.New("pending block is not available")
-		}
-		return block, nil
+		return nil, errors.New("pending block is not available")
 	}
 	// Otherwise resolve and return the block
 	if number == rpc.LatestBlockNumber {
-		header := b.eth.blockchain.CurrentBlock()
-		return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
+		numberAfterDelay := new(big.Int).Sub(b.eth.blockchain.CurrentBlock().Number, big.NewInt(int64(b.eth.config.RPCStateDelay)))
+		if numberAfterDelay.Sign() > 0 {
+			header := b.eth.blockchain.GetHeaderByNumber(numberAfterDelay.Uint64())
+			return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
+		} else {
+			header := b.eth.blockchain.GetHeaderByNumber(0)
+			return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
+		}
 	}
 	if number == rpc.FinalizedBlockNumber {
-		header := b.eth.blockchain.CurrentFinalBlock()
-		if header == nil {
-			return nil, errors.New("finalized block not found")
-		}
-		return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
+		return nil, errors.New("finalized block not found")
 	}
 	if number == rpc.SafeBlockNumber {
-		header := b.eth.blockchain.CurrentSafeBlock()
-		if header == nil {
-			return nil, errors.New("safe block not found")
-		}
-		return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
+		return nil, errors.New("safe block not found")
 	}
 	bn := uint64(number) // the resolved number
 	if number == rpc.EarliestBlockNumber {
@@ -513,7 +505,12 @@ func (b *EthAPIBackend) Engine() consensus.Engine {
 }
 
 func (b *EthAPIBackend) CurrentHeader() *types.Header {
-	return b.eth.blockchain.CurrentHeader()
+	numberAfterDelay := new(big.Int).Sub(b.eth.blockchain.CurrentBlock().Number, big.NewInt(int64(b.eth.config.RPCStateDelay)))
+	if numberAfterDelay.Sign() > 0 {
+		return b.eth.blockchain.GetHeaderByNumber(numberAfterDelay.Uint64())
+	} else {
+		return b.eth.blockchain.GetHeaderByNumber(0)
+	}
 }
 
 func (b *EthAPIBackend) Miner() *miner.Miner {
