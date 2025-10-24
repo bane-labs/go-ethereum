@@ -72,6 +72,7 @@ var Defaults = Config{
 	RPCEVMTimeout:        5 * time.Second,
 	GPO:                  FullNodeGPO,
 	RPCTxFeeCap:          1, // 1 ether
+	RPCStateDelay:        0,
 	TxSyncDefaultTimeout: 20 * time.Second,
 	TxSyncMaxTimeout:     1 * time.Minute,
 }
@@ -175,6 +176,9 @@ type Config struct {
 	// RPCTxFeeCap is the global transaction fee (price * gas limit) cap for
 	// send-transaction variants. The unit is ether.
 	RPCTxFeeCap float64
+
+	// RPCStateDelay is the global number of blocks in RPC delay.
+	RPCStateDelay uint64
 
 	// OverrideOsaka (TODO: remove after the fork)
 	OverrideOsaka *uint64 `toml:",omitempty"`

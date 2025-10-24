@@ -710,9 +710,14 @@ var (
 		Category: flags.APICategory,
 	}
 	RPCTxSyncMaxTimeoutFlag = &cli.DurationFlag{
-		Name:     "rpc.txsync.maxtimeout",
-		Usage:    "Maximum allowed timeout for eth_sendRawTransactionSync (e.g. 5m)",
-		Value:    ethconfig.Defaults.TxSyncMaxTimeout,
+		Name:  "rpc.txsync.maxtimeout",
+		Usage: "Maximum allowed timeout for eth_sendRawTransactionSync (e.g. 5m)",
+		Value: ethconfig.Defaults.TxSyncMaxTimeout,
+	}
+	RPCGlobalStateDelayFlag = &cli.Uint64Flag{
+		Name:     "rpc.statedelay",
+		Usage:    "Sets a delay of the state back from the latest (0 = no delay)",
+		Value:    ethconfig.Defaults.RPCStateDelay,
 		Category: flags.APICategory,
 	}
 	// Authenticated RPC HTTP settings
@@ -1953,6 +1958,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(RPCGlobalTxFeeCapFlag.Name) {
 		cfg.RPCTxFeeCap = ctx.Float64(RPCGlobalTxFeeCapFlag.Name)
+	}
+	if ctx.IsSet(RPCGlobalStateDelayFlag.Name) {
+		cfg.RPCStateDelay = ctx.Uint64(RPCGlobalStateDelayFlag.Name)
 	}
 	if ctx.IsSet(NoDiscoverFlag.Name) {
 		cfg.EthDiscoveryURLs, cfg.SnapDiscoveryURLs = []string{}, []string{}
