@@ -237,7 +237,7 @@ func buildEnvelopeFromPriv0(t *testing.T, ks *keystore.KeyStore, acc coreaccount
 		to       = systemcontracts.GovernanceRewardProxyHash // transfer to Governance Reward as required by Envelope verification rules
 		nonce    = uint64(0)                                 // same nonce as for Inner transaction
 		gasPrice = big.NewInt(400_0000_0000)                 // based on (*ethclient.Client).SuggestGasPrice
-		gasLimit = uint64(3_1000)                            // higher than required by inner transaciton
+		gasLimit = uint64(3_5000)                            // higher than required by inner transaciton
 		value    = big.NewInt(1)                             // 1 wei
 	)
 
