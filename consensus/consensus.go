@@ -20,10 +20,12 @@ package consensus
 import (
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -117,4 +119,7 @@ type Engine interface {
 
 	// Close terminates any background threads maintained by the consensus engine.
 	Close() error
+
+	// SubscribeEnvelopeEvent creates a subscription that fires for all new envelopes that enter the consensus engine.
+	SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription
 }

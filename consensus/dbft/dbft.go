@@ -137,6 +137,46 @@ var (
 	errUnauthorizedSigner = errors.New("unauthorized signer")
 )
 
+// Various error messages to mark Envelopes invalid. These are not relevant to
+// block validity, but rather to Envelope processing.
+var (
+	// errEnvelopeDecryption is returned if an Envelope's data decryption fails.
+	errEnvelopeDecryption = errors.New("envelope data decryption failed")
+
+	// errDecryptedDecoding is returned if an Envelope's decrypted data decoding fails.
+	errDecryptedDecoding = errors.New("decrypted transaction decoding failed")
+
+	// errDecryptedTypeUnsupported is returned if a decrypted transaction type is unsupported.
+	errDecryptedTypeUnsupported = errors.New("decrypted transaction type unsupported")
+
+	// errDecryptedNonceMismatch is returned if a decrypted transaction nonce is different
+	// from the nonce of Envelope.
+	errDecryptedNonceMismatch = errors.New("decrypted transaction nonce mismatch")
+
+	// errDecryptedUnderpriced is returned if a decrypted transaction gas price is lower
+	// than the Envelope.
+	errDecryptedUnderpriced = errors.New("decrypted transaction underpriced")
+
+	// errDecryptedSenderMismatch is returned if a decrypted transaction sender is different
+	// from the Envelope sender.
+	errDecryptedSenderMismatch = errors.New("decrypted transaction sender mismatch")
+
+	// errDecryptedHashMismatch is returned if a decrypted transaction hash is different
+	// from the declared hash in Envelope.
+	errDecryptedHashMismatch = errors.New("decrypted transaction hash mismatch")
+
+	// errDecryptedGasMismatch is returned if a decrypted transaction gas limit is different
+	// from the declared gas limit in Envelope.
+	errDecryptedGasMismatch = errors.New("decrypted transaction gas limit mismatch")
+
+	// errDecryptedGasNotAllocated is returned if a decrypted transaction gas limit is
+	// higher than the gas allocated in Envelope.
+	errDecryptedGasNotAllocated = errors.New("decrypted transaction gas limit not allocated")
+
+	// errPreBlockReverted is returned if PreBlock state processing fails.
+	errPreBlockReverted = errors.New("pre-block processing reverted")
+)
+
 // errShutdown represents an error caused by engine shutdown initiated by user.
 var errShutdown = errors.New("shutdown detected")
 
@@ -175,6 +215,9 @@ type DBFT struct {
 	signFn       SignerFn          // Signer function to authorize hashes with
 	amevKeystore *antimev.KeyStore // anti-MEV keystore responsible for DKG and encrypted transactions decryption
 	lock         sync.RWMutex      // Protects signer, signFn and amevKeystore fields
+
+	envelopeFeed event.Feed              // Event feed for new Envelopes
+	scope        event.SubscriptionScope // Subscription scope for dBFT events
 
 	dbft             *dbft.DBFT[common.Hash]
 	dbftStarted      atomic.Bool
@@ -1142,13 +1185,18 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 		var (
 			j                  int
 			txx                = make([]*types.Transaction, len(pre.transactions))
+			envelopes          = make([]*antimev.EnvelopeInfo, len(pre.envelopesData))
 			parent             = c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
-			fallbackToEnvelope = func(i int, incrementJ bool, reason string) bool {
-				if len(reason) != 0 {
+			fallbackToEnvelope = func(i int, incrementJ bool, err error) bool {
+				if err != nil {
 					log.Info("Falling back to envelope",
 						"envelope hash", pre.transactions[i].Hash(),
 						"envelope index", i,
-						"reason", reason)
+						"err", err)
+					envelopes[j] = &antimev.EnvelopeInfo{
+						Envelope: pre.transactions[i],
+						Err:      err,
+					}
 				}
 				if pre.transactions[i].Type() != types.BlobTxType {
 					errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false)
@@ -1158,6 +1206,12 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 							"envelope index", i,
 							"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
 						txx = pre.transactions
+						for i := range envelopes {
+							envelopes[i] = &antimev.EnvelopeInfo{
+								Envelope: pre.transactions[pre.envelopesData[i].index],
+								Err:      errPreBlockReverted,
+							}
+						}
 						hasDecryptedTxs = false
 						return false
 					}
@@ -1186,11 +1240,11 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			var isEnvelope = j < len(pre.envelopesData) && pre.envelopesData[j].index == i
 			if !isEnvelope || // pre.transactions[i] is not an envelope, use it as-is.
 				decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
-				var reason string
+				var err error
 				if isEnvelope {
-					reason = "envelope data decryption failed"
+					err = errEnvelopeDecryption
 				}
-				if fallbackToEnvelope(i, isEnvelope, reason) {
+				if fallbackToEnvelope(i, isEnvelope, err) {
 					continue
 				} else {
 					break
@@ -1203,7 +1257,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			var decryptedTx = new(types.Transaction)
 			err := decryptedTx.UnmarshalBinary(decryptedTxsBytes[j])
 			if err != nil {
-				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction decoding failed: %s", err)) {
+				if fallbackToEnvelope(i, true, errDecryptedDecoding) {
 					continue
 				} else {
 					break
@@ -1211,7 +1265,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			}
 			err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i], receipts[i])
 			if err != nil {
-				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction verification failed: %s", err)) {
+				if fallbackToEnvelope(i, true, err) {
 					continue
 				} else {
 					break
@@ -1219,17 +1273,22 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			}
 			errs := c.staticPool.Add([]*types.Transaction{decryptedTx}, false)
 			if errs[0] != nil {
-				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction has pool conflicts: %s", errs[0].Error())) {
+				if fallbackToEnvelope(i, true, err) {
 					continue
 				} else {
 					break
 				}
 			}
 			txx[i] = decryptedTx
+			envelopes[j] = &antimev.EnvelopeInfo{
+				Envelope:  pre.transactions[i],
+				Decrypted: decryptedTx,
+			}
 			j++
 			hasDecryptedTxs = true
 		}
 		pre.finalTransactions = txx
+		c.envelopeFeed.Send(envelopes)
 		c.staticPool.ResetStatic()
 	}
 
@@ -1305,46 +1364,46 @@ func (c *DBFT) initStaticPool(parent *types.Header, state *state.StateDB) error 
 func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transaction, envelope *types.Transaction, envelopeReceipt *types.Receipt) error {
 	// Make sure the transaction type is supported by legacy tx pool
 	if decryptedTx.Type() == types.BlobTxType {
-		return fmt.Errorf("decryptedTx has unsupported type: %v", decryptedTx.Type())
+		return errDecryptedTypeUnsupported
 	}
 
 	// Make sure the transaction is signed properly and has the same sender and nonce with envelope
 	if decryptedTx.Nonce() != envelope.Nonce() {
-		return fmt.Errorf("decryptedTx nonce mismatch: decryptedNonce %v, envelopeNonce %v", decryptedTx.Nonce(), envelope.Nonce())
+		return errDecryptedNonceMismatch
 	}
 
 	// Ensure the gasprice is high enough to replace the envelope transaction
 	baseFee := head.BaseFee
 	if decryptedTx.EffectiveGasTipCmp(envelope, baseFee) < 0 {
-		return fmt.Errorf("decryptedTx underpriced: EffectiveGasTip needed %v, EffectiveGasTip permitted %v", envelope.EffectiveGasTipValue(baseFee), decryptedTx.EffectiveGasTipValue(baseFee))
+		return errDecryptedUnderpriced
 	}
 
 	// Ensure envelope sender matches decrypted sender.
 	envelopeFrom, err := types.Sender(c.signerConfig, envelope)
 	if err != nil {
-		return fmt.Errorf("%w: failed to retrieve envelope sender: %w", txpool.ErrInvalidSender, err)
+		return txpool.ErrInvalidSender
 	}
 	decryptedFrom, err := types.Sender(c.signerConfig, decryptedTx)
 	if err != nil {
-		return fmt.Errorf("%w: failed to retrieve decrypted transaction sender: %w", txpool.ErrInvalidSender, err)
+		return txpool.ErrInvalidSender
 	}
 	if envelopeFrom != decryptedFrom {
-		return fmt.Errorf("decryptedTx from mismatch: decryptedFrom %v, envelopeFrom %v", decryptedFrom, envelopeFrom)
+		return errDecryptedSenderMismatch
 	}
 
 	// Ensure decrypted hash matches the one specified in an unencrypted part of Envelope data.
 	expectedH := antimev.GetEncryptedHash(envelope)
 	if decryptedTx.Hash().Cmp(expectedH) != 0 {
-		return fmt.Errorf("decryptedTx hash mismatch: expected %s, got %s", expectedH, decryptedTx.Hash())
+		return errDecryptedHashMismatch
 	}
 	// Ensure decrypted gas limit is the same as the envelope declared
 	expectedG := antimev.GetEncryptedGas(envelope.Data())
 	if decryptedTx.Gas() != uint64(expectedG) {
-		return fmt.Errorf("decryptedTx gas limit mismatch: expected %v, got %v", expectedG, decryptedTx.Gas())
+		return errDecryptedGasMismatch
 	}
 	// Ensure decrypted gas limit has been allocated by Envelope
 	if decryptedTx.Gas() > envelopeReceipt.GasUsed {
-		return fmt.Errorf("decryptedTx gas limit not allocated: needed %v, got %v", decryptedTx.Gas(), envelopeReceipt.GasUsed)
+		return errDecryptedGasNotAllocated
 	}
 
 	return nil
@@ -2795,6 +2854,11 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 		Namespace: "dbft",
 		Service:   &API{chain: chain, bft: c, config: c.config.statisticsConfig},
 	}}
+}
+
+// SubscribeEnvelopeEvent creates a subscription that fires for all new envelopes that enter the consensus engine.
+func (c *DBFT) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription {
+	return c.scope.Track(c.envelopeFeed.Subscribe(ch))
 }
 
 // getValidatorsSorted returns validators chosen in the result of the latest

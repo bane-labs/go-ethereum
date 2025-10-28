@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
@@ -29,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
@@ -458,6 +460,11 @@ func (beacon *Beacon) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 // Close shutdowns the consensus engine
 func (beacon *Beacon) Close() error {
 	return beacon.ethone.Close()
+}
+
+// SubscribeEnvelopeEvent creates a subscription that fires for all new envelopes that enter the consensus engine.
+func (beacon *Beacon) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription {
+	return beacon.ethone.SubscribeEnvelopeEvent(ch)
 }
 
 // IsPoSHeader reports the header belongs to the PoS-stage with some special fields.

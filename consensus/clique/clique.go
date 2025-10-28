@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/lru"
@@ -39,6 +40,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -183,6 +185,9 @@ type Clique struct {
 	signer common.Address // Ethereum address of the signing key
 	signFn SignerFn       // Signer function to authorize hashes with
 	lock   sync.RWMutex   // Protects the signer and proposals fields
+
+	envelopeFeed event.Feed              // Event feed for new Envelopes
+	scope        event.SubscriptionScope // Subscription scope for clique events
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
@@ -711,6 +716,11 @@ func (c *Clique) SealHash(header *types.Header) common.Hash {
 // Close implements consensus.Engine. It's a noop for clique as there are no background threads.
 func (c *Clique) Close() error {
 	return nil
+}
+
+// SubscribeEnvelopeEvent creates a subscription that fires for all new envelopes that enter the consensus engine.
+func (c *Clique) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription {
+	return c.scope.Track(c.envelopeFeed.Subscribe(ch))
 }
 
 // APIs implements consensus.Engine, returning the user facing RPC API to allow

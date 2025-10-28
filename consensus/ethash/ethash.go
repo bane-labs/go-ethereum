@@ -20,8 +20,10 @@ package ethash
 import (
 	"time"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
@@ -31,6 +33,9 @@ type Ethash struct {
 	fakeFail  *uint64        // Block number which fails PoW check even in fake mode
 	fakeDelay *time.Duration // Time delay to sleep for before returning from verify
 	fakeFull  bool           // Accepts everything as valid
+
+	envelopeFeed event.Feed              // Event feed for new Envelopes
+	scope        event.SubscriptionScope // Subscription scope for ethash events
 }
 
 // NewFaker creates an ethash consensus engine with a fake PoW scheme that accepts
@@ -75,6 +80,11 @@ func (ethash *Ethash) Close() error {
 // shell in the post-merge world.
 func (ethash *Ethash) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	return []rpc.API{}
+}
+
+// SubscribeEnvelopeEvent creates a subscription that fires for all new envelopes that enter the consensus engine.
+func (ethash *Ethash) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription {
+	return ethash.scope.Track(ethash.envelopeFeed.Subscribe(ch))
 }
 
 // Seal generates a new sealing request for the given input block and pushes

@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
@@ -46,6 +47,7 @@ type testBackend struct {
 	logsFeed        event.Feed
 	rmLogsFeed      event.Feed
 	chainFeed       event.Feed
+	envelopeFeed    event.Feed
 	pendingBlock    *types.Block
 	pendingReceipts types.Receipts
 }
@@ -160,6 +162,10 @@ func (b *testBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscript
 
 func (b *testBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
 	return b.chainFeed.Subscribe(ch)
+}
+
+func (b *testBackend) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription {
+	return b.envelopeFeed.Subscribe(ch)
 }
 
 func (b *testBackend) CurrentView() *filtermaps.ChainView {
