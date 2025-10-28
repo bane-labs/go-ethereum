@@ -173,8 +173,11 @@ var (
 	// higher than the gas allocated in Envelope.
 	errDecryptedGasNotAllocated = errors.New("decrypted transaction gas limit not allocated")
 
-	// errPreBlockReverted is returned if PreBlock state processing fails.
-	errPreBlockReverted = errors.New("pre-block processing reverted")
+	// errDecryptedRejectedByPool is returned if a decrypted transaction is rejected by mempool.
+	errDecryptedRejectedByPool = errors.New("decrypted transaction rejected by mempool")
+
+	// errDecryptedRejectedByEVM is returned if a decrypted transaction is rejected by EVM.
+	errDecryptedRejectedByEVM = errors.New("decrypted transaction rejected by EVM")
 )
 
 // errShutdown represents an error caused by engine shutdown initiated by user.
@@ -1087,9 +1090,8 @@ func (c *DBFT) newPreBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Pre
 // processPreBlockCb is a dbft library setting callback.
 func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 	var (
-		ctx             = c.dbft.Context
-		pre             = b.(*PreBlock)
-		hasDecryptedTxs bool
+		ctx = c.dbft.Context
+		pre = b.(*PreBlock)
 	)
 	// A short path: there's no envelopes at all, use proposed transactions as-is.
 	if len(pre.envelopesData) == 0 {
@@ -1182,156 +1184,167 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			}
 		}
 
+		// Now validate decrypted transactions and construct final list of transactions for the block.
+		parent := c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
+		state, err := c.chain.StateAt(parent.Root)
+		if err != nil {
+			return fmt.Errorf("failed to get parent state: %w", err)
+		}
+		// Initialize EVM context for transaction validation and reconstruct the block like a miner.
 		var (
-			j                  int
-			txx                = make([]*types.Transaction, len(pre.transactions))
-			envelopes          = make([]*antimev.EnvelopeInfo, len(pre.envelopesData))
-			parent             = c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
-			fallbackToEnvelope = func(i int, incrementJ bool, err error) bool {
-				if err != nil {
-					log.Info("Falling back to envelope",
-						"envelope hash", pre.transactions[i].Hash(),
-						"envelope index", i,
-						"err", err)
+			receipts []*types.Receipt
+			allLogs  []*types.Log
+			evm      = vm.NewEVM(core.NewEVMBlockContext(pre.header, c.chain, &pre.header.Coinbase), state, c.chain.Config(), vm.Config{})
+			gasPool  = new(core.GasPool).AddGas(pre.header.GasLimit)
+			gasUsed  = uint64(0)
+		)
+		if pre.header.ParentBeaconRoot != nil {
+			core.ProcessBeaconBlockRoot(*pre.header.ParentBeaconRoot, evm)
+		}
+		if c.chain.Config().IsPrague(pre.header.Number, pre.header.Time) {
+			core.ProcessParentBlockHash(pre.header.ParentHash, evm)
+		}
+		core.ProcessOnPersist(evm)
+
+		var (
+			j                    int
+			txx                  = make([]*types.Transaction, 0)
+			envelopes            = make([]*antimev.EnvelopeInfo, len(pre.envelopesData))
+			signer               = types.MakeSigner(c.chain.Config(), pre.header.Number, pre.header.Time)
+			skipAccounts         = make(map[common.Address]bool) // Record accounts have failed transactions in reconstruction.
+			fallbackToPreBlockTx = func(i int, isEnvelope bool, sender common.Address, decrypted *types.Transaction, err error) {
+				// Log the fallback event.
+				if isEnvelope {
 					envelopes[j] = &antimev.EnvelopeInfo{
-						Envelope: pre.transactions[i],
-						Err:      err,
+						Envelope:  pre.transactions[i],
+						Decrypted: decrypted,
+						Err:       err,
 					}
-				}
-				if pre.transactions[i].Type() != types.BlobTxType {
-					errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false)
-					if errs[0] != nil {
-						log.Info("Falling back to original set of transactions",
-							"envelope hash", pre.transactions[i].Hash(),
-							"envelope index", i,
-							"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
-						txx = pre.transactions
-						for i := range envelopes {
-							envelopes[i] = &antimev.EnvelopeInfo{
-								Envelope: pre.transactions[pre.envelopesData[i].index],
-								Err:      errPreBlockReverted,
-							}
-						}
-						hasDecryptedTxs = false
-						return false
-					}
-				}
-				txx[i] = pre.transactions[i]
-				if incrementJ {
 					j++
 				}
-				return true
+				// Use original Envelope transaction as-is.
+				if errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false); errs[0] == nil {
+					var (
+						snap = state.Snapshot()
+						gp   = gasPool.Gas()
+					)
+					state.SetTxContext(pre.transactions[i].Hash(), i)
+					receipt, err := core.ApplyTransaction(evm, gasPool, state, pre.header, pre.transactions[i], &gasUsed)
+					if err != nil {
+						state.RevertToSnapshot(snap)
+						gasPool.SetGas(gp)
+						// Drop following transactions from this account.
+						skipAccounts[sender] = true
+					} else {
+						txx = append(txx, pre.transactions[i])
+						receipts = append(receipts, receipt)
+						allLogs = append(allLogs, receipt.Logs...)
+					}
+				} else {
+					// Drop following transactions from this account.
+					skipAccounts[sender] = true
+				}
 			}
 		)
 
 		// If we're backup, then pre.finalReceipts are filled in during PreBlock verification;
 		// if we're primary, then reuse receipts got after PrepareRequest construction since
 		// PreBlock verification code is not executed by block proposer.
-		var receipts = pre.finalReceipts
+		preReceipts := pre.finalReceipts
 		if ctx.IsPrimary() && pre.finalState == nil {
-			receipts = c.sealingReceipts
+			preReceipts = c.sealingReceipts
 		}
-		if len(receipts) != len(pre.transactions) {
-			return fmt.Errorf("number of receipts mismatch: expected %d, actual %d", len(pre.transactions), len(receipts))
+		if len(preReceipts) != len(pre.transactions) {
+			return fmt.Errorf("number of receipts mismatch: expected %d, actual %d", len(pre.transactions), len(preReceipts))
 		}
 		// No need to reinitialize static pool since it was already initialized in verifyPreBlockCb.
 		// Reset the static pool after processing all transactions.
 		for i := range pre.transactions {
-			var isEnvelope = j < len(pre.envelopesData) && pre.envelopesData[j].index == i
+			sender, err := types.Sender(signer, pre.transactions[i])
+			if err != nil || skipAccounts[sender] {
+				continue
+			}
+			isEnvelope := j < len(pre.envelopesData) && pre.envelopesData[j].index == i
 			if !isEnvelope || // pre.transactions[i] is not an envelope, use it as-is.
 				decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
-				var err error
 				if isEnvelope {
-					err = errEnvelopeDecryption
-				}
-				if fallbackToEnvelope(i, isEnvelope, err) {
-					continue
+					fallbackToPreBlockTx(i, true, sender, nil, errEnvelopeDecryption)
 				} else {
-					break
+					fallbackToPreBlockTx(i, false, sender, nil, nil)
 				}
+				continue
 			}
 			log.Info("Envelope data decrypted",
 				"envelope hash", pre.transactions[i].Hash(),
 				"envelope index", i,
 				"data", hex.EncodeToString(decryptedTxsBytes[j]))
 			var decryptedTx = new(types.Transaction)
-			err := decryptedTx.UnmarshalBinary(decryptedTxsBytes[j])
+			if err := decryptedTx.UnmarshalBinary(decryptedTxsBytes[j]); err != nil {
+				fallbackToPreBlockTx(i, true, sender, nil, errDecryptedDecoding)
+				continue
+			}
+			if err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i], preReceipts[i]); err != nil {
+				fallbackToPreBlockTx(i, true, sender, decryptedTx, err)
+				continue
+			}
+			if errs := c.staticPool.Add([]*types.Transaction{decryptedTx}, false); errs[0] != nil {
+				fallbackToPreBlockTx(i, true, sender, decryptedTx, errDecryptedRejectedByPool)
+				continue
+			}
+			var (
+				snap = state.Snapshot()
+				gp   = gasPool.Gas()
+			)
+			state.SetTxContext(decryptedTx.Hash(), i)
+			receipt, err := core.ApplyTransaction(evm, gasPool, state, pre.header, decryptedTx, &gasUsed)
 			if err != nil {
-				if fallbackToEnvelope(i, true, errDecryptedDecoding) {
-					continue
-				} else {
-					break
+				state.RevertToSnapshot(snap)
+				gasPool.SetGas(gp)
+				fallbackToPreBlockTx(i, true, sender, decryptedTx, errDecryptedRejectedByEVM)
+				continue
+			} else {
+				envelopes[j] = &antimev.EnvelopeInfo{
+					Envelope:  pre.transactions[i],
+					Decrypted: decryptedTx,
+					Err:       nil,
 				}
+				txx = append(txx, decryptedTx)
+				receipts = append(receipts, receipt)
+				allLogs = append(allLogs, receipt.Logs...)
+				j++
 			}
-			err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i], receipts[i])
-			if err != nil {
-				if fallbackToEnvelope(i, true, err) {
-					continue
-				} else {
-					break
-				}
-			}
-			errs := c.staticPool.Add([]*types.Transaction{decryptedTx}, false)
-			if errs[0] != nil {
-				if fallbackToEnvelope(i, true, err) {
-					continue
-				} else {
-					break
-				}
-			}
-			txx[i] = decryptedTx
-			envelopes[j] = &antimev.EnvelopeInfo{
-				Envelope:  pre.transactions[i],
-				Decrypted: decryptedTx,
-			}
-			j++
-			hasDecryptedTxs = true
 		}
+		// Read requests if Prague is enabled.
+		var requests [][]byte
+		if c.chain.Config().IsPrague(pre.header.Number, pre.header.Time) {
+			requests = [][]byte{}
+			// EIP-6110
+			if err := core.ParseDepositLogs(&requests, allLogs, c.chain.Config()); err != nil {
+				return err
+			}
+			// EIP-7002
+			if err := core.ProcessWithdrawalQueue(&requests, evm); err != nil {
+				return err
+			}
+			// EIP-7251
+			if err := core.ProcessConsolidationQueue(&requests, evm); err != nil {
+				return err
+			}
+		}
+		if requests != nil {
+			reqHash := types.CalcRequestsHash(requests)
+			pre.header.RequestsHash = &reqHash
+		}
+		// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
+		c.Finalize(c.chain, pre.header, state, &types.Body{Transactions: txx, Withdrawals: pre.withdrawals})
+
 		pre.finalTransactions = txx
+		pre.finalState = state
+		pre.finalReceipts = receipts
+		pre.finalGASUsed = gasUsed
 		c.envelopeFeed.Send(envelopes)
 		c.staticPool.ResetStatic()
 	}
-
-	// Use cached processing results if no new transactions were included into
-	// the block compared to the original proposal.
-	if !hasDecryptedTxs {
-		return nil
-	}
-
-	// Process state with constructed list of transactions to fill state-dependent
-	// block fields.
-	finalBlock := &PreBlock{
-		header:                 pre.header,
-		transactions:           pre.finalTransactions,
-		withdrawals:            pre.withdrawals,
-		dkgRound:               pre.dkgRound,
-		enforceECDSASignatures: pre.enforceECDSASignatures,
-	}
-	ethBlock := finalBlock.ToEthBlock()
-	state, res, err := c.chain.ProcessState(ethBlock, nil)
-	if err != nil {
-		// Something went wrong, fallback to the original set of transactions and cached
-		// processing results.
-		log.Error("failed to process PreBlock, falling back to the original proposal",
-			"err", err,
-			"number", ethBlock.NumberU64(),
-			"seal hash", c.SealHash(ethBlock.Header()),
-			"parent hash", ethBlock.ParentHash().String(),
-			"intermediate merkle root", ethBlock.Root(),
-			"coinbase", ethBlock.Coinbase().String(),
-			"gas limit", ethBlock.GasLimit(),
-			"gas used", ethBlock.GasUsed(),
-			"difficulty", ethBlock.Difficulty().String(),
-			"mix digest", ethBlock.MixDigest().String(),
-			"nonce", ethBlock.Nonce(),
-			"time", ethBlock.Time(),
-			"uncle hash", ethBlock.UncleHash().String(),
-			"txs", len(ethBlock.Transactions()))
-		pre.finalTransactions = pre.transactions
-		return nil
-	}
-
-	pre.finalState, pre.finalReceipts, pre.finalGASUsed = state, res.Receipts, res.GasUsed
 	return nil
 }
 
