@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/core"
@@ -71,6 +72,7 @@ type Backend interface {
 	SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription
 	SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription
 	SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription
+	SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription
 
 	CurrentView() *filtermaps.ChainView
 	NewMatcherBackend() filtermaps.MatcherBackend
@@ -159,6 +161,8 @@ const (
 	PendingTransactionsSubscription
 	// BlocksSubscription queries hashes for blocks that are imported
 	BlocksSubscription
+	// EnvelopeSubscription queries for dBFT envelope transactions handling
+	EnvelopeSubscription
 	// LastIndexSubscription keeps track of the last index
 	LastIndexSubscription
 )
@@ -173,6 +177,9 @@ const (
 	logsChanSize = 10
 	// chainEvChanSize is the size of channel listening to ChainEvent.
 	chainEvChanSize = 10
+	// envelopeChanSize is the size of channel listening to EnvelopeEvent.
+	// The number is referenced from the size of tx pool.
+	envelopeChanSize = 4096
 )
 
 type subscription struct {
@@ -183,6 +190,7 @@ type subscription struct {
 	logs      chan []*types.Log
 	txs       chan []*types.Transaction
 	headers   chan *types.Header
+	envelopes chan []*antimev.EnvelopeInfo
 	installed chan struct{} // closed when the filter is installed
 	err       chan error    // closed when the filter is uninstalled
 }
@@ -194,18 +202,20 @@ type EventSystem struct {
 	sys     *FilterSystem
 
 	// Subscriptions
-	txsSub    event.Subscription // Subscription for new transaction event
-	logsSub   event.Subscription // Subscription for new log event
-	rmLogsSub event.Subscription // Subscription for removed log event
-	chainSub  event.Subscription // Subscription for new chain event
+	txsSub      event.Subscription // Subscription for new transaction event
+	logsSub     event.Subscription // Subscription for new log event
+	rmLogsSub   event.Subscription // Subscription for removed log event
+	chainSub    event.Subscription // Subscription for new chain event
+	envelopeSub event.Subscription // Subscription for new envelope event
 
 	// Channels
-	install   chan *subscription         // install filter for event notification
-	uninstall chan *subscription         // remove filter for event notification
-	txsCh     chan core.NewTxsEvent      // Channel to receive new transactions event
-	logsCh    chan []*types.Log          // Channel to receive new log event
-	rmLogsCh  chan core.RemovedLogsEvent // Channel to receive removed log event
-	chainCh   chan core.ChainEvent       // Channel to receive new chain event
+	install    chan *subscription           // install filter for event notification
+	uninstall  chan *subscription           // remove filter for event notification
+	txsCh      chan core.NewTxsEvent        // Channel to receive new transactions event
+	logsCh     chan []*types.Log            // Channel to receive new log event
+	rmLogsCh   chan core.RemovedLogsEvent   // Channel to receive removed log event
+	chainCh    chan core.ChainEvent         // Channel to receive new chain event
+	envelopeCh chan []*antimev.EnvelopeInfo // Channel to receive new envelope event
 }
 
 // NewEventSystem creates a new manager that listens for event on the given mux,
@@ -216,14 +226,15 @@ type EventSystem struct {
 // or by stopping the given mux.
 func NewEventSystem(sys *FilterSystem) *EventSystem {
 	m := &EventSystem{
-		sys:       sys,
-		backend:   sys.backend,
-		install:   make(chan *subscription),
-		uninstall: make(chan *subscription),
-		txsCh:     make(chan core.NewTxsEvent, txChanSize),
-		logsCh:    make(chan []*types.Log, logsChanSize),
-		rmLogsCh:  make(chan core.RemovedLogsEvent, rmLogsChanSize),
-		chainCh:   make(chan core.ChainEvent, chainEvChanSize),
+		sys:        sys,
+		backend:    sys.backend,
+		install:    make(chan *subscription),
+		uninstall:  make(chan *subscription),
+		txsCh:      make(chan core.NewTxsEvent, txChanSize),
+		logsCh:     make(chan []*types.Log, logsChanSize),
+		rmLogsCh:   make(chan core.RemovedLogsEvent, rmLogsChanSize),
+		chainCh:    make(chan core.ChainEvent, chainEvChanSize),
+		envelopeCh: make(chan []*antimev.EnvelopeInfo, envelopeChanSize),
 	}
 
 	// Subscribe events
@@ -231,9 +242,10 @@ func NewEventSystem(sys *FilterSystem) *EventSystem {
 	m.logsSub = m.backend.SubscribeLogsEvent(m.logsCh)
 	m.rmLogsSub = m.backend.SubscribeRemovedLogsEvent(m.rmLogsCh)
 	m.chainSub = m.backend.SubscribeChainEvent(m.chainCh)
+	m.envelopeSub = m.backend.SubscribeEnvelopeEvent(m.envelopeCh)
 
 	// Make sure none of the subscriptions are empty
-	if m.txsSub == nil || m.logsSub == nil || m.rmLogsSub == nil || m.chainSub == nil {
+	if m.txsSub == nil || m.logsSub == nil || m.rmLogsSub == nil || m.chainSub == nil || m.envelopeSub == nil {
 		log.Crit("Subscribe for event system failed")
 	}
 
@@ -269,6 +281,7 @@ func (sub *Subscription) Unsubscribe() {
 			case <-sub.f.logs:
 			case <-sub.f.txs:
 			case <-sub.f.headers:
+			case <-sub.f.envelopes:
 			}
 		}
 
@@ -344,6 +357,7 @@ func (es *EventSystem) subscribeLogs(crit ethereum.FilterQuery, logs chan []*typ
 		logs:      logs,
 		txs:       make(chan []*types.Transaction),
 		headers:   make(chan *types.Header),
+		envelopes: make(chan []*antimev.EnvelopeInfo),
 		installed: make(chan struct{}),
 		err:       make(chan error),
 	}
@@ -360,6 +374,7 @@ func (es *EventSystem) SubscribeNewHeads(headers chan *types.Header) *Subscripti
 		logs:      make(chan []*types.Log),
 		txs:       make(chan []*types.Transaction),
 		headers:   headers,
+		envelopes: make(chan []*antimev.EnvelopeInfo),
 		installed: make(chan struct{}),
 		err:       make(chan error),
 	}
@@ -376,6 +391,24 @@ func (es *EventSystem) SubscribePendingTxs(txs chan []*types.Transaction) *Subsc
 		logs:      make(chan []*types.Log),
 		txs:       txs,
 		headers:   make(chan *types.Header),
+		envelopes: make(chan []*antimev.EnvelopeInfo),
+		installed: make(chan struct{}),
+		err:       make(chan error),
+	}
+	return es.subscribe(sub)
+}
+
+// SubscribeEnvelopes creates a subscription that writes information for
+// envelopes that enter the consensus engine.
+func (es *EventSystem) SubscribeEnvelopes(envelopes chan []*antimev.EnvelopeInfo) *Subscription {
+	sub := &subscription{
+		id:        rpc.NewID(),
+		typ:       EnvelopeSubscription,
+		created:   time.Now(),
+		logs:      make(chan []*types.Log),
+		txs:       make(chan []*types.Transaction),
+		headers:   make(chan *types.Header),
+		envelopes: envelopes,
 		installed: make(chan struct{}),
 		err:       make(chan error),
 	}
@@ -408,6 +441,12 @@ func (es *EventSystem) handleChainEvent(filters filterIndex, ev core.ChainEvent)
 	}
 }
 
+func (es *EventSystem) handleEnvelopeEvent(filters filterIndex, ev []*antimev.EnvelopeInfo) {
+	for _, f := range filters[EnvelopeSubscription] {
+		f.envelopes <- ev
+	}
+}
+
 // eventLoop (un)installs filters and processes mux events.
 func (es *EventSystem) eventLoop() {
 	// Ensure all subscriptions get cleaned up
@@ -416,6 +455,7 @@ func (es *EventSystem) eventLoop() {
 		es.logsSub.Unsubscribe()
 		es.rmLogsSub.Unsubscribe()
 		es.chainSub.Unsubscribe()
+		es.envelopeSub.Unsubscribe()
 	}()
 
 	index := make(filterIndex)
@@ -433,6 +473,8 @@ func (es *EventSystem) eventLoop() {
 			es.handleLogs(index, ev.Logs)
 		case ev := <-es.chainCh:
 			es.handleChainEvent(index, ev)
+		case ev := <-es.envelopeCh:
+			es.handleEnvelopeEvent(index, ev)
 
 		case f := <-es.install:
 			index[f.typ][f.id] = f
@@ -450,6 +492,8 @@ func (es *EventSystem) eventLoop() {
 		case <-es.rmLogsSub.Err():
 			return
 		case <-es.chainSub.Err():
+			return
+		case <-es.envelopeSub.Err():
 			return
 		}
 	}

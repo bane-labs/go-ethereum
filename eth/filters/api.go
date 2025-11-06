@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
@@ -300,6 +301,35 @@ func (api *FilterAPI) Logs(ctx context.Context, crit FilterCriteria) (*rpc.Subsc
 					notifier.Notify(rpcSub.ID, &log)
 				}
 			case <-rpcSub.Err(): // client send an unsubscribe request
+				return
+			}
+		}
+	}()
+
+	return rpcSub, nil
+}
+
+// Envelopes creates a subscription that fires for all new envelopes that enter the consensus engine.
+func (api *FilterAPI) Envelopes(ctx context.Context) (*rpc.Subscription, error) {
+	notifier, supported := rpc.NotifierFromContext(ctx)
+	if !supported {
+		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
+	}
+
+	rpcSub := notifier.CreateSubscription()
+
+	go func() {
+		envelopes := make(chan []*antimev.EnvelopeInfo)
+		envelopeSub := api.events.SubscribeEnvelopes(envelopes)
+		defer envelopeSub.Unsubscribe()
+
+		for {
+			select {
+			case envs := <-envelopes:
+				for _, env := range envs {
+					notifier.Notify(rpcSub.ID, env)
+				}
+			case <-rpcSub.Err():
 				return
 			}
 		}

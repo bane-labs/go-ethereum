@@ -137,6 +137,49 @@ var (
 	errUnauthorizedSigner = errors.New("unauthorized signer")
 )
 
+// Various error messages to mark Envelopes invalid. These are not relevant to
+// block validity, but rather to Envelope processing.
+var (
+	// errEnvelopeDecryption is returned if an Envelope's data decryption fails.
+	errEnvelopeDecryption = errors.New("envelope data decryption failed")
+
+	// errDecryptedDecoding is returned if an Envelope's decrypted data decoding fails.
+	errDecryptedDecoding = errors.New("decrypted transaction decoding failed")
+
+	// errDecryptedTypeUnsupported is returned if a decrypted transaction type is unsupported.
+	errDecryptedTypeUnsupported = errors.New("decrypted transaction type unsupported")
+
+	// errDecryptedNonceMismatch is returned if a decrypted transaction nonce is different
+	// from the nonce of Envelope.
+	errDecryptedNonceMismatch = errors.New("decrypted transaction nonce mismatch")
+
+	// errDecryptedUnderpriced is returned if a decrypted transaction gas price is lower
+	// than the Envelope.
+	errDecryptedUnderpriced = errors.New("decrypted transaction underpriced")
+
+	// errDecryptedSenderMismatch is returned if a decrypted transaction sender is different
+	// from the Envelope sender.
+	errDecryptedSenderMismatch = errors.New("decrypted transaction sender mismatch")
+
+	// errDecryptedHashMismatch is returned if a decrypted transaction hash is different
+	// from the declared hash in Envelope.
+	errDecryptedHashMismatch = errors.New("decrypted transaction hash mismatch")
+
+	// errDecryptedGasMismatch is returned if a decrypted transaction gas limit is different
+	// from the declared gas limit in Envelope.
+	errDecryptedGasMismatch = errors.New("decrypted transaction gas limit mismatch")
+
+	// errDecryptedGasNotAllocated is returned if a decrypted transaction gas limit is
+	// higher than the gas allocated in Envelope.
+	errDecryptedGasNotAllocated = errors.New("decrypted transaction gas limit not allocated")
+
+	// errDecryptedRejectedByPool is returned if a decrypted transaction is rejected by mempool.
+	errDecryptedRejectedByPool = errors.New("decrypted transaction rejected by mempool")
+
+	// errDecryptedRejectedByEVM is returned if a decrypted transaction is rejected by EVM.
+	errDecryptedRejectedByEVM = errors.New("decrypted transaction rejected by EVM")
+)
+
 // errShutdown represents an error caused by engine shutdown initiated by user.
 var errShutdown = errors.New("shutdown detected")
 
@@ -175,6 +218,9 @@ type DBFT struct {
 	signFn       SignerFn          // Signer function to authorize hashes with
 	amevKeystore *antimev.KeyStore // anti-MEV keystore responsible for DKG and encrypted transactions decryption
 	lock         sync.RWMutex      // Protects signer, signFn and amevKeystore fields
+
+	envelopeFeed event.Feed              // Event feed for new Envelopes
+	scope        event.SubscriptionScope // Subscription scope for dBFT events
 
 	dbft             *dbft.DBFT[common.Hash]
 	dbftStarted      atomic.Bool
@@ -1044,9 +1090,8 @@ func (c *DBFT) newPreBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Pre
 // processPreBlockCb is a dbft library setting callback.
 func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 	var (
-		ctx             = c.dbft.Context
-		pre             = b.(*PreBlock)
-		hasDecryptedTxs bool
+		ctx = c.dbft.Context
+		pre = b.(*PreBlock)
 	)
 	// A short path: there's no envelopes at all, use proposed transactions as-is.
 	if len(pre.envelopesData) == 0 {
@@ -1139,140 +1184,167 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			}
 		}
 
+		// Now validate decrypted transactions and construct final list of transactions for the block.
+		parent := c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
+		state, err := c.chain.StateAt(parent.Root)
+		if err != nil {
+			return fmt.Errorf("failed to get parent state: %w", err)
+		}
+		// Initialize EVM context for transaction validation and reconstruct the block like a miner.
 		var (
-			j                  int
-			txx                = make([]*types.Transaction, len(pre.transactions))
-			parent             = c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
-			fallbackToEnvelope = func(i int, incrementJ bool, reason string) bool {
-				if len(reason) != 0 {
-					log.Info("Falling back to envelope",
-						"envelope hash", pre.transactions[i].Hash(),
-						"envelope index", i,
-						"reason", reason)
-				}
-				if pre.transactions[i].Type() != types.BlobTxType {
-					errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false)
-					if errs[0] != nil {
-						log.Info("Falling back to original set of transactions",
-							"envelope hash", pre.transactions[i].Hash(),
-							"envelope index", i,
-							"reason", fmt.Sprintf("envelope has pool conflicts: %s", errs[0]))
-						txx = pre.transactions
-						hasDecryptedTxs = false
-						return false
+			receipts []*types.Receipt
+			allLogs  []*types.Log
+			evm      = vm.NewEVM(core.NewEVMBlockContext(pre.header, c.chain, &pre.header.Coinbase), state, c.chain.Config(), vm.Config{})
+			gasPool  = new(core.GasPool).AddGas(pre.header.GasLimit)
+			gasUsed  = uint64(0)
+		)
+		if pre.header.ParentBeaconRoot != nil {
+			core.ProcessBeaconBlockRoot(*pre.header.ParentBeaconRoot, evm)
+		}
+		if c.chain.Config().IsPrague(pre.header.Number, pre.header.Time) {
+			core.ProcessParentBlockHash(pre.header.ParentHash, evm)
+		}
+		core.ProcessOnPersist(evm)
+
+		var (
+			j                    int
+			txx                  = make([]*types.Transaction, 0)
+			envelopes            = make([]*antimev.EnvelopeInfo, len(pre.envelopesData))
+			signer               = types.MakeSigner(c.chain.Config(), pre.header.Number, pre.header.Time)
+			skipAccounts         = make(map[common.Address]bool) // Record accounts have failed transactions in reconstruction.
+			fallbackToPreBlockTx = func(i int, isEnvelope bool, sender common.Address, decrypted *types.Transaction, err error) {
+				// Log the fallback event.
+				if isEnvelope {
+					envelopes[j] = &antimev.EnvelopeInfo{
+						Envelope:  pre.transactions[i],
+						Decrypted: decrypted,
+						Err:       err,
 					}
-				}
-				txx[i] = pre.transactions[i]
-				if incrementJ {
 					j++
 				}
-				return true
+				// Use original Envelope transaction as-is.
+				if errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false); errs[0] == nil {
+					var (
+						snap = state.Snapshot()
+						gp   = gasPool.Gas()
+					)
+					state.SetTxContext(pre.transactions[i].Hash(), i)
+					receipt, err := core.ApplyTransaction(evm, gasPool, state, pre.header, pre.transactions[i], &gasUsed)
+					if err != nil {
+						state.RevertToSnapshot(snap)
+						gasPool.SetGas(gp)
+						// Drop following transactions from this account.
+						skipAccounts[sender] = true
+					} else {
+						txx = append(txx, pre.transactions[i])
+						receipts = append(receipts, receipt)
+						allLogs = append(allLogs, receipt.Logs...)
+					}
+				} else {
+					// Drop following transactions from this account.
+					skipAccounts[sender] = true
+				}
 			}
 		)
 
 		// If we're backup, then pre.finalReceipts are filled in during PreBlock verification;
 		// if we're primary, then reuse receipts got after PrepareRequest construction since
 		// PreBlock verification code is not executed by block proposer.
-		var receipts = pre.finalReceipts
+		preReceipts := pre.finalReceipts
 		if ctx.IsPrimary() && pre.finalState == nil {
-			receipts = c.sealingReceipts
+			preReceipts = c.sealingReceipts
 		}
-		if len(receipts) != len(pre.transactions) {
-			return fmt.Errorf("number of receipts mismatch: expected %d, actual %d", len(pre.transactions), len(receipts))
+		if len(preReceipts) != len(pre.transactions) {
+			return fmt.Errorf("number of receipts mismatch: expected %d, actual %d", len(pre.transactions), len(preReceipts))
 		}
 		// No need to reinitialize static pool since it was already initialized in verifyPreBlockCb.
 		// Reset the static pool after processing all transactions.
 		for i := range pre.transactions {
-			var isEnvelope = j < len(pre.envelopesData) && pre.envelopesData[j].index == i
+			sender, err := types.Sender(signer, pre.transactions[i])
+			if err != nil || skipAccounts[sender] {
+				continue
+			}
+			isEnvelope := j < len(pre.envelopesData) && pre.envelopesData[j].index == i
 			if !isEnvelope || // pre.transactions[i] is not an envelope, use it as-is.
 				decryptedTxsBytes[j] == nil { // pre.transactions[i] is Envelope, but its content failed to be decrypted, use Envelope as-is.
-				var reason string
 				if isEnvelope {
-					reason = "envelope data decryption failed"
-				}
-				if fallbackToEnvelope(i, isEnvelope, reason) {
-					continue
+					fallbackToPreBlockTx(i, true, sender, nil, errEnvelopeDecryption)
 				} else {
-					break
+					fallbackToPreBlockTx(i, false, sender, nil, nil)
 				}
+				continue
 			}
 			log.Info("Envelope data decrypted",
 				"envelope hash", pre.transactions[i].Hash(),
 				"envelope index", i,
 				"data", hex.EncodeToString(decryptedTxsBytes[j]))
 			var decryptedTx = new(types.Transaction)
-			err := decryptedTx.UnmarshalBinary(decryptedTxsBytes[j])
+			if err := decryptedTx.UnmarshalBinary(decryptedTxsBytes[j]); err != nil {
+				fallbackToPreBlockTx(i, true, sender, nil, errDecryptedDecoding)
+				continue
+			}
+			if err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i], preReceipts[i]); err != nil {
+				fallbackToPreBlockTx(i, true, sender, decryptedTx, err)
+				continue
+			}
+			if errs := c.staticPool.Add([]*types.Transaction{decryptedTx}, false); errs[0] != nil {
+				fallbackToPreBlockTx(i, true, sender, decryptedTx, errDecryptedRejectedByPool)
+				continue
+			}
+			var (
+				snap = state.Snapshot()
+				gp   = gasPool.Gas()
+			)
+			state.SetTxContext(decryptedTx.Hash(), i)
+			receipt, err := core.ApplyTransaction(evm, gasPool, state, pre.header, decryptedTx, &gasUsed)
 			if err != nil {
-				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction decoding failed: %s", err)) {
-					continue
-				} else {
-					break
+				state.RevertToSnapshot(snap)
+				gasPool.SetGas(gp)
+				fallbackToPreBlockTx(i, true, sender, decryptedTx, errDecryptedRejectedByEVM)
+				continue
+			} else {
+				envelopes[j] = &antimev.EnvelopeInfo{
+					Envelope:  pre.transactions[i],
+					Decrypted: decryptedTx,
+					Err:       nil,
 				}
+				txx = append(txx, decryptedTx)
+				receipts = append(receipts, receipt)
+				allLogs = append(allLogs, receipt.Logs...)
+				j++
 			}
-			err = c.validateDecryptedTx(parent, decryptedTx, pre.transactions[i], receipts[i])
-			if err != nil {
-				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction verification failed: %s", err)) {
-					continue
-				} else {
-					break
-				}
-			}
-			errs := c.staticPool.Add([]*types.Transaction{decryptedTx}, false)
-			if errs[0] != nil {
-				if fallbackToEnvelope(i, true, fmt.Sprintf("decrypted transaction has pool conflicts: %s", errs[0].Error())) {
-					continue
-				} else {
-					break
-				}
-			}
-			txx[i] = decryptedTx
-			j++
-			hasDecryptedTxs = true
 		}
+		// Read requests if Prague is enabled.
+		var requests [][]byte
+		if c.chain.Config().IsPrague(pre.header.Number, pre.header.Time) {
+			requests = [][]byte{}
+			// EIP-6110
+			if err := core.ParseDepositLogs(&requests, allLogs, c.chain.Config()); err != nil {
+				return err
+			}
+			// EIP-7002
+			if err := core.ProcessWithdrawalQueue(&requests, evm); err != nil {
+				return err
+			}
+			// EIP-7251
+			if err := core.ProcessConsolidationQueue(&requests, evm); err != nil {
+				return err
+			}
+		}
+		if requests != nil {
+			reqHash := types.CalcRequestsHash(requests)
+			pre.header.RequestsHash = &reqHash
+		}
+		// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
+		c.Finalize(c.chain, pre.header, state, &types.Body{Transactions: txx, Withdrawals: pre.withdrawals})
+
 		pre.finalTransactions = txx
+		pre.finalState = state
+		pre.finalReceipts = receipts
+		pre.finalGASUsed = gasUsed
+		c.envelopeFeed.Send(envelopes)
 		c.staticPool.ResetStatic()
 	}
-
-	// Use cached processing results if no new transactions were included into
-	// the block compared to the original proposal.
-	if !hasDecryptedTxs {
-		return nil
-	}
-
-	// Process state with constructed list of transactions to fill state-dependent
-	// block fields.
-	finalBlock := &PreBlock{
-		header:                 pre.header,
-		transactions:           pre.finalTransactions,
-		withdrawals:            pre.withdrawals,
-		dkgRound:               pre.dkgRound,
-		enforceECDSASignatures: pre.enforceECDSASignatures,
-	}
-	ethBlock := finalBlock.ToEthBlock()
-	state, res, err := c.chain.ProcessState(ethBlock, nil)
-	if err != nil {
-		// Something went wrong, fallback to the original set of transactions and cached
-		// processing results.
-		log.Error("failed to process PreBlock, falling back to the original proposal",
-			"err", err,
-			"number", ethBlock.NumberU64(),
-			"seal hash", c.SealHash(ethBlock.Header()),
-			"parent hash", ethBlock.ParentHash().String(),
-			"intermediate merkle root", ethBlock.Root(),
-			"coinbase", ethBlock.Coinbase().String(),
-			"gas limit", ethBlock.GasLimit(),
-			"gas used", ethBlock.GasUsed(),
-			"difficulty", ethBlock.Difficulty().String(),
-			"mix digest", ethBlock.MixDigest().String(),
-			"nonce", ethBlock.Nonce(),
-			"time", ethBlock.Time(),
-			"uncle hash", ethBlock.UncleHash().String(),
-			"txs", len(ethBlock.Transactions()))
-		pre.finalTransactions = pre.transactions
-		return nil
-	}
-
-	pre.finalState, pre.finalReceipts, pre.finalGASUsed = state, res.Receipts, res.GasUsed
 	return nil
 }
 
@@ -1305,46 +1377,46 @@ func (c *DBFT) initStaticPool(parent *types.Header, state *state.StateDB) error 
 func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transaction, envelope *types.Transaction, envelopeReceipt *types.Receipt) error {
 	// Make sure the transaction type is supported by legacy tx pool
 	if decryptedTx.Type() == types.BlobTxType {
-		return fmt.Errorf("decryptedTx has unsupported type: %v", decryptedTx.Type())
+		return errDecryptedTypeUnsupported
 	}
 
 	// Make sure the transaction is signed properly and has the same sender and nonce with envelope
 	if decryptedTx.Nonce() != envelope.Nonce() {
-		return fmt.Errorf("decryptedTx nonce mismatch: decryptedNonce %v, envelopeNonce %v", decryptedTx.Nonce(), envelope.Nonce())
+		return errDecryptedNonceMismatch
 	}
 
 	// Ensure the gasprice is high enough to replace the envelope transaction
 	baseFee := head.BaseFee
 	if decryptedTx.EffectiveGasTipCmp(envelope, baseFee) < 0 {
-		return fmt.Errorf("decryptedTx underpriced: EffectiveGasTip needed %v, EffectiveGasTip permitted %v", envelope.EffectiveGasTipValue(baseFee), decryptedTx.EffectiveGasTipValue(baseFee))
+		return errDecryptedUnderpriced
 	}
 
 	// Ensure envelope sender matches decrypted sender.
 	envelopeFrom, err := types.Sender(c.signerConfig, envelope)
 	if err != nil {
-		return fmt.Errorf("%w: failed to retrieve envelope sender: %w", txpool.ErrInvalidSender, err)
+		return txpool.ErrInvalidSender
 	}
 	decryptedFrom, err := types.Sender(c.signerConfig, decryptedTx)
 	if err != nil {
-		return fmt.Errorf("%w: failed to retrieve decrypted transaction sender: %w", txpool.ErrInvalidSender, err)
+		return txpool.ErrInvalidSender
 	}
 	if envelopeFrom != decryptedFrom {
-		return fmt.Errorf("decryptedTx from mismatch: decryptedFrom %v, envelopeFrom %v", decryptedFrom, envelopeFrom)
+		return errDecryptedSenderMismatch
 	}
 
 	// Ensure decrypted hash matches the one specified in an unencrypted part of Envelope data.
 	expectedH := antimev.GetEncryptedHash(envelope)
 	if decryptedTx.Hash().Cmp(expectedH) != 0 {
-		return fmt.Errorf("decryptedTx hash mismatch: expected %s, got %s", expectedH, decryptedTx.Hash())
+		return errDecryptedHashMismatch
 	}
 	// Ensure decrypted gas limit is the same as the envelope declared
 	expectedG := antimev.GetEncryptedGas(envelope.Data())
 	if decryptedTx.Gas() != uint64(expectedG) {
-		return fmt.Errorf("decryptedTx gas limit mismatch: expected %v, got %v", expectedG, decryptedTx.Gas())
+		return errDecryptedGasMismatch
 	}
 	// Ensure decrypted gas limit has been allocated by Envelope
 	if decryptedTx.Gas() > envelopeReceipt.GasUsed {
-		return fmt.Errorf("decryptedTx gas limit not allocated: needed %v, got %v", decryptedTx.Gas(), envelopeReceipt.GasUsed)
+		return errDecryptedGasNotAllocated
 	}
 
 	return nil
@@ -2795,6 +2867,11 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 		Namespace: "dbft",
 		Service:   &API{chain: chain, bft: c, config: c.config.statisticsConfig},
 	}}
+}
+
+// SubscribeEnvelopeEvent creates a subscription that fires for all new envelopes that enter the consensus engine.
+func (c *DBFT) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription {
+	return c.scope.Track(c.envelopeFeed.Subscribe(ch))
 }
 
 // getValidatorsSorted returns validators chosen in the result of the latest

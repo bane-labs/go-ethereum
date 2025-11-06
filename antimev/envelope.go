@@ -85,3 +85,10 @@ func GetEncryptedGas(envelopeData []byte) uint32 {
 	gasOffset := EncryptedDataPrefixLen + EncryptedDataRoundLen
 	return binary.BigEndian.Uint32(envelopeData[gasOffset : gasOffset+EncryptedDataGasLen])
 }
+
+// EnvelopeInfo is a wrapped packet of an Envelope and its handling result.
+type EnvelopeInfo struct {
+	Envelope  *types.Transaction `json:"envelope"`  // Original Envelope transaction
+	Decrypted *types.Transaction `json:"decrypted"` // Decrypted inner transaction
+	Err       error              `json:"err"`       // Decryption error, if any
+}
