@@ -2,6 +2,41 @@
 
 This document outlines major changes between releases.
 
+## 0.5.1 "Ornamentation" (7 Nov 2025)
+
+This patch-release supports an event subscription from dBFT and improves the
+PreBlock construction about Envelope transaction handling. Since the `Cancun`
+and `Prague` upgrades work on TestNet quite well, this version also schedules
+the same upgrades for MainNet.
+
+This version is fully compatible with v0.5.0 and does not require node
+resynchronization. For TestNet nodes no configuration changes are required on
+upgrade (comparing to v0.5.0). For MainNet nodes the DB reinitialization is
+required with the updated genesis configuration since `Cancun` and `Prague`
+forks are enabled. Follow the instructions below to upgrade your node from
+v0.5.0 to v0.5.1:
+
+1. Download new binary and new genesis configuration file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. For MainNet nodes only: don't remove DB; reinitialize DB using new binary and
+   new genesis configuration file with the following command:
+   ```
+   ./geth init --datadir ./node-datadir ./config/genesis.json
+   ```
+5. Start the node.
+
+New features:
+ * support a real-time event subscription about Envelopes (#528, #530)
+
+Behaviour changes:
+ * `Cancun` fork is enabled at timestamp `1763000000` on MainNet (#531)
+ * `Prague` fork is enabled at timestamp `1763000000` on MainNet (#531)
+
+Improvements:
+ * refactor PreBlock handling to avoid unexpected Envelope revert (#528)
+ * update system contract documentation about Message Bridge (#529)
+
 ## 0.5.0 "Neutralization‌" (23 Oct 2025)
 
 This version introduces the support for two Ethereum major upgrades: Cancun and
@@ -68,7 +103,7 @@ your node from v0.4.1 to v0.4.2:
 
 Behaviour changes:
  * `NeoXDKG`, `NeoXAMEV` and `NeoXEthSig` forks of MainNet are rescheduled to 3623040,
-   3689280 and 3689280 blocks correspondingly (#512)
+   3749760 and 3749760 blocks correspondingly (#512, #516)
  * reschedule `NeoXDKG` fork for PrivNet setups (#502)
 
 Improvements:
