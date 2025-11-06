@@ -90,5 +90,5 @@ func GetEncryptedGas(envelopeData []byte) uint32 {
 type EnvelopeInfo struct {
 	Envelope  *types.Transaction `json:"envelope"`  // Original Envelope transaction
 	Decrypted *types.Transaction `json:"decrypted"` // Decrypted inner transaction
-	Err       error              `json:"err"`       // Decryption error, if any
+	Err       *string            `json:"err"`       // Decryption error, if any
 }

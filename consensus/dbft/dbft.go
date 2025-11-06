@@ -1215,10 +1215,14 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			fallbackToPreBlockTx = func(i int, isEnvelope bool, sender common.Address, decrypted *types.Transaction, err error) {
 				// Log the fallback event.
 				if isEnvelope {
+					if err == nil {
+						panic("bug: no error is given to fallback an Envelope")
+					}
+					errStr := err.Error()
 					envelopes[j] = &antimev.EnvelopeInfo{
 						Envelope:  pre.transactions[i],
 						Decrypted: decrypted,
-						Err:       err,
+						Err:       &errStr,
 					}
 					j++
 				}
