@@ -6,26 +6,26 @@ Neo X system contracts are a set of build-in Solidity contracts with predefined 
 
 These contracts are not deployed by transactions but allocated in the [genesis file](https://github.com/bane-labs/go-ethereum/blob/bane-main/config). The address setting of existing pre-compiled contracts is listed as below.
 
-| Address                                      | Contract                                                      |
-|----------------------------------------------|---------------------------------------------------------------|
-| `0x1212000000000000000000000000000000000000` | GovProxyAdmin                                                 |
-| `0x1212000000000000000000000000000000000001` | Governance Proxy                                              |
-| `0x1212000000000000000000000000000000000002` | Policy Proxy                                                  |
-| `0x1212000000000000000000000000000000000003` | GovernanceReward Proxy                                        |
-| `0x1212000000000000000000000000000000000004` | Bridge Proxy                                                  |
-| `0x1212000000000000000000000000000000000005` | BridgeManagement Proxy                                        |
-| `0x1212000000000000000000000000000000000006` | Treasury                                                      |
-| `0x1212000000000000000000000000000000000007` | CommitteeMultiSig Proxy                                       |
-| `0x1212000000000000000000000000000000000008` | KeyManagement Proxy                                           |
-| `0x1212000000000000000000000000000000000009` | Stub1 Proxy                                                   |
-| `0x121200000000000000000000000000000000000a` | Stub2 Proxy                                                   |
-| `0x121200000000000000000000000000000000000b` | Stub3 Proxy                                                   |
-| `0x121200000000000000000000000000000000000c` | Stub4 Proxy                                                   |
-| `0x121200000000000000000000000000000000000d` | Stub5 Proxy                                                   |
-| `0x121200000000000000000000000000000000000e` | Stub6 Proxy                                                   |
-| `0x121200000000000000000000000000000000000f` | Stub7 Proxy                                                   |
-| `0x1212000000000000000000000000000000000010` | Stub8 Proxy                                                   |
-| `0x1212000000000000000000000000000000000011` | Stub9 Proxy                                                   |
+| Address                                      | Contract                |
+|----------------------------------------------|-------------------------|
+| `0x1212000000000000000000000000000000000000` | GovProxyAdmin           |
+| `0x1212000000000000000000000000000000000001` | Governance Proxy        |
+| `0x1212000000000000000000000000000000000002` | Policy Proxy            |
+| `0x1212000000000000000000000000000000000003` | GovernanceReward Proxy  |
+| `0x1212000000000000000000000000000000000004` | Bridge Proxy            |
+| `0x1212000000000000000000000000000000000005` | BridgeManagement Proxy  |
+| `0x1212000000000000000000000000000000000006` | Treasury                |
+| `0x1212000000000000000000000000000000000007` | CommitteeMultiSig Proxy |
+| `0x1212000000000000000000000000000000000008` | KeyManagement Proxy     |
+| `0x1212000000000000000000000000000000000009` | MessageBridge Proxy     |
+| `0x121200000000000000000000000000000000000a` | Stub2 Proxy             |
+| `0x121200000000000000000000000000000000000b` | Stub3 Proxy             |
+| `0x121200000000000000000000000000000000000c` | Stub4 Proxy             |
+| `0x121200000000000000000000000000000000000d` | Stub5 Proxy             |
+| `0x121200000000000000000000000000000000000e` | Stub6 Proxy             |
+| `0x121200000000000000000000000000000000000f` | Stub7 Proxy             |
+| `0x1212000000000000000000000000000000000010` | Stub8 Proxy             |
+| `0x1212000000000000000000000000000000000011` | Stub9 Proxy             |
 
 ## GovernanceVote
 
@@ -39,7 +39,7 @@ Any contract inheriting `GovernanceVote.sol` can set up a consensus vote on meth
 
 ## GovProxyAdmin
 
-[GovProxyAdmin](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovProxyAdmin.sol) controls the upgrade of other pre-compiled system contracts, since all of their `onlyOwner`/`onlyAdmin` point to `0x1212000000000000000000000000000000000000`.
+[GovProxyAdmin](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovProxyAdmin.sol) controls the upgrade of other pre-compiled system contracts, since all of their `onlyOwner` or `onlyAdmin` point to `0x1212000000000000000000000000000000000000`.
 
 This contract inherits `GovernanceVote.sol` so that it requires a `50%` majority votes among current consensus to execute `scheduleUpgrade(...)`, which means **more than half** of the **current consensus** votes for **the same contract implementation**. 
 
@@ -90,15 +90,15 @@ At the end of every election epoch, the 7 candidates with the highest amount of 
 
 Otherwise, the consensus nodes of the next epoch will be the following predefined stand-by members.
 
-|Testnet Stand-by Address|Mainnet Stand-by Address|
-|--|--|
-|`0xcbbeca26e89011e32ba25610520b20741b809007`|`0x34a3b2abb99b4c128acf61dcbbd1fcac0b161652`|
-|`0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc`|`0x641ec1c538fa17e6ad8193c9b580f6850b114280`|
-|`0xd10f47396dc6c76ad53546158751582d3e2683ef`|`0xe3973f57e8a0aa312c1917ab0e6a05d8b6af6609`|
-|`0xa51fe05b0183d01607bf48c1718d1168a1c11171`|`0xa61ac4a4f006f4fceeb72ee0012a2d3367168d10`|
-|`0x01b517b301bb143476da35bb4a1399500d925514`|`0xe6d1a9db6a0893926bd81c0ef93aaaa543c116f0`|
-|`0x7976ad987d572377d39fb4bab86c80e08b6f8327`|`0x4fe8af0dbb633283d8e9703668142fd130f2818d`|
-|`0xd711da2d8c71a801fc351163337656f1321343a0`|`0x763452f65353fffe73d46539e51a6ddfc0e2c86a`|
+| Testnet Stand-by Address                     | Mainnet Stand-by Address                     |
+|----------------------------------------------|----------------------------------------------|
+| `0xcbbeca26e89011e32ba25610520b20741b809007` | `0x34a3b2abb99b4c128acf61dcbbd1fcac0b161652` |
+| `0x4ea2a4697d40247c8be1f2b9ffa03a0e92dcbacc` | `0x641ec1c538fa17e6ad8193c9b580f6850b114280` |
+| `0xd10f47396dc6c76ad53546158751582d3e2683ef` | `0xe3973f57e8a0aa312c1917ab0e6a05d8b6af6609` |
+| `0xa51fe05b0183d01607bf48c1718d1168a1c11171` | `0xa61ac4a4f006f4fceeb72ee0012a2d3367168d10` |
+| `0x01b517b301bb143476da35bb4a1399500d925514` | `0xe6d1a9db6a0893926bd81c0ef93aaaa543c116f0` |
+| `0x7976ad987d572377d39fb4bab86c80e08b6f8327` | `0x4fe8af0dbb633283d8e9703668142fd130f2818d` |
+| `0xd711da2d8c71a801fc351163337656f1321343a0` | `0x763452f65353fffe73d46539e51a6ddfc0e2c86a` |
 
 After enabling DKG-related features and the KeyManagement contract for further antimev usage, there is a short period (currently `360` blocks) for key generations before epoch change. In this period, the **top 7 candidates** get locked in election, so the voted GAS amount can't further affect the result. Related voter operations (e.g. voting and withdrawing) and candidate operations (e.g. registering and exiting) are still open to use, which provides a smooth UX, but they don't change the election result as well.
 
@@ -143,19 +143,19 @@ There are several special cases of reward distribution:
 
 The current Neo X Policy maintains following parameters. All these policies are both checked by honest consensus nodes locally and by dBFT globally.
 
-|Name|Parameter|Usage|
-|--|--|--|
-|Address Blacklist|`isBlackListed`|Prevent blacklisted addresses to send transactions or be elected as block validators in Neo X network|
-|Minimum Transaction Tip Cap|`minGasTipCap`|Force transaction senders to pay a minimum tip to Neo X Governance|
-|Base Fee|`baseFee`|Burn a fixed part of transaction fees instead of following EIP-1559's dynamic evaluation|
-|Candidate Limit|`candidateLimit`|Limit the number of candidates in Governance registration and election|
-|Envelope Fee|`envelopeFee`|Force envelope transaction senders to pay an extra tip to Neo X Governance|
-|Maximum Envelopes Per Block|`maxEnvelopesPerBlock`|Limit the number of envelope transactions in each block|
-|Maximum Envelope Gas Limit|`maxEnvelopeGasLimit`|Limit the gas consumption of each envelope transaction|
+| Name                        | Parameter              | Usage                                                                                                 |
+|-----------------------------|------------------------|-------------------------------------------------------------------------------------------------------|
+| Address Blacklist           | `isBlackListed`        | Prevent blacklisted addresses to send transactions or be elected as block validators in Neo X network |
+| Minimum Transaction Tip Cap | `minGasTipCap`         | Force transaction senders to pay a minimum tip to Neo X Governance                                    |
+| Base Fee                    | `baseFee`              | Burn a fixed part of transaction fees instead of following EIP-1559's dynamic evaluation              |
+| Candidate Limit             | `candidateLimit`       | Limit the number of candidates in Governance registration and election                                |
+| Envelope Fee                | `envelopeFee`          | Force envelope transaction senders to pay an extra tip to Neo X Governance                            |
+| Maximum Envelopes Per Block | `maxEnvelopesPerBlock` | Limit the number of envelope transactions in each block                                               |
+| Maximum Envelope Gas Limit  | `maxEnvelopeGasLimit`  | Limit the gas consumption of each envelope transaction                                                |
 
 Since all the policy setters adopt the `needVote` modifier, any policy change requires more than 1/2 of the current Neo X consensus nodes votes to be collected.
 
-## Bridge
+## Bridge / MessageBridge
 
 Refer to the [Bridge Contracts repository](https://github.com/bane-labs/bridge-evm-contracts).
 
@@ -207,6 +207,19 @@ Different from the DKG resharing, a brand new sharing cannot be recovered before
 
 The above processes will be automatically performed by Neo X node when antimev feature is enabled. For more details about the crypto, please refer [crypto/tpke](https://github.com/bane-labs/go-ethereum/tree/bane-main/crypto/tpke) and [core/antimev](https://github.com/bane-labs/go-ethereum/tree/bane-main/core/antimev).
 
-## System contract stubs
+## Stubs
 
-[Stub](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Stub.sol) is reserved system contract implementation that has pre-assigned addresses in the genesis allocations (Stup0-Stub9 Proxies). Once designated role for the stub contract is created, its code will be updated correspondingly to serve the needs of the Neo X chain.
+[Stub](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Stub.sol) is reserved system contract implementation that has pre-assigned addresses in the genesis allocations. Once designated role for the stub contract is created, its code will be updated correspondingly to serve the needs of the Neo X chain.
+
+| Name  | Address                                      | Status                |
+|-------|----------------------------------------------|-----------------------|
+| Stub0 | `0x1212000000000000000000000000000000000008` | Used by KeyManagement |
+| Stub1 | `0x1212000000000000000000000000000000000009` | Used by MessageBridge |
+| Stub2 | `0x121200000000000000000000000000000000000a` | *Not used*            |
+| Stub3 | `0x121200000000000000000000000000000000000b` | *Not used*            |
+| Stub4 | `0x121200000000000000000000000000000000000c` | *Not used*            |
+| Stub5 | `0x121200000000000000000000000000000000000d` | *Not used*            |
+| Stub6 | `0x121200000000000000000000000000000000000e` | *Not used*            |
+| Stub7 | `0x121200000000000000000000000000000000000f` | *Not used*            |
+| Stub8 | `0x1212000000000000000000000000000000000010` | *Not used*            |
+| Stub9 | `0x1212000000000000000000000000000000000011` | *Not used*            |
