@@ -148,6 +148,9 @@ func NewOracle(backend OracleBackend, params Config, startPrice *big.Int) *Oracl
 	return &Oracle{
 		backend:          backend,
 		lastPrice:        startPrice,
+		lastBaseFee:      new(big.Int),
+		lastMinGasTipCap: new(big.Int),
+		lastEnvelopeFee:  new(big.Int),
 		maxPrice:         maxPrice,
 		ignorePrice:      ignorePrice,
 		checkBlocks:      blocks,
