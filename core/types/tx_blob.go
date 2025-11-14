@@ -102,6 +102,10 @@ func (sc *BlobTxSidecar) ValidateBlobCommitmentHashes(hashes []common.Hash) erro
 	return nil
 }
 
+type BlobSidecars []*BlobTxSidecar
+
+func (scs BlobSidecars) Len() int { return len(scs) }
+
 // blobTxWithBlobs is used for encoding of transactions when blobs are present.
 type blobTxWithBlobs struct {
 	BlobTx      *BlobTx

@@ -37,3 +37,25 @@ func (p *Peer) broadcastBlocks() {
 		}
 	}
 }
+
+// broadcastBlockBlob is a write loop that schedules blob broadcasts
+// to the remote peer. The goal is to have an async writer that does not lock up
+// node internals and at the same time rate limits queued data.
+func (p *Peer) broadcastBlockBlob() {
+	for {
+		select {
+		case data := <-p.blobBroadcast:
+			if err := p.sendBlockBlobs(data.BlockHash, data.Sidecars); err != nil {
+				return
+			}
+			p.Log().Trace("Sent blobs", "block hash", data.BlockHash)
+		case blockHash := <-p.blobRootBroadcast:
+			if err := p.sendBlobsRoot(blockHash); err != nil {
+				return
+			}
+			p.Log().Trace("Sent blobs block hash", "block hash", blockHash)
+		case <-p.term:
+			return
+		}
+	}
+}

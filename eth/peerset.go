@@ -244,10 +244,25 @@ func (ps *peerSet) beaconsWithoutBlock(hash common.Hash) []*beaconPeer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
-	list := make([]*beaconPeer, 0, len(ps.peers))
+	list := make([]*beaconPeer, 0, len(ps.beacons))
 	for _, b := range ps.beacons {
 		if !b.KnownBlock(hash) {
 			list = append(list, b)
+		}
+	}
+	return list
+}
+
+// beaconsWithoutBlockBlobs retrieves a list of peers that do not have a given blob in
+// their set of known hashes.
+func (ps *peerSet) beaconsWithoutBlockBlobs(hash common.Hash) []*beaconPeer {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	list := make([]*beaconPeer, 0, len(ps.beacons))
+	for _, p := range ps.beacons {
+		if !p.KnownBlockBlobs(hash) {
+			list = append(list, p)
 		}
 	}
 	return list
@@ -275,6 +290,18 @@ func (ps *peerSet) allPeers() []*ethPeer {
 
 	list := make([]*ethPeer, 0, len(ps.peers))
 	for _, p := range ps.peers {
+		list = append(list, p)
+	}
+	return list
+}
+
+// allBeacons retrieves all of the beacon peers.
+func (ps *peerSet) allBeacons() []*beaconPeer {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	list := make([]*beaconPeer, 0, len(ps.beacons))
+	for _, p := range ps.beacons {
 		list = append(list, p)
 	}
 	return list

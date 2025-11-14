@@ -82,6 +82,7 @@ type Ethereum struct {
 	localTxTracker *locals.TxTracker
 	dbftSrv        *dbftproto.Service
 	blockchain     *core.BlockChain
+	filesystem     *core.FileSystem
 
 	handler *handler
 	discmix *enode.FairMix
@@ -250,6 +251,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+	eth.filesystem, err = core.NewFileSystem()
+	if err != nil {
+		return nil, err
+	}
 
 	// Initialize filtermaps log index.
 	fmConfig := filtermaps.Config{
@@ -316,6 +321,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		BloomCache:     uint64(cacheLimit),
 		EventMux:       eth.eventMux,
 		RequiredBlocks: config.RequiredBlocks,
+		fs:             eth.filesystem,
 	}); err != nil {
 		return nil, err
 	}

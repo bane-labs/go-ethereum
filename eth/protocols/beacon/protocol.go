@@ -25,7 +25,7 @@ var ProtocolVersions = []uint{BEACON1}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{BEACON1: 3}
+var protocolLengths = map[uint]uint64{BEACON1: 7}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -34,6 +34,10 @@ const (
 	StatusMsg         = 0x00
 	NewBlockHashesMsg = 0x01
 	NewBlockMsg       = 0x02
+	NewBlobsMsg       = 0x03
+	BlobsRootMsg      = 0x04
+	GetBlobsMsg       = 0x05
+	BlobsByRootMsg    = 0x06
 )
 
 var (
@@ -90,37 +94,59 @@ type NewBlockPacket struct {
 	TD    *big.Int
 }
 
-// GetBlobsRequest represents a blobs query.
-type GetBlobsRequest []common.Hash
+// NewBlobsPacket is the network packet for blobs record.
+type NewBlobsPacket struct {
+	BlockHash common.Hash
+	Sidecars  types.BlobSidecars
+}
+
+func (request *NewBlobsPacket) sanityCheck() error {
+	if len(request.Sidecars) > 0 {
+		for _, sidecar := range request.Sidecars {
+			if len(sidecar.Blobs) != len(sidecar.Commitments) || len(sidecar.Blobs) != len(sidecar.Proofs) {
+				return errInvalidBlobs
+			}
+		}
+	}
+	return nil
+}
+
+// BlobsRootPacket is the network packet for blobs block hash.
+type BlobsRootPacket struct {
+	BlockHash common.Hash
+}
 
 // GetBlobsPacket is the request packet for blob query by block hash.
 type GetBlobsPacket struct {
 	RequestId uint64
+	BlockHash common.Hash
+}
+
+// GetBlobsRequest represents a blobs query.
+type GetBlobsRequest []common.Hash
+
+// BatchGetBlobsPacket is the request packet for batch blob query by block hashes.
+type BatchGetBlobsPacket struct {
+	RequestId uint64
 	GetBlobsRequest
+}
+
+// BlobsByRootPacket is the response packet for blobs by block hash.
+type BlobsByRootPacket struct {
+	RequestId uint64
+	Sidecars  types.BlobSidecars
 }
 
 // BlobsResponse is the response packet for blobs by block hash.
 type BlobsResponse [][]*types.BlobTxSidecar
 
-// BlobsPacket is the response packet for blobs by block hash with request
-// ID wrapping.
-type BlobsPacket struct {
+// BatchBlobsByRootPacket is the response packet for batch blobs by block hashes.
+type BatchBlobsByRootPacket struct {
 	RequestId uint64
 	BlobsResponse
 }
 
-// BlobsRLPResponse is used for replying to blobs by block hash requests, in cases
-// where we already have them RLP-encoded, and thus can avoid the decode-encode
-// roundtrip.
-type BlobsRLPResponse []rlp.RawValue
-
-// BlobsRLPPacket is the BlobsRLPResponse with request ID wrapping.
-type BlobsRLPPacket struct {
-	RequestId uint64
-	BlobsRLPResponse
-}
-
-func (packet *BlobsPacket) sanityCheck() error {
+func (packet *BatchBlobsByRootPacket) sanityCheck() error {
 	if len(packet.BlobsResponse) > 0 {
 		for _, sidecars := range packet.BlobsResponse {
 			for _, sidecar := range sidecars {
@@ -133,6 +159,25 @@ func (packet *BlobsPacket) sanityCheck() error {
 	return nil
 }
 
+// BlobsRLP is used for replying to blobs by block hash requests, in cases
+// where we already have them RLP-encoded, and thus can avoid the decode-encode
+// roundtrip.
+type BlobsRLPPacket struct {
+	RequestId        uint64
+	BlobsRLPResponse rlp.RawValue
+}
+
+// BatchBlobsRLPResponse is used for replying to blobs by block hash requests, in cases
+// where we already have them RLP-encoded, and thus can avoid the decode-encode
+// roundtrip.
+type BatchBlobsRLPResponse []rlp.RawValue
+
+// BatchBlobsRLPPacket is the BatchBlobsRLPResponse with request ID wrapping.
+type BatchBlobsRLPPacket struct {
+	RequestId uint64
+	BatchBlobsRLPResponse
+}
+
 func (*StatusPacket) Name() string { return "Status" }
 func (*StatusPacket) Kind() byte   { return StatusMsg }
 
@@ -141,3 +186,15 @@ func (*NewBlockHashesPacket) Kind() byte   { return NewBlockHashesMsg }
 
 func (*NewBlockPacket) Name() string { return "NewBlock" }
 func (*NewBlockPacket) Kind() byte   { return NewBlockMsg }
+
+func (*NewBlobsPacket) Name() string { return "NewBlobs" }
+func (*NewBlobsPacket) Kind() byte   { return NewBlobsMsg }
+
+func (*BlobsRootPacket) Name() string { return "BlobsRoot" }
+func (*BlobsRootPacket) Kind() byte   { return BlobsRootMsg }
+
+func (*GetBlobsPacket) Name() string { return "GetBlobs" }
+func (*GetBlobsPacket) Kind() byte   { return GetBlobsMsg }
+
+func (*BlobsByRootPacket) Name() string { return "BlobsByRoot" }
+func (*BlobsByRootPacket) Kind() byte   { return BlobsByRootMsg }

@@ -3,8 +3,11 @@ package beacon
 import (
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 )
 
@@ -43,4 +46,105 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 	peer.markBlock(ann.Block.Hash())
 
 	return backend.Handle(peer, ann)
+}
+
+func handleNewBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	ann := new(NewBlobsPacket)
+	if err := msg.Decode(ann); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+	if err := ann.sanityCheck(); err != nil {
+		return err
+	}
+
+	// Schedule all the unknown hashes for retrieval
+	peer.markBlockBlobs(ann.BlockHash)
+	return backend.Handle(peer, ann)
+}
+
+func handleBlobsRoot(backend Backend, msg Decoder, peer *Peer) error {
+	ann := new(BlobsRootPacket)
+	if err := msg.Decode(ann); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+
+	log.Debug("receive BlobsRoot announcement", "from", peer.id, "blockHash", ann.BlockHash)
+
+	peer.markBlockBlobs(ann.BlockHash)
+	return nil
+}
+
+func handleGetBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	req := new(GetBlobsPacket)
+	if err := msg.Decode(req); err != nil {
+		return fmt.Errorf("msg %v, decode err: %v", GetBlobsMsg, err)
+	}
+
+	log.Debug("receive GetBlobsMsg request", "from", peer.id, "req", req)
+
+	return backend.Handle(peer, req)
+}
+
+func handleBlobsByRoot(backend Backend, msg Decoder, peer *Peer) error {
+	ann := new(BlobsByRootPacket)
+	if err := msg.Decode(ann); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+
+	err := peer.dispatchResponse(&Response{
+		id:   ann.RequestId,
+		code: BlobsByRootMsg,
+		Res:  ann,
+	}, nil)
+	log.Debug("receive BlobsByRoot response", "from", peer.id, "requestId", ann.RequestId, "sidecars", len(ann.Sidecars), "err", err)
+	return nil
+}
+
+// func handleGetBlobs(backend Backend, msg Decoder, peer *Peer) error {
+// 	query := new(GetBlobsPacket)
+// 	if err := msg.Decode(query); err != nil {
+// 		return fmt.Errorf("msg %v, decode err: %v", GetBlobsMsg, err)
+// 	}
+// 	response := ServiceGetBlobsQuery(nil, query.GetBlobsRequest)
+// 	return peer.ReplyBlobsRLP(query.RequestId, response)
+// }
+
+// ServiceGetBlobsQuery assembles the response to a blob query. It is
+// exposed to allow external packages to test protocol behavior.
+func ServiceGetBlobsQuery(chain *core.BlockChain, query GetBlobsRequest) []rlp.RawValue {
+	// Gather blocks until the fetch or network limits is reached
+	var (
+		bytes int
+		blobs []rlp.RawValue
+	)
+	for lookups, _ := range query {
+		if bytes >= softResponseLimit || len(blobs) >= maxBlobsServe ||
+			lookups >= 2*maxBlobsServe {
+			break
+		}
+		// Retrieve the requested block's blobs
+		// results := fs.GetBlobssByHash(hash)
+		// if results == nil {
+		// 	if header := chain.GetHeaderByHash(hash); header == nil || header.ReceiptHash != types.EmptyRootHash {
+		// 		continue
+		// 	}
+		// }
+		results := make([]*types.BlobTxSidecar, 0)
+		emptyBlob := kzg4844.Blob{}
+		emptyBlobCommit, _ := kzg4844.BlobToCommitment(&emptyBlob)
+		emptyBlobProof, _ := kzg4844.ComputeBlobProof(&emptyBlob, emptyBlobCommit)
+		results = append(results, &types.BlobTxSidecar{
+			Blobs:       []kzg4844.Blob{emptyBlob},
+			Commitments: []kzg4844.Commitment{emptyBlobCommit},
+			Proofs:      []kzg4844.Proof{emptyBlobProof},
+		})
+		// If known, encode and queue for response packet
+		if encoded, err := rlp.EncodeToBytes(results); err != nil {
+			log.Error("Failed to encode blobs", "err", err)
+		} else {
+			blobs = append(blobs, encoded)
+			bytes += len(encoded)
+		}
+	}
+	return blobs
 }

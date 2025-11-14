@@ -2,12 +2,15 @@ package beacon
 
 import (
 	"math/big"
+	"math/rand/v2"
 	"sync"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 const (
@@ -24,6 +27,13 @@ const (
 	// dropping broadcasts. Similarly to block propagations, there's no point to queue
 	// above some healthy uncle limit, so use that.
 	maxQueuedBlockAnns = 4
+
+	// maxKnownBlobs is the maximum block hashes to keep in the known list
+	// before starting to randomly evict them.
+	maxKnownBlobs = 512
+
+	// blobBufferSize is the maximum number of batch blobs can be hold before sending
+	blobBufferSize = 4
 )
 
 // Peer is a collection of relevant information we have about a `beacon` peer.
@@ -41,6 +51,10 @@ type Peer struct {
 	queuedBlocks    chan *blockPropagation // Queue of blocks to broadcast to the peer
 	queuedBlockAnns chan *types.Block      // Queue of blocks to announce to the peer
 
+	knownBlobs        *knownCache         // Set of blob hashes known to be known by this peer
+	blobBroadcast     chan core.BlobEvent // Channel used to queue blobs propagation requests
+	blobRootBroadcast chan common.Hash    // Channel used to queue blobs block hash announcement requests
+
 	reqDispatch chan *request  // Dispatch channel to send requests and track then until fulfillment
 	reqCancel   chan *cancel   // Dispatch channel to cancel pending requests and untrack them
 	resDispatch chan *response // Dispatch channel to fulfil pending requests and untrack them
@@ -54,16 +68,20 @@ type Peer struct {
 func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
 	id := p.ID().String()
 	peer := &Peer{
-		id:              id,
-		knownBlocks:     newKnownCache(maxKnownBlocks),
-		queuedBlocks:    make(chan *blockPropagation, maxQueuedBlocks),
-		queuedBlockAnns: make(chan *types.Block, maxQueuedBlockAnns),
-		Peer:            p,
-		rw:              rw,
-		version:         version,
-		term:            make(chan struct{}),
+		id:                id,
+		knownBlocks:       newKnownCache(maxKnownBlocks),
+		queuedBlocks:      make(chan *blockPropagation, maxQueuedBlocks),
+		queuedBlockAnns:   make(chan *types.Block, maxQueuedBlockAnns),
+		knownBlobs:        newKnownCache(maxKnownBlobs),
+		blobBroadcast:     make(chan core.BlobEvent, blobBufferSize),
+		blobRootBroadcast: make(chan common.Hash, blobBufferSize),
+		Peer:              p,
+		rw:                rw,
+		version:           version,
+		term:              make(chan struct{}),
 	}
 	go peer.broadcastBlocks()
+	go peer.broadcastBlockBlob()
 	go peer.dispatcher()
 
 	return peer
@@ -162,6 +180,86 @@ func (p *Peer) AsyncSendNewBlock(block *types.Block, td *big.Int) {
 		p.knownBlocks.Add(block.Hash())
 	default:
 		p.Log().Debug("Dropping block propagation", "number", block.NumberU64(), "hash", block.Hash())
+	}
+}
+
+// ReplyBlobsRLP is the response to GetBlobs.
+func (p *Peer) ReplyBlobsRLP(id uint64, blobs rlp.RawValue) error {
+	return p2p.Send(p.rw, BlobsByRootMsg, &BlobsRLPPacket{
+		RequestId:        id,
+		BlobsRLPResponse: blobs,
+	})
+}
+
+// RequestBlobsByRoot sends GetBlobsMsg by request block hash.
+func (p *Peer) RequestBlobsByRoot(hash common.Hash, sink chan *Response) (*Request, error) {
+	id := rand.Uint64()
+
+	req := &Request{
+		id:   id,
+		sink: sink,
+		code: GetBlobsMsg,
+		want: BlobsByRootMsg,
+		data: &GetBlobsPacket{
+			RequestId: id,
+			BlockHash: hash,
+		},
+	}
+
+	if err := p.dispatchRequest(req); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+// KnownBlockBlobs returns whether peer is known to already have a block's blobs.
+func (p *Peer) KnownBlockBlobs(blockHash common.Hash) bool {
+	return p.knownBlobs.Contains(blockHash)
+}
+
+// markBlockBlobs marks blobs as known for the peer, ensuring that they
+// will never be repropagated to this particular peer.
+func (p *Peer) markBlockBlobs(blockHash common.Hash) {
+	if !p.knownBlobs.Contains(blockHash) {
+		// If we reached the memory allowance, drop a previously known block hash
+		p.knownBlobs.Add(blockHash)
+	}
+}
+
+// sendBlockBlobs propagates a block's blobs to the remote peer.
+func (p *Peer) sendBlockBlobs(blockHash common.Hash, blobs types.BlobSidecars) error {
+	// Mark all the blobs as known, but ensure we don't overflow our limits
+	p.markBlockBlobs(blockHash)
+	return p2p.Send(p.rw, NewBlobsMsg, &NewBlobsPacket{blockHash, blobs})
+}
+
+// AsyncSendBlockBlobs queues a batch of blob data for propagation to a remote peer. If
+// the peer's broadcast queue is full, the event is silently dropped.
+func (p *Peer) AsyncSendBlockBlobs(blockHash common.Hash, blobs types.BlobSidecars) {
+	select {
+	case p.blobBroadcast <- core.BlobEvent{BlockHash: blockHash, Sidecars: blobs}:
+	case <-p.term:
+		p.Log().Debug("Dropping blob propagation for closed peer", "block hash", blockHash)
+	default:
+		p.Log().Debug("Dropping blob propagation for abnormal peer", "block hash", blockHash)
+	}
+}
+
+// sendBlobsRoot sends blobs block hash to the remote peer.
+func (p *Peer) sendBlobsRoot(hash common.Hash) error {
+	p.markBlockBlobs(hash)
+	return p2p.Send(p.rw, BlobsRootMsg, &BlobsRootPacket{BlockHash: hash})
+}
+
+// AsyncSendBlobsRoot queues a blobs block hash announcement to a remote peer. If
+// the peer's broadcast queue is full, the event is silently dropped.
+func (p *Peer) AsyncSendBlobsRoot(hash common.Hash) {
+	select {
+	case p.blobRootBroadcast <- hash:
+	case <-p.term:
+		p.Log().Debug("Dropping blob block hash propagation for closed peer", "block hash", hash)
+	default:
+		p.Log().Debug("Dropping blob block hash propagation for abnormal peer", "block hash", hash)
 	}
 }
 

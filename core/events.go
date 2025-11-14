@@ -17,6 +17,7 @@
 package core
 
 import (
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -35,4 +36,9 @@ type ChainEvent struct {
 
 type ChainHeadEvent struct {
 	Header *types.Header
+}
+
+type BlobEvent struct {
+	BlockHash common.Hash
+	Sidecars  types.BlobSidecars
 }
