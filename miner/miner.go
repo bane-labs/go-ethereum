@@ -37,6 +37,7 @@ import (
 // to offer all the functions here.
 type Backend interface {
 	BlockChain() *core.BlockChain
+	FileSystem() *core.FileSystem
 	TxPool() *txpool.TxPool
 }
 

@@ -251,7 +251,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
-	eth.filesystem, err = core.NewFileSystem()
+	eth.filesystem, err = core.NewFileSystem(eth.blockchain)
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +572,7 @@ func (s *Ethereum) StartMining() error {
 
 		go s.beacon.StartMining()
 		if bft != nil {
-			go bft.Start(s.blockchain, s.beacon.InsertBlock)
+			go bft.Start(s.blockchain, s.beacon.InsertBlock, s.filesystem)
 		}
 	}
 	return nil
@@ -596,6 +596,7 @@ func (s *Ethereum) Miner() *miner.Miner { return s.miner }
 
 func (s *Ethereum) AccountManager() *accounts.Manager  { return s.accountManager }
 func (s *Ethereum) BlockChain() *core.BlockChain       { return s.blockchain }
+func (s *Ethereum) FileSystem() *core.FileSystem       { return s.filesystem }
 func (s *Ethereum) TxPool() *txpool.TxPool             { return s.txPool }
 func (s *Ethereum) EventMux() *event.TypeMux           { return s.eventMux }
 func (s *Ethereum) Engine() consensus.Engine           { return s.engine }

@@ -1,6 +1,8 @@
 package dbft
 
 import (
+	"fmt"
+
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 )
@@ -9,6 +11,7 @@ import (
 // blocks in the chain.
 type blockQueue struct {
 	chain       ChainHeaderReader
+	fs          FSWriter
 	feed        *event.Feed
 	insertChain ChainInsertFn
 }
@@ -28,6 +31,11 @@ func (bq *blockQueue) SetChain(chain ChainHeaderReader, inserter ChainInsertFn) 
 	bq.insertChain = inserter
 }
 
+// SetFileSystem initializes FSWriter instanse needed for proper blockQueue functioning.
+func (bq *blockQueue) SetFileSystem(fs FSWriter) {
+	bq.fs = fs
+}
+
 // PutBlock routes block to blockchain. No block verification is performed, it is
 // assumed that provided block is sealed and valid.
 func (bq *blockQueue) PutBlock(b *types.Block) error {
@@ -38,6 +46,11 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 
 	if err := bq.insertChain(b); err != nil {
 		return err
+	}
+
+	err := bq.fs.CommitSealBlockHash(b)
+	if err != nil {
+		return fmt.Errorf("failed to commit block hash into filesystem: %w", err)
 	}
 
 	// Broadcast the block and announce chain insertion event

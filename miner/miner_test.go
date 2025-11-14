@@ -40,18 +40,24 @@ import (
 
 type mockBackend struct {
 	bc     *core.BlockChain
+	fs     *core.FileSystem
 	txPool *txpool.TxPool
 }
 
-func NewMockBackend(bc *core.BlockChain, txPool *txpool.TxPool) *mockBackend {
+func NewMockBackend(bc *core.BlockChain, fs *core.FileSystem, txPool *txpool.TxPool) *mockBackend {
 	return &mockBackend{
 		bc:     bc,
+		fs:     fs,
 		txPool: txPool,
 	}
 }
 
 func (m *mockBackend) BlockChain() *core.BlockChain {
 	return m.bc
+}
+
+func (m *mockBackend) FileSystem() *core.FileSystem {
+	return m.fs
 }
 
 func (m *mockBackend) TxPool() *txpool.TxPool {
@@ -156,6 +162,10 @@ func createMiner(t *testing.T) *Miner {
 	if err != nil {
 		t.Fatalf("can't create new chain %v", err)
 	}
+	fs, err := core.NewFileSystem(bc)
+	if err != nil {
+		t.Fatalf("can't create new file system %v", err)
+	}
 	statedb, _ := state.New(bc.Genesis().Root(), bc.StateCache())
 	blockchain := &testBlockChain{bc.Genesis().Root(), chainConfig, statedb, 10000000, new(event.Feed)}
 
@@ -163,7 +173,7 @@ func createMiner(t *testing.T) *Miner {
 	txpool, _ := txpool.New(testTxPoolConfig.PriceLimit, blockchain, []txpool.SubPool{pool})
 
 	// Create Miner
-	backend := NewMockBackend(bc, txpool)
+	backend := NewMockBackend(bc, fs, txpool)
 	miner := New(backend, config, engine)
 	return miner
 }
