@@ -127,6 +127,7 @@ var (
 		utils.MinerGasPriceFlag,
 		utils.MinerEtherbaseFlag, // deprecated
 		utils.MinerExtraDataFlag,
+		utils.MinerMaxBlobsFlag,
 		utils.MinerRecommitIntervalFlag,
 		utils.MinerPendingFeeRecipientFlag,
 		utils.MinerNewPayloadTimeoutFlag, // deprecated
