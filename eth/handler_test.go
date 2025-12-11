@@ -176,6 +176,15 @@ func (p *testTxPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bo
 	return p.txFeed.Subscribe(ch)
 }
 
+// FilterType should check whether the pool supports the given type of transactions.
+func (p *testTxPool) FilterType(kind byte) bool {
+	switch kind {
+	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.BlobTxType, types.SetCodeTxType:
+		return true
+	}
+	return false
+}
+
 // SubscribeReannoTransactions should return an event subscription of ReannoTxsEvent
 // and send events to the given channel.
 func (p *testTxPool) SubscribeReannoTransactions(ch chan<- core.ReannoTxsEvent) event.Subscription {
