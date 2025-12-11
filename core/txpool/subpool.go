@@ -100,6 +100,9 @@ type SubPool interface {
 	// to this particular subpool.
 	Filter(tx *types.Transaction) bool
 
+	// FilterType returns whether the subpool supports the given transaction type.
+	FilterType(kind byte) bool
+
 	// FilterAdd is a selector used to decide whether a transaction would be added
 	// to this particular subpool.
 	//

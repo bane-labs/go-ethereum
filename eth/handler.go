@@ -101,6 +101,9 @@ type txPool interface {
 	// or also for reorged out ones.
 	SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription
 
+	// FilterType returns whether the given tx type is supported by the txPool.
+	FilterType(kind byte) bool
+
 	// SubscribeReannoTransactions subscribes to reannounce transaction events.
 	SubscribeReannoTransactions(chan<- core.ReannoTxsEvent) event.Subscription
 }
@@ -222,7 +225,18 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	addTxs := func(txs []*types.Transaction) []error {
 		return h.txpool.Add(txs, false, false)
 	}
-	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
+
+	validateMeta := func(tx common.Hash, kind byte) error {
+		if h.txpool.Has(tx) {
+			return txpool.ErrAlreadyKnown
+		}
+		if !h.txpool.FilterType(kind) {
+			return types.ErrTxTypeNotSupported
+		}
+		return nil
+	}
+
+	h.txFetcher = fetcher.NewTxFetcher(validateMeta, addTxs, fetchTx, h.removePeer)
 	if h.blobSync {
 		h.sidecarFetcher = beaconfetch.NewSidecarFetcher(h.chain, h.fs, h.peers.blobPeers, h.peers.markNoBlobPeer, h.removePeer,
 			h.peers.highestNumberOfBeacons, h.announceBlobs, h.fetchSidecars, (*beaconHandler)(h).RetrieveSidecarsByRoot)
