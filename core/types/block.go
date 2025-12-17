@@ -566,6 +566,16 @@ func (b *Block) Hash() common.Hash {
 	return h
 }
 
+// HasBlobTxs returns whether the block contains blob transactions.
+func (b *Block) HasBlobTxs() bool {
+	for _, tx := range b.transactions {
+		if tx.Type() == BlobTxType {
+			return true
+		}
+	}
+	return false
+}
+
 type Blocks []*Block
 
 // HeaderParentHashFromRLP returns the parentHash of an RLP-encoded

@@ -31,13 +31,13 @@ var protocolLengths = map[uint]uint64{BEACON1: 7}
 const maxMessageSize = 10 * 1024 * 1024
 
 const (
-	StatusMsg         = 0x00
-	NewBlockHashesMsg = 0x01
-	NewBlockMsg       = 0x02
-	NewBlobsMsg       = 0x03
-	BlobsRootMsg      = 0x04
-	GetBlobsMsg       = 0x05
-	BlobsByRootMsg    = 0x06
+	StatusMsg         = 0x00 // Status message
+	NewBlockHashesMsg = 0x01 // New block hashes message
+	NewBlockMsg       = 0x02 // New block message
+	NewBlobsMsg       = 0x03 // New blobs message
+	NewBlobsRootMsg   = 0x04 // New blobs root message
+	GetBlobsMsg       = 0x05 // Get blobs message
+	BlobsMsg          = 0x06 // Blobs message
 )
 
 var (
@@ -111,8 +111,8 @@ func (request *NewBlobsPacket) sanityCheck() error {
 	return nil
 }
 
-// BlobsRootPacket is the network packet for blobs block hash.
-type BlobsRootPacket struct {
+// NewBlobsRootPacket is the network packet for blobs block hash.
+type NewBlobsRootPacket struct {
 	BlockHash common.Hash
 }
 
@@ -120,6 +120,7 @@ type BlobsRootPacket struct {
 type GetBlobsPacket struct {
 	RequestId uint64
 	BlockHash common.Hash
+	Ttl       uint8
 }
 
 // GetBlobsRequest represents a blobs query.
@@ -131,8 +132,8 @@ type BatchGetBlobsPacket struct {
 	GetBlobsRequest
 }
 
-// BlobsByRootPacket is the response packet for blobs by block hash.
-type BlobsByRootPacket struct {
+// BlobsPacket is the response packet for blobs by block hash.
+type BlobsPacket struct {
 	RequestId uint64
 	Sidecars  types.BlobSidecars
 }
@@ -190,11 +191,11 @@ func (*NewBlockPacket) Kind() byte   { return NewBlockMsg }
 func (*NewBlobsPacket) Name() string { return "NewBlobs" }
 func (*NewBlobsPacket) Kind() byte   { return NewBlobsMsg }
 
-func (*BlobsRootPacket) Name() string { return "BlobsRoot" }
-func (*BlobsRootPacket) Kind() byte   { return BlobsRootMsg }
+func (*NewBlobsRootPacket) Name() string { return "NewBlobsRoot" }
+func (*NewBlobsRootPacket) Kind() byte   { return NewBlobsRootMsg }
 
 func (*GetBlobsPacket) Name() string { return "GetBlobs" }
 func (*GetBlobsPacket) Kind() byte   { return GetBlobsMsg }
 
-func (*BlobsByRootPacket) Name() string { return "BlobsByRoot" }
-func (*BlobsByRootPacket) Kind() byte   { return BlobsByRootMsg }
+func (*BlobsPacket) Name() string { return "Blobs" }
+func (*BlobsPacket) Kind() byte   { return BlobsMsg }

@@ -62,16 +62,16 @@ func handleNewBlobs(backend Backend, msg Decoder, peer *Peer) error {
 	return backend.Handle(peer, ann)
 }
 
-func handleBlobsRoot(backend Backend, msg Decoder, peer *Peer) error {
-	ann := new(BlobsRootPacket)
+func handleNewBlobsRoot(backend Backend, msg Decoder, peer *Peer) error {
+	ann := new(NewBlobsRootPacket)
 	if err := msg.Decode(ann); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 
-	log.Debug("receive BlobsRoot announcement", "from", peer.id, "blockHash", ann.BlockHash)
+	log.Debug("receive NewBlobsRoot announcement", "from", peer.id, "blockHash", ann.BlockHash)
 
 	peer.markBlockBlobs(ann.BlockHash)
-	return nil
+	return backend.Handle(peer, ann)
 }
 
 func handleGetBlobs(backend Backend, msg Decoder, peer *Peer) error {
@@ -80,23 +80,28 @@ func handleGetBlobs(backend Backend, msg Decoder, peer *Peer) error {
 		return fmt.Errorf("msg %v, decode err: %v", GetBlobsMsg, err)
 	}
 
-	log.Debug("receive GetBlobsMsg request", "from", peer.id, "req", req)
+	log.Debug("receive GetBlobs request", "from", peer.id, "req", req)
+
+	if req.Ttl < 1 {
+		log.Debug("GetBlobs request reached TTL limit", "from", peer.id, "req", req)
+		return fmt.Errorf("invalid GetBlobs request, as the TTL limit has been reached, req block hash %s", req.BlockHash.Hex())
+	}
 
 	return backend.Handle(peer, req)
 }
 
-func handleBlobsByRoot(backend Backend, msg Decoder, peer *Peer) error {
-	ann := new(BlobsByRootPacket)
+func handleBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	ann := new(BlobsPacket)
 	if err := msg.Decode(ann); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 
 	err := peer.dispatchResponse(&Response{
 		id:   ann.RequestId,
-		code: BlobsByRootMsg,
+		code: BlobsMsg,
 		Res:  ann,
 	}, nil)
-	log.Debug("receive BlobsByRoot response", "from", peer.id, "requestId", ann.RequestId, "sidecars", len(ann.Sidecars), "err", err)
+	log.Debug("receive Blobs response", "from", peer.id, "requestId", ann.RequestId, "sidecars", len(ann.Sidecars), "err", err)
 	return nil
 }
 

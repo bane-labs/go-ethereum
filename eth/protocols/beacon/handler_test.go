@@ -70,7 +70,7 @@ func testGetBlobs(t *testing.T, protocol uint) {
 		blobs = append(blobs, blob)
 		// Send the hash request and verify the response
 		p2p.Send(peer.app, GetBlobsMsg, tt.msg)
-		if err := p2p.ExpectMsg(peer.app, BlobsByRootMsg, &BlobsByRootPacket{
+		if err := p2p.ExpectMsg(peer.app, BlobsMsg, &BlobsPacket{
 			RequestId: tt.msg.RequestId,
 			Sidecars:  blobs,
 		}); err != nil {
@@ -90,8 +90,8 @@ func (m *mockMsg) Decode(val interface{}) error {
 	switch v := val.(type) {
 	case *GetBlobsPacket:
 		*v = *m.data.(*GetBlobsPacket)
-	case *BlobsByRootPacket:
-		*v = *m.data.(*BlobsByRootPacket)
+	case *BlobsPacket:
+		*v = *m.data.(*BlobsPacket)
 	}
 	return nil
 }
@@ -128,8 +128,8 @@ func TestHandleBlobsByRoot(t *testing.T) {
 		{
 			name: "Valid blob response",
 			msg: &mockMsg{
-				code: BlobsByRootMsg,
-				data: &BlobsByRootPacket{
+				code: BlobsMsg,
+				data: &BlobsPacket{
 					RequestId: 1,
 					Sidecars:  *blockBlobs[0],
 				},
@@ -139,8 +139,8 @@ func TestHandleBlobsByRoot(t *testing.T) {
 		{
 			name: "Empty blob response",
 			msg: &mockMsg{
-				code: BlobsByRootMsg,
-				data: &BlobsByRootPacket{
+				code: BlobsMsg,
+				data: &BlobsPacket{
 					RequestId: 2,
 					Sidecars:  types.BlobSidecars{},
 				},
@@ -150,8 +150,8 @@ func TestHandleBlobsByRoot(t *testing.T) {
 		{
 			name: "Invalid request ID",
 			msg: &mockMsg{
-				code: BlobsByRootMsg,
-				data: &BlobsByRootPacket{
+				code: BlobsMsg,
+				data: &BlobsPacket{
 					RequestId: 0,
 					Sidecars:  *blockBlobs[0],
 				},
@@ -161,8 +161,8 @@ func TestHandleBlobsByRoot(t *testing.T) {
 		{
 			name: "Non-continuous blocks",
 			msg: &mockMsg{
-				code: BlobsByRootMsg,
-				data: &BlobsByRootPacket{
+				code: BlobsMsg,
+				data: &BlobsPacket{
 					RequestId: 3,
 					Sidecars:  *blockBlobs[0],
 				},
@@ -173,7 +173,7 @@ func TestHandleBlobsByRoot(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := handleBlobsByRoot(backend, tt.msg, peer.Peer)
+			err := handleBlobs(backend, tt.msg, peer.Peer)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("handleBlocksByRange() error = %v, wantErr %v", err, tt.wantErr)
 			}

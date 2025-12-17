@@ -125,7 +125,8 @@ type handlerConfig struct {
 	BloomCache     uint64                 // Megabytes to alloc for snap sync bloom
 	EventMux       *event.TypeMux         // Legacy event mux, deprecate for `feed`
 	RequiredBlocks map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
-	fs             FileSystem             // File system for blob sidecars
+	FileSystem     FileSystem             // File system for blob sidecars
+	NoPruning      bool                   // Whether to disable pruning
 }
 
 type handler struct {
@@ -144,6 +145,7 @@ type handler struct {
 	downloader *downloader.Downloader
 	beacon     Beacon
 	fs         FileSystem
+	noPruning  bool
 	txFetcher  *fetcher.TxFetcher
 	peers      *peerSet
 
@@ -183,7 +185,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		chain:          config.Chain,
 		peers:          newPeerSet(),
 		requiredBlocks: config.RequiredBlocks,
-		fs:             config.fs,
+		fs:             config.FileSystem,
+		noPruning:      config.NoPruning,
 		quitSync:       make(chan struct{}),
 		handlerDoneCh:  make(chan struct{}),
 		handlerStartCh: make(chan struct{}),
@@ -830,7 +833,6 @@ func (h *handler) handleBlobsEvents() {
 			if !ok {
 				return
 			}
-			h.broadcastBlobs(ev.BlockHash, ev.Sidecars, true)
 			h.broadcastBlobs(ev.BlockHash, ev.Sidecars, false)
 		case <-h.blobsSub.Err():
 			return
@@ -847,7 +849,7 @@ func (h *handler) broadcastBlobs(blockHash common.Hash, blobs types.BlobSidecars
 		// Send the block to a subset of our peers
 		transfer := peers[:int(math.Sqrt(float64(len(peers))))]
 		for _, peer := range transfer {
-			peer.AsyncSendBlockBlobs(blockHash, blobs)
+			peer.AsyncSendNewBlockBlobs(blockHash, blobs)
 		}
 		log.Trace("Propagated blob", "hash", blockHash, "recipients", len(transfer))
 		return
@@ -855,7 +857,7 @@ func (h *handler) broadcastBlobs(blockHash common.Hash, blobs types.BlobSidecars
 	// Otherwise if the blob is indeed in out own chain, announce it
 	if sidecars := h.fs.GetSidecarsByRoot(blockHash); sidecars.Len() > 0 {
 		for _, peer := range peers {
-			peer.AsyncSendBlobsRoot(blockHash)
+			peer.AsyncSendNewBlobsRoot(blockHash)
 		}
 		log.Trace("Announced blob", "hash", blockHash, "recipients", len(peers))
 	}

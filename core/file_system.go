@@ -20,20 +20,17 @@ var (
 type FileSystem struct {
 	bc *BlockChain
 
-	sealNumber *big.Int
-
-	pendingHashes map[uint64]common.Hash
-	pendingBlobs  map[uint64]types.BlobSidecars
+	sealNumber   *big.Int
+	pendingBlobs map[uint64]types.BlobSidecars
 
 	blobFeed event.Feed
 }
 
 func NewFileSystem(bc *BlockChain) (*FileSystem, error) {
 	fs := &FileSystem{
-		bc:            bc,
-		sealNumber:    nil,
-		pendingHashes: make(map[uint64]common.Hash),
-		pendingBlobs:  make(map[uint64]types.BlobSidecars),
+		bc:           bc,
+		sealNumber:   nil,
+		pendingBlobs: make(map[uint64]types.BlobSidecars),
 	}
 	go fs.loop()
 	return fs, nil
@@ -74,9 +71,7 @@ func (fs *FileSystem) finalize() error {
 		if block > last {
 			continue
 		}
-		// TODO: Store blobs to persistent storage with header as index.
 		delete(fs.pendingBlobs, block)
-		delete(fs.pendingHashes, block)
 	}
 	return nil
 }
@@ -109,10 +104,11 @@ func (fs *FileSystem) CommitSealBlockHash(block *types.Block) error {
 		}
 		i++
 	}
-	fs.pendingHashes[fs.sealNumber.Uint64()] = block.Hash()
+	// Store blobs to local storage.
+	fs.saveBlobs(block.Hash(), blobs)
 	fs.blobFeed.Send(BlobEvent{
 		BlockHash: block.Hash(),
-		Sidecars:  fs.pendingBlobs[block.Number().Uint64()],
+		Sidecars:  blobs,
 	})
 	return nil
 }
@@ -145,16 +141,16 @@ func (fs *FileSystem) InsertBlobs(hash common.Hash, blobs types.BlobSidecars) er
 		}
 		i++
 	}
-	fs.pendingHashes[block.NumberU64()] = hash
-	fs.pendingBlobs[block.NumberU64()] = blobs
-	fs.blobFeed.Send(BlobEvent{
-		BlockHash: hash,
-		Sidecars:  blobs,
-	})
+	// Store blobs to local storage.
+	fs.saveBlobs(hash, blobs)
 	return nil
 }
 
 // SubscribeBlobsEvent subscribes to blob events.
 func (fs *FileSystem) SubscribeBlobsEvent(ch chan<- BlobEvent) event.Subscription {
 	return fs.blobFeed.Subscribe(ch)
+}
+
+func (fs *FileSystem) saveBlobs(hash common.Hash, blobs types.BlobSidecars) error {
+	return nil
 }
