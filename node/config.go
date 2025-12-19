@@ -224,6 +224,18 @@ type Config struct {
 
 	// DBFTStatistics is the dBFT statistics calculation configuration.
 	DBFTStatistics dbft.StatisticsConfig `toml:",omitempty"`
+
+	// BlobRetentionEpoch is the number of epochs to retain blob and sidecar data for.
+	BlobRetentionEpoch uint64 `toml:",omitempty"`
+
+	// BlobStoragePath is the base path for blob storage.
+	BlobStoragePath string `toml:",omitempty"`
+
+	// BlobStorageLayout is the layout of blob storage.
+	BlobStorageLayout string `toml:",omitempty"`
+
+	// BlobSaveFsync enforces durable filesystem writes for use cases where blob availability is critical.
+	BlobSaveFsync bool `toml:",omitempty"`
 }
 
 // IPCEndpoint resolves an IPC endpoint based on a configured value, taking into

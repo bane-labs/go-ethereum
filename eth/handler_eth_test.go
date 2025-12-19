@@ -104,6 +104,9 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 		_, blocksNoFork, _  = core.GenerateChainWithGenesis(gspecNoFork, engine, 2, nil)
 		_, blocksProFork, _ = core.GenerateChainWithGenesis(gspecProFork, engine, 2, nil)
 
+		fsNoFork, _  = core.NewFileSystem(chainNoFork, nil, nil)
+		fsProFork, _ = core.NewFileSystem(chainProFork, nil, nil)
+
 		ethNoFork, _ = newHandler(&handlerConfig{
 			Database:   dbNoFork,
 			Chain:      chainNoFork,
@@ -111,6 +114,7 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 			Network:    1,
 			Sync:       ethconfig.FullSync,
 			BloomCache: 1,
+			FileSystem: fsNoFork,
 		})
 		ethProFork, _ = newHandler(&handlerConfig{
 			Database:   dbProFork,
@@ -119,6 +123,7 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 			Network:    1,
 			Sync:       ethconfig.FullSync,
 			BloomCache: 1,
+			FileSystem: fsProFork,
 		})
 	)
 	ethNoFork.Start(1000)

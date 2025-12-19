@@ -78,6 +78,7 @@ func NewBackend(alloc types.GenesisAlloc, options ...func(nodeConf *node.Config,
 	nodeConf := node.DefaultConfig
 	nodeConf.DataDir = ""
 	nodeConf.P2P = p2p.Config{NoDiscovery: true}
+	nodeConf.BlobStoragePath = "./blobs"
 
 	ethConf := ethconfig.Defaults
 	ethConf.Genesis = &core.Genesis{

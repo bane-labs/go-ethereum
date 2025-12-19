@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/filesystem"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
@@ -62,6 +63,13 @@ func (m *mockBackend) FileSystem() *core.FileSystem {
 
 func (m *mockBackend) TxPool() *txpool.TxPool {
 	return m.txPool
+}
+
+type mockBlobPool struct {
+}
+
+func (bp *mockBlobPool) Get(hash common.Hash) *types.Transaction {
+	return nil
 }
 
 type testBlockChain struct {
@@ -162,7 +170,8 @@ func createMiner(t *testing.T) *Miner {
 	if err != nil {
 		t.Fatalf("can't create new chain %v", err)
 	}
-	fs, err := core.NewFileSystem(bc)
+	bs := filesystem.NewEphemeralBlobStorage(t)
+	fs, err := core.NewFileSystem(bc, new(mockBlobPool), bs)
 	if err != nil {
 		t.Fatalf("can't create new file system %v", err)
 	}

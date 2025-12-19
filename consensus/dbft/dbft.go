@@ -256,7 +256,6 @@ type DBFT struct {
 
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
 	chain  ChainHeaderReader
-	fs     FSWriter
 	txpool txPool
 
 	// signerConfig is a types.Signer used to retrieve transactions signer
@@ -2144,7 +2143,7 @@ func (c *DBFT) Authorize(signer common.Address, signFn SignerFn, amevKeystore *a
 func (c *DBFT) Start(chain ChainHeaderReader, inserter ChainInsertFn, fs FSWriter) {
 	if c.dbftStarted.CompareAndSwap(false, true) {
 		c.chain = chain
-		c.fs = fs
+		c.blockQueue.fs = fs
 		c.blockQueue.SetChain(chain, inserter)
 		c.staticPool = newStaticPool(c.chain)
 

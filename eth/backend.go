@@ -36,6 +36,8 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/filesystem"
+	"github.com/ethereum/go-ethereum/core/filesystem/primitives"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/pruner"
@@ -251,10 +253,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
-	eth.filesystem, err = core.NewFileSystem(eth.blockchain)
-	if err != nil {
-		return nil, err
-	}
 
 	// Initialize filtermaps log index.
 	fmConfig := filtermaps.Config{
@@ -307,6 +305,22 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		}
 		eth.localTxTracker = locals.New(config.TxPool.Journal, rejournal, eth.blockchain.Config(), eth.txPool)
 		stack.RegisterLifecycle(eth.localTxTracker)
+	}
+
+	blobStorage, err := filesystem.NewBlobStorage(
+		filesystem.WithBlobRetentionEpochs(primitives.Epoch(stack.Config().BlobRetentionEpoch)),
+		filesystem.WithBasePath(stack.Config().BlobStoragePath),
+		filesystem.WithLayout(stack.Config().BlobStorageLayout), // This is validated in the Action func for BlobStorageLayout.
+		filesystem.WithSaveFsync(stack.Config().BlobSaveFsync),
+		filesystem.WithChainConfig(chainConfig),
+	)
+	if err != nil {
+		return nil, err
+	}
+	blobStorage.WarmCache()
+	eth.filesystem, err = core.NewFileSystem(eth.blockchain, blobPool, blobStorage)
+	if err != nil {
+		return nil, err
 	}
 
 	// Permit the downloader to use the trie cache allowance during fast sync

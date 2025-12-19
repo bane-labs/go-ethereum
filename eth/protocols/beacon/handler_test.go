@@ -1,6 +1,7 @@
 package beacon
 
 import (
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/holiman/uint256"
 )
 
@@ -31,7 +33,25 @@ func (b *testBackend) RunPeer(peer *Peer, handler Handler) error {
 func (b *testBackend) PeerInfo(enode.ID) interface{} { panic("not implemented") }
 
 func (b *testBackend) Handle(peer *Peer, packet Packet) error {
-	return nil
+	switch packet := packet.(type) {
+	case *GetBlobsPacket:
+		var sidecars types.BlobSidecars
+		if packet.BlockHash == common.HexToHash("0x123") {
+			sc := &types.BlobTxSidecar{
+				Blobs:       []kzg4844.Blob{emptyBlob},
+				Commitments: []kzg4844.Commitment{emptyBlobCommit},
+				Proofs:      []kzg4844.Proof{emptyBlobProof},
+			}
+			sidecars = append(sidecars, sc)
+		}
+		encoded, err := rlp.EncodeToBytes(sidecars)
+		if err != nil {
+			return err
+		}
+		return peer.ReplyBlobsRLP(packet.RequestId, encoded)
+	default:
+		return fmt.Errorf("unexpected beacon packet type: %T", packet)
+	}
 }
 
 // Tests that blobs can be retrieved from a remote peer based on user queries.
@@ -55,6 +75,7 @@ func testGetBlobs(t *testing.T, protocol uint) {
 			msg: &GetBlobsPacket{
 				RequestId: 1,
 				BlockHash: common.HexToHash("0x123"),
+				Ttl:       1,
 			},
 		},
 	}

@@ -1,10 +1,9 @@
 package dbft
 
 import (
-	"fmt"
-
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
+	"github.com/ethereum/go-ethereum/log"
 )
 
 // blockQueue is an entity that collects sealed blocks from dBFT and stores these
@@ -44,13 +43,13 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 		return nil
 	}
 
-	if err := bq.insertChain(b); err != nil {
+	if err := bq.fs.CommitSealBlockHash(b); err != nil {
+		log.Error("Failed to commit seal block hash into filesystem", "number", b.NumberU64(), "hash", hash, "err", err)
 		return err
 	}
 
-	err := bq.fs.CommitSealBlockHash(b)
-	if err != nil {
-		return fmt.Errorf("failed to commit block hash into filesystem: %w", err)
+	if err := bq.insertChain(b); err != nil {
+		return err
 	}
 
 	// Broadcast the block and announce chain insertion event

@@ -430,7 +430,9 @@ func startEthService(t *testing.T, genesis *core.Genesis, blocks []*types.Block)
 			ListenAddr:  "0.0.0.0:0",
 			NoDiscovery: true,
 			MaxPeers:    25,
-		}})
+		},
+		BlobStoragePath: "./blobs",
+	})
 	if err != nil {
 		t.Fatal("can't create node:", err)
 	}

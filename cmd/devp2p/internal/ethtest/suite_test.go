@@ -110,7 +110,8 @@ func runGeth(dir string, jwtPath string) (*node.Node, error) {
 			MaxPeers:    10, // in case a test requires multiple connections, can be changed in the future
 			NoDial:      true,
 		},
-		JWTSecret: jwtPath,
+		JWTSecret:       jwtPath,
+		BlobStoragePath: "./blobs",
 	})
 	if err != nil {
 		return nil, err
