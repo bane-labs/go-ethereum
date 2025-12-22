@@ -99,8 +99,10 @@ type Ethereum struct {
 
 	APIBackend *EthAPIBackend
 
+	internalRPC *rpc.Client
+	beacon      *beaconImpl.Beacon
+
 	miner        *miner.Miner
-	beacon       *beaconImpl.Beacon
 	gasPrice     *big.Int
 	feeRecipient common.Address
 
@@ -375,7 +377,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	stack.RegisterLifecycle(eth)
 
 	// Set up local beacon client
-	eth.beacon = beaconImpl.New(eth, stack, eth.EventMux(), eth.engine, eth.feeRecipient)
+	eth.internalRPC = stack.Attach()
+	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.EventMux(), eth.engine, eth.feeRecipient)
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
 	eth.shutdownTracker.MarkStartup()
@@ -736,6 +739,7 @@ func (s *Ethereum) Stop() error {
 	s.filterMaps.Stop()
 	s.txPool.Close()
 	s.beacon.Close()
+	s.internalRPC.Close()
 	s.blockchain.Stop()
 	s.engine.Close()
 

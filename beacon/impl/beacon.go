@@ -10,7 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 // Backend wraps all methods required for mining. Only full node is capable
@@ -28,20 +28,20 @@ type Beacon struct {
 	startCh chan struct{}
 	stopCh  chan struct{}
 	worker  *worker
-	node    *node.Node
+	rpc     *rpc.Client
 
 	wg sync.WaitGroup
 }
 
-func New(eth Backend, node *node.Node, mux *event.TypeMux, engine consensus.Engine, coinbase common.Address) *Beacon {
+func New(eth Backend, rpc *rpc.Client, mux *event.TypeMux, engine consensus.Engine, coinbase common.Address) *Beacon {
 	beacon := &Beacon{
 		mux:     mux,
 		engine:  engine,
 		exitCh:  make(chan struct{}),
 		startCh: make(chan struct{}),
 		stopCh:  make(chan struct{}),
-		worker:  newWorker(engine, node, eth, mux, coinbase, true),
-		node:    node,
+		worker:  newWorker(engine, rpc, eth, mux, coinbase, true),
+		rpc:     rpc,
 	}
 	beacon.wg.Add(1)
 	go beacon.update()

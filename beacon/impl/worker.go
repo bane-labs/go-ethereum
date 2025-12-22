@@ -17,7 +17,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/params/forks"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -54,7 +53,7 @@ type worker struct {
 	chainConfig  *params.ChainConfig
 	engine       consensus.Engine
 	chain        *core.BlockChain
-	node         *node.Node
+	rpc          *rpc.Client
 	feeRecipient common.Address
 
 	// Subscriptions
@@ -80,12 +79,12 @@ type worker struct {
 	syncing atomic.Bool // The indicator whether the node is still syncing.
 }
 
-func newWorker(engine consensus.Engine, node *node.Node, eth Backend, mux *event.TypeMux, feeRecipient common.Address, init bool) *worker {
+func newWorker(engine consensus.Engine, rpc *rpc.Client, eth Backend, mux *event.TypeMux, feeRecipient common.Address, init bool) *worker {
 	worker := &worker{
 		chainConfig:  eth.BlockChain().Config(),
 		engine:       engine,
 		chain:        eth.BlockChain(),
-		node:         node,
+		rpc:          rpc,
 		mux:          mux,
 		feeRecipient: feeRecipient,
 		chainHeadCh:  make(chan core.ChainHeadEvent, chainHeadChanSize),
@@ -312,14 +311,12 @@ func (w *worker) requestWork(event core.ChainHeadEvent, timestamp uint64) {
 	}
 
 	// Get the EL payload through RPC request.
-	rpc := w.node.Attach()
-	defer rpc.Close()
-	resp, err := w.sendForkChoice(rpc, event.Header.Hash(), timestamp)
+	resp, err := w.sendForkChoice(event.Header.Hash(), timestamp)
 	if err != nil {
 		log.Error("Failed to prepare payload", "err", err)
 		return
 	}
-	payload, err := w.getPayload(rpc, resp.PayloadID, timestamp)
+	payload, err := w.getPayload(resp.PayloadID, timestamp)
 	if err != nil {
 		log.Error("Failed to fetch payload", "err", err)
 		return
@@ -373,7 +370,7 @@ func (w *worker) commit(block *types.Block, start time.Time) error {
 }
 
 // sendForkChoice sends new chain head information to EL miner API through RPC.
-func (w *worker) sendForkChoice(rpc *rpc.Client, headHash common.Hash, timestamp uint64) (engine.ForkChoiceResponse, error) {
+func (w *worker) sendForkChoice(headHash common.Hash, timestamp uint64) (engine.ForkChoiceResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
@@ -403,7 +400,7 @@ func (w *worker) sendForkChoice(rpc *rpc.Client, headHash common.Hash, timestamp
 	default:
 		return engine.ForkChoiceResponse{}, fmt.Errorf("fork %s is not supported for engine_forkchoiceUpdated", w.chain.Config().LatestFork(timestamp).String())
 	}
-	err := rpc.CallContext(ctx, &resp, forkChoiceMethod, update, attributes)
+	err := w.rpc.CallContext(ctx, &resp, forkChoiceMethod, update, attributes)
 	if err != nil {
 		return engine.ForkChoiceResponse{}, err
 	}
@@ -411,7 +408,7 @@ func (w *worker) sendForkChoice(rpc *rpc.Client, headHash common.Hash, timestamp
 }
 
 // getPayload requests new block payload from EL miner through RPC.
-func (w *worker) getPayload(rpc *rpc.Client, payloadID *engine.PayloadID, timestamp uint64) (engine.ExecutionPayloadEnvelope, error) {
+func (w *worker) getPayload(payloadID *engine.PayloadID, timestamp uint64) (engine.ExecutionPayloadEnvelope, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
@@ -427,7 +424,7 @@ func (w *worker) getPayload(rpc *rpc.Client, payloadID *engine.PayloadID, timest
 	default:
 		return engine.ExecutionPayloadEnvelope{}, fmt.Errorf("fork %s is not supported for engine_getPayload", w.chain.Config().LatestFork(timestamp).String())
 	}
-	err := rpc.CallContext(ctx, &payload, getPayloadMethod, payloadID)
+	err := w.rpc.CallContext(ctx, &payload, getPayloadMethod, payloadID)
 	if err != nil {
 		return engine.ExecutionPayloadEnvelope{}, err
 	}

@@ -10,14 +10,13 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/triedb"
 )
 
@@ -33,41 +32,6 @@ func NewMockBackend(bc *core.BlockChain) *mockBackend {
 
 func (m *mockBackend) BlockChain() *core.BlockChain {
 	return m.bc
-}
-
-type testBlockChain struct {
-	root          common.Hash
-	config        *params.ChainConfig
-	statedb       *state.StateDB
-	gasLimit      uint64
-	chainHeadFeed *event.Feed
-}
-
-func (bc *testBlockChain) Config() *params.ChainConfig {
-	return bc.config
-}
-
-func (bc *testBlockChain) CurrentBlock() *types.Header {
-	return &types.Header{
-		Number:   new(big.Int),
-		GasLimit: bc.gasLimit,
-	}
-}
-
-func (bc *testBlockChain) GetBlock(hash common.Hash, number uint64) *types.Block {
-	return types.NewBlock(bc.CurrentBlock(), nil, nil, trie.NewStackTrie(nil))
-}
-
-func (bc *testBlockChain) StateAt(common.Hash) (*state.StateDB, error) {
-	return bc.statedb, nil
-}
-
-func (bc *testBlockChain) HasState(root common.Hash) bool {
-	return bc.root == root
-}
-
-func (bc *testBlockChain) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
-	return bc.chainHeadFeed.Subscribe(ch)
 }
 
 func TestBeacon(t *testing.T) {
@@ -266,7 +230,7 @@ func createBeacon(t *testing.T) (*Beacon, *event.TypeMux, func(skipBeacon bool))
 	// Create event Mux
 	mux := new(event.TypeMux)
 	// Create Beacon
-	beacon := New(backend, nil, mux, engine, etherbase)
+	beacon := New(backend, &rpc.Client{}, mux, engine, etherbase)
 	cleanup := func(skipBeacon bool) {
 		bc.Stop()
 		engine.Close()
