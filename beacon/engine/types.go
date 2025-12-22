@@ -65,6 +65,7 @@ type ExecutableData struct {
 	ReceiptsRoot     common.Hash             `json:"receiptsRoot"  gencodec:"required"`
 	LogsBloom        []byte                  `json:"logsBloom"     gencodec:"required"`
 	Random           common.Hash             `json:"prevRandao"    gencodec:"required"`
+	Difficulty       uint64                  `json:"difficulty"    gencodec:"required"` // TODO: Should remove after TTD reaches.
 	Number           uint64                  `json:"blockNumber"   gencodec:"required"`
 	GasLimit         uint64                  `json:"gasLimit"      gencodec:"required"`
 	GasUsed          uint64                  `json:"gasUsed"       gencodec:"required"`
@@ -277,7 +278,7 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 		TxHash:           types.DeriveSha(types.Transactions(txs), trie.NewStackTrie(nil)),
 		ReceiptHash:      data.ReceiptsRoot,
 		Bloom:            types.BytesToBloom(data.LogsBloom),
-		Difficulty:       common.Big0,
+		Difficulty:       new(big.Int).SetUint64(data.Difficulty),
 		Number:           new(big.Int).SetUint64(data.Number),
 		GasLimit:         data.GasLimit,
 		GasUsed:          data.GasUsed,
@@ -305,6 +306,7 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		ParentHash:       block.ParentHash(),
 		FeeRecipient:     block.Coinbase(),
 		StateRoot:        block.Root(),
+		Difficulty:       block.Difficulty().Uint64(),
 		Number:           block.NumberU64(),
 		GasLimit:         block.GasLimit(),
 		GasUsed:          block.GasUsed(),

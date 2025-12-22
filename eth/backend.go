@@ -28,6 +28,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/antimev"
+	beaconImpl "github.com/ethereum/go-ethereum/beacon/impl"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -98,9 +99,10 @@ type Ethereum struct {
 
 	APIBackend *EthAPIBackend
 
-	miner     *miner.Miner
-	gasPrice  *big.Int
-	etherbase common.Address
+	miner        *miner.Miner
+	beacon       *beaconImpl.Beacon
+	gasPrice     *big.Int
+	feeRecipient common.Address
 
 	networkID     uint64
 	netRPCService *ethapi.NetAPI
@@ -177,7 +179,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		engine:          engine,
 		networkID:       networkID,
 		gasPrice:        config.Miner.GasPrice,
-		etherbase:       config.Miner.Etherbase,
+		feeRecipient:    config.Miner.PendingFeeRecipient,
 		p2pServer:       stack.Server(),
 		discmix:         enode.NewFairMix(0),
 		shutdownTracker: shutdowncheck.NewShutdownTracker(chainDb),
@@ -185,7 +187,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.antimevKeystore = stack.AntiMEVKeyStore()
 	// Override the address that mining rewards will be sent to.
 	if chainConfig.DBFT != nil {
-		eth.etherbase = chainConfig.DBFT.Coinbase
+		eth.feeRecipient = chainConfig.DBFT.Coinbase
 	}
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
 	var dbVer = "<nil>"
@@ -317,7 +319,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	eth.dropper = newDropper(eth.p2pServer.MaxDialedConns(), eth.p2pServer.MaxInboundConns())
 
-	eth.miner = miner.New(eth, &config.Miner, eth.EventMux(), eth.engine)
+	eth.miner = miner.New(eth, config.Miner, eth.engine)
 	if chainConfig.DBFT != nil && len(config.Miner.ExtraData) != 0 {
 		return nil, fmt.Errorf("custom miner Extra is not supported by dBFT")
 	}
@@ -372,6 +374,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	stack.RegisterProtocols(eth.Protocols())
 	stack.RegisterLifecycle(eth)
 
+	// Set up local beacon client
+	eth.beacon = beaconImpl.New(eth, stack, eth.EventMux(), eth.engine, eth.feeRecipient)
+
 	// Successful startup; push a marker and check previous unclean shutdowns.
 	eth.shutdownTracker.MarkStartup()
 
@@ -411,9 +416,6 @@ func (s *Ethereum) APIs() []rpc.API {
 	// Append all the local APIs and return
 	return append(apis, []rpc.API{
 		{
-			Namespace: "eth",
-			Service:   NewEthereumAPI(s),
-		}, {
 			Namespace: "miner",
 			Service:   NewMinerAPI(s),
 		}, {
@@ -436,31 +438,6 @@ func (s *Ethereum) ResetWithGenesisBlock(gb *types.Block) {
 	s.blockchain.ResetWithGenesisBlock(gb)
 }
 
-func (s *Ethereum) Etherbase() (eb common.Address, err error) {
-	s.lock.RLock()
-	etherbase := s.etherbase
-	s.lock.RUnlock()
-
-	if etherbase != (common.Address{}) {
-		return etherbase, nil
-	}
-	return common.Address{}, errors.New("etherbase must be explicitly specified")
-}
-
-// SetEtherbase sets the mining reward address.
-func (s *Ethereum) SetEtherbase(etherbase common.Address) bool {
-	if s.config.Genesis.Config.DBFT != nil {
-		// dBFT's Coinbase change is not supported on running Geth node.
-		return false
-	}
-	s.lock.Lock()
-	s.etherbase = etherbase
-	s.lock.Unlock()
-
-	s.miner.SetEtherbase(etherbase)
-	return true
-}
-
 // isLocalBlock checks whether the specified block is mined
 // by local miner accounts.
 //
@@ -474,9 +451,9 @@ func (s *Ethereum) isLocalBlock(header *types.Header) bool {
 	}
 	// Check whether the given address is etherbase.
 	s.lock.RLock()
-	etherbase := s.etherbase
+	feeRecipient := s.feeRecipient
 	s.lock.RUnlock()
-	if author == etherbase {
+	if author == feeRecipient {
 		return true
 	}
 	// Check whether the given address is specified by `txpool.local`
@@ -523,7 +500,7 @@ func (s *Ethereum) shouldPreserve(header *types.Header) bool {
 // and updates the minimum price required by the transaction pool.
 func (s *Ethereum) StartMining() error {
 	// If the miner was not running, initialize it
-	if !s.IsMining() {
+	if !s.beacon.Mining() {
 		// Propagate the initial price point to the transaction pool
 		s.lock.RLock()
 		price := s.gasPrice
@@ -531,37 +508,29 @@ func (s *Ethereum) StartMining() error {
 		s.txPool.SetGasTip(price)
 
 		// Configure the local mining address
-		eb := s.config.Miner.Etherbase
+		eb := s.config.Miner.PendingFeeRecipient
 		if eb == (common.Address{}) {
 			err := errors.New("etherbase must be explicitly specified")
 			log.Error("Cannot start mining without etherbase", "err", err)
 			return fmt.Errorf("etherbase missing: %v", err)
 		}
 		var (
-			cli *clique.Clique
 			bft *dbft.DBFT
 		)
 		switch t := s.engine.(type) {
-		case *clique.Clique:
-			cli = t
 		case *dbft.DBFT:
 			bft = t
 		case *beacon.Beacon:
 			switch inner := t.InnerEngine().(type) {
-			case *clique.Clique:
-				cli = inner
 			case *dbft.DBFT:
 				bft = inner
 			}
 		}
-		if cli != nil || bft != nil {
+		if bft != nil {
 			wallet, err := s.accountManager.Find(accounts.Account{Address: eb})
 			if wallet == nil || err != nil {
 				log.Error("Etherbase account unavailable locally", "err", err)
 				return fmt.Errorf("signer missing: %v", err)
-			}
-			if cli != nil {
-				cli.Authorize(eb, wallet.SignData)
 			}
 			if bft != nil {
 				dkgIdentity := s.antimevKeystore.Address()
@@ -589,7 +558,7 @@ func (s *Ethereum) StartMining() error {
 		// introduced to speed sync times.
 		s.handler.enableSyncedFeatures()
 
-		go s.miner.Start()
+		go s.beacon.Start()
 		if bft != nil {
 			go bft.Start(s.blockchain)
 		}
@@ -608,10 +577,9 @@ func (s *Ethereum) StopMining() {
 		th.SetThreads(-1)
 	}
 	// Stop the block creating itself
-	s.miner.Stop()
+	s.beacon.Stop()
 }
 
-func (s *Ethereum) IsMining() bool      { return s.miner.Mining() }
 func (s *Ethereum) Miner() *miner.Miner { return s.miner }
 
 func (s *Ethereum) AccountManager() *accounts.Manager  { return s.accountManager }
@@ -767,7 +735,7 @@ func (s *Ethereum) Stop() error {
 	<-ch
 	s.filterMaps.Stop()
 	s.txPool.Close()
-	s.miner.Close()
+	s.beacon.Close()
 	s.blockchain.Stop()
 	s.engine.Close()
 
