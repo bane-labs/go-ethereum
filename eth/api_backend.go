@@ -513,3 +513,27 @@ func (b *EthAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, re
 func (b *EthAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*types.Transaction, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	return b.eth.stateAtTransaction(ctx, block, txIndex, reexec)
 }
+
+func (b *EthAPIBackend) BlobSidecarByRoot(ctx context.Context, hash common.Hash, index uint64) (*types.BlobTxSidecar, error) {
+	blobs := b.eth.filesystem.GetBlobTxSidecar(hash, index)
+	if blobs != nil {
+		return blobs, nil
+	}
+
+	block, err := b.BlockByHash(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	if !block.HasBlobTxs() {
+		return nil, nil
+	}
+
+	blockBlobs, err := b.eth.blobSrv.RetrieveSidecarsByRoot(hash)
+	if err != nil {
+		return nil, err
+	}
+	if index >= uint64(len(blockBlobs)) {
+		return nil, errors.New("blob sidecar index out of range")
+	}
+	return blockBlobs[index], nil
+}

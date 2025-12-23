@@ -97,7 +97,7 @@ func (fs *FileSystem) GetSidecarsByRoot(hash common.Hash) types.BlobSidecars {
 	txs := block.Transactions()
 	blobTxCount := 0
 	for _, tx := range txs {
-		if tx.BlobTxSidecar() != nil {
+		if tx.Type() == types.BlobTxType {
 			blobTxCount++
 		}
 	}
@@ -123,7 +123,7 @@ func (fs *FileSystem) GetBlobTxSidecar(hash common.Hash, index uint64) *types.Bl
 	txs := block.Transactions()
 	blobTxCount := 0
 	for _, tx := range txs {
-		if tx.BlobTxSidecar() != nil {
+		if tx.Type() == types.BlobTxType {
 			blobTxCount++
 		}
 	}
