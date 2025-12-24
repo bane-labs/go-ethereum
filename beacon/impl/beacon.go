@@ -17,6 +17,7 @@ import (
 // to offer all the functions here.
 type Backend interface {
 	BlockChain() *core.BlockChain
+	Engine() consensus.Engine
 }
 
 // Beacon is the main object which takes care of submitting new work to consensus
@@ -33,14 +34,14 @@ type Beacon struct {
 	wg sync.WaitGroup
 }
 
-func New(eth Backend, rpc *rpc.Client, mux *event.TypeMux, engine consensus.Engine, coinbase common.Address) *Beacon {
+func New(eth Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address) *Beacon {
 	beacon := &Beacon{
 		mux:     mux,
-		engine:  engine,
+		engine:  eth.Engine(),
 		exitCh:  make(chan struct{}),
 		startCh: make(chan struct{}),
 		stopCh:  make(chan struct{}),
-		worker:  newWorker(engine, rpc, eth, mux, coinbase, true),
+		worker:  newWorker(eth, rpc, mux, coinbase),
 		rpc:     rpc,
 	}
 	beacon.wg.Add(1)
@@ -76,7 +77,7 @@ func (beacon *Beacon) update() {
 			switch ev.Data.(type) {
 			case downloader.StartEvent:
 				wasMining := beacon.Mining()
-				beacon.worker.stop()
+				beacon.worker.stopMining()
 				canStart = false
 				if wasMining {
 					// Resume mining after sync was finished
@@ -88,14 +89,14 @@ func (beacon *Beacon) update() {
 			case downloader.FailedEvent:
 				canStart = true
 				if shouldStart {
-					beacon.worker.start()
+					beacon.worker.startMining()
 				}
 				beacon.worker.syncing.Store(false)
 
 			case downloader.DoneEvent:
 				canStart = true
 				if shouldStart {
-					beacon.worker.start()
+					beacon.worker.startMining()
 				}
 				beacon.worker.syncing.Store(false)
 
@@ -104,12 +105,12 @@ func (beacon *Beacon) update() {
 			}
 		case <-beacon.startCh:
 			if canStart {
-				beacon.worker.start()
+				beacon.worker.startMining()
 			}
 			shouldStart = true
 		case <-beacon.stopCh:
 			shouldStart = false
-			beacon.worker.stop()
+			beacon.worker.stopMining()
 		case <-beacon.exitCh:
 			beacon.worker.close()
 			return
@@ -131,5 +132,5 @@ func (beacon *Beacon) Close() {
 }
 
 func (beacon *Beacon) Mining() bool {
-	return beacon.worker.isRunning()
+	return beacon.worker.isMining()
 }

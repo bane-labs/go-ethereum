@@ -75,14 +75,14 @@ type worker struct {
 	pendingTasks map[common.Hash]*task
 
 	// Atomic status counters
-	running atomic.Bool // The indicator whether the consensus engine is running or not.
+	mining  atomic.Bool // The indicator whether the consensus engine is running or not.
 	syncing atomic.Bool // The indicator whether the node is still syncing.
 }
 
-func newWorker(engine consensus.Engine, rpc *rpc.Client, eth Backend, mux *event.TypeMux, feeRecipient common.Address, init bool) *worker {
+func newWorker(eth Backend, rpc *rpc.Client, mux *event.TypeMux, feeRecipient common.Address) *worker {
 	worker := &worker{
 		chainConfig:  eth.BlockChain().Config(),
-		engine:       engine,
+		engine:       eth.Engine(),
 		chain:        eth.BlockChain(),
 		rpc:          rpc,
 		mux:          mux,
@@ -105,33 +105,29 @@ func newWorker(engine consensus.Engine, rpc *rpc.Client, eth Backend, mux *event
 	go worker.resultLoop()
 	go worker.taskLoop()
 
-	// Submit first work to initialize pending state.
-	if init {
-		worker.startCh <- struct{}{}
-	}
 	return worker
 }
 
-// start sets the running status as 1 and triggers new work submitting.
-func (w *worker) start() {
-	w.running.Store(true)
+// startMining sets the mining status as 1 and triggers new work submitting.
+func (w *worker) startMining() {
+	w.mining.Store(true)
 	w.startCh <- struct{}{}
 }
 
-// stop sets the running status as 0.
-func (w *worker) stop() {
-	w.running.Store(false)
+// stopMining sets the mining status as 0.
+func (w *worker) stopMining() {
+	w.mining.Store(false)
 }
 
-// isRunning returns an indicator whether worker is running or not.
-func (w *worker) isRunning() bool {
-	return w.running.Load()
+// isMining returns an indicator whether worker is mining or not.
+func (w *worker) isMining() bool {
+	return w.mining.Load()
 }
 
 // close terminates all background threads maintained by the worker.
 // Note the worker does not support being closed multiple times.
 func (w *worker) close() {
-	w.running.Store(false)
+	w.mining.Store(false)
 	close(w.exitCh)
 	w.wg.Wait()
 }
@@ -164,14 +160,14 @@ func (w *worker) newWorkLoop() {
 
 	for {
 		select {
-		case <-w.startCh:
+		case <-w.startCh: // Trigger a new check manually.
 			clearPending(w.chain.CurrentBlock().Number.Uint64())
 			timestamp = uint64(time.Now().Unix())
 			commit(core.ChainHeadEvent{
 				Header: w.chain.CurrentBlock(),
 			})
 
-		case head := <-w.chainHeadCh:
+		case head := <-w.chainHeadCh: // A new head from network, commit a miner check.
 			clearPending(head.Header.Number.Uint64())
 			timestamp = uint64(time.Now().Unix())
 			commit(head)
@@ -304,67 +300,70 @@ func (w *worker) requestWork(event core.ChainHeadEvent, timestamp uint64) {
 	}
 	start := time.Now()
 
-	// Find a proper latest header, and use parent as finalized.
+	// Find a proper latest header, and use it as parent.
 	if event.Header == nil {
 		log.Error("Missing parent")
 		return
 	}
 
-	// Get the EL payload through RPC request.
+	// Send the latest head info to EL.
 	resp, err := w.sendForkChoice(event.Header.Hash(), timestamp)
 	if err != nil {
 		log.Error("Failed to prepare payload", "err", err)
 		return
 	}
-	payload, err := w.getPayload(resp.PayloadID, timestamp)
-	if err != nil {
-		log.Error("Failed to fetch payload", "err", err)
-		return
-	}
 
-	// Rebuild the block from execution payload.
-	var versionedHashes []common.Hash
-	for _, commitment := range payload.BlobsBundle.Commitments {
-		versionedHashes = append(versionedHashes, convertKzgCommitmentToVersionedHash(commitment))
-	}
-	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, &types.EmptyRootHash, payload.Requests)
-	if err != nil {
-		log.Error("Failed to rebuild full block", "err", err)
-		return
-	}
+	// Get the EL payload through RPC request, if there is one.
+	if resp.PayloadID != nil {
+		payload, err := w.getPayload(resp.PayloadID, timestamp)
+		if err != nil {
+			log.Error("Failed to fetch payload", "err", err)
+			return
+		}
 
-	// Submit the generated block for consensus sealing.
-	err = w.commit(block, start)
-	if err != nil {
-		log.Error("Failed to commit payload", "err", err)
+		// Rebuild the block from execution payload.
+		var versionedHashes []common.Hash
+		for _, commitment := range payload.BlobsBundle.Commitments {
+			versionedHashes = append(versionedHashes, convertKzgCommitmentToVersionedHash(commitment))
+		}
+		block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, &types.EmptyRootHash, payload.Requests)
+		if err != nil {
+			log.Error("Failed to rebuild full block", "err", err)
+			return
+		}
+
+		// Submit the generated block for consensus sealing.
+		err = w.commit(block, start)
+		if err != nil {
+			log.Error("Failed to commit payload", "err", err)
+			return
+		}
 	}
 }
 
 // commit commits new work to consensus engine.
 func (w *worker) commit(block *types.Block, start time.Time) error {
-	if w.isRunning() {
-		// Execute the transactions of the block to get the state and receipts.
-		parent := w.chain.GetHeader(block.Header().ParentHash, block.Header().Number.Uint64()-1)
-		parentState, err := w.chain.StateAt(parent.Root)
-		if err != nil {
-			return err
-		}
-		state, res, err := w.chain.ProcessState(block, parentState)
-		if err != nil {
-			return err
-		}
+	// Execute the transactions of the block to get the state and receipts.
+	parent := w.chain.GetHeader(block.Header().ParentHash, block.Header().Number.Uint64()-1)
+	parentState, err := w.chain.StateAt(parent.Root)
+	if err != nil {
+		return err
+	}
+	state, res, err := w.chain.ProcessState(block, parentState)
+	if err != nil {
+		return err
+	}
 
-		select {
-		case w.taskCh <- &task{receipts: res.Receipts, state: state, block: block, createdAt: time.Now()}:
-			fees := totalFees(block, res.Receipts)
-			feesInEther := new(big.Float).Quo(new(big.Float).SetInt(fees), big.NewFloat(params.Ether))
-			log.Info("Commit new sealing work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
-				"txs", len(block.Transactions()), "gas", block.GasUsed(), "fees", feesInEther,
-				"elapsed", common.PrettyDuration(time.Since(start)))
+	select {
+	case w.taskCh <- &task{receipts: res.Receipts, state: state, block: block, createdAt: time.Now()}:
+		fees := totalFees(block, res.Receipts)
+		feesInEther := new(big.Float).Quo(new(big.Float).SetInt(fees), big.NewFloat(params.Ether))
+		log.Info("Commit new sealing work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
+			"txs", len(block.Transactions()), "gas", block.GasUsed(), "fees", feesInEther,
+			"elapsed", common.PrettyDuration(time.Since(start)))
 
-		case <-w.exitCh:
-			log.Info("Worker has exited")
-		}
+	case <-w.exitCh:
+		log.Info("Worker has exited")
 	}
 	return nil
 }
@@ -400,7 +399,14 @@ func (w *worker) sendForkChoice(headHash common.Hash, timestamp uint64) (engine.
 	default:
 		return engine.ForkChoiceResponse{}, fmt.Errorf("fork %s is not supported for engine_forkchoiceUpdated", w.chain.Config().LatestFork(timestamp).String())
 	}
-	err := w.rpc.CallContext(ctx, &resp, forkChoiceMethod, update, attributes)
+
+	// Set mining attributes only when the worker is set to be mining.
+	var err error
+	if w.isMining() {
+		err = w.rpc.CallContext(ctx, &resp, forkChoiceMethod, update, attributes)
+	} else {
+		err = w.rpc.CallContext(ctx, &resp, forkChoiceMethod, update, nil)
+	}
 	if err != nil {
 		return engine.ForkChoiceResponse{}, err
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -21,17 +22,23 @@ import (
 )
 
 type mockBackend struct {
-	bc *core.BlockChain
+	bc     *core.BlockChain
+	engine consensus.Engine
 }
 
-func NewMockBackend(bc *core.BlockChain) *mockBackend {
+func NewMockBackend(bc *core.BlockChain, engine consensus.Engine) *mockBackend {
 	return &mockBackend{
-		bc: bc,
+		bc:     bc,
+		engine: engine,
 	}
 }
 
 func (m *mockBackend) BlockChain() *core.BlockChain {
 	return m.bc
+}
+
+func (m *mockBackend) Engine() consensus.Engine {
+	return m.engine
 }
 
 func TestBeacon(t *testing.T) {
@@ -226,11 +233,11 @@ func createBeacon(t *testing.T) (*Beacon, *event.TypeMux, func(skipBeacon bool))
 	}
 
 	// Create Beacon
-	backend := NewMockBackend(bc)
+	backend := NewMockBackend(bc, engine)
 	// Create event Mux
 	mux := new(event.TypeMux)
 	// Create Beacon
-	beacon := New(backend, &rpc.Client{}, mux, engine, etherbase)
+	beacon := New(backend, &rpc.Client{}, mux, etherbase)
 	cleanup := func(skipBeacon bool) {
 		bc.Stop()
 		engine.Close()
