@@ -227,49 +227,25 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload
 	// Construct a payload object for return.
 	payload := newPayload(empty.block, empty.requests, empty.witness, args.Id())
 
-	// Spin up a routine for updating the payload in background. This strategy
-	// can maximum the revenue for including transactions with highest fee.
-	go func() {
-		// Setup the timer for re-building the payload. The initial clock is kept
-		// for triggering process immediately.
-		timer := time.NewTimer(0)
-		defer timer.Stop()
+	// Fullfil the payload with transactions.
+	fullParams := &generateParams{
+		timestamp:   args.Timestamp,
+		forceTime:   true,
+		parentHash:  args.Parent,
+		coinbase:    args.FeeRecipient,
+		random:      args.Random,
+		withdrawals: args.Withdrawals,
+		beaconRoot:  args.BeaconRoot,
+		noTxs:       false,
+	}
 
-		// Setup the timer for terminating the process if SECONDS_PER_SLOT (12s in
-		// the Mainnet configuration) have passed since the point in time identified
-		// by the timestamp parameter.
-		endTimer := time.NewTimer(time.Second * 12)
+	start := time.Now()
+	r := miner.generateWork(fullParams, witness)
+	if r.err == nil {
+		payload.update(r, time.Since(start))
+	} else {
+		log.Info("Error while generating work", "id", payload.id, "err", r.err)
+	}
 
-		fullParams := &generateParams{
-			timestamp:   args.Timestamp,
-			forceTime:   true,
-			parentHash:  args.Parent,
-			coinbase:    args.FeeRecipient,
-			random:      args.Random,
-			withdrawals: args.Withdrawals,
-			beaconRoot:  args.BeaconRoot,
-			noTxs:       false,
-		}
-
-		for {
-			select {
-			case <-timer.C:
-				start := time.Now()
-				r := miner.generateWork(fullParams, witness)
-				if r.err == nil {
-					payload.update(r, time.Since(start))
-				} else {
-					log.Info("Error while generating work", "id", payload.id, "err", r.err)
-				}
-				timer.Reset(miner.config.Recommit)
-			case <-payload.stop:
-				log.Info("Stopping work on payload", "id", payload.id, "reason", "delivery")
-				return
-			case <-endTimer.C:
-				log.Info("Stopping work on payload", "id", payload.id, "reason", "timeout")
-				return
-			}
-		}
-	}()
 	return payload, nil
 }
