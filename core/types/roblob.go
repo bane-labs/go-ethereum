@@ -10,17 +10,19 @@ const BlobSidecarSize = 131190 // defined to match blob sidecar size in rlp code
 type BlobSidecar struct {
 	BlobTxSidecar
 	BlockNumber *big.Int // The block number this blob sidecar is associated with.
+	BlockTime   uint64   // The block time this blob sidecar is associated with.
 	Index       uint64   // The index of this blob sidecar within the block.
 }
 
 // NewBlobSidecar creates a new BlobSidecar instance.
-func NewBlobSidecar(b *BlobTxSidecar, blockNumber *big.Int, index uint64) *BlobSidecar {
+func NewBlobSidecar(b *BlobTxSidecar, blockNumber *big.Int, blockTime uint64, index uint64) *BlobSidecar {
 	if b == nil || blockNumber == nil {
 		return nil
 	}
 	return &BlobSidecar{
 		BlobTxSidecar: *b,
 		BlockNumber:   blockNumber,
+		BlockTime:     blockTime,
 		Index:         index,
 	}
 }

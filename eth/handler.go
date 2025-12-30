@@ -108,6 +108,7 @@ type Beacon interface {
 
 // FileSystem is enough of a FileSystem to satisfy [Service].
 type FileSystem interface {
+	HasSidecars(hash common.Hash, indices []int) bool
 	GetSidecarsByRoot(hash common.Hash) types.BlobSidecars
 	InsertBlobs(hash common.Hash, blobs types.BlobSidecars) error
 	SubscribeBlobsEvent(ch chan<- core.BlobEvent) event.Subscription
@@ -855,7 +856,11 @@ func (h *handler) broadcastBlobs(blockHash common.Hash, blobs types.BlobSidecars
 		return
 	}
 	// Otherwise if the blob is indeed in out own chain, announce it
-	if sidecars := h.fs.GetSidecarsByRoot(blockHash); sidecars.Len() > 0 {
+	indices := make([]int, len(blobs))
+	for i := range blobs {
+		indices[i] = i
+	}
+	if h.fs.HasSidecars(blockHash, indices) {
 		for _, peer := range peers {
 			peer.AsyncSendNewBlobsRoot(blockHash)
 		}

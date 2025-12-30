@@ -165,11 +165,12 @@ func populateNoop(namer blobIdent, _ string) (blobIdent, error) {
 }
 
 func populateRoot(namer blobIdent, dir string) (blobIdent, error) {
-	root, err := rootFromPath(dir)
+	root, time, err := rootAndTimeFromPath(dir)
 	if err != nil {
 		return namer, err
 	}
 	namer.root = root
+	namer.time = time
 	return namer, nil
 }
 
@@ -182,13 +183,21 @@ func populateIndex(namer blobIdent, fname string) (blobIdent, error) {
 	return namer, nil
 }
 
-func rootFromPath(p string) ([32]byte, error) {
+func rootAndTimeFromPath(p string) ([32]byte, uint64, error) {
 	subdir := filepath.Base(p)
-	root, err := stringToRoot(subdir)
-	if err != nil {
-		return root, errors.Wrapf(err, "invalid directory, could not parse subdir as root %s", p)
+	parts := strings.Split(subdir, "-")
+	if len(parts) != 2 {
+		return [32]byte{}, 0, errors.New("unexpected subdir structure (want <root-time>.ssz)")
 	}
-	return root, nil
+	root, err := stringToRoot(parts[0])
+	if err != nil {
+		return root, 0, errors.Wrapf(err, "invalid directory, could not parse subdir as root %s", p)
+	}
+	time, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil {
+		return [32]byte{}, 0, err
+	}
+	return root, time, nil
 }
 
 func idxFromPath(p string) (uint64, error) {
@@ -215,7 +224,7 @@ func filterNoop(_ string) bool {
 // IsBlockRootDir returns true if the path segment looks like a block root directory.
 func IsBlockRootDir(p string) bool {
 	dir := filepath.Base(p)
-	return len(dir) == rootStringLen && strings.HasPrefix(dir, "0x")
+	return len(dir) >= rootStringLen && strings.HasPrefix(dir, "0x")
 }
 
 func isSszFile(s string) bool {

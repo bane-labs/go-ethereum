@@ -140,8 +140,10 @@ func (h *beaconHandler) handleGetBlobsPacket(peer *beacon.Peer, packet *beacon.G
 		return fmt.Errorf("block %s has no blobs", packet.BlockHash.Hex())
 	}
 
-	sidecars := h.fs.GetSidecarsByRoot(packet.BlockHash)
-	if len(sidecars) > 0 {
+	indices := block.BlobTxIndices()
+	// Check if it exists locally
+	if h.fs.HasSidecars(packet.BlockHash, indices) {
+		sidecars := h.fs.GetSidecarsByRoot(packet.BlockHash)
 		log.Debug("reply GetBlobs msg", "from", peer.ID(), "req block hash", packet.BlockHash, "sidecars", sidecars.Len())
 		encoded, err := rlp.EncodeToBytes(sidecars)
 		if err != nil {
@@ -187,11 +189,10 @@ func (h *beaconHandler) handleBlobsRootAnnounces(peer *beacon.Peer, packet *beac
 	}
 
 	// Check if it exists locally
-	sidecars := h.fs.GetSidecarsByRoot(packet.BlockHash)
-	if sidecars.Len() > 0 {
+	indices := block.BlobTxIndices()
+	if h.fs.HasSidecars(packet.BlockHash, indices) {
 		return nil
 	}
-
 	// request blobs from peer
 	resCh := make(chan *beacon.Response)
 	defer close(resCh)

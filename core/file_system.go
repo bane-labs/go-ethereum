@@ -1,7 +1,6 @@
 package core
 
 import (
-	"errors"
 	"fmt"
 	"math/big"
 
@@ -86,6 +85,22 @@ func (fs *FileSystem) CommitSealBlockHash(block *types.Block) error {
 	return nil
 }
 
+// HasSidecars checks if the blobs for a given block hash and indices are available.
+func (fs *FileSystem) HasSidecars(hash common.Hash, indices []int) bool {
+	summary := fs.blobStorage.Summary(hash)
+	maxBlobCount := summary.MaxBlobsForTime()
+
+	for _, index := range indices {
+		if uint64(index) >= maxBlobCount {
+			return false
+		}
+		if !summary.HasIndex(uint64(index)) {
+			return false
+		}
+	}
+	return true
+}
+
 // GetSidecarsByRoot retrieves the blobs associated with a block hash.
 // Returns nil if not found, please try to fetch from blob protocol if so.
 func (fs *FileSystem) GetSidecarsByRoot(hash common.Hash) types.BlobSidecars {
@@ -116,28 +131,30 @@ func (fs *FileSystem) GetSidecarsByRoot(hash common.Hash) types.BlobSidecars {
 
 // GetBlobTxSidecar retrieves the blob sidecar for a given block hash and index.
 func (fs *FileSystem) GetBlobTxSidecar(hash common.Hash, index uint64) *types.BlobTxSidecar {
-	block := fs.bc.GetBlockByHash(hash)
-	if block == nil {
+	summary := fs.blobStorage.Summary(hash)
+	maxBlobCount := summary.MaxBlobsForTime()
+
+	if maxBlobCount == 0 {
+		log.Debug(fmt.Sprintf("requested index %d not found", index))
 		return nil
 	}
-	txs := block.Transactions()
-	blobTxCount := 0
-	for _, tx := range txs {
-		if tx.Type() == types.BlobTxType {
-			blobTxCount++
-		}
-	}
-	if index >= uint64(blobTxCount) {
+	if index >= maxBlobCount {
+		log.Warn(fmt.Sprintf("requested index %d is bigger than the maximum possible blob count %d", index, maxBlobCount))
 		return nil
 	}
 
-	// Retrieve blobs from persistent storage with header hash.
-	vro, err := fs.blobStorage.Get(hash, uint64(index))
+	if !summary.HasIndex(index) {
+		log.Debug(fmt.Sprintf("requested index %d not found", index))
+		return nil
+	}
+
+	// Retrieve blob sidecars from the store.
+	blobSidecar, err := fs.blobStorage.Get(hash, index)
 	if err != nil {
+		log.Debug(fmt.Sprintf("could not retrieve blob for block root %#x at index %d", hash, index))
 		return nil
 	}
-	return &vro.BlobSidecar.BlobTxSidecar
-
+	return &blobSidecar.BlobTxSidecar
 }
 
 // InsertBlobs inserts blobs for a given block hash.
@@ -166,7 +183,7 @@ func (fs *FileSystem) SubscribeBlobsEvent(ch chan<- BlobEvent) event.Subscriptio
 
 func (fs *FileSystem) saveBlobs(header *types.Header, blobs types.BlobSidecars) error {
 	for i, b := range blobs {
-		ro, err := types.NewROBlobWithRoot(types.NewBlobSidecar(b, header.Number, uint64(i)), header.Hash())
+		ro, err := types.NewROBlobWithRoot(types.NewBlobSidecar(b, header.Number, header.Time, uint64(i)), header.Hash())
 		if err != nil {
 			return err
 		}
@@ -187,11 +204,11 @@ func (fs *FileSystem) shouldRetain(blockNumberRequested *big.Int) bool {
 func (fs *FileSystem) checkBlobsAvailable(block *types.Block, blobs types.BlobSidecars) error {
 	if !fs.bc.Config().IsCancun(block.Number(), block.Time()) {
 		if blobs != nil {
-			return errors.New("sidecars present in block body before cancun")
+			return errSidecarsBeforeCancun
 		}
 	}
 	if len(blobs) > eip4844.MaxBlobsPerBlock(fs.bc.Config(), block.Time()) {
-		return errors.New("too many blobs in block")
+		return errTooManyBlobsInBlock
 	}
 
 	// Verify blobs match the block's blob hashes.

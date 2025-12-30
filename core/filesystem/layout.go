@@ -47,14 +47,15 @@ type blobIdent struct {
 	root  [32]byte
 	epoch primitives.Epoch
 	index uint64
+	time  uint64
 }
 
-func newBlobIdent(root [32]byte, epoch primitives.Epoch, index uint64) blobIdent {
-	return blobIdent{root: root, epoch: epoch, index: index}
+func newBlobIdent(root [32]byte, epoch primitives.Epoch, time uint64, index uint64) blobIdent {
+	return blobIdent{root: root, epoch: epoch, index: index, time: time}
 }
 
 func identForSidecar(sc types.VerifiedROBlob) blobIdent {
-	return newBlobIdent(sc.BlockRoot(), BlockNumberToEpoch(sc.BlockNumber), sc.Index)
+	return newBlobIdent(sc.BlockRoot(), BlockNumberToEpoch(sc.BlockNumber), sc.BlockTime, sc.Index)
 }
 
 func (n blobIdent) sszFname() string {

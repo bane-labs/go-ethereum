@@ -104,7 +104,9 @@ func NewBlobStorage(opts ...BlobStorageOption) (*BlobStorage, error) {
 	if b.cfg == nil {
 		return nil, errors.New("chain config must be provided to BlobStorage")
 	}
-	b.cache = newBlobStorageCache(eip4844.LatestMaxBlobsPerBlock(b.cfg))
+	b.cache = newBlobStorageCache(func(time uint64) int {
+		return eip4844.MaxBlobsPerBlock(b.cfg, time)
+	})
 	pruner := newBlobPruner(b.retentionEpochs)
 	if b.layoutName == "" {
 		b.layoutName = LayoutNameByEpoch

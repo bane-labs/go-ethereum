@@ -528,7 +528,7 @@ func (b *EthAPIBackend) BlobSidecarByRoot(ctx context.Context, hash common.Hash,
 		return nil, nil
 	}
 
-	blockBlobs, err := b.eth.blobSrv.RetrieveSidecarsByRoot(hash)
+	blockBlobs, err := ((*beaconHandler)(b.eth.handler)).RetrieveSidecarsByRoot(hash)
 	if err != nil {
 		return nil, err
 	}

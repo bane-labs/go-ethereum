@@ -576,6 +576,21 @@ func (b *Block) HasBlobTxs() bool {
 	return false
 }
 
+// BlobTxIndices returns the indices of blob transactions in the block.
+func (b *Block) BlobTxIndices() []int {
+	var blobTxs Transactions
+	for _, tx := range b.transactions {
+		if tx.Type() == BlobTxType {
+			blobTxs = append(blobTxs, tx)
+		}
+	}
+	indices := make([]int, 0, len(blobTxs))
+	for i := range blobTxs {
+		indices = append(indices, i)
+	}
+	return indices
+}
+
 type Blocks []*Block
 
 // HeaderParentHashFromRLP returns the parentHash of an RLP-encoded

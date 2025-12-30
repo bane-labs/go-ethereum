@@ -50,7 +50,7 @@ func TestSlotByRoot_Summary(t *testing.T) {
 			expected: lastSet,
 		},
 	}
-	sc := newBlobStorageCache(testMaxBlobsPerBlock)
+	sc := newBlobStorageCache(func(time uint64) int { return testMaxBlobsPerBlock })
 	for _, c := range cases {
 		if c.expected != nil {
 			key := bytesutil.ToBytes32([]byte(c.name))

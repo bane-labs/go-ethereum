@@ -90,7 +90,7 @@ func (l *periodicEpochLayout) summary(root [32]byte) BlobStorageSummary {
 }
 
 func (l *periodicEpochLayout) dir(n blobIdent) string {
-	return filepath.Join(l.epochDir(n.epoch), rootToString(n.root))
+	return filepath.Join(l.epochDir(n.epoch), fmt.Sprintf("%s-%d", rootToString(n.root), n.time))
 }
 
 func (l *periodicEpochLayout) epochDir(epoch primitives.Epoch) string {

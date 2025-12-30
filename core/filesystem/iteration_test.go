@@ -202,10 +202,10 @@ type iterationTestTarget struct {
 	path              string
 }
 
-func ezIdent(t *testing.T, rootStr string, epoch primitives.Epoch, index uint64) blobIdent {
+func ezIdent(t *testing.T, rootStr string, epoch primitives.Epoch, time uint64, index uint64) blobIdent {
 	r, err := stringToRoot(rootStr)
 	require.NoError(t, err)
-	return blobIdent{root: r, epoch: epoch, index: index}
+	return blobIdent{root: r, epoch: epoch, time: time, index: index}
 }
 
 func setupTestBlobFile(t *testing.T, ident blobIdent, blockNumberOffset uint64, fs afero.Fs, l fsLayout) {
@@ -228,41 +228,41 @@ func TestIterationComplete(t *testing.T) {
 	de := primitives.Epoch(1000)
 	targets := []iterationTestTarget{
 		{
-			ident: ezIdent(t, "0x0125e54c64c925018c9296965a5b622d9f5ab626c10917860dcfb6aa09a0a00b", de+1234, 0),
-			path:  "by-epoch/%d/%d/0x0125e54c64c925018c9296965a5b622d9f5ab626c10917860dcfb6aa09a0a00b/0.ssz",
+			ident: ezIdent(t, "0x0125e54c64c925018c9296965a5b622d9f5ab626c10917860dcfb6aa09a0a00b", de+1234, 1766741589, 0),
+			path:  "by-epoch/%d/%d/0x0125e54c64c925018c9296965a5b622d9f5ab626c10917860dcfb6aa09a0a00b-1766741589/0.ssz",
 		},
 		{
-			ident:             ezIdent(t, "0x0127dba6fd30fdbb47e73e861d5c6e602b38ac3ddc945bb6a2fc4e10761e9a86", de+5330, 0),
+			ident:             ezIdent(t, "0x0127dba6fd30fdbb47e73e861d5c6e602b38ac3ddc945bb6a2fc4e10761e9a86", de+5330, 1766741589, 0),
 			blockNumberOffset: 31,
-			path:              "by-epoch/%d/%d/0x0127dba6fd30fdbb47e73e861d5c6e602b38ac3ddc945bb6a2fc4e10761e9a86/0.ssz",
+			path:              "by-epoch/%d/%d/0x0127dba6fd30fdbb47e73e861d5c6e602b38ac3ddc945bb6a2fc4e10761e9a86-1766741589/0.ssz",
 		},
 		{
-			ident:             ezIdent(t, "0x0127dba6fd30fdbb47e73e861d5c6e602b38ac3ddc945bb6a2fc4e10761e9a86", de+5330, 1),
+			ident:             ezIdent(t, "0x0127dba6fd30fdbb47e73e861d5c6e602b38ac3ddc945bb6a2fc4e10761e9a86", de+5330, 1766741589, 1),
 			blockNumberOffset: 31,
-			path:              "by-epoch/%d/%d/0x0127dba6fd30fdbb47e73e861d5c6e602b38ac3ddc945bb6a2fc4e10761e9a86/1.ssz",
+			path:              "by-epoch/%d/%d/0x0127dba6fd30fdbb47e73e861d5c6e602b38ac3ddc945bb6a2fc4e10761e9a86-1766741589/1.ssz",
 		},
 		{
-			ident:             ezIdent(t, "0x0232521756a0b965eab2c2245d7ad85feaeaf5f427cd14d1a7531f9d555b415c", -1+math.MaxUint64/32, 0),
+			ident:             ezIdent(t, "0x0232521756a0b965eab2c2245d7ad85feaeaf5f427cd14d1a7531f9d555b415c", -1+math.MaxUint64/32, 1766741589, 0),
 			blockNumberOffset: 16,
-			path:              "by-epoch/%d/%d/0x0232521756a0b965eab2c2245d7ad85feaeaf5f427cd14d1a7531f9d555b415c/0.ssz",
+			path:              "by-epoch/%d/%d/0x0232521756a0b965eab2c2245d7ad85feaeaf5f427cd14d1a7531f9d555b415c-1766741589/0.ssz",
 		},
 		{
-			ident:             ezIdent(t, "0x0232521756a0b965eab2c2245d7ad85feaeaf5f427cd14d1a7531f9d555b415c", -1+math.MaxUint64/32, 1),
+			ident:             ezIdent(t, "0x0232521756a0b965eab2c2245d7ad85feaeaf5f427cd14d1a7531f9d555b415c", -1+math.MaxUint64/32, 1766741589, 1),
 			blockNumberOffset: 16,
-			path:              "by-epoch/%d/%d/0x0232521756a0b965eab2c2245d7ad85feaeaf5f427cd14d1a7531f9d555b415c/1.ssz",
+			path:              "by-epoch/%d/%d/0x0232521756a0b965eab2c2245d7ad85feaeaf5f427cd14d1a7531f9d555b415c-1766741589/1.ssz",
 		},
 		{
-			ident:             ezIdent(t, "0x42eabe3d2c125410cd226de6f2825fb7575ab896c3f52e43de1fa29e4c809aba", -1+math.MaxUint64/32, 0),
+			ident:             ezIdent(t, "0x42eabe3d2c125410cd226de6f2825fb7575ab896c3f52e43de1fa29e4c809aba", -1+math.MaxUint64/32, 1766741589, 0),
 			blockNumberOffset: 16,
-			path:              "by-epoch/%d/%d/0x42eabe3d2c125410cd226de6f2825fb7575ab896c3f52e43de1fa29e4c809aba/0.ssz",
+			path:              "by-epoch/%d/%d/0x42eabe3d2c125410cd226de6f2825fb7575ab896c3f52e43de1fa29e4c809aba-1766741589/0.ssz",
 		},
 		{
-			ident: ezIdent(t, "0x666cea5034e22bd3b849cb33914cad59afd88ee08e4d5bc0e997411c945fbc1d", de+11235, 1),
-			path:  "by-epoch/%d/%d/0x666cea5034e22bd3b849cb33914cad59afd88ee08e4d5bc0e997411c945fbc1d/1.ssz",
+			ident: ezIdent(t, "0x666cea5034e22bd3b849cb33914cad59afd88ee08e4d5bc0e997411c945fbc1d", de+11235, 1766741589, 1),
+			path:  "by-epoch/%d/%d/0x666cea5034e22bd3b849cb33914cad59afd88ee08e4d5bc0e997411c945fbc1d-1766741589/1.ssz",
 		},
 	}
 	fs := afero.NewMemMapFs()
-	cache := newBlobStorageCache(testMaxBlobsPerBlock)
+	cache := newBlobStorageCache(func(time uint64) int { return testMaxBlobsPerBlock })
 	byEpoch, err := newLayout(LayoutNameByEpoch, fs, cache, nil, primitives.Epoch(params.MinEthEpochsForBlobsSidecarsRequest))
 	require.NoError(t, err)
 	for _, tar := range targets {

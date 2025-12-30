@@ -51,7 +51,7 @@ func NewWarmedEphemeralBlobStorageUsingFs(t testing.TB, fs afero.Fs, opts ...Blo
 }
 
 func NewMockBlobStorageSummarizer(t *testing.T, epoch primitives.Epoch, set map[[32]byte][]int) BlobStorageSummarizer {
-	c := newBlobStorageCache(testMaxBlobsPerBlock)
+	c := newBlobStorageCache(func(time uint64) int { return testMaxBlobsPerBlock })
 	for k, v := range set {
 		for i := range v {
 			if err := c.ensure(blobIdent{root: k, epoch: epoch, index: uint64(v[i])}); err != nil {
@@ -72,6 +72,7 @@ func GenerateMockBlobSidecar(t *testing.T, root [32]byte, blockNumber *big.Int, 
 	pb := &types.BlobSidecar{
 		Index:       uint64(index),
 		BlockNumber: blockNumber,
+		BlockTime:   blockNumber.Uint64() * 5,
 		BlobTxSidecar: types.BlobTxSidecar{
 			Blobs:       []kzg4844.Blob{emptyBlob},
 			Commitments: []kzg4844.Commitment{emptyBlobCommit},
@@ -94,8 +95,11 @@ func FakeVerifySliceForTest(t *testing.T, b []types.ROBlob) []types.VerifiedROBl
 }
 
 func GenerateMockBlobStorageChainConfig() *params.ChainConfig {
+	zeroTime := uint64(0)
 	return &params.ChainConfig{
-		ChainID: big.NewInt(10),
+		ChainID:     big.NewInt(10),
+		LondonBlock: big.NewInt(0),
+		CancunTime:  &zeroTime,
 		BlobScheduleConfig: &params.BlobScheduleConfig{
 			Cancun: params.DefaultCancunBlobConfig,
 		},

@@ -134,7 +134,7 @@ func TestBlobIndicesBounds(t *testing.T) {
 	root := [32]byte{}
 
 	okIdx := uint64(testMaxBlobsPerBlock) - 1
-	writeFakeSSZ(t, fs, root, blockNumber, okIdx)
+	writeFakeSSZ(t, fs, root, blockNumber, 0, okIdx)
 	bs := NewWarmedEphemeralBlobStorageUsingFs(t, fs, WithLayout(LayoutNameByEpoch))
 	indices := bs.Summary(root).mask
 	expected := make([]bool, testMaxBlobsPerBlock)
@@ -144,14 +144,14 @@ func TestBlobIndicesBounds(t *testing.T) {
 	}
 
 	oobIdx := uint64(testMaxBlobsPerBlock)
-	writeFakeSSZ(t, fs, root, blockNumber, oobIdx)
+	writeFakeSSZ(t, fs, root, blockNumber, 0, oobIdx)
 	// This now fails at cache warmup time.
 	require.ErrorIs(t, warmCache(bs.layout, bs.cache), errIndexOutOfBounds)
 }
 
-func writeFakeSSZ(t *testing.T, fs afero.Fs, root [32]byte, blockNumber *big.Int, idx uint64) {
+func writeFakeSSZ(t *testing.T, fs afero.Fs, root [32]byte, blockNumber *big.Int, time uint64, idx uint64) {
 	epoch := BlockNumberToEpoch(blockNumber)
-	namer := newBlobIdent(root, epoch, idx)
+	namer := newBlobIdent(root, epoch, time, idx)
 	layout := periodicEpochLayout{
 		retain: primitives.Epoch(params.MinEthEpochsForBlobsSidecarsRequest),
 	}

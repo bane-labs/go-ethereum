@@ -23,8 +23,10 @@ type blobIndexMask []bool
 
 // BlobStorageSummary represents cached information about the BlobSidecars on disk for each root the cache knows about.
 type BlobStorageSummary struct {
-	epoch primitives.Epoch
-	mask  blobIndexMask
+	epoch            primitives.Epoch
+	time             uint64
+	mask             blobIndexMask
+	maxBlobsPerBlock int
 }
 
 // HasIndex returns true if the BlobSidecar at the given index is available in the filesystem.
@@ -48,14 +50,20 @@ func (s BlobStorageSummary) AllAvailable(count int) bool {
 	return true
 }
 
+func (s BlobStorageSummary) MaxBlobsForTime() uint64 {
+	return uint64(s.maxBlobsPerBlock)
+}
+
 // NewBlobStorageSummary creates a new BlobStorageSummary for a given epoch and mask.
-func NewBlobStorageSummary(epoch primitives.Epoch, mask []bool, maxBlobsPerBlock int) (BlobStorageSummary, error) {
+func NewBlobStorageSummary(epoch primitives.Epoch, time uint64, mask []bool, maxBlobsPerBlock int) (BlobStorageSummary, error) {
 	if len(mask) != maxBlobsPerBlock {
 		return BlobStorageSummary{}, fmt.Errorf("mask length %d does not match expected %d for epoch %d", len(mask), maxBlobsPerBlock, epoch)
 	}
 	return BlobStorageSummary{
-		epoch: epoch,
-		mask:  mask,
+		epoch:            epoch,
+		time:             time,
+		mask:             mask,
+		maxBlobsPerBlock: maxBlobsPerBlock,
 	}, nil
 }
 
@@ -70,12 +78,12 @@ type blobStorageSummaryCache struct {
 	nBlobs float64
 	cache  map[[32]byte]BlobStorageSummary
 
-	maxBlobsPerBlock int
+	maxBlobsPerBlock func(time uint64) int
 }
 
 var _ BlobStorageSummarizer = &blobStorageSummaryCache{}
 
-func newBlobStorageCache(maxBlobsPerBlock int) *blobStorageSummaryCache {
+func newBlobStorageCache(maxBlobsPerBlock func(time uint64) int) *blobStorageSummaryCache {
 	return &blobStorageSummaryCache{
 		cache:            make(map[[32]byte]BlobStorageSummary),
 		maxBlobsPerBlock: maxBlobsPerBlock,
@@ -91,15 +99,18 @@ func (s *blobStorageSummaryCache) Summary(root [32]byte) BlobStorageSummary {
 }
 
 func (s *blobStorageSummaryCache) ensure(ident blobIdent) error {
-	if ident.index >= uint64(s.maxBlobsPerBlock) {
+	maxBlobsPerBlock := s.maxBlobsPerBlock(ident.time)
+	if ident.index >= uint64(maxBlobsPerBlock) {
 		return errIndexOutOfBounds
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v := s.cache[ident.root]
 	v.epoch = ident.epoch
+	v.time = ident.time
+	v.maxBlobsPerBlock = maxBlobsPerBlock
 	if v.mask == nil {
-		v.mask = make(blobIndexMask, s.maxBlobsPerBlock)
+		v.mask = make(blobIndexMask, maxBlobsPerBlock)
 	}
 	if !v.mask[ident.index] {
 		s.updateMetrics(1)
@@ -125,6 +136,7 @@ func (s *blobStorageSummaryCache) identForIdx(key [32]byte, idx uint64) (blobIde
 		root:  key,
 		index: idx,
 		epoch: v.epoch,
+		time:  v.time,
 	}, nil
 }
 
@@ -136,6 +148,7 @@ func (s *blobStorageSummaryCache) identForRoot(key [32]byte) (blobIdent, error) 
 	return blobIdent{
 		root:  key,
 		epoch: v.epoch,
+		time:  v.time,
 	}, nil
 }
 
