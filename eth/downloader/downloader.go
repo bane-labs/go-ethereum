@@ -99,8 +99,10 @@ type Downloader struct {
 	mode atomic.Uint32  // Synchronisation mode defining the strategy used (per sync cycle), use d.getMode() to get the SyncMode
 	mux  *event.TypeMux // Event multiplexer to announce sync operation events
 
-	queue *queue   // Scheduler for selecting the hashes to download
-	peers *peerSet // Set of active peers from which download can proceed
+	queue         *queue                // Scheduler for selecting the hashes to download
+	peers         *peerSet              // Set of active peers from which download can proceed
+	pendingBeacon map[string]beaconPeer // Set of beacon peers waiting for `eth` protocol connection
+	pendingLock   sync.RWMutex          // Lock protecting the pending beacon fields
 
 	stateDB ethdb.Database // Database to state sync into (and deduplicate via)
 
@@ -230,6 +232,7 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer 
 		mux:               mux,
 		queue:             newQueue(blockCacheMaxItems, blockCacheInitialItems),
 		peers:             newPeerSet(),
+		pendingBeacon:     make(map[string]beaconPeer),
 		blockchain:        chain,
 		chainCutoffNumber: cutoffNumber,
 		chainCutoffHash:   cutoffHash,
@@ -292,7 +295,7 @@ func (d *Downloader) Progress() ethereum.SyncProgress {
 
 // RegisterPeer injects a new download peer into the set of block source to be
 // used for fetching hashes and blocks from.
-func (d *Downloader) RegisterPeer(id string, version uint, peer Peer) error {
+func (d *Downloader) RegisterPeer(id string, version uint, peer ethPeer) error {
 	var logger log.Logger
 	if len(id) < 16 {
 		// Tests use short IDs, don't choke on them
@@ -305,7 +308,35 @@ func (d *Downloader) RegisterPeer(id string, version uint, peer Peer) error {
 		logger.Error("Failed to register sync peer", "err", err)
 		return err
 	}
+	d.pendingLock.Lock()
+	defer d.pendingLock.Unlock()
+	if p := d.pendingBeacon[id]; p != nil {
+		d.peers.ConnectBeacon(id, p)
+		delete(d.pendingBeacon, id)
+	}
 	return nil
+}
+
+// RegisterBeacon connects a download peer with a beacon peer with the same ID.
+func (d *Downloader) RegisterBeacon(id string, peer beaconPeer) error {
+	var logger log.Logger
+	if len(id) < 16 {
+		// Tests use short IDs, don't choke on them
+		logger = log.New("beacon", id)
+	} else {
+		logger = log.New("beacon", id[:8])
+	}
+	logger.Trace("Registering sync beacon")
+	d.pendingLock.Lock()
+	defer d.pendingLock.Unlock()
+	if p := d.peers.Peer(id); p != nil {
+		return d.peers.ConnectBeacon(id, peer)
+	} else if d.pendingBeacon[id] == nil {
+		d.pendingBeacon[id] = peer
+		return nil
+	} else {
+		return errAlreadyRegistered
+	}
 }
 
 // UnregisterPeer remove a peer from the known list, preventing any action from
@@ -321,6 +352,13 @@ func (d *Downloader) UnregisterPeer(id string) error {
 		logger = log.New("peer", id[:8])
 	}
 	logger.Trace("Unregistering sync peer")
+	d.pendingLock.Lock()
+	defer d.pendingLock.Unlock()
+	if p := d.peers.Peer(id); p != nil {
+		if p.beacon != nil {
+			d.pendingBeacon[id] = p.beacon
+		}
+	}
 	if err := d.peers.Unregister(id); err != nil {
 		logger.Error("Failed to unregister sync peer", "err", err)
 		return err
@@ -328,6 +366,29 @@ func (d *Downloader) UnregisterPeer(id string) error {
 	d.queue.Revoke(id)
 
 	return nil
+}
+
+// UnregisterBeacon disconnects the beacon from a download peer.
+func (d *Downloader) UnregisterBeacon(id string) error {
+	// Unregister the peer from the active peer set and revoke any fetch tasks
+	var logger log.Logger
+	if len(id) < 16 {
+		// Tests use short IDs, don't choke on them
+		logger = log.New("beacon", id)
+	} else {
+		logger = log.New("beacon", id[:8])
+	}
+	logger.Trace("Unregistering sync beacon")
+	d.pendingLock.Lock()
+	defer d.pendingLock.Unlock()
+	if p := d.peers.Peer(id); p != nil {
+		return d.peers.DisconnectBeacon(id)
+	} else if d.pendingBeacon[id] != nil {
+		delete(d.pendingBeacon, id)
+		return nil
+	} else {
+		return errNotRegistered
+	}
 }
 
 // LegacySync tries to sync up our local block chain with a remote peer, both
@@ -755,7 +816,7 @@ func (d *Downloader) fetchHead(p *peerConnection) (head *types.Header, pivot *ty
 	mode := d.getMode()
 
 	// Request the advertised remote head block and wait for the response
-	latest, _ := p.peer.Head()
+	latest, _ := p.beacon.Head()
 	fetch := 1
 	if mode == SnapSync {
 		fetch = 2 // head + pivot headers

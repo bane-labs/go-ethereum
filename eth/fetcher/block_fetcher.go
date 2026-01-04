@@ -76,10 +76,10 @@ var (
 type blockRetrievalFn func(common.Hash) *types.Block
 
 // headerRequesterFn is a callback type for sending a header retrieval request.
-type headerRequesterFn func(common.Hash, chan *eth.Response) (*eth.Request, error)
+type headerRequesterFn func(string, common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // bodyRequesterFn is a callback type for sending a body retrieval request.
-type bodyRequesterFn func([]common.Hash, chan *eth.Response) (*eth.Request, error)
+type bodyRequesterFn func(string, []common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // headerVerifierFn is a callback type to verify a block's header for fast propagation.
 type headerVerifierFn func(header *types.Header) error
@@ -108,9 +108,6 @@ type blockAnnounce struct {
 	time   time.Time     // Timestamp of the announcement
 
 	origin string // Identifier of the peer originating the notification
-
-	fetchHeader headerRequesterFn // Fetcher function to retrieve the header of an announced block
-	fetchBodies bodyRequesterFn   // Fetcher function to retrieve the body of an announced block
 }
 
 // headerFilterTask represents a batch of headers needing fetcher filtering.
@@ -189,6 +186,9 @@ type BlockFetcher struct {
 	insertChain          chainInsertFn          // Injects a batch of blocks into the chain
 	dropPeer             peerDropFn             // Drops a peer for misbehaving
 
+	fetchHeader headerRequesterFn // Fetcher function to retrieve the header of an announced block
+	fetchBodies bodyRequesterFn   // Fetcher function to retrieve the body of an announced block
+
 	// Testing hooks
 	announceChangeHook func(common.Hash, bool)           // Method to call upon adding or deleting a hash from the blockAnnounce list
 	queueChangeHook    func(common.Hash, bool)           // Method to call upon adding or deleting a block from the import queue
@@ -199,7 +199,8 @@ type BlockFetcher struct {
 
 // NewBlockFetcher creates a block fetcher to retrieve blocks based on hash announcements.
 func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBlock blockBroadcasterFn,
-	chainHeight chainHeightFn, chainFinalizedHeight chainFinalizedHeightFn, insertChain chainInsertFn, dropPeer peerDropFn) *BlockFetcher {
+	chainHeight chainHeightFn, chainFinalizedHeight chainFinalizedHeightFn, insertChain chainInsertFn, dropPeer peerDropFn,
+	fetchHeader headerRequesterFn, fetchBodies bodyRequesterFn) *BlockFetcher {
 	return &BlockFetcher{
 		notify:               make(chan *blockAnnounce),
 		inject:               make(chan *blockOrHeaderInject),
@@ -223,6 +224,8 @@ func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, b
 		chainFinalizedHeight: chainFinalizedHeight,
 		insertChain:          insertChain,
 		dropPeer:             dropPeer,
+		fetchHeader:          fetchHeader,
+		fetchBodies:          fetchBodies,
 	}
 }
 
@@ -240,15 +243,12 @@ func (f *BlockFetcher) Stop() {
 
 // Notify announces the fetcher of the potential availability of a new block in
 // the network.
-func (f *BlockFetcher) Notify(peer string, hash common.Hash, number uint64, time time.Time,
-	headerFetcher headerRequesterFn, bodyFetcher bodyRequesterFn) error {
+func (f *BlockFetcher) Notify(peer string, hash common.Hash, number uint64, time time.Time) error {
 	block := &blockAnnounce{
-		hash:        hash,
-		number:      number,
-		time:        time,
-		origin:      peer,
-		fetchHeader: headerFetcher,
-		fetchBodies: bodyFetcher,
+		hash:   hash,
+		number: number,
+		time:   time,
+		origin: peer,
 	}
 	select {
 	case f.notify <- block:
@@ -469,9 +469,6 @@ func (f *BlockFetcher) loop() {
 			for peer, hashes := range request {
 				log.Trace("Fetching scheduled headers", "peer", peer, "list", hashes)
 
-				// Create a closure of the fetch and schedule in on a new thread
-				fetchHeader := f.fetching[hashes[0]].fetchHeader
-
 				go func(peer string) {
 					if f.fetchingHook != nil {
 						f.fetchingHook(hashes)
@@ -481,7 +478,7 @@ func (f *BlockFetcher) loop() {
 						go func(hash common.Hash) {
 							resCh := make(chan *eth.Response)
 
-							req, err := fetchHeader(hash, resCh)
+							req, err := f.fetchHeader(peer, hash, resCh)
 							if err != nil {
 								return // Legacy code, yolo
 							}
@@ -532,13 +529,12 @@ func (f *BlockFetcher) loop() {
 				if f.completingHook != nil {
 					f.completingHook(hashes)
 				}
-				fetchBodies := f.completing[hashes[0]].fetchBodies
 				bodyFetchMeter.Mark(int64(len(hashes)))
 
 				go func(peer string, hashes []common.Hash) {
 					resCh := make(chan *eth.Response)
 
-					req, err := fetchBodies(hashes, resCh)
+					req, err := f.fetchBodies(peer, hashes, resCh)
 					if err != nil {
 						return // Legacy code, yolo
 					}

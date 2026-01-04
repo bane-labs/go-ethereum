@@ -48,6 +48,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
+	beaconproto "github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
@@ -605,10 +606,11 @@ func (s *Ethereum) SyncMode() downloader.SyncMode {
 // network protocols to start.
 func (s *Ethereum) Protocols() []p2p.Protocol {
 	protos := eth.MakeProtocols((*ethHandler)(s.handler), s.networkID, s.discmix)
-	protos = append(protos, s.dbftSrv.MakeProtocols()...)
+	protos = append(protos, beaconproto.MakeProtocols((*beaconHandler)(s.handler))...)
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler))...)
 	}
+	protos = append(protos, s.dbftSrv.MakeProtocols()...)
 	return protos
 }
 

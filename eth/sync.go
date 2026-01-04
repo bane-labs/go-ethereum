@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -155,12 +156,12 @@ func (cs *chainSyncer) nextSyncOp() *chainSyncOp {
 	// We have enough peers, pick the one with the highest TD, but avoid going
 	// over the terminal total difficulty. Above that we expect the consensus
 	// clients to direct the chain head to sync to.
-	peer := cs.handler.peers.peerWithHighestTD()
+	beacon, peer := cs.handler.peers.peerWithHighestTD()
 	if peer == nil {
 		return nil
 	}
 	mode, ourTD := cs.modeAndLocalHead()
-	op := peerToSyncOp(mode, peer)
+	op := peerToSyncOp(mode, beacon, peer)
 	if op.td.Cmp(ourTD) <= 0 {
 		// We seem to be in sync according to the legacy rules. In the merge
 		// world, it can also mean we're stuck on the merge block, waiting for
@@ -174,8 +175,8 @@ func (cs *chainSyncer) nextSyncOp() *chainSyncOp {
 	return op
 }
 
-func peerToSyncOp(mode downloader.SyncMode, p *eth.Peer) *chainSyncOp {
-	peerHead, peerTD := p.Head()
+func peerToSyncOp(mode downloader.SyncMode, b *beacon.Peer, p *eth.Peer) *chainSyncOp {
+	peerHead, peerTD := b.Head()
 	return &chainSyncOp{mode: mode, peer: p, td: peerTD, head: peerHead}
 }
 

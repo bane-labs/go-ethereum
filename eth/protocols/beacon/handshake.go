@@ -1,36 +1,18 @@
-// Copyright 2020 The go-ethereum Authors
-// This file is part of the go-ethereum library.
-//
-// The go-ethereum library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Lesser General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// The go-ethereum library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Lesser General Public License for more details.
-//
-// You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
-
-package eth
+package beacon
 
 import (
-	"errors"
 	"fmt"
 	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/forkid"
-	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
 )
 
 const (
-	// handshakeTimeout is the maximum allowed time for the `eth` handshake to
-	// complete before dropping the connection.= as malicious.
+	// handshakeTimeout is the maximum allowed time for the `beacon` handshake to
+	// complete before dropping the connection as malicious.
 	handshakeTimeout = 5 * time.Second
 )
 
@@ -61,14 +43,13 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 		select {
 		case err := <-errc:
 			if err != nil {
-				markError(p, err)
 				return err
 			}
 		case <-timeout.C:
-			markError(p, p2p.DiscReadTimeout)
 			return p2p.DiscReadTimeout
 		}
 	}
+	p.td, p.head = status.TD, status.Head
 	return nil
 }
 
@@ -101,26 +82,4 @@ func (p *Peer) readStatus(network uint64, status *StatusPacket, genesis common.H
 		return fmt.Errorf("%w: %v", errForkIDRejected, err)
 	}
 	return nil
-}
-
-// markError registers the error with the corresponding metric.
-func markError(p *Peer, err error) {
-	if !metrics.Enabled() {
-		return
-	}
-	m := meters.get(p.Inbound())
-	switch errors.Unwrap(err) {
-	case errNetworkIDMismatch:
-		m.networkIDMismatch.Mark(1)
-	case errProtocolVersionMismatch:
-		m.protocolVersionMismatch.Mark(1)
-	case errGenesisMismatch:
-		m.genesisMismatch.Mark(1)
-	case errForkIDRejected:
-		m.forkidRejected.Mark(1)
-	case p2p.DiscReadTimeout:
-		m.timeoutError.Mark(1)
-	default:
-		m.peerError.Mark(1)
-	}
 }

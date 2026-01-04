@@ -79,7 +79,6 @@ func newTestBackendWithGenerator(blocks int, shanghai bool, cancun bool, generat
 		config = params.TestChainConfig
 		engine = beacon.New(ethash.NewFaker())
 	)
-
 	if shanghai {
 		config = &params.ChainConfig{
 			ChainID:                 big.NewInt(1),

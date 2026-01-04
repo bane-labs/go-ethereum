@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 )
@@ -54,6 +55,24 @@ type snapPeer struct {
 // info gathers and returns some `snap` protocol metadata known about a peer.
 func (p *snapPeer) info() *snapPeerInfo {
 	return &snapPeerInfo{
+		Version: p.Version(),
+	}
+}
+
+// beaconPeerInfo represents a short summary of the `beacon` sub-protocol metadata known
+// about a connected peer.
+type beaconPeerInfo struct {
+	Version uint `json:"version"` // Beacon protocol version negotiated
+}
+
+// beaconPeer is a wrapper around beacon.Peer to maintain a few extra metadata.
+type beaconPeer struct {
+	*beacon.Peer
+}
+
+// info gathers and returns some `beacon` protocol metadata known about a peer.
+func (p *beaconPeer) info() *beaconPeerInfo {
+	return &beaconPeerInfo{
 		Version: p.Version(),
 	}
 }

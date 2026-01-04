@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/fetcher"
+	beaconproto "github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -200,16 +201,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	// Construct the downloader (long sync)
 	h.downloader = downloader.New(config.Database, h.eventMux, h.chain, h.removePeer, h.enableSyncedFeatures)
-	if ttd := h.chain.Config().TerminalTotalDifficulty; ttd != nil {
-		head := h.chain.CurrentBlock()
-		if td := h.chain.GetTd(head.Hash(), head.Number.Uint64()); td.Cmp(ttd) >= 0 {
-			log.Info("Chain post-TTD, sync via beacon client")
-		} else {
-			log.Warn("Chain pre-merge, sync via PoW (ensure beacon client is ready)")
-		}
-	} else {
-		log.Error("Chain configured without TTD")
-	}
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {
 		// Reject all the PoS style headers in the first place. No matter
@@ -246,7 +237,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return h.chain.InsertChain(blocks)
 	}
 	h.blockFetcher = fetcher.NewBlockFetcher(h.chain.GetBlockByHash, validator, h.BroadcastBlock,
-		heighter, finalizeHeighter, inserter, h.removePeer)
+		heighter, finalizeHeighter, inserter, h.removePeer, h.fetchHeader, h.fetchBodies)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := h.peers.peer(peer)
@@ -312,6 +303,56 @@ func (h *handler) decHandlers() {
 	h.handlerDoneCh <- struct{}{}
 }
 
+// runBeaconPeer registers an beacon peer into the joint beacon peerset, adds it to
+// various subsystems and starts handling messages.
+func (h *handler) runBeaconPeer(peer *beaconproto.Peer, handler beaconproto.Handler) error {
+	if !h.incHandlers() {
+		return p2p.DiscQuitting
+	}
+	defer h.decHandlers()
+
+	// Execute the Beacon handshake
+	var (
+		genesis = h.chain.Genesis()
+		head    = h.chain.CurrentHeader()
+		hash    = head.Hash()
+		number  = head.Number.Uint64()
+		td      = h.chain.GetTd(hash, number)
+	)
+	forkID := forkid.NewID(h.chain.Config(), genesis, number, head.Time)
+	if err := peer.Handshake(h.networkID, td, hash, genesis.Hash(), forkID, h.forkFilter); err != nil {
+		peer.Log().Debug("Beacon handshake failed", "err", err)
+		return err
+	}
+	// Ignore maxPeers if this is a trusted peer
+	if !peer.Peer.Info().Network.Trusted {
+		if h.peers.beaconLen() >= h.maxPeers {
+			return p2p.DiscTooManyPeers
+		}
+	}
+	peer.Log().Debug("Beacon peer connected", "name", peer.Name())
+
+	// Register the peer locally
+	if err := h.peers.registerBeacon(peer); err != nil {
+		peer.Log().Error("Beacon peer registration failed", "err", err)
+		return err
+	}
+	defer h.unregisterBeacon(peer.ID())
+
+	p := h.peers.beacon(peer.ID())
+	if p == nil {
+		return errors.New("peer dropped during handling")
+	}
+	// Register the peer in the downloader. If the downloader considers it banned, we disconnect
+	if err := h.downloader.RegisterBeacon(peer.ID(), peer); err != nil {
+		peer.Log().Error("Failed to register peer in eth syncer", "err", err)
+		return err
+	}
+	h.chainSync.handlePeerEvent()
+
+	return handler(peer)
+}
+
 // runEthPeer registers an eth peer into the joint eth/snap peerset, adds it to
 // various subsystems and starts handling messages.
 func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
@@ -328,7 +369,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		return err
 	}
 
-	// Execute the Ethereum handshake
+	// Execute the Ethereum handshake, but td and head is no longer referred
 	var (
 		genesis = h.chain.Genesis()
 		head    = h.chain.CurrentHeader()
@@ -464,9 +505,39 @@ func (h *handler) runSnapExtension(peer *snap.Peer, handler snap.Handler) error 
 
 // removePeer requests disconnection of a peer.
 func (h *handler) removePeer(id string) {
+	beacon := h.peers.beacon(id)
+	if beacon != nil {
+		beacon.Peer.Disconnect(p2p.DiscUselessPeer)
+	}
 	peer := h.peers.peer(id)
 	if peer != nil {
 		peer.Peer.Disconnect(p2p.DiscUselessPeer)
+	}
+}
+
+// unregisterBeacon removes a beacon from the downloader, fetchers and main peer set.
+func (h *handler) unregisterBeacon(id string) {
+	// Create a custom logger to avoid printing the entire id
+	var logger log.Logger
+	if len(id) < 16 {
+		// Tests use short IDs, don't choke on them
+		logger = log.New("beacon", id)
+	} else {
+		logger = log.New("beacon", id[:8])
+	}
+	// Abort if the peer does not exist
+	peer := h.peers.beacon(id)
+	if peer == nil {
+		logger.Warn("Beacon peer removal failed", "err", errPeerNotRegistered)
+		return
+	}
+	// Remove the `beacon` peer if it exists
+	logger.Debug("Removing Beacon peer")
+
+	h.downloader.UnregisterBeacon(id)
+
+	if err := h.peers.unregisterBeacon(id); err != nil {
+		logger.Error("Beacon peer removal failed", "err", err)
 	}
 }
 
@@ -559,7 +630,7 @@ func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
 		}
 	}
 	hash := block.Hash()
-	peers := h.peers.peersWithoutBlock(hash)
+	peers := h.peers.beaconsWithoutBlock(hash)
 
 	// If propagation is requested, send to a subset of the peer
 	if propagate {
@@ -586,6 +657,16 @@ func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
 		}
 		log.Trace("Announced block", "hash", hash, "recipients", len(peers), "duration", common.PrettyDuration(time.Since(block.ReceivedAt)))
 	}
+}
+
+// fetchHeader is the bridge to use a hash to get the header from `eth` protocol.
+func (h *handler) fetchHeader(id string, hash common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+	return h.peers.peer(id).RequestOneHeader(hash, sink)
+}
+
+// fetchBodies is the bridge to use a hash array to get the block bodies from `eth` protocol.
+func (h *handler) fetchBodies(id string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+	return h.peers.peer(id).RequestBodies(hashes, sink)
 }
 
 // BroadcastTransactions will propagate a batch of transactions
