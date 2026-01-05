@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	beaconfetch "github.com/ethereum/go-ethereum/beacon/impl/fetcher"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/dbft"
@@ -96,6 +97,16 @@ type txPool interface {
 	SubscribeReannoTransactions(chan<- core.ReannoTxsEvent) event.Subscription
 }
 
+type Beacon interface {
+	StartBlockFetcher(
+		broadcastBlock beaconfetch.BlockBroadcasterFn, insertChain beaconfetch.ChainInsertFn,
+		dropPeer beaconfetch.PeerDropFn, fetchHeader beaconfetch.HeaderRequesterFn,
+		fetchBodies beaconfetch.BodyRequesterFn,
+	)
+	NotifyBlockAnnon(peer string, hash common.Hash, number uint64, time time.Time)
+	EnqueueBlock(peer string, block *types.Block)
+}
+
 // handlerConfig is the collection of initialization parameters to create a full
 // node network handler.
 type handlerConfig struct {
@@ -123,10 +134,10 @@ type handler struct {
 	chain    *core.BlockChain
 	maxPeers int
 
-	downloader   *downloader.Downloader
-	blockFetcher *fetcher.BlockFetcher
-	txFetcher    *fetcher.TxFetcher
-	peers        *peerSet
+	downloader *downloader.Downloader
+	beacon     Beacon
+	txFetcher  *fetcher.TxFetcher
+	peers      *peerSet
 
 	eventMux      *event.TypeMux
 	txsCh         chan core.NewTxsEvent
@@ -201,43 +212,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	// Construct the downloader (long sync)
 	h.downloader = downloader.New(config.Database, h.eventMux, h.chain, h.removePeer, h.enableSyncedFeatures)
-	// Construct the fetcher (short sync)
-	validator := func(header *types.Header) error {
-		// Reject all the PoS style headers in the first place. No matter
-		// the chain has finished the transition or not, the PoS headers
-		// should only come from the trusted consensus layer instead of
-		// p2p network.
-		if beacon, ok := h.chain.Engine().(*beacon.Beacon); ok {
-			if beacon.IsPoSHeader(header) {
-				return errors.New("unexpected post-merge header")
-			}
-		}
-		return h.chain.Engine().VerifyHeader(h.chain, header)
-	}
-	heighter := func() uint64 {
-		return h.chain.CurrentBlock().Number.Uint64()
-	}
-	finalizeHeighter := func() uint64 {
-		fblock := h.chain.CurrentFinalBlock()
-		if fblock == nil {
-			return 0
-		}
-		return fblock.Number.Uint64()
-	}
-	inserter := func(blocks types.Blocks) (int, error) {
-		// If snap sync is running, deny importing weird blocks. This is a problematic
-		// clause when starting up a new network, because snap-syncing miners might not
-		// accept each others' blocks until a restart. Unfortunately we haven't figured
-		// out a way yet where nodes can decide unilaterally whether the network is new
-		// or not. This should be fixed if we figure out a solution.
-		if !h.synced.Load() {
-			log.Warn("Syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
-			return 0, nil
-		}
-		return h.chain.InsertChain(blocks)
-	}
-	h.blockFetcher = fetcher.NewBlockFetcher(h.chain.GetBlockByHash, validator, h.BroadcastBlock,
-		heighter, finalizeHeighter, inserter, h.removePeer, h.fetchHeader, h.fetchBodies)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := h.peers.peer(peer)
@@ -265,6 +239,24 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
 	h.chainSync = newChainSyncer(h)
 	return h, nil
+}
+
+// connectBeacon connects beacon client to the protocols, and inits its handler.
+func (h *handler) connectBeacon(beacon Beacon) {
+	inserter := func(blocks types.Blocks) (int, error) {
+		// If snap sync is running, deny importing weird blocks. This is a problematic
+		// clause when starting up a new network, because snap-syncing miners might not
+		// accept each others' blocks until a restart. Unfortunately we haven't figured
+		// out a way yet where nodes can decide unilaterally whether the network is new
+		// or not. This should be fixed if we figure out a solution.
+		if !h.synced.Load() {
+			log.Warn("Syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
+			return 0, nil
+		}
+		return h.chain.InsertChain(blocks)
+	}
+	h.beacon = beacon
+	h.beacon.StartBlockFetcher(h.BroadcastBlock, inserter, h.removePeer, h.fetchHeader, h.fetchBodies)
 }
 
 // protoTracker tracks the number of active protocol handlers.

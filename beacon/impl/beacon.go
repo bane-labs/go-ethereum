@@ -1,136 +1,82 @@
-// Package beacon implements minimized Ethereum beacon client.
 package impl
 
 import (
-	"sync"
+	"time"
 
+	"github.com/ethereum/go-ethereum/beacon/impl/fetcher"
+	"github.com/ethereum/go-ethereum/beacon/impl/miner"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-// Backend wraps all methods required for mining. Only full node is capable
-// to offer all the functions here.
-type Backend interface {
-	BlockChain() *core.BlockChain
-	Engine() consensus.Engine
-}
-
-// Beacon is the main object which takes care of submitting new work to consensus
-// engine and gathering the sealing result.
 type Beacon struct {
-	mux     *event.TypeMux
-	engine  consensus.Engine
-	exitCh  chan struct{}
-	startCh chan struct{}
-	stopCh  chan struct{}
-	worker  *worker
-	rpc     *rpc.Client
-
-	wg sync.WaitGroup
+	chain        *core.BlockChain
+	miner        *miner.Miner
+	blockFetcher *fetcher.BlockFetcher
 }
 
-func New(eth Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address) *Beacon {
-	beacon := &Beacon{
-		mux:     mux,
-		engine:  eth.Engine(),
-		exitCh:  make(chan struct{}),
-		startCh: make(chan struct{}),
-		stopCh:  make(chan struct{}),
-		worker:  newWorker(eth, rpc, mux, coinbase),
-		rpc:     rpc,
-	}
-	beacon.wg.Add(1)
-	go beacon.update()
-	return beacon
-}
-
-// update keeps track of the downloader events. Please be aware that this is a one shot type of update loop.
-// It's entered once and as soon as `Done` or `Failed` has been broadcasted the events are unregistered and
-// the loop is exited. This to prevent a major security vuln where external parties can DOS you with blocks
-// and halt your mining operation for as long as the DOS continues.
-func (beacon *Beacon) update() {
-	defer beacon.wg.Done()
-
-	events := beacon.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
-	defer func() {
-		if !events.Closed() {
-			events.Unsubscribe()
-		}
-	}()
-
-	shouldStart := false
-	canStart := true
-	dlEventCh := events.Chan()
-	for {
-		select {
-		case ev := <-dlEventCh:
-			if ev == nil {
-				// Unsubscription done, stop listening
-				dlEventCh = nil
-				continue
-			}
-			switch ev.Data.(type) {
-			case downloader.StartEvent:
-				wasMining := beacon.Mining()
-				beacon.worker.stopMining()
-				canStart = false
-				if wasMining {
-					// Resume mining after sync was finished
-					shouldStart = true
-					log.Info("Mining aborted due to sync")
-				}
-				beacon.worker.syncing.Store(true)
-
-			case downloader.FailedEvent:
-				canStart = true
-				if shouldStart {
-					beacon.worker.startMining()
-				}
-				beacon.worker.syncing.Store(false)
-
-			case downloader.DoneEvent:
-				canStart = true
-				if shouldStart {
-					beacon.worker.startMining()
-				}
-				beacon.worker.syncing.Store(false)
-
-				// Stop reacting to downloader events
-				events.Unsubscribe()
-			}
-		case <-beacon.startCh:
-			if canStart {
-				beacon.worker.startMining()
-			}
-			shouldStart = true
-		case <-beacon.stopCh:
-			shouldStart = false
-			beacon.worker.stopMining()
-		case <-beacon.exitCh:
-			beacon.worker.close()
-			return
-		}
+// New creates a mock beacon client with basic mining functionality.
+func New(eth miner.Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address) *Beacon {
+	return &Beacon{
+		chain: eth.BlockChain(),
+		miner: miner.New(eth, rpc, mux, coinbase),
 	}
 }
 
-func (beacon *Beacon) Start() {
-	beacon.startCh <- struct{}{}
+// StartBlockFetcher enables the block fetching functionality of the beacon client.
+func (b *Beacon) StartBlockFetcher(broadcastBlock fetcher.BlockBroadcasterFn, insertChain fetcher.ChainInsertFn,
+	dropPeer fetcher.PeerDropFn, fetchHeader fetcher.HeaderRequesterFn, fetchBodies fetcher.BodyRequesterFn) {
+
+	validator := func(header *types.Header) error {
+		return b.chain.Engine().VerifyHeader(b.chain, header)
+	}
+	heighter := func() uint64 {
+		return b.chain.CurrentBlock().Number.Uint64()
+	}
+	finalizeHeighter := func() uint64 {
+		fblock := b.chain.CurrentFinalBlock()
+		if fblock == nil {
+			return 0
+		}
+		return fblock.Number.Uint64()
+	}
+
+	b.blockFetcher = fetcher.NewBlockFetcher(b.chain.GetBlockByHash, validator,
+		broadcastBlock, heighter, finalizeHeighter, insertChain, dropPeer,
+		fetchHeader, fetchBodies)
+	b.blockFetcher.Start()
 }
 
-func (beacon *Beacon) Stop() {
-	beacon.stopCh <- struct{}{}
+// EnqueueBlock sends a received block to beacon for further injection.
+func (b *Beacon) EnqueueBlock(peer string, block *types.Block) {
+	b.blockFetcher.Enqueue(peer, block)
 }
 
-func (beacon *Beacon) Close() {
-	close(beacon.exitCh)
-	beacon.wg.Wait()
+// NotifyBlockAnnon sends a received block announcement to beacon for further download.
+func (b *Beacon) NotifyBlockAnnon(peer string, hash common.Hash, number uint64, time time.Time) {
+	b.blockFetcher.Notify(peer, hash, number, time)
 }
 
-func (beacon *Beacon) Mining() bool {
-	return beacon.worker.isMining()
+// Mining returns whether the beacon client is mining.
+func (b *Beacon) Mining() bool {
+	return b.miner.Mining()
+}
+
+// StartMining starts beacon mining.
+func (b *Beacon) StartMining() {
+	b.miner.Start()
+}
+
+// StopMining stops beacon mining.
+func (b *Beacon) StopMining() {
+	b.miner.Stop()
+}
+
+// Close closes the beacon client service.
+func (b *Beacon) Close() {
+	b.miner.Close()
+	b.blockFetcher.Stop()
 }

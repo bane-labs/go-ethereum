@@ -91,9 +91,7 @@ func (cs *chainSyncer) handlePeerEvent() bool {
 func (cs *chainSyncer) loop() {
 	defer cs.handler.wg.Done()
 
-	cs.handler.blockFetcher.Start()
 	cs.handler.txFetcher.Start()
-	defer cs.handler.blockFetcher.Stop()
 	defer cs.handler.txFetcher.Stop()
 	defer cs.handler.downloader.Terminate()
 
@@ -234,7 +232,7 @@ func (h *handler) doSync(op *chainSyncOp) error {
 		// scenario will most often crop up in private and hackathon networks with
 		// degenerate connectivity, but it should be healthy for the mainnet too to
 		// more reliably update peers or the local TD state.
-		if block := h.chain.GetBlock(head.Hash(), head.Number.Uint64()); block != nil {
+		if block := h.chain.GetBlock(head.Hash(), head.Number.Uint64()); block != nil && h.beacon != nil {
 			h.BroadcastBlock(block, false)
 		}
 	}

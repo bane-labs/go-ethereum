@@ -562,7 +562,7 @@ func (s *Ethereum) StartMining() error {
 		// introduced to speed sync times.
 		s.handler.enableSyncedFeatures()
 
-		go s.beacon.Start()
+		go s.beacon.StartMining()
 		if bft != nil {
 			go bft.Start(s.blockchain)
 		}
@@ -581,7 +581,7 @@ func (s *Ethereum) StopMining() {
 		th.SetThreads(-1)
 	}
 	// Stop the block creating itself
-	s.beacon.Stop()
+	s.beacon.StopMining()
 }
 
 func (s *Ethereum) Miner() *miner.Miner { return s.miner }

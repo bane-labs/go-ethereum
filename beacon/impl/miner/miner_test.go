@@ -1,5 +1,4 @@
-// Package beacon implements minimized Ethereum beacon client.
-package impl
+package miner
 
 import (
 	"math/big"
@@ -41,137 +40,137 @@ func (m *mockBackend) Engine() consensus.Engine {
 	return m.engine
 }
 
-func TestBeacon(t *testing.T) {
+func TestMiner(t *testing.T) {
 	t.Parallel()
-	beacon, mux, cleanup := createBeacon(t)
+	miner, mux, cleanup := createMiner(t)
 	defer cleanup(false)
 
-	beacon.Start()
-	waitForMiningState(t, beacon, true)
+	miner.Start()
+	waitForMiningState(t, miner, true)
 	// Start the downloader
 	mux.Post(downloader.StartEvent{})
-	waitForMiningState(t, beacon, false)
+	waitForMiningState(t, miner, false)
 	// Stop the downloader and wait for the update loop to run
 	mux.Post(downloader.DoneEvent{})
-	waitForMiningState(t, beacon, true)
+	waitForMiningState(t, miner, true)
 
 	// Subsequent downloader events after a successful DoneEvent should not cause the
-	// beacon to start or stop. This prevents a security vulnerability
+	// miner to start or stop. This prevents a security vulnerability
 	// that would allow entities to present fake high blocks that would
 	// stop mining operations by causing a downloader sync
 	// until it was discovered they were invalid, whereon mining would resume.
 	mux.Post(downloader.StartEvent{})
-	waitForMiningState(t, beacon, true)
+	waitForMiningState(t, miner, true)
 
 	mux.Post(downloader.FailedEvent{})
-	waitForMiningState(t, beacon, true)
+	waitForMiningState(t, miner, true)
 }
 
-// TestBeaconDownloaderFirstFails tests that mining is only
+// TestMinerDownloaderFirstFails tests that mining is only
 // permitted to run indefinitely once the downloader sees a DoneEvent (success).
 // An initial FailedEvent should allow mining to stop on a subsequent
 // downloader StartEvent.
-func TestBeaconDownloaderFirstFails(t *testing.T) {
+func TestMinerDownloaderFirstFails(t *testing.T) {
 	t.Parallel()
-	beacon, mux, cleanup := createBeacon(t)
+	miner, mux, cleanup := createMiner(t)
 	defer cleanup(false)
 
-	beacon.Start()
-	waitForMiningState(t, beacon, true)
+	miner.Start()
+	waitForMiningState(t, miner, true)
 	// Start the downloader
 	mux.Post(downloader.StartEvent{})
-	waitForMiningState(t, beacon, false)
+	waitForMiningState(t, miner, false)
 
 	// Stop the downloader and wait for the update loop to run
 	mux.Post(downloader.FailedEvent{})
-	waitForMiningState(t, beacon, true)
+	waitForMiningState(t, miner, true)
 
 	// Since the downloader hasn't yet emitted a successful DoneEvent,
-	// we expect the beacon to stop on next StartEvent.
+	// we expect the miner to stop on next StartEvent.
 	mux.Post(downloader.StartEvent{})
-	waitForMiningState(t, beacon, false)
+	waitForMiningState(t, miner, false)
 
 	// Downloader finally succeeds.
 	mux.Post(downloader.DoneEvent{})
-	waitForMiningState(t, beacon, true)
+	waitForMiningState(t, miner, true)
 
 	// Downloader starts again.
-	// Since it has achieved a DoneEvent once, we expect beacon
+	// Since it has achieved a DoneEvent once, we expect miner
 	// state to be unchanged.
 	mux.Post(downloader.StartEvent{})
-	waitForMiningState(t, beacon, true)
+	waitForMiningState(t, miner, true)
 
 	mux.Post(downloader.FailedEvent{})
-	waitForMiningState(t, beacon, true)
+	waitForMiningState(t, miner, true)
 }
 
-func TestBeaconStartStopAfterDownloaderEvents(t *testing.T) {
+func TestMinerStartStopAfterDownloaderEvents(t *testing.T) {
 	t.Parallel()
-	beacon, mux, cleanup := createBeacon(t)
+	miner, mux, cleanup := createMiner(t)
 	defer cleanup(false)
 
-	beacon.Start()
-	waitForMiningState(t, beacon, true)
+	miner.Start()
+	waitForMiningState(t, miner, true)
 	// Start the downloader
 	mux.Post(downloader.StartEvent{})
-	waitForMiningState(t, beacon, false)
+	waitForMiningState(t, miner, false)
 
 	// Downloader finally succeeds.
 	mux.Post(downloader.DoneEvent{})
-	waitForMiningState(t, beacon, true)
+	waitForMiningState(t, miner, true)
 
-	beacon.Stop()
-	waitForMiningState(t, beacon, false)
+	miner.Stop()
+	waitForMiningState(t, miner, false)
 
-	beacon.Start()
-	waitForMiningState(t, beacon, true)
+	miner.Start()
+	waitForMiningState(t, miner, true)
 
-	beacon.Stop()
-	waitForMiningState(t, beacon, false)
+	miner.Stop()
+	waitForMiningState(t, miner, false)
 }
 
 func TestStartWhileDownload(t *testing.T) {
 	t.Parallel()
-	beacon, mux, cleanup := createBeacon(t)
+	miner, mux, cleanup := createMiner(t)
 	defer cleanup(false)
-	waitForMiningState(t, beacon, false)
-	beacon.Start()
-	waitForMiningState(t, beacon, true)
+	waitForMiningState(t, miner, false)
+	miner.Start()
+	waitForMiningState(t, miner, true)
 	// Stop the downloader and wait for the update loop to run
 	mux.Post(downloader.StartEvent{})
-	waitForMiningState(t, beacon, false)
-	// Starting the beacon after the downloader should not work
-	beacon.Start()
-	waitForMiningState(t, beacon, false)
+	waitForMiningState(t, miner, false)
+	// Starting the miner after the downloader should not work
+	miner.Start()
+	waitForMiningState(t, miner, false)
 }
 
-func TestStartStopBeacon(t *testing.T) {
+func TestStartStopMiner(t *testing.T) {
 	t.Parallel()
-	beacon, _, cleanup := createBeacon(t)
+	miner, _, cleanup := createMiner(t)
 	defer cleanup(false)
-	waitForMiningState(t, beacon, false)
-	beacon.Start()
-	waitForMiningState(t, beacon, true)
-	beacon.Stop()
-	waitForMiningState(t, beacon, false)
+	waitForMiningState(t, miner, false)
+	miner.Start()
+	waitForMiningState(t, miner, true)
+	miner.Stop()
+	waitForMiningState(t, miner, false)
 }
 
-func TestCloseBeacon(t *testing.T) {
+func TestCloseMiner(t *testing.T) {
 	t.Parallel()
-	beacon, _, cleanup := createBeacon(t)
+	miner, _, cleanup := createMiner(t)
 	defer cleanup(true)
-	waitForMiningState(t, beacon, false)
-	beacon.Start()
-	waitForMiningState(t, beacon, true)
-	// Terminate the beacon and wait for the update loop to run
-	beacon.Close()
-	waitForMiningState(t, beacon, false)
+	waitForMiningState(t, miner, false)
+	miner.Start()
+	waitForMiningState(t, miner, true)
+	// Terminate the miner and wait for the update loop to run
+	miner.Close()
+	waitForMiningState(t, miner, false)
 }
 
 // waitForMiningState waits until either
 // * the desired mining state was reached
 // * a timeout was reached which fails the test
-func waitForMiningState(t *testing.T, m *Beacon, mining bool) {
+func waitForMiningState(t *testing.T, m *Miner, mining bool) {
 	t.Helper()
 
 	var state bool
@@ -184,7 +183,7 @@ func waitForMiningState(t *testing.T, m *Beacon, mining bool) {
 	t.Fatalf("Mining() == %t, want %t", state, mining)
 }
 
-func beaconTestGenesisBlock(period uint64, gasLimit uint64, faucet common.Address) *core.Genesis {
+func minerTestGenesisBlock(period uint64, gasLimit uint64, faucet common.Address) *core.Genesis {
 	config := *params.AllCliqueProtocolChanges
 	config.Clique = &params.CliqueConfig{
 		Period: period,
@@ -213,13 +212,13 @@ func beaconTestGenesisBlock(period uint64, gasLimit uint64, faucet common.Addres
 	}
 }
 
-func createBeacon(t *testing.T) (*Beacon, *event.TypeMux, func(skipBeacon bool)) {
+func createMiner(t *testing.T) (*Miner, *event.TypeMux, func(skipMiner bool)) {
 	// Init coinbase
 	etherbase := common.HexToAddress("123456789")
 	// Create chainConfig
 	chainDB := rawdb.NewMemoryDatabase()
 	triedb := triedb.NewDatabase(chainDB, nil)
-	genesis := beaconTestGenesisBlock(15, 11_500_000, common.HexToAddress("12345"))
+	genesis := minerTestGenesisBlock(15, 11_500_000, common.HexToAddress("12345"))
 	chainConfig, _, _, err := core.SetupGenesisBlock(chainDB, triedb, genesis)
 	if err != nil {
 		t.Fatalf("can't create new chain config: %v", err)
@@ -232,18 +231,18 @@ func createBeacon(t *testing.T) (*Beacon, *event.TypeMux, func(skipBeacon bool))
 		t.Fatalf("can't create new chain %v", err)
 	}
 
-	// Create Beacon
+	// Create Miner
 	backend := NewMockBackend(bc, engine)
 	// Create event Mux
 	mux := new(event.TypeMux)
-	// Create Beacon
-	beacon := New(backend, &rpc.Client{}, mux, etherbase)
-	cleanup := func(skipBeacon bool) {
+	// Create Miner
+	miner := New(backend, &rpc.Client{}, mux, etherbase)
+	cleanup := func(skipMiner bool) {
 		bc.Stop()
 		engine.Close()
-		if !skipBeacon {
-			beacon.Close()
+		if !skipMiner {
+			miner.Close()
 		}
 	}
-	return beacon, mux, cleanup
+	return miner, mux, cleanup
 }

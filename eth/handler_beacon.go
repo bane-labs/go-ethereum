@@ -61,8 +61,10 @@ func (h *beaconHandler) handleBlockAnnounces(peer *beacon.Peer, hashes []common.
 			unknownNumbers = append(unknownNumbers, numbers[i])
 		}
 	}
-	for i := 0; i < len(unknownHashes); i++ {
-		h.blockFetcher.Notify(peer.ID(), unknownHashes[i], unknownNumbers[i], time.Now())
+	if h.beacon != nil {
+		for i := 0; i < len(unknownHashes); i++ {
+			h.beacon.NotifyBlockAnnon(peer.ID(), unknownHashes[i], unknownNumbers[i], time.Now())
+		}
 	}
 	return nil
 }
@@ -74,7 +76,9 @@ func (h *beaconHandler) handleBlockBroadcast(peer *beacon.Peer, packet *beacon.N
 	td := packet.TD
 
 	// Schedule the block for import
-	h.blockFetcher.Enqueue(peer.ID(), block)
+	if h.beacon != nil {
+		h.beacon.EnqueueBlock(peer.ID(), block)
+	}
 
 	// Assuming the block is importable by the peer, but possibly not yet done so,
 	// calculate the head hash and TD that the peer truly must have.

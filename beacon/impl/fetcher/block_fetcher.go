@@ -1,23 +1,7 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
-//
-// The go-ethereum library is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Lesser General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// The go-ethereum library is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Lesser General Public License for more details.
-//
-// You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
-
-// Package fetcher contains the announcement based header, blocks or transaction synchronisation.
 package fetcher
 
 import (
+	"errors"
 	"math/rand"
 	"time"
 
@@ -49,43 +33,45 @@ const (
 )
 
 var (
-	blockAnnounceInMeter   = metrics.NewRegisteredMeter("eth/fetcher/block/announces/in", nil)
-	blockAnnounceOutTimer  = metrics.NewRegisteredTimer("eth/fetcher/block/announces/out", nil)
-	blockAnnounceDropMeter = metrics.NewRegisteredMeter("eth/fetcher/block/announces/drop", nil)
-	blockAnnounceDOSMeter  = metrics.NewRegisteredMeter("eth/fetcher/block/announces/dos", nil)
+	blockAnnounceInMeter   = metrics.NewRegisteredMeter("beacon/fetcher/block/announces/in", nil)
+	blockAnnounceOutTimer  = metrics.NewRegisteredTimer("beacon/fetcher/block/announces/out", nil)
+	blockAnnounceDropMeter = metrics.NewRegisteredMeter("beacon/fetcher/block/announces/drop", nil)
+	blockAnnounceDOSMeter  = metrics.NewRegisteredMeter("beacon/fetcher/block/announces/dos", nil)
 
-	blockBroadcastInMeter   = metrics.NewRegisteredMeter("eth/fetcher/block/broadcasts/in", nil)
-	blockBroadcastOutTimer  = metrics.NewRegisteredTimer("eth/fetcher/block/broadcasts/out", nil)
-	blockBroadcastDropMeter = metrics.NewRegisteredMeter("eth/fetcher/block/broadcasts/drop", nil)
-	blockBroadcastDOSMeter  = metrics.NewRegisteredMeter("eth/fetcher/block/broadcasts/dos", nil)
+	blockBroadcastInMeter   = metrics.NewRegisteredMeter("beacon/fetcher/block/broadcasts/in", nil)
+	blockBroadcastOutTimer  = metrics.NewRegisteredTimer("beacon/fetcher/block/broadcasts/out", nil)
+	blockBroadcastDropMeter = metrics.NewRegisteredMeter("beacon/fetcher/block/broadcasts/drop", nil)
+	blockBroadcastDOSMeter  = metrics.NewRegisteredMeter("beacon/fetcher/block/broadcasts/dos", nil)
 
-	headerFetchMeter = metrics.NewRegisteredMeter("eth/fetcher/block/headers", nil)
-	bodyFetchMeter   = metrics.NewRegisteredMeter("eth/fetcher/block/bodies", nil)
+	headerFetchMeter = metrics.NewRegisteredMeter("beacon/fetcher/block/headers", nil)
+	bodyFetchMeter   = metrics.NewRegisteredMeter("beacon/fetcher/block/bodies", nil)
 
-	headerFilterInMeter  = metrics.NewRegisteredMeter("eth/fetcher/block/filter/headers/in", nil)
-	headerFilterOutMeter = metrics.NewRegisteredMeter("eth/fetcher/block/filter/headers/out", nil)
-	bodyFilterInMeter    = metrics.NewRegisteredMeter("eth/fetcher/block/filter/bodies/in", nil)
-	bodyFilterOutMeter   = metrics.NewRegisteredMeter("eth/fetcher/block/filter/bodies/out", nil)
+	headerFilterInMeter  = metrics.NewRegisteredMeter("beacon/fetcher/block/filter/headers/in", nil)
+	headerFilterOutMeter = metrics.NewRegisteredMeter("beacon/fetcher/block/filter/headers/out", nil)
+	bodyFilterInMeter    = metrics.NewRegisteredMeter("beacon/fetcher/block/filter/bodies/in", nil)
+	bodyFilterOutMeter   = metrics.NewRegisteredMeter("beacon/fetcher/block/filter/bodies/out", nil)
 
 	blockInsertFailRecords      = mapset.NewSet[common.Hash]()
 	blockInsertFailRecordslimit = 1000
 	blockInsertFailGauge        = metrics.NewRegisteredGauge("chain/insert/failed", nil)
 )
 
+var errTerminated = errors.New("terminated")
+
 // blockRetrievalFn is a callback type for retrieving a block from the local chain.
 type blockRetrievalFn func(common.Hash) *types.Block
 
-// headerRequesterFn is a callback type for sending a header retrieval request.
-type headerRequesterFn func(string, common.Hash, chan *eth.Response) (*eth.Request, error)
+// HeaderRequesterFn is a callback type for sending a header retrieval request.
+type HeaderRequesterFn func(string, common.Hash, chan *eth.Response) (*eth.Request, error)
 
-// bodyRequesterFn is a callback type for sending a body retrieval request.
-type bodyRequesterFn func(string, []common.Hash, chan *eth.Response) (*eth.Request, error)
+// BodyRequesterFn is a callback type for sending a body retrieval request.
+type BodyRequesterFn func(string, []common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // headerVerifierFn is a callback type to verify a block's header for fast propagation.
 type headerVerifierFn func(header *types.Header) error
 
-// blockBroadcasterFn is a callback type for broadcasting a block to connected peers.
-type blockBroadcasterFn func(block *types.Block, propagate bool)
+// BlockBroadcasterFn is a callback type for broadcasting a block to connected peers.
+type BlockBroadcasterFn func(block *types.Block, propagate bool)
 
 // chainHeightFn is a callback type to retrieve the current chain height.
 type chainHeightFn func() uint64
@@ -93,11 +79,11 @@ type chainHeightFn func() uint64
 // chainFinalizedHeightFn is a callback type to retrieve the current chain finalized height.
 type chainFinalizedHeightFn func() uint64
 
-// chainInsertFn is a callback type to insert a batch of blocks into the local chain.
-type chainInsertFn func(types.Blocks) (int, error)
+// ChainInsertFn is a callback type to insert a batch of blocks into the local chain.
+type ChainInsertFn func(types.Blocks) (int, error)
 
-// peerDropFn is a callback type for dropping a peer detected as malicious.
-type peerDropFn func(id string)
+// PeerDropFn is a callback type for dropping a peer detected as malicious.
+type PeerDropFn func(id string)
 
 // blockAnnounce is the hash notification of the availability of a new block in the
 // network.
@@ -180,14 +166,14 @@ type BlockFetcher struct {
 	// Callbacks
 	getBlock             blockRetrievalFn       // Retrieves a block from the local chain
 	verifyHeader         headerVerifierFn       // Checks if a block's headers have a valid proof of work
-	broadcastBlock       blockBroadcasterFn     // Broadcasts a block to connected peers
+	broadcastBlock       BlockBroadcasterFn     // Broadcasts a block to connected peers
 	chainHeight          chainHeightFn          // Retrieves the current chain's height
 	chainFinalizedHeight chainFinalizedHeightFn // Retrieves the current chain's finalized height
-	insertChain          chainInsertFn          // Injects a batch of blocks into the chain
-	dropPeer             peerDropFn             // Drops a peer for misbehaving
+	insertChain          ChainInsertFn          // Injects a batch of blocks into the chain
+	dropPeer             PeerDropFn             // Drops a peer for misbehaving
 
-	fetchHeader headerRequesterFn // Fetcher function to retrieve the header of an announced block
-	fetchBodies bodyRequesterFn   // Fetcher function to retrieve the body of an announced block
+	fetchHeader HeaderRequesterFn // Fetcher function to retrieve the header of an announced block
+	fetchBodies BodyRequesterFn   // Fetcher function to retrieve the body of an announced block
 
 	// Testing hooks
 	announceChangeHook func(common.Hash, bool)           // Method to call upon adding or deleting a hash from the blockAnnounce list
@@ -198,9 +184,9 @@ type BlockFetcher struct {
 }
 
 // NewBlockFetcher creates a block fetcher to retrieve blocks based on hash announcements.
-func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBlock blockBroadcasterFn,
-	chainHeight chainHeightFn, chainFinalizedHeight chainFinalizedHeightFn, insertChain chainInsertFn, dropPeer peerDropFn,
-	fetchHeader headerRequesterFn, fetchBodies bodyRequesterFn) *BlockFetcher {
+func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBlock BlockBroadcasterFn,
+	chainHeight chainHeightFn, chainFinalizedHeight chainFinalizedHeightFn, insertChain ChainInsertFn, dropPeer PeerDropFn,
+	fetchHeader HeaderRequesterFn, fetchBodies BodyRequesterFn) *BlockFetcher {
 	return &BlockFetcher{
 		notify:               make(chan *blockAnnounce),
 		inject:               make(chan *blockOrHeaderInject),
