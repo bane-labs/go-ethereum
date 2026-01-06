@@ -220,6 +220,7 @@ type DBFT struct {
 	lock         sync.RWMutex      // Protects signer, signFn and amevKeystore fields
 
 	envelopeFeed event.Feed              // Event feed for new Envelopes
+	blockFeed    event.Feed              // Event feed for new Blocks
 	scope        event.SubscriptionScope // Subscription scope for dBFT events
 
 	dbft             *dbft.DBFT[common.Hash]
@@ -357,13 +358,12 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 	}
 
 	c := &DBFT{
-		config:     cfg,
-		blockQueue: newBlockQueue(),
+		config:       cfg,
+		signerConfig: types.LatestSigner(chainCfg),
 
 		messages:        make(chan Payload, msgsChCap),
 		txs:             make(chan *types.Transaction, txSubCap),
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
-		signerConfig:    types.LatestSigner(chainCfg),
 
 		quit:                     make(chan struct{}),
 		eventLoopToCloseCh:       make(chan struct{}),
@@ -377,6 +377,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 		dkgTaskExecutorCh: make(chan *taskList, 2), // The maximum number of task lists per epoch is 3
 		dkgTaskWatcherCh:  make(chan *taskList, 2),
 	}
+	c.blockQueue = newBlockQueue(&c.blockFeed)
 
 	var err error
 	logger, logLevel, err := buildLogger()
@@ -1581,8 +1582,6 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 // the ongoing node sync process.
 func (c *DBFT) WithMux(mux *event.TypeMux) {
 	c.mux = mux
-	c.blockQueue.SetMux(mux)
-
 	go c.syncWatcher()
 }
 
@@ -2849,6 +2848,7 @@ func (c *DBFT) Close() error {
 		<-c.dkgTaskWatcherToCloseCh
 		close(c.dkgTaskExecutorCh)
 		close(c.dkgTaskWatcherCh)
+		c.scope.Close()
 	}
 	log.Info("dBFT engine stopped")
 	return nil
@@ -2866,6 +2866,13 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 // SubscribeEnvelopeEvent creates a subscription that fires for all new envelopes that enter the consensus engine.
 func (c *DBFT) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription {
 	return c.scope.Track(c.envelopeFeed.Subscribe(ch))
+}
+
+// SubscribeNewBlockEvent creates a subscription that fires new blocks.
+// NewMinedBlockEvent is removed from EL so new blocks will not be sent to node directly.
+// This is only necessary for dBFT, so absent from the general consensus interface.
+func (c *DBFT) SubscribeNewBlockEvent(ch chan<- *types.Block) event.Subscription {
+	return c.scope.Track(c.blockFeed.Subscribe(ch))
 }
 
 // getValidatorsSorted returns validators chosen in the result of the latest

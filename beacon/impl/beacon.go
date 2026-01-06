@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/beacon/impl/fetcher"
@@ -9,24 +10,40 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
+type DBFT interface {
+	SubscribeNewBlockEvent(ch chan<- *types.Block) event.Subscription
+}
+
 type Beacon struct {
-	chain        *core.BlockChain
-	miner        *miner.Miner
-	blockFetcher *fetcher.BlockFetcher
+	chain          *core.BlockChain
+	miner          *miner.Miner
+	blockCh        chan *types.Block
+	blockSub       event.Subscription
+	blockFetcher   *fetcher.BlockFetcher
+	broadcastBlock fetcher.BlockBroadcasterFn
+	wg             sync.WaitGroup
 }
 
 // New creates a mock beacon client with basic mining functionality.
-func New(eth miner.Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address) *Beacon {
-	return &Beacon{
-		chain: eth.BlockChain(),
-		miner: miner.New(eth, rpc, mux, coinbase),
+func New(eth miner.Backend, rpc *rpc.Client, bft DBFT, mux *event.TypeMux, coinbase common.Address) *Beacon {
+	b := &Beacon{
+		chain:   eth.BlockChain(),
+		miner:   miner.New(eth, rpc, mux, coinbase),
+		blockCh: make(chan *types.Block),
 	}
+	b.blockSub = bft.SubscribeNewBlockEvent(b.blockCh)
+
+	b.wg.Add(1)
+	go b.minedBroadcastLoop()
+	return b
 }
 
 // StartBlockFetcher enables the block fetching functionality of the beacon client.
+// This is also a part of initialization, to connect to the protocol layer.
 func (b *Beacon) StartBlockFetcher(broadcastBlock fetcher.BlockBroadcasterFn, insertChain fetcher.ChainInsertFn,
 	dropPeer fetcher.PeerDropFn, fetchHeader fetcher.HeaderRequesterFn, fetchBodies fetcher.BodyRequesterFn) {
 
@@ -44,6 +61,7 @@ func (b *Beacon) StartBlockFetcher(broadcastBlock fetcher.BlockBroadcasterFn, in
 		return fblock.Number.Uint64()
 	}
 
+	b.broadcastBlock = broadcastBlock
 	b.blockFetcher = fetcher.NewBlockFetcher(b.chain.GetBlockByHash, validator,
 		broadcastBlock, heighter, finalizeHeighter, insertChain, dropPeer,
 		fetchHeader, fetchBodies)
@@ -76,7 +94,23 @@ func (b *Beacon) StopMining() {
 }
 
 // Close closes the beacon client service.
-func (b *Beacon) Close() {
+func (b *Beacon) Close() error {
 	b.miner.Close()
 	b.blockFetcher.Stop()
+	b.blockSub.Unsubscribe()
+	close(b.blockCh)
+	b.wg.Wait()
+
+	log.Info("Beacon stopped")
+	return nil
+}
+
+// minedBroadcastLoop sends mined blocks to connected peers.
+func (b *Beacon) minedBroadcastLoop() {
+	defer b.wg.Done()
+
+	for block := range b.blockCh {
+		b.broadcastBlock(block, true)  // First propagate block to peers
+		b.broadcastBlock(block, false) // Only then announce to the rest
+	}
 }

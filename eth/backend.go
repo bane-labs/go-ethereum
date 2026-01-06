@@ -379,7 +379,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Set up local beacon client
 	eth.internalRPC = stack.Attach()
-	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.EventMux(), eth.feeRecipient)
+	if bft != nil {
+		eth.beacon = beaconImpl.New(eth, eth.internalRPC, bft, eth.EventMux(), eth.feeRecipient)
+		eth.handler.connectBeacon(eth.beacon)
+	}
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
 	eth.shutdownTracker.MarkStartup()
@@ -740,7 +743,9 @@ func (s *Ethereum) Stop() error {
 	<-ch
 	s.filterMaps.Stop()
 	s.txPool.Close()
-	s.beacon.Close()
+	if s.beacon != nil {
+		s.beacon.Close()
+	}
 	s.internalRPC.Close()
 	s.blockchain.Stop()
 	s.engine.Close()

@@ -41,7 +41,7 @@ func New(eth Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Addre
 		exitCh:  make(chan struct{}),
 		startCh: make(chan struct{}),
 		stopCh:  make(chan struct{}),
-		worker:  newWorker(eth, rpc, mux, coinbase),
+		worker:  newWorker(eth, rpc, coinbase),
 		rpc:     rpc,
 	}
 	miner.wg.Add(1)

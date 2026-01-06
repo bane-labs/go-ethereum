@@ -3,7 +3,6 @@ package dbft
 import (
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
@@ -14,24 +13,21 @@ import (
 // blocks in the chain.
 type blockQueue struct {
 	chain ChainHeaderWriter
-	mux   *event.TypeMux
+	feed  *event.Feed
 }
 
 // newBlockQueue creates an instance of blockQueue. It's not ready for usage until
 // an instance of ChainHeaderWriter is properly set.
-func newBlockQueue() *blockQueue {
-	return &blockQueue{}
+func newBlockQueue(feed *event.Feed) *blockQueue {
+	return &blockQueue{
+		feed: feed,
+	}
 }
 
 // SetChain initializes ChainHeaderWriter instanse needed for proper blockQueue
 // functioning.
 func (bq *blockQueue) SetChain(chain ChainHeaderWriter) {
 	bq.chain = chain
-}
-
-// SetMux initializes mux instanse needed for proper blockQueue functioning.
-func (bq *blockQueue) SetMux(mux *event.TypeMux) {
-	bq.mux = mux
 }
 
 // PutBlock routs block either to miner or (if there's no suitable sealing task)
@@ -53,8 +49,7 @@ func (bq *blockQueue) PutBlock(b *types.Block, state *state.StateDB, receipts []
 		log.Info("Successfully inserted new block", "number", b.Number(), "hash", hash)
 
 		// Broadcast the block and announce chain insertion event
-		bq.mux.Post(core.NewMinedBlockEvent{Block: b})
-		
+		bq.feed.Send(b)
 		return nil
 	}
 
@@ -85,7 +80,6 @@ func (bq *blockQueue) PutBlock(b *types.Block, state *state.StateDB, receipts []
 	log.Info("Successfully wrote new block with state", "number", b.Number(), "hash", hash)
 
 	// Broadcast the block and announce chain insertion event
-	bq.mux.Post(core.NewMinedBlockEvent{Block: b})
-
+	bq.feed.Send(b)
 	return nil
 }

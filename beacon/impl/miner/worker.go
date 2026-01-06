@@ -57,7 +57,6 @@ type worker struct {
 	feeRecipient common.Address
 
 	// Subscriptions
-	mux          *event.TypeMux
 	chainHeadCh  chan core.ChainHeadEvent
 	chainHeadSub event.Subscription
 
@@ -79,13 +78,12 @@ type worker struct {
 	syncing atomic.Bool // The indicator whether the node is still syncing.
 }
 
-func newWorker(eth Backend, rpc *rpc.Client, mux *event.TypeMux, feeRecipient common.Address) *worker {
+func newWorker(eth Backend, rpc *rpc.Client, feeRecipient common.Address) *worker {
 	worker := &worker{
 		chainConfig:  eth.BlockChain().Config(),
 		engine:       eth.Engine(),
 		chain:        eth.BlockChain(),
 		rpc:          rpc,
-		mux:          mux,
 		feeRecipient: feeRecipient,
 		chainHeadCh:  make(chan core.ChainHeadEvent, chainHeadChanSize),
 		newWorkCh:    make(chan *newWorkReq),
@@ -282,9 +280,6 @@ func (w *worker) resultLoop() {
 			}
 			log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
 				"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
-
-			// Broadcast the block and announce chain insertion event
-			w.mux.Post(core.NewMinedBlockEvent{Block: block})
 
 		case <-w.exitCh:
 			return
