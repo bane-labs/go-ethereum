@@ -301,7 +301,7 @@ func initGenesis(ctx *cli.Context) error {
 		}
 	}()
 
-	chainConfig, hash, compatErr, err := core.SetupGenesisBlockWithOverride(chaindb, triedb, genesis, &overrides)
+	chainConfig, hash, compatErr, err := core.SetupGenesisBlockWithOverride(chaindb, triedb, genesis, &overrides, nil)
 	if err != nil {
 		utils.Fatalf("Failed to write genesis block: %v", err)
 	}
