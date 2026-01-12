@@ -234,6 +234,15 @@ func NewTxPoolAPI(b Backend) *TxPoolAPI {
 	}
 }
 
+// flattenTxs builds the RPC transaction map keyed by nonce for a set of pool txs.
+func flattenTxs(txs types.Transactions, header *types.Header, cfg *params.ChainConfig, baseFee *big.Int) map[string]*RPCTransaction {
+	dump := make(map[string]*RPCTransaction, len(txs))
+	for _, tx := range txs {
+		dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, header, cfg, baseFee)
+	}
+	return dump
+}
+
 // Content returns the transactions contained within the transaction pool.
 func (api *TxPoolAPI) Content() map[string]map[string]map[string]*RPCTransaction {
 	pending, queue := api.b.TxPoolContent()
@@ -245,19 +254,11 @@ func (api *TxPoolAPI) Content() map[string]map[string]map[string]*RPCTransaction
 	baseFee := api.nextBaseFeeCache.getNextBaseFee(curHeader.Number.Int64())
 	// Flatten the pending transactions
 	for account, txs := range pending {
-		dump := make(map[string]*RPCTransaction, len(txs))
-		for _, tx := range txs {
-			dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, api.b.ChainConfig(), baseFee)
-		}
-		content["pending"][account.Hex()] = dump
+		content["pending"][account.Hex()] = flattenTxs(txs, curHeader, api.b.ChainConfig(), baseFee)
 	}
 	// Flatten the queued transactions
 	for account, txs := range queue {
-		dump := make(map[string]*RPCTransaction, len(txs))
-		for _, tx := range txs {
-			dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, api.b.ChainConfig(), baseFee)
-		}
-		content["queued"][account.Hex()] = dump
+		content["queued"][account.Hex()] = flattenTxs(txs, curHeader, api.b.ChainConfig(), baseFee)
 	}
 	return content
 }
@@ -269,18 +270,10 @@ func (api *TxPoolAPI) ContentFrom(addr common.Address) map[string]map[string]*RP
 	curHeader := api.b.CurrentHeader()
 	baseFee := api.nextBaseFeeCache.getNextBaseFee(curHeader.Number.Int64())
 	// Build the pending transactions
-	dump := make(map[string]*RPCTransaction, len(pending))
-	for _, tx := range pending {
-		dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, api.b.ChainConfig(), baseFee)
-	}
-	content["pending"] = dump
+	content["pending"] = flattenTxs(pending, curHeader, api.b.ChainConfig(), baseFee)
 
 	// Build the queued transactions
-	dump = make(map[string]*RPCTransaction, len(queue))
-	for _, tx := range queue {
-		dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, curHeader, api.b.ChainConfig(), baseFee)
-	}
-	content["queued"] = dump
+	content["queued"] = flattenTxs(queue, curHeader, api.b.ChainConfig(), baseFee)
 
 	return content
 }
