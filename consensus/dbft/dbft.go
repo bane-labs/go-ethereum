@@ -2152,6 +2152,12 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 			return nil, errors.New("parentBeaconRoot set before Cancun activation")
 		}
 	}
+	prague := chain.Config().IsPrague(header.Number, header.Time)
+	if !prague {
+		if header.RequestsHash != nil {
+			return nil, errors.New("RequestsHash set before Prague activation")
+		}
+	}
 
 	// Finalize block
 	c.Finalize(chain, header, state, body)
