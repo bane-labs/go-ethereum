@@ -99,9 +99,8 @@ type txPool interface {
 
 type Beacon interface {
 	StartBlockFetcher(
-		broadcastBlock beaconfetch.BlockBroadcasterFn, insertChain beaconfetch.ChainInsertFn,
-		dropPeer beaconfetch.PeerDropFn, fetchHeader beaconfetch.HeaderRequesterFn,
-		fetchBodies beaconfetch.BodyRequesterFn,
+		broadcastBlock beaconfetch.BlockBroadcasterFn, dropPeer beaconfetch.PeerDropFn,
+		fetchHeader beaconfetch.HeaderRequesterFn, fetchBodies beaconfetch.BodyRequesterFn,
 	)
 	NotifyBlockAnnon(peer string, hash common.Hash, number uint64, time time.Time)
 	EnqueueBlock(peer string, block *types.Block)
@@ -242,20 +241,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 
 // connectBeacon connects beacon client to the protocols, and inits its handler.
 func (h *handler) connectBeacon(beacon Beacon) {
-	inserter := func(blocks types.Blocks) (int, error) {
-		// If snap sync is running, deny importing weird blocks. This is a problematic
-		// clause when starting up a new network, because snap-syncing miners might not
-		// accept each others' blocks until a restart. Unfortunately we haven't figured
-		// out a way yet where nodes can decide unilaterally whether the network is new
-		// or not. This should be fixed if we figure out a solution.
-		if !h.synced.Load() {
-			log.Warn("Syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
-			return 0, nil
-		}
-		return h.chain.InsertChain(blocks)
-	}
 	h.beacon = beacon
-	h.beacon.StartBlockFetcher(h.BroadcastBlock, inserter, h.removePeer, h.fetchHeader, h.fetchBodies)
+	h.beacon.StartBlockFetcher(h.BroadcastBlock, h.removePeer, h.fetchHeader, h.fetchBodies)
 }
 
 // protoTracker tracks the number of active protocol handlers.

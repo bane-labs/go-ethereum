@@ -22,20 +22,18 @@ type Beacon struct {
 	chain          *core.BlockChain
 	miner          *miner.Miner
 	blockCh        chan *types.Block
-	blockSub       event.Subscription
 	blockFetcher   *fetcher.BlockFetcher
 	broadcastBlock fetcher.BlockBroadcasterFn
 	wg             sync.WaitGroup
 }
 
 // New creates a mock beacon client with basic mining functionality.
-func New(eth miner.Backend, rpc *rpc.Client, bft DBFT, mux *event.TypeMux, coinbase common.Address) *Beacon {
+func New(eth miner.Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address, shouldPreserve func(header *types.Header) bool) *Beacon {
 	b := &Beacon{
 		chain:   eth.BlockChain(),
-		miner:   miner.New(eth, rpc, mux, coinbase),
+		miner:   miner.New(eth, rpc, mux, coinbase, shouldPreserve),
 		blockCh: make(chan *types.Block),
 	}
-	b.blockSub = bft.SubscribeNewBlockEvent(b.blockCh)
 
 	b.wg.Add(1)
 	go b.minedBroadcastLoop()
@@ -44,8 +42,8 @@ func New(eth miner.Backend, rpc *rpc.Client, bft DBFT, mux *event.TypeMux, coinb
 
 // StartBlockFetcher enables the block fetching functionality of the beacon client.
 // This is also a part of initialization, to connect to the protocol layer.
-func (b *Beacon) StartBlockFetcher(broadcastBlock fetcher.BlockBroadcasterFn, insertChain fetcher.ChainInsertFn,
-	dropPeer fetcher.PeerDropFn, fetchHeader fetcher.HeaderRequesterFn, fetchBodies fetcher.BodyRequesterFn) {
+func (b *Beacon) StartBlockFetcher(broadcastBlock fetcher.BlockBroadcasterFn, dropPeer fetcher.PeerDropFn,
+	fetchHeader fetcher.HeaderRequesterFn, fetchBodies fetcher.BodyRequesterFn) {
 
 	validator := func(header *types.Header) error {
 		return b.chain.Engine().VerifyHeader(b.chain, header)
@@ -63,7 +61,7 @@ func (b *Beacon) StartBlockFetcher(broadcastBlock fetcher.BlockBroadcasterFn, in
 
 	b.broadcastBlock = broadcastBlock
 	b.blockFetcher = fetcher.NewBlockFetcher(b.chain.GetBlockByHash, validator,
-		broadcastBlock, heighter, finalizeHeighter, insertChain, dropPeer,
+		broadcastBlock, heighter, finalizeHeighter, b.InsertBlock, dropPeer,
 		fetchHeader, fetchBodies)
 	b.blockFetcher.Start()
 }
@@ -76,6 +74,11 @@ func (b *Beacon) EnqueueBlock(peer string, block *types.Block) {
 // NotifyBlockAnnon sends a received block announcement to beacon for further download.
 func (b *Beacon) NotifyBlockAnnon(peer string, hash common.Hash, number uint64, time time.Time) {
 	b.blockFetcher.Notify(peer, hash, number, time)
+}
+
+// InsertBlock is a universal block insert function to feed block back to EL.
+func (b *Beacon) InsertBlock(block *types.Block) error {
+	return b.miner.DispatchBlock(block)
 }
 
 // Mining returns whether the beacon client is mining.
@@ -97,12 +100,16 @@ func (b *Beacon) StopMining() {
 func (b *Beacon) Close() error {
 	b.miner.Close()
 	b.blockFetcher.Stop()
-	b.blockSub.Unsubscribe()
 	close(b.blockCh)
 	b.wg.Wait()
 
 	log.Info("Beacon stopped")
 	return nil
+}
+
+// BlockBroadcaster returns the channel for block broadcasting.
+func (b *Beacon) BlockBroadcaster() chan<- *types.Block {
+	return b.blockCh
 }
 
 // minedBroadcastLoop sends mined blocks to connected peers.

@@ -40,6 +40,10 @@ func (m *mockBackend) Engine() consensus.Engine {
 	return m.engine
 }
 
+func (m *mockBackend) Synced() bool {
+	panic("not implemented")
+}
+
 func TestMiner(t *testing.T) {
 	t.Parallel()
 	miner, mux, cleanup := createMiner(t)
@@ -236,7 +240,10 @@ func createMiner(t *testing.T) (*Miner, *event.TypeMux, func(skipMiner bool)) {
 	// Create event Mux
 	mux := new(event.TypeMux)
 	// Create Miner
-	miner := New(backend, &rpc.Client{}, mux, etherbase)
+	shouldPreserve := func(_ *types.Header) bool {
+		return false
+	}
+	miner := New(backend, &rpc.Client{}, mux, etherbase, shouldPreserve)
 	cleanup := func(skipMiner bool) {
 		bc.Stop()
 		engine.Close()

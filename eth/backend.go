@@ -379,9 +379,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Set up local beacon client
 	eth.internalRPC = stack.Attach()
+	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.EventMux(), eth.feeRecipient, eth.shouldPreserve)
+	eth.handler.connectBeacon(eth.beacon)
 	if bft != nil {
-		eth.beacon = beaconImpl.New(eth, eth.internalRPC, bft, eth.EventMux(), eth.feeRecipient)
-		eth.handler.connectBeacon(eth.beacon)
+		bft.SubscribeNewBlockEvent(eth.beacon.BlockBroadcaster())
 	}
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
@@ -567,7 +568,7 @@ func (s *Ethereum) StartMining() error {
 
 		go s.beacon.StartMining()
 		if bft != nil {
-			go bft.Start(s.blockchain)
+			go bft.Start(s.blockchain, s.beacon.InsertBlock)
 		}
 	}
 	return nil
@@ -743,9 +744,7 @@ func (s *Ethereum) Stop() error {
 	<-ch
 	s.filterMaps.Stop()
 	s.txPool.Close()
-	if s.beacon != nil {
-		s.beacon.Close()
-	}
+	s.beacon.Close()
 	s.internalRPC.Close()
 	s.blockchain.Stop()
 	s.engine.Close()

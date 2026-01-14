@@ -560,7 +560,7 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
 	res := types.NewBlockWithHeader(dbftBlock.header).WithBody(types.Body{Transactions: dbftBlock.transactions, Uncles: nil, Withdrawals: dbftBlock.withdrawals})
 
 	// Firstly, notify chain about new block.
-	if err := c.blockQueue.PutBlock(res, dbftBlock.state, dbftBlock.receipts); err != nil {
+	if err := c.blockQueue.PutBlock(res); err != nil {
 		// The block might already be added via the regular network
 		// interaction.
 		if h := c.chain.GetHeaderByNumber(res.Number().Uint64()); h == nil {
@@ -918,7 +918,7 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 		oldHash := c.lastBlockHash
 		oldExtra := c.lastBlockExtra
 		parentHeader.Extra = req.ParentExtra
-		err = c.blockQueue.PutBlock(parent.WithSeal(parentHeader), nil, nil)
+		err = c.blockQueue.PutBlock(parent.WithSeal(parentHeader))
 		if err != nil {
 			err = fmt.Errorf("failed to enqueue parent with updated extra for height %d (old hash %s, new hash %s): %w",
 				req.SealingProposal.Number.Uint64()-1,
@@ -2177,10 +2177,10 @@ func (c *DBFT) Authorize(signer common.Address, signFn SignerFn, amevKeystore *a
 
 // Start initializes last block cache, fetches fresh proposal from miner, starts
 // DBFT engine event loop and starts dBFT consensus process.
-func (c *DBFT) Start(chain ChainHeaderWriter) {
+func (c *DBFT) Start(chain ChainHeaderReader, inserter ChainInsertFn) {
 	if c.dbftStarted.CompareAndSwap(false, true) {
 		c.chain = chain
-		c.blockQueue.chain = chain
+		c.blockQueue.SetChain(chain, inserter)
 		c.staticPool = newStaticPool(c.chain)
 
 		// Subscribe for minted blocks prior to accessing current chain header.

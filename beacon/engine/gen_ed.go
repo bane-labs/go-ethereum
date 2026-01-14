@@ -28,6 +28,7 @@ func (e ExecutableData) MarshalJSON() ([]byte, error) {
 		GasLimit         hexutil.Uint64          `json:"gasLimit"      gencodec:"required"`
 		GasUsed          hexutil.Uint64          `json:"gasUsed"       gencodec:"required"`
 		Timestamp        hexutil.Uint64          `json:"timestamp"     gencodec:"required"`
+		Nonce            hexutil.Uint64          `json:"nonce"         gencodec:"required"`
 		ExtraData        hexutil.Bytes           `json:"extraData"     gencodec:"required"`
 		BaseFeePerGas    *hexutil.Big            `json:"baseFeePerGas" gencodec:"required"`
 		BlockHash        common.Hash             `json:"blockHash"     gencodec:"required"`
@@ -49,6 +50,7 @@ func (e ExecutableData) MarshalJSON() ([]byte, error) {
 	enc.GasLimit = hexutil.Uint64(e.GasLimit)
 	enc.GasUsed = hexutil.Uint64(e.GasUsed)
 	enc.Timestamp = hexutil.Uint64(e.Timestamp)
+	enc.Nonce = hexutil.Uint64(e.Nonce)
 	enc.ExtraData = e.ExtraData
 	enc.BaseFeePerGas = (*hexutil.Big)(e.BaseFeePerGas)
 	enc.BlockHash = e.BlockHash
@@ -79,6 +81,7 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 		GasLimit         *hexutil.Uint64         `json:"gasLimit"      gencodec:"required"`
 		GasUsed          *hexutil.Uint64         `json:"gasUsed"       gencodec:"required"`
 		Timestamp        *hexutil.Uint64         `json:"timestamp"     gencodec:"required"`
+		Nonce            *hexutil.Uint64         `json:"nonce"         gencodec:"required"`
 		ExtraData        *hexutil.Bytes          `json:"extraData"     gencodec:"required"`
 		BaseFeePerGas    *hexutil.Big            `json:"baseFeePerGas" gencodec:"required"`
 		BlockHash        *common.Hash            `json:"blockHash"     gencodec:"required"`
@@ -138,6 +141,10 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 	e.Timestamp = uint64(*dec.Timestamp)
 	if dec.ExtraData == nil {
 		return errors.New("missing required field 'extraData' for ExecutableData")
+	}
+	e.Nonce = uint64(*dec.Nonce)
+	if dec.Nonce == nil {
+		return errors.New("missing required field 'nonce' for ExecutableData")
 	}
 	e.ExtraData = *dec.ExtraData
 	if dec.BaseFeePerGas == nil {

@@ -79,8 +79,8 @@ type chainHeightFn func() uint64
 // chainFinalizedHeightFn is a callback type to retrieve the current chain finalized height.
 type chainFinalizedHeightFn func() uint64
 
-// ChainInsertFn is a callback type to insert a batch of blocks into the local chain.
-type ChainInsertFn func(types.Blocks) (int, error)
+// chainInsertFn is a callback type to insert a block into the local chain.
+type chainInsertFn func(*types.Block) error
 
 // PeerDropFn is a callback type for dropping a peer detected as malicious.
 type PeerDropFn func(id string)
@@ -169,7 +169,7 @@ type BlockFetcher struct {
 	broadcastBlock       BlockBroadcasterFn     // Broadcasts a block to connected peers
 	chainHeight          chainHeightFn          // Retrieves the current chain's height
 	chainFinalizedHeight chainFinalizedHeightFn // Retrieves the current chain's finalized height
-	insertChain          ChainInsertFn          // Injects a batch of blocks into the chain
+	insertChain          chainInsertFn          // Injects a block into the chain
 	dropPeer             PeerDropFn             // Drops a peer for misbehaving
 
 	fetchHeader HeaderRequesterFn // Fetcher function to retrieve the header of an announced block
@@ -185,7 +185,7 @@ type BlockFetcher struct {
 
 // NewBlockFetcher creates a block fetcher to retrieve blocks based on hash announcements.
 func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBlock BlockBroadcasterFn,
-	chainHeight chainHeightFn, chainFinalizedHeight chainFinalizedHeightFn, insertChain ChainInsertFn, dropPeer PeerDropFn,
+	chainHeight chainHeightFn, chainFinalizedHeight chainFinalizedHeightFn, insertChain chainInsertFn, dropPeer PeerDropFn,
 	fetchHeader HeaderRequesterFn, fetchBodies BodyRequesterFn) *BlockFetcher {
 	return &BlockFetcher{
 		notify:               make(chan *blockAnnounce),
@@ -840,7 +840,7 @@ func (f *BlockFetcher) importBlocks(op *blockOrHeaderInject) {
 			return
 		}
 		// Run the actual import and log any issues
-		if _, err := f.insertChain(types.Blocks{block}); err != nil {
+		if err := f.insertChain(block); err != nil {
 			if blockInsertFailRecords.Cardinality() < blockInsertFailRecordslimit {
 				blockInsertFailRecords.Add(block.Hash())
 				blockInsertFailGauge.Update(int64(blockInsertFailRecords.Cardinality()))

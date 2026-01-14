@@ -127,25 +127,24 @@ func (f *fetcherTester) chainFinalizedHeight() uint64 {
 	return f.blocks[f.hashes[len(f.hashes)-3]].NumberU64()
 }
 
-// insertChain injects a new blocks into the simulated chain.
-func (f *fetcherTester) insertChain(blocks types.Blocks) (int, error) {
+// insertChain injects a new block into the simulated chain.
+func (f *fetcherTester) insertChain(block *types.Block) error {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
-	for i, block := range blocks {
-		// Make sure the parent in known
-		if _, ok := f.blocks[block.ParentHash()]; !ok {
-			return i, errors.New("unknown parent")
-		}
-		// Discard any new blocks if the same height already exists
-		if block.NumberU64() <= f.blocks[f.hashes[len(f.hashes)-1]].NumberU64() {
-			return i, nil
-		}
-		// Otherwise build our current chain
-		f.hashes = append(f.hashes, block.Hash())
-		f.blocks[block.Hash()] = block
+	// Make sure the parent in known
+	if _, ok := f.blocks[block.ParentHash()]; !ok {
+		return errors.New("unknown parent")
 	}
-	return 0, nil
+	// Discard any new blocks if the same height already exists
+	if block.NumberU64() <= f.blocks[f.hashes[len(f.hashes)-1]].NumberU64() {
+		return nil
+	}
+	// Otherwise build our current chain
+	f.hashes = append(f.hashes, block.Hash())
+	f.blocks[block.Hash()] = block
+
+	return nil
 }
 
 // dropPeer is an emulator for the peer removal, simply accumulating the various
@@ -556,9 +555,9 @@ func TestImportDeduplication(t *testing.T) {
 	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
 
 	var counter atomic.Uint32
-	tester.fetcher.insertChain = func(blocks types.Blocks) (int, error) {
-		counter.Add(uint32(len(blocks)))
-		return tester.insertChain(blocks)
+	tester.fetcher.insertChain = func(block *types.Block) error {
+		counter.Add(1)
+		return tester.insertChain(block)
 	}
 	// Instrument the fetching and imported events
 	fetching := make(chan []common.Hash)
