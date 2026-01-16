@@ -53,7 +53,7 @@ services:
         --netrestrict 172.200.0.0/24 \
         --dbft.loglevel debug \
         --mine \
-        --miner.etherbase="0x$$(cat ${FOUR_NODE0_DIR}/node_address.txt)" \
+        --miner.pending.feeRecipient="0x$$(cat ${FOUR_NODE0_DIR}/node_address.txt)" \
         --antimev.password=${FOUR_NODE0_DIR}/password.txt
     volumes:
       - ../privnet:/privnet
@@ -94,7 +94,7 @@ services:
         --netrestrict 172.200.0.0/24 \
         --dbft.loglevel debug \
         --mine \
-        --miner.etherbase="0x$$(cat ${FOUR_NODE1_DIR}/node_address.txt)" \
+        --miner.pending.feeRecipient="0x$$(cat ${FOUR_NODE1_DIR}/node_address.txt)" \
         --antimev.password=${FOUR_NODE1_DIR}/password.txt
     volumes:
       - ../privnet:/privnet
@@ -135,7 +135,7 @@ services:
         --netrestrict 172.200.0.0/24 \
         --dbft.loglevel debug \
         --mine \
-        --miner.etherbase="0x$$(cat ${FOUR_NODE2_DIR}/node_address.txt)" \
+        --miner.pending.feeRecipient="0x$$(cat ${FOUR_NODE2_DIR}/node_address.txt)" \
         --antimev.password=${FOUR_NODE2_DIR}/password.txt
     volumes:
       - ../privnet:/privnet
@@ -176,7 +176,7 @@ services:
         --netrestrict 172.200.0.0/24 \
         --dbft.loglevel debug \
         --mine \
-        --miner.etherbase="0x$$(cat ${FOUR_NODE3_DIR}/node_address.txt)" \
+        --miner.pending.feeRecipient="0x$$(cat ${FOUR_NODE3_DIR}/node_address.txt)" \
         --antimev.password=${FOUR_NODE3_DIR}/password.txt
     volumes:
       - ../privnet:/privnet
@@ -217,7 +217,7 @@ services:
         --netrestrict 172.200.0.0/24 \
         --dbft.loglevel debug \
         --mine \
-        --miner.etherbase="0x$$(cat ${FOUR_NODE4_DIR}/node_address.txt)" \
+        --miner.pending.feeRecipient="0x$$(cat ${FOUR_NODE4_DIR}/node_address.txt)" \
         --antimev.password=${FOUR_NODE4_DIR}/password.txt
     volumes:
       - ../privnet:/privnet
