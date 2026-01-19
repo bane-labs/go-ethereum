@@ -76,8 +76,9 @@ func TestGeneratePOSChain(t *testing.T) {
 		Code:    common.Hex2Bytes("600154600354"),
 	}
 	genesis := gspec.MustCommit(gendb, triedb.NewDatabase(gendb, triedb.HashDefaults))
+	engine := beacon.New(ethash.NewFaker())
 
-	genchain, genreceipts := GenerateChain(gspec.Config, genesis, beacon.New(ethash.NewFaker()), gendb, 4, func(i int, gen *BlockGen) {
+	genchain, genreceipts := GenerateChain(gspec.Config, genesis, engine, gendb, 4, func(i int, gen *BlockGen) {
 		gen.SetParentBeaconRoot(common.Hash{byte(i + 1)})
 
 		// Add value transfer tx.
@@ -118,7 +119,7 @@ func TestGeneratePOSChain(t *testing.T) {
 	})
 
 	// Import the chain. This runs all block validation rules.
-	blockchain, _ := NewBlockChain(db, nil, gspec, nil, beacon.New(ethash.NewFaker()), vm.Config{}, nil, nil)
+	blockchain, _ := NewBlockChain(db, nil, gspec, nil, engine, vm.Config{}, nil)
 	defer blockchain.Stop()
 
 	if i, err := blockchain.InsertChain(genchain); err != nil {
@@ -233,7 +234,7 @@ func ExampleGenerateChain() {
 	})
 
 	// Import the chain. This runs all block validation rules.
-	blockchain, _ := NewBlockChain(db, DefaultCacheConfigWithScheme(rawdb.HashScheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
+	blockchain, _ := NewBlockChain(db, DefaultCacheConfigWithScheme(rawdb.HashScheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil)
 	defer blockchain.Stop()
 
 	if i, err := blockchain.InsertChain(chain); err != nil {
