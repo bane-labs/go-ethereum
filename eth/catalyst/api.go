@@ -365,7 +365,9 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 		var (
 			td  = api.eth.BlockChain().GetTd(update.HeadBlockHash, block.NumberU64())
 			ptd = api.eth.BlockChain().GetTd(block.ParentHash(), block.NumberU64()-1)
-			ttd = api.eth.BlockChain().Config().TerminalTotalDifficulty
+			// TODO: Should revert after real TTD reaches or has a better solution.
+			// ttd = api.eth.BlockChain().Config().TerminalTotalDifficulty
+			ttd = td
 		)
 		if td == nil || (block.NumberU64() > 0 && ptd == nil) {
 			log.Error("TDs unavailable for TTD check", "number", block.NumberU64(), "hash", update.HeadBlockHash, "td", td, "parent", block.ParentHash(), "ptd", ptd)

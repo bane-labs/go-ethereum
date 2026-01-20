@@ -206,7 +206,7 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 }
 
 // buildPayload builds the payload according to the provided parameters.
-func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
+func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload, error) {
 	// Build the initial version with no transaction included. It should be fast
 	// enough to run. The empty payload can at least make sure there is something
 	// to deliver for not missing slot.
@@ -220,56 +220,32 @@ func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 		beaconRoot:  args.BeaconRoot,
 		noTxs:       true,
 	}
-	empty := w.getSealingBlock(emptyParams)
+	empty := miner.generateWork(emptyParams, witness)
 	if empty.err != nil {
 		return nil, empty.err
 	}
 	// Construct a payload object for return.
 	payload := newPayload(empty.block, empty.requests, empty.witness, args.Id())
 
-	// Spin up a routine for updating the payload in background. This strategy
-	// can maximum the revenue for including transactions with highest fee.
-	go func() {
-		// Setup the timer for re-building the payload. The initial clock is kept
-		// for triggering process immediately.
-		timer := time.NewTimer(0)
-		defer timer.Stop()
+	// Fullfil the payload with transactions.
+	fullParams := &generateParams{
+		timestamp:   args.Timestamp,
+		forceTime:   true,
+		parentHash:  args.Parent,
+		coinbase:    args.FeeRecipient,
+		random:      args.Random,
+		withdrawals: args.Withdrawals,
+		beaconRoot:  args.BeaconRoot,
+		noTxs:       false,
+	}
 
-		// Setup the timer for terminating the process if SECONDS_PER_SLOT (12s in
-		// the Mainnet configuration) have passed since the point in time identified
-		// by the timestamp parameter.
-		endTimer := time.NewTimer(time.Second * 12)
+	start := time.Now()
+	r := miner.generateWork(fullParams, witness)
+	if r.err == nil {
+		payload.update(r, time.Since(start))
+	} else {
+		log.Info("Error while generating work", "id", payload.id, "err", r.err)
+	}
 
-		fullParams := &generateParams{
-			timestamp:   args.Timestamp,
-			forceTime:   true,
-			parentHash:  args.Parent,
-			coinbase:    args.FeeRecipient,
-			random:      args.Random,
-			withdrawals: args.Withdrawals,
-			beaconRoot:  args.BeaconRoot,
-			noTxs:       false,
-		}
-
-		for {
-			select {
-			case <-timer.C:
-				start := time.Now()
-				r := w.getSealingBlock(fullParams)
-				if r.err == nil {
-					payload.update(r, time.Since(start))
-				} else {
-					log.Info("Error while generating work", "id", payload.id, "err", r.err)
-				}
-				timer.Reset(w.recommit)
-			case <-payload.stop:
-				log.Info("Stopping work on payload", "id", payload.id, "reason", "delivery")
-				return
-			case <-endTimer.C:
-				log.Info("Stopping work on payload", "id", payload.id, "reason", "timeout")
-				return
-			}
-		}
-	}()
 	return payload, nil
 }

@@ -2142,23 +2142,13 @@ func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header,
 // nor block rewards given, and returns the final block.
 func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
 	shanghai := chain.Config().IsShanghai(header.Number, header.Time)
-	if shanghai {
-		// All blocks after Shanghai must include a withdrawals root.
-		if body.Withdrawals == nil {
-			body.Withdrawals = make([]*types.Withdrawal, 0)
-		}
-	} else {
+	if !shanghai {
 		if len(body.Withdrawals) > 0 {
 			return nil, errors.New("withdrawals set before Shanghai activation")
 		}
 	}
 	cancun := chain.Config().IsCancun(header.Number, header.Time)
-	if cancun {
-		// All headers after Cancun must include a beacon root.
-		if header.ParentBeaconRoot == nil {
-			header.ParentBeaconRoot = &types.EmptyRootHash
-		}
-	} else {
+	if !cancun {
 		if header.ParentBeaconRoot != nil {
 			return nil, errors.New("parentBeaconRoot set before Cancun activation")
 		}
@@ -2267,7 +2257,7 @@ func (c *DBFT) Start(chain ChainHeaderWriter) {
 
 // Seal implements consensus.Engine, attempting to create a sealed block using
 // the local signing credentials.
-func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+func (c *DBFT) Seal(chain consensus.ChainHeaderReader, b *types.Block, results chan<- *types.Block) error {
 	// Coinbase must be configured by miner and fetched from the node's config, do not change it.
 	if b.Coinbase().Cmp(common.Address{}) == 0 {
 		return errors.New("unexpected empty Coinbase in sealing task")

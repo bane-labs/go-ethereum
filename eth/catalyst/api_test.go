@@ -32,8 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/consensus"
-	beaconConsensus "github.com/ethereum/go-ethereum/consensus/beacon"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -63,11 +62,15 @@ var (
 
 func generateMergeChain(n int, merged bool) (*core.Genesis, []*types.Block) {
 	config := *params.AllEthashProtocolChanges
-	engine := consensus.Engine(beaconConsensus.New(ethash.NewFaker()))
+	engine := beacon.New(ethash.NewFaker())
 	if merged {
 		config.TerminalTotalDifficulty = common.Big0
-		engine = beaconConsensus.New(ethash.NewFaker())
+		config.MergeNetsplitBlock = common.Big0
+	} else {
+		// When !merged, the tests expect the next block after the generated chain to be in PoS.
+		config.MergeNetsplitBlock = big.NewInt(int64(n + 1))
 	}
+
 	genesis := &core.Genesis{
 		Config: &config,
 		Alloc: types.GenesisAlloc{
@@ -102,7 +105,6 @@ func generateMergeChain(n int, merged bool) (*core.Genesis, []*types.Block) {
 		}
 		config.TerminalTotalDifficulty = totalDifficulty
 	}
-
 	return genesis, blocks
 }
 
@@ -162,24 +164,6 @@ func TestEth2AssembleBlockWithAnotherBlocksTxs(t *testing.T) {
 	// needed.
 	if _, err := assembleWithTransactions(api, blocks[8].Hash(), &blockParams, blocks[9].Transactions().Len()); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestSetHeadBeforeTotalDifficulty(t *testing.T) {
-	genesis, blocks := generateMergeChain(10, false)
-	n, ethservice := startEthService(t, genesis, blocks)
-	defer n.Close()
-
-	api := NewConsensusAPI(ethservice)
-	fcState := engine.ForkchoiceStateV1{
-		HeadBlockHash:      blocks[5].Hash(),
-		SafeBlockHash:      common.Hash{},
-		FinalizedBlockHash: common.Hash{},
-	}
-	if resp, err := api.ForkchoiceUpdatedV1(fcState, nil); err != nil {
-		t.Errorf("fork choice updated should not error: %v", err)
-	} else if resp.PayloadStatus.Status != engine.INVALID_TERMINAL_BLOCK.Status {
-		t.Errorf("fork choice updated before total terminal difficulty should be INVALID")
 	}
 }
 
@@ -451,7 +435,8 @@ func startEthService(t *testing.T, genesis *core.Genesis, blocks []*types.Block)
 		t.Fatal("can't create node:", err)
 	}
 
-	ethcfg := &ethconfig.Config{Genesis: genesis, SyncMode: downloader.FullSync, TrieTimeout: time.Minute, TrieDirtyCache: 256, TrieCleanCache: 256}
+	mcfg := miner.DefaultConfig
+	ethcfg := &ethconfig.Config{Genesis: genesis, SyncMode: downloader.FullSync, TrieTimeout: time.Minute, TrieDirtyCache: 256, TrieCleanCache: 256, Miner: mcfg}
 	ethservice, err := eth.New(n, ethcfg)
 	if err != nil {
 		t.Fatal("can't create eth service:", err)
@@ -467,9 +452,6 @@ func startEthService(t *testing.T, genesis *core.Genesis, blocks []*types.Block)
 		t.Fatal("failed to sync txpool after initial blockchain import:", err)
 	}
 
-	if !ethservice.SetEtherbase(testAddr) {
-		t.Fatal("can't set Etherbase")
-	}
 	ethservice.SetSynced()
 	return n, ethservice
 }
@@ -905,70 +887,6 @@ func TestInvalidBloom(t *testing.T) {
 	}
 	if status.Status != engine.INVALID {
 		t.Errorf("invalid status: expected INVALID got: %v", status.Status)
-	}
-}
-
-func TestNewPayloadOnInvalidTerminalBlock(t *testing.T) {
-	genesis, preMergeBlocks := generateMergeChain(100, false)
-	n, ethservice := startEthService(t, genesis, preMergeBlocks)
-	defer n.Close()
-	api := NewConsensusAPI(ethservice)
-
-	// Test parent already post TTD in FCU
-	parent := preMergeBlocks[len(preMergeBlocks)-2]
-	fcState := engine.ForkchoiceStateV1{
-		HeadBlockHash:      parent.Hash(),
-		SafeBlockHash:      common.Hash{},
-		FinalizedBlockHash: common.Hash{},
-	}
-	resp, err := api.ForkchoiceUpdatedV1(fcState, nil)
-	if err != nil {
-		t.Fatalf("error sending forkchoice, err=%v", err)
-	}
-	if resp.PayloadStatus != engine.INVALID_TERMINAL_BLOCK {
-		t.Fatalf("error sending invalid forkchoice, invalid status: %v", resp.PayloadStatus.Status)
-	}
-
-	// Test parent already post TTD in NewPayload
-	args := &miner.BuildPayloadArgs{
-		Parent:       parent.Hash(),
-		Timestamp:    parent.Time() + 1,
-		Random:       crypto.Keccak256Hash([]byte{byte(1)}),
-		FeeRecipient: parent.Coinbase(),
-	}
-	payload, err := api.eth.Miner().BuildPayload(args, false)
-	if err != nil {
-		t.Fatalf("error preparing payload, err=%v", err)
-	}
-	data := *payload.Resolve().ExecutionPayload
-	// We need to recompute the blockhash, since the miner computes a wrong (correct) blockhash
-	txs, _ := decodeTransactions(data.Transactions)
-	header := &types.Header{
-		ParentHash:  data.ParentHash,
-		UncleHash:   types.EmptyUncleHash,
-		Coinbase:    data.FeeRecipient,
-		Root:        data.StateRoot,
-		TxHash:      types.DeriveSha(types.Transactions(txs), trie.NewStackTrie(nil)),
-		ReceiptHash: data.ReceiptsRoot,
-		Bloom:       types.BytesToBloom(data.LogsBloom),
-		Difficulty:  common.Big0,
-		Number:      new(big.Int).SetUint64(data.Number),
-		GasLimit:    data.GasLimit,
-		GasUsed:     data.GasUsed,
-		Time:        data.Timestamp,
-		BaseFee:     data.BaseFeePerGas,
-		Extra:       data.ExtraData,
-		MixDigest:   data.Random,
-	}
-	block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: txs})
-	data.BlockHash = block.Hash()
-	// Send the new payload
-	resp2, err := api.NewPayloadV1(data)
-	if err != nil {
-		t.Fatalf("error sending NewPayload, err=%v", err)
-	}
-	if resp2 != engine.INVALID_TERMINAL_BLOCK {
-		t.Fatalf("error sending invalid forkchoice, invalid status: %v", resp.PayloadStatus.Status)
 	}
 }
 

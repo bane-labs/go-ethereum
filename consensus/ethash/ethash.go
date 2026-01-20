@@ -90,6 +90,6 @@ func (ethash *Ethash) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) 
 // Seal generates a new sealing request for the given input block and pushes
 // the result into the given channel. For the ethash engine, this method will
 // just panic as sealing is not supported anymore.
-func (ethash *Ethash) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+func (ethash *Ethash) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block) error {
 	panic("ethash (pow) sealing not supported any more")
 }

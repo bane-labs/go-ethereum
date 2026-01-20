@@ -23,6 +23,7 @@ func (e ExecutableData) MarshalJSON() ([]byte, error) {
 		ReceiptsRoot     common.Hash             `json:"receiptsRoot"  gencodec:"required"`
 		LogsBloom        hexutil.Bytes           `json:"logsBloom"     gencodec:"required"`
 		Random           common.Hash             `json:"prevRandao"    gencodec:"required"`
+		Difficulty       hexutil.Uint64          `json:"difficulty"    gencodec:"required"`
 		Number           hexutil.Uint64          `json:"blockNumber"   gencodec:"required"`
 		GasLimit         hexutil.Uint64          `json:"gasLimit"      gencodec:"required"`
 		GasUsed          hexutil.Uint64          `json:"gasUsed"       gencodec:"required"`
@@ -43,6 +44,7 @@ func (e ExecutableData) MarshalJSON() ([]byte, error) {
 	enc.ReceiptsRoot = e.ReceiptsRoot
 	enc.LogsBloom = e.LogsBloom
 	enc.Random = e.Random
+	enc.Difficulty = hexutil.Uint64(e.Difficulty)
 	enc.Number = hexutil.Uint64(e.Number)
 	enc.GasLimit = hexutil.Uint64(e.GasLimit)
 	enc.GasUsed = hexutil.Uint64(e.GasUsed)
@@ -72,6 +74,7 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 		ReceiptsRoot     *common.Hash            `json:"receiptsRoot"  gencodec:"required"`
 		LogsBloom        *hexutil.Bytes          `json:"logsBloom"     gencodec:"required"`
 		Random           *common.Hash            `json:"prevRandao"    gencodec:"required"`
+		Difficulty       *hexutil.Uint64         `json:"difficulty"    gencodec:"required"`
 		Number           *hexutil.Uint64         `json:"blockNumber"   gencodec:"required"`
 		GasLimit         *hexutil.Uint64         `json:"gasLimit"      gencodec:"required"`
 		GasUsed          *hexutil.Uint64         `json:"gasUsed"       gencodec:"required"`
@@ -113,6 +116,10 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 		return errors.New("missing required field 'prevRandao' for ExecutableData")
 	}
 	e.Random = *dec.Random
+	if dec.Difficulty == nil {
+		return errors.New("missing required field 'difficulty' for ExecutableData")
+	}
+	e.Difficulty = uint64(*dec.Difficulty)
 	if dec.Number == nil {
 		return errors.New("missing required field 'blockNumber' for ExecutableData")
 	}

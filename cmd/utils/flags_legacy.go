@@ -48,6 +48,7 @@ var DeprecatedFlags = []cli.Flag{
 	LogBacktraceAtFlag,
 	LogDebugFlag,
 	MinerNewPayloadTimeoutFlag,
+	MinerEtherbaseFlag,
 }
 
 var (
@@ -134,6 +135,11 @@ var (
 		Name:     "miner.newpayload-timeout",
 		Usage:    "Specify the maximum time allowance for creating a new payload (deprecated)",
 		Value:    ethconfig.Defaults.Miner.Recommit,
+		Category: flags.DeprecatedCategory,
+	}
+	MinerEtherbaseFlag = &cli.StringFlag{
+		Name:     "miner.etherbase",
+		Usage:    "0x prefixed public address for block mining rewards (deprecated)",
 		Category: flags.DeprecatedCategory,
 	}
 	MetricsEnabledExpensiveFlag = &cli.BoolFlag{
