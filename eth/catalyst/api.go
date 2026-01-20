@@ -869,6 +869,7 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 			"params.GasLimit", params.GasLimit,
 			"params.GasUsed", params.GasUsed,
 			"params.Timestamp", params.Timestamp,
+			"params.Nonce", params.Nonce,
 			"params.ExtraData", common.PrettyBytes(params.ExtraData),
 			"params.BaseFeePerGas", params.BaseFeePerGas,
 			"params.BlobGasUsed", bgu,
@@ -909,8 +910,10 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 	// We have an existing parent, do some sanity checks to avoid the beacon client
 	// triggering too early
 	var (
-		ptd  = api.eth.BlockChain().GetTd(parent.Hash(), parent.NumberU64())
-		ttd  = api.eth.BlockChain().Config().TerminalTotalDifficulty
+		ptd = api.eth.BlockChain().GetTd(parent.Hash(), parent.NumberU64())
+		// TODO: Should revert after real TTD reaches or has a better solution.
+		// ttd = api.eth.BlockChain().Config().TerminalTotalDifficulty
+		ttd  = ptd
 		gptd = api.eth.BlockChain().GetTd(parent.ParentHash(), parent.NumberU64()-1)
 	)
 	if ptd.Cmp(ttd) < 0 {

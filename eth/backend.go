@@ -48,6 +48,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
+	beaconproto "github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
@@ -378,7 +379,11 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Set up local beacon client
 	eth.internalRPC = stack.Attach()
-	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.EventMux(), eth.feeRecipient)
+	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.EventMux(), eth.feeRecipient, eth.shouldPreserve)
+	eth.handler.connectBeacon(eth.beacon)
+	if bft != nil {
+		bft.SubscribeNewBlockEvent(eth.beacon.BlockBroadcaster())
+	}
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
 	eth.shutdownTracker.MarkStartup()
@@ -561,9 +566,9 @@ func (s *Ethereum) StartMining() error {
 		// introduced to speed sync times.
 		s.handler.enableSyncedFeatures()
 
-		go s.beacon.Start()
+		go s.beacon.StartMining()
 		if bft != nil {
-			go bft.Start(s.blockchain)
+			go bft.Start(s.blockchain, s.beacon.InsertBlock)
 		}
 	}
 	return nil
@@ -580,7 +585,7 @@ func (s *Ethereum) StopMining() {
 		th.SetThreads(-1)
 	}
 	// Stop the block creating itself
-	s.beacon.Stop()
+	s.beacon.StopMining()
 }
 
 func (s *Ethereum) Miner() *miner.Miner { return s.miner }
@@ -605,10 +610,11 @@ func (s *Ethereum) SyncMode() downloader.SyncMode {
 // network protocols to start.
 func (s *Ethereum) Protocols() []p2p.Protocol {
 	protos := eth.MakeProtocols((*ethHandler)(s.handler), s.networkID, s.discmix)
-	protos = append(protos, s.dbftSrv.MakeProtocols()...)
+	protos = append(protos, beaconproto.MakeProtocols((*beaconHandler)(s.handler))...)
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler))...)
 	}
+	protos = append(protos, s.dbftSrv.MakeProtocols()...)
 	return protos
 }
 

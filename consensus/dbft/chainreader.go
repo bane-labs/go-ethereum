@@ -25,10 +25,5 @@ type ChainHeaderReader interface {
 	Engine() consensus.Engine
 }
 
-// ChainHeaderWriter is a Blockchain API abstraction needed for proper blockQueue
-// work.
-type ChainHeaderWriter interface {
-	ChainHeaderReader
-	InsertChain(chain types.Blocks) (int, error)
-	WriteBlockAndSetHead(block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB, emitHeadEvent bool) (core.WriteStatus, error)
-}
+// ChainInsertFn is a callback type to insert a block into the local chain.
+type ChainInsertFn func(*types.Block) error

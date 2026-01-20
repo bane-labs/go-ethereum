@@ -112,6 +112,10 @@ func (dl *downloadTester) newPeer(id string, version uint, blocks []*types.Block
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
+	beacon := &downloadTesterBeacon{
+		id:    id,
+		chain: newTestBlockchain(blocks),
+	}
 	peer := &downloadTesterPeer{
 		dl:              dl,
 		id:              id,
@@ -121,6 +125,9 @@ func (dl *downloadTester) newPeer(id string, version uint, blocks []*types.Block
 	dl.peers[id] = peer
 
 	if err := dl.downloader.RegisterPeer(id, version, peer); err != nil {
+		panic(err)
+	}
+	if err := dl.downloader.RegisterBeacon(id, beacon); err != nil {
 		panic(err)
 	}
 	if err := dl.downloader.SnapSyncer.Register(peer); err != nil {
@@ -137,6 +144,19 @@ func (dl *downloadTester) dropPeer(id string) {
 	delete(dl.peers, id)
 	dl.downloader.SnapSyncer.Unregister(id)
 	dl.downloader.UnregisterPeer(id)
+	dl.downloader.UnregisterBeacon(id)
+}
+
+type downloadTesterBeacon struct {
+	id    string
+	chain *core.BlockChain
+}
+
+// Head constructs a function to retrieve a peer's current head hash
+// and total difficulty.
+func (dlb *downloadTesterBeacon) Head() (common.Hash, *big.Int) {
+	head := dlb.chain.CurrentBlock()
+	return head.Hash(), dlb.chain.GetTd(head.Hash(), head.Number.Uint64())
 }
 
 type downloadTesterPeer struct {
@@ -145,13 +165,6 @@ type downloadTesterPeer struct {
 	chain *core.BlockChain
 
 	withholdHeaders map[common.Hash]struct{}
-}
-
-// Head constructs a function to retrieve a peer's current head hash
-// and total difficulty.
-func (dlp *downloadTesterPeer) Head() (common.Hash, *big.Int) {
-	head := dlp.chain.CurrentBlock()
-	return head.Hash(), dlp.chain.GetTd(head.Hash(), head.Number.Uint64())
 }
 
 func unmarshalRlpHeaders(rlpdata []rlp.RawValue) []*types.Header {

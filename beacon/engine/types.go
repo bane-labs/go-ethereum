@@ -17,6 +17,7 @@
 package engine
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"slices"
@@ -24,7 +25,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
 )
 
@@ -70,6 +70,7 @@ type ExecutableData struct {
 	GasLimit         uint64                  `json:"gasLimit"      gencodec:"required"`
 	GasUsed          uint64                  `json:"gasUsed"       gencodec:"required"`
 	Timestamp        uint64                  `json:"timestamp"     gencodec:"required"`
+	Nonce            uint64                  `json:"nonce"         gencodec:"required"`
 	ExtraData        []byte                  `json:"extraData"     gencodec:"required"`
 	BaseFeePerGas    *big.Int                `json:"baseFeePerGas" gencodec:"required"`
 	BlockHash        common.Hash             `json:"blockHash"     gencodec:"required"`
@@ -233,9 +234,9 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 	if err != nil {
 		return nil, err
 	}
-	if len(data.ExtraData) > int(params.MaximumExtraDataSize) {
-		return nil, fmt.Errorf("invalid extradata length: %v", len(data.ExtraData))
-	}
+	// if len(data.ExtraData) > int(params.MaximumExtraDataSize) {
+	// 	return nil, fmt.Errorf("invalid extradata length: %v", len(data.ExtraData))
+	// }
 	if len(data.LogsBloom) != 256 {
 		return nil, fmt.Errorf("invalid logsBloom length: %v", len(data.LogsBloom))
 	}
@@ -247,14 +248,15 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 	for _, tx := range txs {
 		blobHashes = append(blobHashes, tx.BlobHashes()...)
 	}
-	if len(blobHashes) != len(versionedHashes) {
-		return nil, fmt.Errorf("invalid number of versionedHashes: %v blobHashes: %v", versionedHashes, blobHashes)
-	}
-	for i := 0; i < len(blobHashes); i++ {
-		if blobHashes[i] != versionedHashes[i] {
-			return nil, fmt.Errorf("invalid versionedHash at %v: %v blobHashes: %v", i, versionedHashes, blobHashes)
-		}
-	}
+	// TODO: add this check back when we have versioned hashes in the payload feedback.
+	// if len(blobHashes) != len(versionedHashes) {
+	// 	return nil, fmt.Errorf("invalid number of versionedHashes: %v blobHashes: %v", versionedHashes, blobHashes)
+	// }
+	// for i := 0; i < len(blobHashes); i++ {
+	// 	if blobHashes[i] != versionedHashes[i] {
+	// 		return nil, fmt.Errorf("invalid versionedHash at %v: %v blobHashes: %v", i, versionedHashes, blobHashes)
+	// 	}
+	// }
 	// Only set withdrawalsRoot if it is non-nil. This allows CLs to use
 	// ExecutableData before withdrawals are enabled by marshaling
 	// Withdrawals as the json null value.
@@ -292,6 +294,7 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 		ParentBeaconRoot: beaconRoot,
 		RequestsHash:     requestsHash,
 	}
+	binary.BigEndian.PutUint64(header.Nonce[:], data.Nonce)
 	return types.NewBlockWithHeader(header).
 			WithBody(types.Body{Transactions: txs, Uncles: nil, Withdrawals: data.Withdrawals}).
 			WithWitness(data.ExecutionWitness),
@@ -316,6 +319,7 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		LogsBloom:        block.Bloom().Bytes(),
 		Transactions:     encodeTransactions(block.Transactions()),
 		Random:           block.MixDigest(),
+		Nonce:            block.Nonce(),
 		ExtraData:        block.Extra(),
 		Withdrawals:      block.Withdrawals(),
 		BlobGasUsed:      block.BlobGasUsed(),

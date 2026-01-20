@@ -71,6 +71,16 @@ func (hf *hookedBackfiller) resume() {
 	}
 }
 
+// skeletonTestBeacon is a mock peer that can only serve head requests.
+type skeletonTestBeacon struct {
+	id      string          // Unique identifier of the mock peer
+	headers []*types.Header // Headers to serve when requested
+}
+
+func (p *skeletonTestBeacon) Head() (common.Hash, *big.Int) {
+	panic("skeleton sync must not request the remote head")
+}
+
 // skeletonTestPeer is a mock peer that can only serve header requests from a
 // pre-perated header chain (which may be arbitrarily wrong for testing).
 //
@@ -187,10 +197,6 @@ func (p *skeletonTestPeer) RequestHeadersByNumber(origin uint64, amount int, ski
 		}
 	}()
 	return req, nil
-}
-
-func (p *skeletonTestPeer) Head() (common.Hash, *big.Int) {
-	panic("skeleton sync must not request the remote head")
 }
 
 func (p *skeletonTestPeer) RequestHeadersByHash(common.Hash, int, int, bool, chan *eth.Response) (*eth.Request, error) {
@@ -839,6 +845,7 @@ func TestSkeletonSyncRetrievals(t *testing.T) {
 		peerset := newPeerSet()
 		for _, peer := range tt.peers {
 			peerset.Register(newPeerConnection(peer.id, eth.ETH68, peer, log.New("id", peer.id)))
+			peerset.ConnectBeacon(peer.id, &skeletonTestBeacon{id: peer.id, headers: peer.headers})
 		}
 		// Create a peer dropper to track malicious peers
 		dropped := make(map[string]int)
@@ -908,6 +915,7 @@ func TestSkeletonSyncRetrievals(t *testing.T) {
 			if err := peerset.Register(newPeerConnection(tt.newPeer.id, eth.ETH68, tt.newPeer, log.New("id", tt.newPeer.id))); err != nil {
 				t.Errorf("test %d: failed to register new peer: %v", i, err)
 			}
+			peerset.ConnectBeacon(tt.newPeer.id, &skeletonTestBeacon{id: tt.newPeer.id, headers: tt.newPeer.headers})
 			time.Sleep(time.Millisecond * 50) // given time for peer registration
 			endpeers = append(tt.peers, tt.newPeer)
 		}
