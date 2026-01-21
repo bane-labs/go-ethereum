@@ -1970,6 +1970,10 @@ func (pool *LegacyPool) Clear() {
 	pool.queue = newQueue(pool.config, pool.signer)
 	pool.pendingNonces = newNoncer(pool.currentState)
 
+	// Reset gauges
+	pendingGauge.Update(0)
+	queuedGauge.Update(0)
+	slotsGauge.Update(0)
 	pendingAddrsGauge.Update(0)
 	queuedAddrsGauge.Update(0)
 }
