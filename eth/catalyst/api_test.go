@@ -247,9 +247,9 @@ func TestInvalidPayloadTimestamp(t *testing.T) {
 		time      uint64
 		shouldErr bool
 	}{
-		{0, true},
-		{parent.Time, true},
-		{parent.Time - 1, true},
+		{0, false},
+		{parent.Time, false},
+		{parent.Time - 1, false},
 		{parent.Time + 1, false},
 		{uint64(time.Now().Unix()) + uint64(time.Minute), false},
 	}

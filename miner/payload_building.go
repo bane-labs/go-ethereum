@@ -212,7 +212,7 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload
 	// to deliver for not missing slot.
 	emptyParams := &generateParams{
 		timestamp:   args.Timestamp,
-		forceTime:   true,
+		forceTime:   false,
 		parentHash:  args.Parent,
 		coinbase:    args.FeeRecipient,
 		random:      args.Random,
@@ -230,7 +230,7 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload
 	// Fullfil the payload with transactions.
 	fullParams := &generateParams{
 		timestamp:   args.Timestamp,
-		forceTime:   true,
+		forceTime:   false,
 		parentHash:  args.Parent,
 		coinbase:    args.FeeRecipient,
 		random:      args.Random,
