@@ -199,8 +199,11 @@ func (w *worker) requestWork(timestamp uint64) {
 	}
 	start := time.Now()
 
+	// Lock to ensure EL RW atomicity, no real reorg happens.
+	w.forkMu.Lock()
 	// Trigger payload build through the fork choice request.
 	resp, err := w.sendForkChoice(w.chain.CurrentHeader(), timestamp, true)
+	w.forkMu.Unlock()
 	if err != nil {
 		log.Error("Failed to prepare payload", "err", err)
 		return
@@ -273,6 +276,9 @@ func (w *worker) feedback(block *types.Block) error {
 		return fmt.Errorf("block rejected by EL, err: %v", *status.ValidationError)
 	}
 
+	// Lock to ensure EL RW atomicity, no concurrent reorg happens.
+	w.forkMu.Lock()
+	defer w.forkMu.Unlock()
 	// Set head based on reorg check.
 	reorg, err := w.forker.ReorgNeeded(w.chain.CurrentHeader(), block.Header())
 	if err != nil {
@@ -294,8 +300,6 @@ func (w *worker) feedback(block *types.Block) error {
 
 // sendForkChoice sends new chain head information to EL miner API through RPC.
 func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMine bool) (engine.ForkChoiceResponse, error) {
-	w.forkMu.Lock()
-	defer w.forkMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
