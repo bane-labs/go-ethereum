@@ -216,6 +216,35 @@ func (p *Peer) RequestBlobs(hash common.Hash, sink chan *Response, ttl uint8) (*
 	return req, nil
 }
 
+// ReplyBatchBlobsRLP is the response to GetBatchBlobs.
+func (p *Peer) ReplyBatchBlobsRLP(id uint64, blobs []rlp.RawValue) error {
+	return p2p.Send(p.rw, BatchBlobsMsg, &BatchBlobsRLPPacket{
+		RequestId:             id,
+		BatchBlobsRLPResponse: blobs,
+	})
+}
+
+// RequestBatchBlobs sends GetBatchBlobsMsg by request block hash.
+func (p *Peer) RequestBatchBlobs(hash []common.Hash, sink chan *Response) (*Request, error) {
+	id := rand.Uint64()
+
+	req := &Request{
+		id:   id,
+		sink: sink,
+		code: GetBatchBlobsMsg,
+		want: BatchBlobsMsg,
+		data: &GetBatchBlobsPacket{
+			RequestId:            id,
+			GetBatchBlobsRequest: hash,
+		},
+	}
+
+	if err := p.dispatchRequest(req); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
 // KnownBlockBlobs returns whether peer is known to already have a block's blobs.
 func (p *Peer) KnownBlockBlobs(blockHash common.Hash) bool {
 	return p.knownBlobs.Contains(blockHash)

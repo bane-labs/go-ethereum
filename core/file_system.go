@@ -176,6 +176,16 @@ func (fs *FileSystem) InsertBlobs(hash common.Hash, blobs types.BlobSidecars) er
 	return nil
 }
 
+// InsertBatchBlobSidecars inserts a batch of blob sidecars associated with their block hashes.
+func (fs *FileSystem) InsertBatchBlobSidecars(batch []*types.BlobSidecarsWithHash) (int, error) {
+	for index, blobSidecar := range batch {
+		if err := fs.InsertBlobs(blobSidecar.Hash, blobSidecar.BlobSidecars); err != nil {
+			return index, err
+		}
+	}
+	return len(batch) - 1, nil
+}
+
 // SubscribeBlobsEvent subscribes to blob events.
 func (fs *FileSystem) SubscribeBlobsEvent(ch chan<- BlobEvent) event.Subscription {
 	return fs.blobFeed.Subscribe(ch)

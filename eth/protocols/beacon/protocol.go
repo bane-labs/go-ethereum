@@ -25,7 +25,7 @@ var ProtocolVersions = []uint{BEACON1}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{BEACON1: 7}
+var protocolLengths = map[uint]uint64{BEACON1: 9}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -38,6 +38,8 @@ const (
 	NewBlobsRootMsg   = 0x04 // New blobs root message
 	GetBlobsMsg       = 0x05 // Get blobs message
 	BlobsMsg          = 0x06 // Blobs message
+	GetBatchBlobsMsg  = 0x07 // Get batch blobs message
+	BatchBlobsMsg     = 0x08 // Batch blobs message
 )
 
 var (
@@ -123,41 +125,10 @@ type GetBlobsPacket struct {
 	Ttl       uint8
 }
 
-// GetBlobsRequest represents a blobs query.
-type GetBlobsRequest []common.Hash
-
-// BatchGetBlobsPacket is the request packet for batch blob query by block hashes.
-type BatchGetBlobsPacket struct {
-	RequestId uint64
-	GetBlobsRequest
-}
-
 // BlobsPacket is the response packet for blobs by block hash.
 type BlobsPacket struct {
 	RequestId uint64
 	Sidecars  types.BlobSidecars
-}
-
-// BlobsResponse is the response packet for blobs by block hash.
-type BlobsResponse [][]*types.BlobTxSidecar
-
-// BatchBlobsByRootPacket is the response packet for batch blobs by block hashes.
-type BatchBlobsByRootPacket struct {
-	RequestId uint64
-	BlobsResponse
-}
-
-func (packet *BatchBlobsByRootPacket) sanityCheck() error {
-	if len(packet.BlobsResponse) > 0 {
-		for _, sidecars := range packet.BlobsResponse {
-			for _, sidecar := range sidecars {
-				if len(sidecar.Blobs) != len(sidecar.Commitments) || len(sidecar.Blobs) != len(sidecar.Proofs) {
-					return errInvalidBlobs
-				}
-			}
-		}
-	}
-	return nil
 }
 
 // BlobsRLP is used for replying to blobs by block hash requests, in cases
@@ -166,6 +137,24 @@ func (packet *BatchBlobsByRootPacket) sanityCheck() error {
 type BlobsRLPPacket struct {
 	RequestId        uint64
 	BlobsRLPResponse rlp.RawValue
+}
+
+// GetBatchBlobsRequest represents a blobs query.
+type GetBatchBlobsRequest []common.Hash
+
+// GetBatchBlobsPacket is the request packet for batch blob query by block hashes.
+type GetBatchBlobsPacket struct {
+	RequestId uint64
+	GetBatchBlobsRequest
+}
+
+// BatchBlobsResponse is the response packet for blobs by block hash.
+type BatchBlobsResponse [][]*types.BlobTxSidecar
+
+// BatchBlobsPacket is the response packet for batch blobs by block hashes.
+type BatchBlobsPacket struct {
+	RequestId uint64
+	BatchBlobsResponse
 }
 
 // BatchBlobsRLPResponse is used for replying to blobs by block hash requests, in cases
@@ -199,3 +188,9 @@ func (*GetBlobsPacket) Kind() byte   { return GetBlobsMsg }
 
 func (*BlobsPacket) Name() string { return "Blobs" }
 func (*BlobsPacket) Kind() byte   { return BlobsMsg }
+
+func (*GetBatchBlobsPacket) Name() string { return "GetBatchBlobs" }
+func (*GetBatchBlobsPacket) Kind() byte   { return GetBatchBlobsMsg }
+
+func (*BatchBlobsPacket) Name() string { return "BatchBlobs" }
+func (*BatchBlobsPacket) Kind() byte   { return BatchBlobsMsg }

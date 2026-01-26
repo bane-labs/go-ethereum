@@ -86,6 +86,11 @@ func (sc *BlobTxSidecar) encodedSize() uint64 {
 	return rlp.ListSize(blobs) + rlp.ListSize(commitments) + rlp.ListSize(proofs)
 }
 
+// Size returns the RLP encoded size of the sidecar.
+func (sc *BlobTxSidecar) Size() uint64 {
+	return sc.encodedSize()
+}
+
 // ValidateBlobCommitmentHashes checks whether the given hashes correspond to the
 // commitments in the sidecar
 func (sc *BlobTxSidecar) ValidateBlobCommitmentHashes(hashes []common.Hash) error {
@@ -102,9 +107,16 @@ func (sc *BlobTxSidecar) ValidateBlobCommitmentHashes(hashes []common.Hash) erro
 	return nil
 }
 
+// BlobSidecars is a slice of blob transaction sidecars.
 type BlobSidecars []*BlobTxSidecar
 
 func (scs BlobSidecars) Len() int { return len(scs) }
+
+// BlobSidecarsWithHash represents blob sidecars associated with a block hash.
+type BlobSidecarsWithHash struct {
+	BlobSidecars
+	Hash common.Hash // The block hash these blob sidecars are associated with.
+}
 
 // blobTxWithBlobs is used for encoding of transactions when blobs are present.
 type blobTxWithBlobs struct {

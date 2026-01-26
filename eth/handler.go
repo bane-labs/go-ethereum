@@ -127,7 +127,7 @@ type handlerConfig struct {
 	EventMux       *event.TypeMux         // Legacy event mux, deprecate for `feed`
 	RequiredBlocks map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
 	FileSystem     FileSystem             // File system for blob sidecars
-	NoPruning      bool                   // Whether to disable pruning
+	BlobSync       bool                   // Whether to sync blob sidecars
 }
 
 type handler struct {
@@ -146,7 +146,7 @@ type handler struct {
 	downloader *downloader.Downloader
 	beacon     Beacon
 	fs         FileSystem
-	noPruning  bool
+	blobSync   bool
 	txFetcher  *fetcher.TxFetcher
 	peers      *peerSet
 
@@ -187,7 +187,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		peers:          newPeerSet(),
 		requiredBlocks: config.RequiredBlocks,
 		fs:             config.FileSystem,
-		noPruning:      config.NoPruning,
+		blobSync:       config.BlobSync,
 		quitSync:       make(chan struct{}),
 		handlerDoneCh:  make(chan struct{}),
 		handlerStartCh: make(chan struct{}),

@@ -336,7 +336,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		EventMux:       eth.eventMux,
 		RequiredBlocks: config.RequiredBlocks,
 		FileSystem:     eth.filesystem,
-		NoPruning:      config.NoPruning,
+		BlobSync:       stack.Config().BlobSync,
 	}); err != nil {
 		return nil, err
 	}

@@ -225,6 +225,9 @@ type Config struct {
 	// DBFTStatistics is the dBFT statistics calculation configuration.
 	DBFTStatistics dbft.StatisticsConfig `toml:",omitempty"`
 
+	// BlobSync enables blob sidecar data syncing.
+	BlobSync bool `toml:",omitempty"`
+
 	// BlobRetentionEpoch is the number of epochs to retain blob and sidecar data for.
 	BlobRetentionEpoch uint64 `toml:",omitempty"`
 

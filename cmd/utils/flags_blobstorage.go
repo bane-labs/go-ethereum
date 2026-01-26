@@ -19,6 +19,12 @@ import (
 )
 
 var (
+	BlobSyncFlag = &cli.BoolFlag{
+		Name:     "blob-sync",
+		Usage:    "Enable blob sidecar synchronization alongside block synchronization.",
+		Value:    true,
+		Category: flags.BlobStorageCategory,
+	}
 	BlobStoragePathFlag = &cli.PathFlag{
 		Name:     "blob-path",
 		Usage:    "Location for blob storage. Default location will be a 'blobs' directory next to the datadir.",
@@ -47,6 +53,7 @@ var (
 
 // BlobStorageFlags is the list of CLI flags for configuring blob storage.
 var BlobStorageFlags = []cli.Flag{
+	BlobSyncFlag,
 	BlobStoragePathFlag,
 	BlobStorageLayout,
 	BlobRetentionEpochFlag,
@@ -66,6 +73,7 @@ func validateLayoutFlag(_ *cli.Context, v string) error {
 
 // SetBlobStorageConfig sets the blob storage configuration options in the node config.
 func SetBlobStorageConfig(ctx *cli.Context, cfg *node.Config) {
+	cfg.BlobSync = ctx.Bool(BlobSyncFlag.Name)
 	blobRetentionEpoch, err := blobRetentionEpoch(ctx)
 	if err != nil {
 		Fatalf("%s", errors.Wrap(err, "blob retention epoch"))

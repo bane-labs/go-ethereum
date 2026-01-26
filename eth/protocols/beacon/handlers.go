@@ -3,11 +3,8 @@ package beacon
 import (
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 )
 
@@ -68,7 +65,7 @@ func handleNewBlobsRoot(backend Backend, msg Decoder, peer *Peer) error {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 
-	log.Debug("receive NewBlobsRoot announcement", "from", peer.id, "blockHash", ann.BlockHash)
+	log.Debug("Receive NewBlobsRoot announcement", "from", peer.id, "blockHash", ann.BlockHash)
 
 	peer.markBlockBlobs(ann.BlockHash)
 	return backend.Handle(peer, ann)
@@ -80,7 +77,7 @@ func handleGetBlobs(backend Backend, msg Decoder, peer *Peer) error {
 		return fmt.Errorf("msg %v, decode err: %v", GetBlobsMsg, err)
 	}
 
-	log.Debug("receive GetBlobs request", "from", peer.id, "req", req)
+	log.Debug("Receive GetBlobs request", "from", peer.id, "req", req)
 
 	if req.Ttl < 1 {
 		log.Debug("GetBlobs request reached TTL limit", "from", peer.id, "req", req)
@@ -99,57 +96,34 @@ func handleBlobs(backend Backend, msg Decoder, peer *Peer) error {
 	err := peer.dispatchResponse(&Response{
 		id:   ann.RequestId,
 		code: BlobsMsg,
-		Res:  ann,
+		Res:  &ann.Sidecars,
 	}, nil)
-	log.Debug("receive Blobs response", "from", peer.id, "requestId", ann.RequestId, "sidecars", len(ann.Sidecars), "err", err)
+	log.Debug("Receive Blobs response", "from", peer.id, "requestId", ann.RequestId, "sidecars", len(ann.Sidecars), "err", err)
 	return nil
 }
 
-// func handleGetBlobs(backend Backend, msg Decoder, peer *Peer) error {
-// 	query := new(GetBlobsPacket)
-// 	if err := msg.Decode(query); err != nil {
-// 		return fmt.Errorf("msg %v, decode err: %v", GetBlobsMsg, err)
-// 	}
-// 	response := ServiceGetBlobsQuery(nil, query.GetBlobsRequest)
-// 	return peer.ReplyBlobsRLP(query.RequestId, response)
-// }
-
-// ServiceGetBlobsQuery assembles the response to a blob query. It is
-// exposed to allow external packages to test protocol behavior.
-func ServiceGetBlobsQuery(chain *core.BlockChain, query GetBlobsRequest) []rlp.RawValue {
-	// Gather blocks until the fetch or network limits is reached
-	var (
-		bytes int
-		blobs []rlp.RawValue
-	)
-	for lookups, _ := range query {
-		if bytes >= softResponseLimit || len(blobs) >= maxBlobsServe ||
-			lookups >= 2*maxBlobsServe {
-			break
-		}
-		// Retrieve the requested block's blobs
-		// results := fs.GetBlobssByHash(hash)
-		// if results == nil {
-		// 	if header := chain.GetHeaderByHash(hash); header == nil || header.ReceiptHash != types.EmptyRootHash {
-		// 		continue
-		// 	}
-		// }
-		results := make([]*types.BlobTxSidecar, 0)
-		emptyBlob := kzg4844.Blob{}
-		emptyBlobCommit, _ := kzg4844.BlobToCommitment(&emptyBlob)
-		emptyBlobProof, _ := kzg4844.ComputeBlobProof(&emptyBlob, emptyBlobCommit)
-		results = append(results, &types.BlobTxSidecar{
-			Blobs:       []kzg4844.Blob{emptyBlob},
-			Commitments: []kzg4844.Commitment{emptyBlobCommit},
-			Proofs:      []kzg4844.Proof{emptyBlobProof},
-		})
-		// If known, encode and queue for response packet
-		if encoded, err := rlp.EncodeToBytes(results); err != nil {
-			log.Error("Failed to encode blobs", "err", err)
-		} else {
-			blobs = append(blobs, encoded)
-			bytes += len(encoded)
-		}
+func handleGetBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	req := new(GetBatchBlobsPacket)
+	if err := msg.Decode(req); err != nil {
+		return fmt.Errorf("msg %v, decode err: %v", GetBatchBlobsMsg, err)
 	}
-	return blobs
+
+	log.Debug("Receive GetBatchBlobs request", "from", peer.id, "req", req)
+
+	return backend.Handle(peer, req)
+}
+
+func handleBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	res := new(BatchBlobsPacket)
+	if err := msg.Decode(res); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+
+	err := peer.dispatchResponse(&Response{
+		id:   res.RequestId,
+		code: BatchBlobsMsg,
+		Res:  &res.BatchBlobsResponse,
+	}, nil)
+	log.Debug("Receive BatchBlobs response", "from", peer.id, "requestId", res.RequestId, "batchBlobs", len(res.BatchBlobsResponse), "err", err)
+	return nil
 }

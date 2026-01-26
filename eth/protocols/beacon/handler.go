@@ -10,15 +10,6 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enr"
 )
 
-const (
-	// softResponseLimit is the target maximum size of replies to data retrievals.
-	softResponseLimit = 2 * 1024 * 1024
-
-	// maxBlobsServe is the maximum number of block blobs to serve. This
-	// number is mostly there to limit the number of disk lookups.
-	maxBlobsServe = 16
-)
-
 // Handler is a callback to invoke from an outside runner after the boilerplate
 // exchanges have passed.
 type Handler func(peer *Peer) error
@@ -100,6 +91,8 @@ var beacon1 = map[uint64]msgHandler{
 	NewBlobsRootMsg:   handleNewBlobsRoot,
 	GetBlobsMsg:       handleGetBlobs,
 	BlobsMsg:          handleBlobs,
+	GetBatchBlobsMsg:  handleGetBatchBlobs,
+	BatchBlobsMsg:     handleBatchBlobs,
 }
 
 // handleMessage is invoked whenever an inbound message is received from a
