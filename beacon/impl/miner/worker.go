@@ -50,6 +50,7 @@ type worker struct {
 	chain        *core.BlockChain
 	forker       *core.ForkChoice
 	rpc          *rpc.Client
+	ctx          context.Context
 	feeRecipient common.Address
 
 	// Subscriptions
@@ -62,6 +63,7 @@ type worker struct {
 	resultCh  chan *types.Block
 	startCh   chan struct{}
 	exitCh    chan struct{}
+	cancel    context.CancelFunc
 
 	wg sync.WaitGroup
 
@@ -88,6 +90,7 @@ func newWorker(eth Backend, rpc *rpc.Client, feeRecipient common.Address, should
 		startCh:      make(chan struct{}, 1),
 		exitCh:       make(chan struct{}),
 	}
+	worker.ctx, worker.cancel = context.WithCancel(context.Background())
 
 	// Subscribe events for blockchain
 	worker.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)
@@ -121,6 +124,7 @@ func (w *worker) isMining() bool {
 func (w *worker) close() {
 	w.mining.Store(false)
 	close(w.exitCh)
+	w.cancel()
 	w.wg.Wait()
 }
 
@@ -300,9 +304,6 @@ func (w *worker) feedback(block *types.Block) error {
 
 // sendForkChoice sends new chain head information to EL miner API through RPC.
 func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMine bool) (engine.ForkChoiceResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-	defer cancel()
-
 	update := engine.ForkchoiceStateV1{
 		HeadBlockHash:      head.Hash(),
 		SafeBlockHash:      head.ParentHash,
@@ -333,9 +334,9 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 	// Set mining attributes only when the worker is set to be mining.
 	var err error
 	if requestMine {
-		err = w.rpc.CallContext(ctx, &resp, forkChoiceMethod, update, attributes)
+		err = w.rpc.CallContext(w.ctx, &resp, forkChoiceMethod, update, attributes)
 	} else {
-		err = w.rpc.CallContext(ctx, &resp, forkChoiceMethod, update, nil)
+		err = w.rpc.CallContext(w.ctx, &resp, forkChoiceMethod, update, nil)
 	}
 	if err != nil {
 		return engine.ForkChoiceResponse{}, err
@@ -345,9 +346,6 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 
 // getPayload requests new block payload from EL miner through RPC.
 func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloadEnvelope, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-	defer cancel()
-
 	var getPayloadMethod string
 	var payload engine.ExecutionPayloadEnvelope
 	switch payloadID.Version() {
@@ -358,7 +356,7 @@ func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloa
 	default:
 		return engine.ExecutionPayloadEnvelope{}, fmt.Errorf("version %v is not supported for engine_getPayload", payloadID.Version())
 	}
-	err := w.rpc.CallContext(ctx, &payload, getPayloadMethod, payloadID)
+	err := w.rpc.CallContext(w.ctx, &payload, getPayloadMethod, payloadID)
 	if err != nil {
 		return engine.ExecutionPayloadEnvelope{}, err
 	}
@@ -367,9 +365,6 @@ func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloa
 
 // sendPayload sends new block back to EL through RPC.
 func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, executionRequests []hexutil.Bytes, timestamp uint64) (engine.PayloadStatusV1, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-	defer cancel()
-
 	var newPayloadMethod string
 	var status engine.PayloadStatusV1
 	switch w.chain.Config().LatestFork(timestamp) {
@@ -382,7 +377,7 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 	default:
 		return engine.PayloadStatusV1{}, fmt.Errorf("fork %s is not supported for engine_getPayload", w.chain.Config().LatestFork(timestamp).String())
 	}
-	err := w.rpc.CallContext(ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, executionRequests)
+	err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, executionRequests)
 	if err != nil {
 		return engine.PayloadStatusV1{}, err
 	}
