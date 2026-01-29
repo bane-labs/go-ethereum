@@ -359,7 +359,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
 		bft.WithTxPool(eth.TxPool())
 		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
-		bft.WithMux(eth.EventMux())
 		err := bft.WithLogLevel(config.DBFTLogLevel)
 		if err != nil {
 			return nil, err
@@ -382,7 +381,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.EventMux(), eth.feeRecipient, eth.shouldPreserve)
 	eth.handler.connectBeacon(eth.beacon)
 	if bft != nil {
-		bft.SubscribeNewBlockEvent(eth.beacon.BlockBroadcaster())
+		// Connect BFT to beacon protocol
+		bft.WithBeacon(eth.beacon.BlockBroadcaster(), eth.beacon.SubscribeSyncingEvents, eth.beacon.Syncing)
 	}
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
@@ -540,26 +540,24 @@ func (s *Ethereum) StartMining() error {
 				log.Error("Etherbase account unavailable locally", "err", err)
 				return fmt.Errorf("signer missing: %v", err)
 			}
-			if bft != nil {
-				dkgIdentity := s.antimevKeystore.Address()
-				if eb != dkgIdentity {
-					log.Error("Antimev keystore mismatch", "consensus address", eb, "keystore", dkgIdentity)
-					return fmt.Errorf("keystore address mismatch: %v", dkgIdentity)
-				}
-				log.Info("Initializing BFT consensus",
-					"account", eb.String())
-				bft.Authorize(eb, wallet.SignData, s.antimevKeystore)
-				err := bft.WithZKFiles(
-					s.config.OneMsgR1CSPath,
-					s.config.TwoMsgR1CSPath,
-					s.config.SevenMsgR1CSPath,
-					s.config.OneMsgProvingKeyPath,
-					s.config.TwoMsgProvingKeyPath,
-					s.config.SevenMsgProvingKeyPath,
-				)
-				if err != nil {
-					return fmt.Errorf("DKG initialization failed: %v", err)
-				}
+			dkgIdentity := s.antimevKeystore.Address()
+			if eb != dkgIdentity {
+				log.Error("Antimev keystore mismatch", "consensus address", eb, "keystore", dkgIdentity)
+				return fmt.Errorf("keystore address mismatch: %v", dkgIdentity)
+			}
+			log.Info("Initializing BFT consensus",
+				"account", eb.String())
+			bft.Authorize(eb, wallet.SignData, s.antimevKeystore)
+			err = bft.WithZKFiles(
+				s.config.OneMsgR1CSPath,
+				s.config.TwoMsgR1CSPath,
+				s.config.SevenMsgR1CSPath,
+				s.config.OneMsgProvingKeyPath,
+				s.config.TwoMsgProvingKeyPath,
+				s.config.SevenMsgProvingKeyPath,
+			)
+			if err != nil {
+				return fmt.Errorf("DKG initialization failed: %v", err)
 			}
 		}
 		// If mining is started, we can disable the transaction rejection mechanism
@@ -601,7 +599,7 @@ func (s *Ethereum) Downloader() *downloader.Downloader { return s.handler.downlo
 func (s *Ethereum) Synced() bool                       { return s.handler.synced.Load() }
 func (s *Ethereum) SetSynced()                         { s.handler.enableSyncedFeatures() }
 func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruning }
-func (s *Ethereum) SyncMode() downloader.SyncMode {
+func (s *Ethereum) SyncMode() ethconfig.SyncMode {
 	mode, _ := s.handler.chainSync.modeAndLocalHead()
 	return mode
 }
@@ -609,8 +607,8 @@ func (s *Ethereum) SyncMode() downloader.SyncMode {
 // Protocols returns all the currently configured
 // network protocols to start.
 func (s *Ethereum) Protocols() []p2p.Protocol {
-	protos := eth.MakeProtocols((*ethHandler)(s.handler), s.networkID, s.discmix)
-	protos = append(protos, beaconproto.MakeProtocols((*beaconHandler)(s.handler))...)
+	protos := beaconproto.MakeProtocols((*beaconHandler)(s.handler))
+	protos = append(protos, eth.MakeProtocols((*ethHandler)(s.handler), s.networkID, s.discmix)...)
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler))...)
 	}

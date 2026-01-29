@@ -31,7 +31,9 @@ type Miner struct {
 	startCh chan struct{}
 	stopCh  chan struct{}
 
-	worker *worker
+	worker      *worker
+	syncingFeed event.Feed              // Event feed for syncing status changes, a CL notifier as proxy
+	scope       event.SubscriptionScope // Subscription scope for miner events
 
 	wg sync.WaitGroup
 }
@@ -101,6 +103,7 @@ func (miner *Miner) update() {
 					log.Info("Mining aborted due to sync")
 				}
 				miner.worker.syncing.Store(true)
+				miner.syncingFeed.Send(true)
 
 			case downloader.FailedEvent:
 				canStart = true
@@ -108,6 +111,7 @@ func (miner *Miner) update() {
 					miner.worker.startMining()
 				}
 				miner.worker.syncing.Store(false)
+				miner.syncingFeed.Send(false)
 
 			case downloader.DoneEvent:
 				canStart = true
@@ -115,6 +119,7 @@ func (miner *Miner) update() {
 					miner.worker.startMining()
 				}
 				miner.worker.syncing.Store(false)
+				miner.syncingFeed.Send(false)
 
 				// Stop reacting to downloader events
 				events.Unsubscribe()
@@ -143,10 +148,22 @@ func (miner *Miner) Stop() {
 }
 
 func (miner *Miner) Close() {
+	miner.scope.Close()
 	close(miner.exitCh)
 	miner.wg.Wait()
 }
 
+// Mining returns whether the miner is currently mining.
 func (miner *Miner) Mining() bool {
 	return miner.worker.isMining()
+}
+
+// Syncing returns whether the miner is currently syncing.
+func (miner *Miner) Syncing() bool {
+	return miner.worker.syncing.Load()
+}
+
+// SubscribeSyncingEvents subscribes to syncing status changes, should only be used in CL.
+func (miner *Miner) SubscribeSyncingEvents(ch chan<- bool) event.Subscription {
+	return miner.scope.Track(miner.syncingFeed.Subscribe(ch))
 }

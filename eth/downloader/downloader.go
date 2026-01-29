@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -79,6 +80,17 @@ var (
 	errNoAncestorFound         = errors.New("no common ancestor found")
 	errNoPivotHeader           = errors.New("pivot header is not found")
 	ErrMergeTransition         = errors.New("legacy sync reached the merge")
+)
+
+// SyncMode defines the sync method of the downloader.
+// Deprecated: use ethconfig.SyncMode instead
+type SyncMode = ethconfig.SyncMode
+
+const (
+	// Deprecated: use ethconfig.FullSync
+	FullSync = ethconfig.FullSync
+	// Deprecated: use ethconfig.SnapSync
+	SnapSync = ethconfig.SnapSync
 )
 
 // peerDropFn is a callback type for dropping a peer detected as malicious.

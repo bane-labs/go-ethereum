@@ -54,7 +54,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
-	"github.com/ethereum/go-ethereum/eth/downloader"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -202,14 +201,9 @@ type DBFT struct {
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
 	chainHeadEvents chan core.ChainHeadEvent
-	// mux is a subscriptions dispatcher for various chain events including chain
-	// downloader events. Downloader events are used to track miner's state since
-	// miner work may be temporary suspended due to the node sync.
-	mux *event.TypeMux
-	// syncing indicates whether the node is still syncing. This variable is updated
-	// irrespectively from the engine activity, and thus, may be relied on even when
-	// dBFT engine is not started.
-	syncing atomic.Bool
+	syncingSub      event.Subscription
+	syncingEvents   chan bool
+	syncing         func() bool
 
 	config  *config  // Consensus engine configuration parameters
 	zkFiles *zkFiles // ZK-DKG configuration parameters
@@ -364,6 +358,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg Statistic
 		messages:        make(chan Payload, msgsChCap),
 		txs:             make(chan *types.Transaction, txSubCap),
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
+		syncingEvents:   make(chan bool, 2),
 
 		quit:                     make(chan struct{}),
 		eventLoopToCloseCh:       make(chan struct{}),
@@ -1577,51 +1572,13 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 	c.requestTxs = f
 }
 
-// WithMux sets subscriptions dispatcher service to provide a way for dBFT to watch
-// over chain downloader progress. It's needed because miner work is suspended during
-// the ongoing node sync process.
-func (c *DBFT) WithMux(mux *event.TypeMux) {
-	c.mux = mux
-	go c.syncWatcher()
-}
-
-// syncWatcher is a standalone loop aimed to be active irrespectively of dBFT engine
-// activity. It tracks the first chain sync attempt till its end.
-func (c *DBFT) syncWatcher() {
-	downloaderEvents := c.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
-	defer func() {
-		if !downloaderEvents.Closed() {
-			downloaderEvents.Unsubscribe()
-		}
-	}()
-	dlEventCh := downloaderEvents.Chan()
-
-events:
-	for {
-		select {
-		case <-c.quit:
-			break events
-		case ev := <-dlEventCh:
-			if ev == nil {
-				// Unsubscription done, stop listening.
-				dlEventCh = nil
-				break events
-			}
-			switch ev.Data.(type) {
-			case downloader.StartEvent:
-				c.syncing.Store(true)
-
-			case downloader.FailedEvent:
-				c.syncing.Store(false)
-
-			case downloader.DoneEvent:
-				c.syncing.Store(false)
-
-				// Stop reacting to downloader events.
-				downloaderEvents.Unsubscribe()
-			}
-		}
-	}
+// WithBeacon initializes beacon protocol related channels and functions.
+func (c *DBFT) WithBeacon(ch chan<- *types.Block, subSyncing SubscribeSyncingFn, syncing SyncingFn) {
+	// The channel to broadcast new blocks in beacon protocol.
+	c.scope.Track(c.blockFeed.Subscribe(ch))
+	// The direct checker of miner working state.
+	c.syncingSub = subSyncing(c.syncingEvents)
+	c.syncing = syncing
 }
 
 // WithTxPool initializes transaction pool API for DBFT interactions with memory pool
@@ -2327,7 +2284,7 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 		if err != nil {
 			return fmt.Errorf("invalid sealing task: failed to calculate Parent honest seal hash: %w", err)
 		}
-		if bytes.Compare(c.lastBlockSealHash, actual) != 0 {
+		if !bytes.Equal(c.lastBlockSealHash, actual) {
 			return fmt.Errorf("invalid sealing task: invalid Parent honest seal hash: expected %s, got %s", hex.EncodeToString(c.lastBlockSealHash), hex.EncodeToString(actual))
 		}
 		log.Info("Update cached dBFT last block information",
@@ -2361,15 +2318,6 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 func (c *DBFT) eventLoop() {
 	c.eventLoopRunning.Store(true)
 	log.Info("dBFT event loop started")
-
-	// Track of the downloader events to be in sync with miner's status since miner's
-	// work is suspended during the initial chain sync. Please be aware that this is
-	// a one shot type of update loop. It's entered once and as soon as `Done` has
-	// been broadcasted the events are unregistered and the loop is exited. This to
-	// prevent a major security vuln where external parties can DOS you with blocks
-	// and halt your dBFT operation for as long as the DOS continues.
-	downloaderEvents := c.mux.Subscribe(downloader.DoneEvent{}, downloader.FailedEvent{})
-	dlEventCh := downloaderEvents.Chan()
 
 events:
 	for {
@@ -2421,22 +2369,12 @@ events:
 					"error", err.Error())
 			}
 			break events
-		case ev := <-dlEventCh:
-			if ev == nil {
-				// Unsubscription done, stop listening.
-				dlEventCh = nil
-				continue
-			}
-			switch ev.Data.(type) {
-			case downloader.FailedEvent:
+		case ev := <-c.syncingEvents:
+			switch ev {
+			case false:
 				latest := c.chain.CurrentHeader()
 				c.handleChainBlock(latest, false)
-			case downloader.DoneEvent:
-				// Stop reacting to downloader events.
-				downloaderEvents.Unsubscribe()
-
-				latest := c.chain.CurrentHeader()
-				c.handleChainBlock(latest, false)
+			default:
 			}
 		}
 		// Always process block event if there is any, we can add one above or external
@@ -2475,9 +2413,7 @@ events:
 	}
 	c.dbft.Timer.Stop()
 	c.chainHeadSub.Unsubscribe()
-	if !downloaderEvents.Closed() {
-		downloaderEvents.Unsubscribe()
-	}
+	c.syncingSub.Unsubscribe()
 	c.eventLoopRunning.Store(false)
 drainLoop:
 	for {
@@ -2502,7 +2438,7 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 		log.Debug("Skip dBFT payload handling: dBFT event loop is inactive or not started yet", "hash", cp.Hash())
 		return nil
 	}
-	if c.syncing.Load() {
+	if c.syncing() {
 		log.Debug("Skip dBFT payload handling due to sync", "hash", cp.Hash())
 		return nil
 	}
@@ -2584,7 +2520,7 @@ func (c *DBFT) validatePayload(p *Payload) error {
 // (only consensus payloads for now) at the specified height.
 func (c *DBFT) IsExtensibleAllowed(h uint64, u common.Address) error {
 	// Can't verify extensible sender if the node has an outdated state.
-	if c.syncing.Load() {
+	if c.syncing() {
 		return dbftproto.ErrSyncing
 	}
 	// Only validators are included into extensible whitelist for now.
@@ -2618,7 +2554,7 @@ func (c *DBFT) handleChainBlock(h *types.Header, checkForSync bool) {
 	// A short path if miner is not active and the node is in the process of block
 	// sync. In this case dBFT can't react properly on the newcoming blocks since no
 	// sealing task is expected from miner.
-	if checkForSync && c.syncing.Load() {
+	if checkForSync && c.syncing() {
 		log.Info("Skipping dBFT block callback due to sync",
 			"block index", h.Number.Int64(),
 			"dbft index", c.dbft.BlockIndex,
@@ -2872,13 +2808,6 @@ func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 // SubscribeEnvelopeEvent creates a subscription that fires for all new envelopes that enter the consensus engine.
 func (c *DBFT) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo) event.Subscription {
 	return c.scope.Track(c.envelopeFeed.Subscribe(ch))
-}
-
-// SubscribeNewBlockEvent creates a subscription that fires new blocks.
-// NewMinedBlockEvent is removed from EL so new blocks will not be sent to node directly.
-// This is only necessary for dBFT, so absent from the general consensus interface.
-func (c *DBFT) SubscribeNewBlockEvent(ch chan<- *types.Block) event.Subscription {
-	return c.scope.Track(c.blockFeed.Subscribe(ch))
 }
 
 // getValidatorsSorted returns validators chosen in the result of the latest
