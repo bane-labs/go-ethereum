@@ -86,6 +86,15 @@ func (b *Beacon) Mining() bool {
 	return b.miner.Mining()
 }
 
+// Syncing returns whether the beacon client is syncing.
+func (b *Beacon) Syncing() bool {
+	return b.miner.Syncing()
+}
+
+func (b *Beacon) SubscribeSyncingEvents(ch chan<- bool) event.Subscription {
+	return b.miner.SubscribeSyncingEvents(ch)
+}
+
 // StartMining starts beacon mining.
 func (b *Beacon) StartMining() {
 	b.miner.Start()

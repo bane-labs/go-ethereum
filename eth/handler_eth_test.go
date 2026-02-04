@@ -29,7 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -40,8 +40,9 @@ import (
 // testEthHandler is a mock event handler to listen for inbound network requests
 // on the `eth` protocol and convert them into a more easily testable form.
 type testEthHandler struct {
-	txAnnounces  event.Feed
-	txBroadcasts event.Feed
+	blockBroadcasts event.Feed
+	txAnnounces     event.Feed
+	txBroadcasts    event.Feed
 }
 
 func (h *testEthHandler) Chain() *core.BlockChain              { panic("no backing chain") }
@@ -52,6 +53,10 @@ func (h *testEthHandler) PeerInfo(enode.ID) interface{}        { panic("not used
 
 func (h *testEthHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 	switch packet := packet.(type) {
+	case *eth.NewBlockPacket:
+		h.blockBroadcasts.Send(packet.Block)
+		return nil
+
 	case *eth.NewPooledTransactionHashesPacket:
 		h.txAnnounces.Send(packet.Hashes)
 		return nil
@@ -93,8 +98,8 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 		gspecNoFork  = &core.Genesis{Config: configNoFork}
 		gspecProFork = &core.Genesis{Config: configProFork}
 
-		chainNoFork, _  = core.NewBlockChain(dbNoFork, nil, gspecNoFork, nil, engine, vm.Config{}, nil, nil)
-		chainProFork, _ = core.NewBlockChain(dbProFork, nil, gspecProFork, nil, engine, vm.Config{}, nil, nil)
+		chainNoFork, _  = core.NewBlockChain(dbNoFork, nil, gspecNoFork, nil, engine, vm.Config{}, nil)
+		chainProFork, _ = core.NewBlockChain(dbProFork, nil, gspecProFork, nil, engine, vm.Config{}, nil)
 
 		_, blocksNoFork, _  = core.GenerateChainWithGenesis(gspecNoFork, engine, 2, nil)
 		_, blocksProFork, _ = core.GenerateChainWithGenesis(gspecProFork, engine, 2, nil)
@@ -104,7 +109,7 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 			Chain:      chainNoFork,
 			TxPool:     newTestTxPool(),
 			Network:    1,
-			Sync:       downloader.FullSync,
+			Sync:       ethconfig.FullSync,
 			BloomCache: 1,
 		})
 		ethProFork, _ = newHandler(&handlerConfig{
@@ -112,7 +117,7 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 			Chain:      chainProFork,
 			TxPool:     newTestTxPool(),
 			Network:    1,
-			Sync:       downloader.FullSync,
+			Sync:       ethconfig.FullSync,
 			BloomCache: 1,
 		})
 	)
@@ -255,9 +260,8 @@ func testRecvTransactions(t *testing.T, protocol uint) {
 	var (
 		genesis = handler.chain.Genesis()
 		head    = handler.chain.CurrentBlock()
-		td      = handler.chain.GetTd(head.Hash(), head.Number.Uint64())
 	)
-	if err := src.Handshake(1, td, head.Hash(), genesis.Hash(), forkid.NewIDWithChain(handler.chain), forkid.NewFilter(handler.chain)); err != nil {
+	if err := src.Handshake(1, head.Hash(), genesis.Hash(), forkid.NewIDWithChain(handler.chain), forkid.NewFilter(handler.chain)); err != nil {
 		t.Fatalf("failed to run protocol handshake")
 	}
 	// Send the transaction to the sink and verify that it's added to the tx pool
@@ -315,9 +319,8 @@ func testSendTransactions(t *testing.T, protocol uint) {
 	var (
 		genesis = handler.chain.Genesis()
 		head    = handler.chain.CurrentBlock()
-		td      = handler.chain.GetTd(head.Hash(), head.Number.Uint64())
 	)
-	if err := sink.Handshake(1, td, head.Hash(), genesis.Hash(), forkid.NewIDWithChain(handler.chain), forkid.NewFilter(handler.chain)); err != nil {
+	if err := sink.Handshake(1, head.Hash(), genesis.Hash(), forkid.NewIDWithChain(handler.chain), forkid.NewFilter(handler.chain)); err != nil {
 		t.Fatalf("failed to run protocol handshake")
 	}
 	// After the handshake completes, the source handler should stream the sink
