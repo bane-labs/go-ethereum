@@ -164,16 +164,21 @@ func (fs *FileSystem) InsertBlobs(hash common.Hash, blobs types.BlobSidecars) er
 		return errUnknownBlock
 	}
 	// Check if we should retain the blobs based on retention policy
-	if !fs.shouldRetain(block.Number()) {
+	if !fs.ShouldRetain(block.Number()) {
 		return nil
 	}
-	if err := fs.checkBlobsAvailable(block, blobs); err != nil {
+	if err := fs.CheckBlobsAvailable(block, blobs); err != nil {
 		return err
 	}
 
 	// Store blobs to local storage.
 	fs.saveBlobs(block.Header(), blobs)
 	return nil
+}
+
+// InsertBlobsWithoutCheck inserts blobs for a given block hash without validation.
+func (fs *FileSystem) InsertBlobsWithoutValidation(header *types.Header, blobs types.BlobSidecars) error {
+	return fs.saveBlobs(header, blobs)
 }
 
 // InsertBatchBlobSidecars inserts a batch of blob sidecars associated with their block hashes.
@@ -204,14 +209,14 @@ func (fs *FileSystem) saveBlobs(header *types.Header, blobs types.BlobSidecars) 
 	return nil
 }
 
-// shouldRetain checks if the blobs for a given block number should be retained based on the retention policy.
-func (fs *FileSystem) shouldRetain(blockNumberRequested *big.Int) bool {
+// ShouldRetain checks if the blobs for a given block number should be retained based on the retention policy.
+func (fs *FileSystem) ShouldRetain(blockNumberRequested *big.Int) bool {
 	current := fs.bc.CurrentBlock().Number
 	return fs.blobStorage.WithinRetentionPeriod(filesystem.BlockNumberToEpoch(blockNumberRequested), filesystem.BlockNumberToEpoch(current))
 }
 
-// checkBlobsAvailable verifies that the provided blobs match the block's blob hashes and adheres to protocol rules.
-func (fs *FileSystem) checkBlobsAvailable(block *types.Block, blobs types.BlobSidecars) error {
+// CheckBlobsAvailable verifies that the provided blobs match the block's blob hashes and adheres to protocol rules.
+func (fs *FileSystem) CheckBlobsAvailable(block *types.Block, blobs types.BlobSidecars) error {
 	if !fs.bc.Config().IsCancun(block.Number(), block.Time()) {
 		if blobs != nil {
 			return errSidecarsBeforeCancun

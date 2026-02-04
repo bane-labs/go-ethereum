@@ -111,7 +111,10 @@ type FileSystem interface {
 	HasSidecars(hash common.Hash, indices []int) bool
 	GetSidecarsByRoot(hash common.Hash) types.BlobSidecars
 	InsertBlobs(hash common.Hash, blobs types.BlobSidecars) error
+	InsertBlobsWithoutValidation(header *types.Header, blobs types.BlobSidecars) error
 	SubscribeBlobsEvent(ch chan<- core.BlobEvent) event.Subscription
+	ShouldRetain(blockNumberRequested *big.Int) bool
+	CheckBlobsAvailable(block *types.Block, blobs types.BlobSidecars) error
 }
 
 // handlerConfig is the collection of initialization parameters to create a full
@@ -143,12 +146,13 @@ type handler struct {
 	chain    *core.BlockChain
 	maxPeers int
 
-	downloader *downloader.Downloader
-	beacon     Beacon
-	fs         FileSystem
-	blobSync   bool
-	txFetcher  *fetcher.TxFetcher
-	peers      *peerSet
+	downloader     *downloader.Downloader
+	beacon         Beacon
+	fs             FileSystem
+	blobSync       bool
+	txFetcher      *fetcher.TxFetcher
+	sidecarFetcher *beaconfetch.SidecarFetcher
+	peers          *peerSet
 
 	eventMux     *event.TypeMux
 	txsCh        chan core.NewTxsEvent
@@ -251,6 +255,18 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return h.txpool.Add(txs, false, false)
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
+	if h.blobSync {
+		allBeacons := func() []string {
+			ids := h.peers.allBeacons()
+			peers := make([]string, 0, len(ids))
+			for _, id := range ids {
+				peers = append(peers, id.ID())
+			}
+			return peers
+		}
+		h.sidecarFetcher = beaconfetch.NewSidecarFetcher(h.chain, h.fs, allBeacons, h.removePeer, h.broadcastBlobs,
+			h.fetchSidecars, (*beaconHandler)(h).RetrieveSidecarsByRoot)
+	}
 	h.chainSync = newChainSyncer(h)
 	return h, nil
 }
@@ -661,6 +677,15 @@ func (h *handler) fetchHeader(id string, hash common.Hash, sink chan *eth.Respon
 // fetchBodies is the bridge to use a hash array to get the block bodies from `eth` protocol.
 func (h *handler) fetchBodies(id string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 	return h.peers.peer(id).RequestBodies(hashes, sink)
+}
+
+// fetchSidecars is the bridge to use a hash array to get the blob sidecars from `beacon` protocol.
+func (h *handler) fetchSidecars(id string, hashes []common.Hash, sink chan *beaconproto.Response) (*beaconproto.Request, error) {
+	peer := h.peers.beacon(id)
+	if peer == nil {
+		return nil, errors.New("unknown beacon peer")
+	}
+	return peer.RequestBatchBlobs(hashes, sink)
 }
 
 // BroadcastTransactions will propagate a batch of transactions

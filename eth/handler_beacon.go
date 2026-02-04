@@ -130,7 +130,11 @@ func (h *beaconHandler) handleBlockBroadcast(peer *beacon.Peer, packet *beacon.N
 
 func (h *beaconHandler) handleBlobsBroadcast(_ *beacon.Peer, packet *beacon.NewBlobsPacket) error {
 	// save blobs to local store
-	return h.fs.InsertBlobs(packet.BlockHash, packet.Sidecars)
+	if err := h.fs.InsertBlobs(packet.BlockHash, packet.Sidecars); err != nil {
+		return err
+	}
+	(*handler)(h).broadcastBlobs(packet.BlockHash, packet.Sidecars, false)
+	return nil
 }
 
 func (h *beaconHandler) handleGetBlobsPacket(peer *beacon.Peer, packet *beacon.GetBlobsPacket) error {
@@ -285,6 +289,7 @@ func (h *beaconHandler) handleBlobsRootAnnounces(peer *beacon.Peer, packet *beac
 		if err = h.fs.InsertBlobs(packet.BlockHash, blobs); err != nil {
 			return err
 		}
+		(*handler)(h).broadcastBlobs(packet.BlockHash, blobs, false)
 	}
 
 	return nil
