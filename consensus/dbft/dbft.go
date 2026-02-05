@@ -2193,10 +2193,9 @@ func (c *DBFT) Start(chain ChainHeaderReader, inserter ChainInsertFn) {
 				c.lock.RUnlock()
 				err := c.handleDKG(c.dkgSnapshot, ks, currHeader, nil, false)
 				if err != nil {
-					log.Crit("Failed to initialize DKG snapshot",
+					log.Error("Failed to initialize DKG snapshot",
 						"height", currHeader.Number.Uint64(),
 						"err", err.Error())
-					return
 				}
 			}
 		}
