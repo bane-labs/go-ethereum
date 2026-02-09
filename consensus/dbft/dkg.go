@@ -130,13 +130,17 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 
 	// If there is an ongoing round and it's time to epoch change.
 	if snapshot.initDone && currentHeight >= snapshot.EpochStartHeight+epochDuration {
+		// In case the node missed the whole sharing period.
+		if !keystore.IsSharing() {
+			keystore.OnSharePeriodStart(false)
+		}
 		indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
 		if indexOfSharing > 0 {
 			if err := c.syncThisRoundSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
 				return fmt.Errorf("failed to sync sharing DKG, err: %v", err)
 			}
 		}
-		// if indexOfSharing is 0, then selfPvss should be nil.
+		// If indexOfSharing is 0, then selfPvss should be nil.
 		// Ref https://github.com/bane-labs/go-ethereum/blob/4c9105ea2bc246729db0540fce2df02074e21087/contracts/solidity/KeyManagement.sol#L113.
 		selfPvss, err := getSharePVSS(c.backend, snapshot.Round, uint64(indexOfSharing), state, h)
 		if err != nil {
