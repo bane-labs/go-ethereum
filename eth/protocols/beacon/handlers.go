@@ -45,20 +45,6 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 	return backend.Handle(peer, ann)
 }
 
-func handleNewBlobs(backend Backend, msg Decoder, peer *Peer) error {
-	ann := new(NewBlobsPacket)
-	if err := msg.Decode(ann); err != nil {
-		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-	}
-	if err := ann.sanityCheck(); err != nil {
-		return err
-	}
-
-	// Schedule all the unknown hashes for retrieval
-	peer.markBlockBlobs(ann.BlockHash)
-	return backend.Handle(peer, ann)
-}
-
 func handleNewBlobsRoot(backend Backend, msg Decoder, peer *Peer) error {
 	ann := new(NewBlobsRootPacket)
 	if err := msg.Decode(ann); err != nil {

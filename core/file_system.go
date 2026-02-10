@@ -32,7 +32,7 @@ type FileSystem struct {
 	blobPool    BlobPool
 	blobStorage *filesystem.BlobStorage
 
-	blobFeed event.Feed
+	annoBlobFeed event.Feed
 }
 
 func NewFileSystem(bc *BlockChain, blobPool BlobPool, blobStorage *filesystem.BlobStorage) (*FileSystem, error) {
@@ -76,10 +76,11 @@ func (fs *FileSystem) CommitSealBlockHash(block *types.Block) error {
 	}
 
 	// Store blobs to local storage.
-	fs.saveBlobs(block.Header(), blobs)
-	fs.blobFeed.Send(BlobEvent{
+	if err := fs.saveBlobs(block.Header(), blobs); err != nil {
+		return err
+	}
+	fs.annoBlobFeed.Send(AnnoBlobEvent{
 		BlockHash: block.Hash(),
-		Sidecars:  blobs,
 	})
 	log.Trace("Commit seal blobs success", "number", block.Number(), "hash", block.Hash())
 	return nil
@@ -191,9 +192,9 @@ func (fs *FileSystem) InsertBatchBlobSidecars(batch []*types.BlobSidecarsWithHas
 	return len(batch) - 1, nil
 }
 
-// SubscribeBlobsEvent subscribes to blob events.
-func (fs *FileSystem) SubscribeBlobsEvent(ch chan<- BlobEvent) event.Subscription {
-	return fs.blobFeed.Subscribe(ch)
+// SubscribeAnnoBlobsEvent subscribes to anno blob events.
+func (fs *FileSystem) SubscribeAnnoBlobsEvent(ch chan<- AnnoBlobEvent) event.Subscription {
+	return fs.annoBlobFeed.Subscribe(ch)
 }
 
 func (fs *FileSystem) saveBlobs(header *types.Header, blobs types.BlobSidecars) error {

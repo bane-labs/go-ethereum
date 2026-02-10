@@ -44,11 +44,6 @@ func (p *Peer) broadcastBlocks() {
 func (p *Peer) broadcastBlockBlob() {
 	for {
 		select {
-		case data := <-p.blobBroadcast:
-			if err := p.sendNewBlockBlobs(data.BlockHash, data.Sidecars); err != nil {
-				return
-			}
-			p.Log().Trace("Sent blobs", "block hash", data.BlockHash)
 		case blockHash := <-p.blobRootBroadcast:
 			if err := p.sendNewBlobsRoot(blockHash); err != nil {
 				return

@@ -64,9 +64,6 @@ func (h *beaconHandler) Handle(peer *beacon.Peer, packet beacon.Packet) error {
 	case *beacon.NewBlockPacket:
 		return h.handleBlockBroadcast(peer, packet)
 
-	case *beacon.NewBlobsPacket:
-		return h.handleBlobsBroadcast(peer, packet)
-
 	case *beacon.GetBlobsPacket:
 		return h.handleGetBlobsPacket(peer, packet)
 
@@ -128,22 +125,14 @@ func (h *beaconHandler) handleBlockBroadcast(peer *beacon.Peer, packet *beacon.N
 	return nil
 }
 
-func (h *beaconHandler) handleBlobsBroadcast(_ *beacon.Peer, packet *beacon.NewBlobsPacket) error {
-	// save blobs to local store
-	if err := h.fs.InsertBlobs(packet.BlockHash, packet.Sidecars); err != nil {
-		return err
-	}
-	(*handler)(h).broadcastBlobs(packet.BlockHash, packet.Sidecars, false)
-	return nil
-}
-
 func (h *beaconHandler) handleGetBlobsPacket(peer *beacon.Peer, packet *beacon.GetBlobsPacket) error {
 	if packet.Ttl > ttl {
 		log.Debug("GetBlobs request with invalid TTL", "from", peer.ID(), "req", packet)
-		// TODO: Suspicious peer. Should we drop it?
+		// Suspicious peer. We should drop it.
+		(*handler)(h).removePeer(peer.ID())
 		return fmt.Errorf("invalid TTL %d for block hash %s", packet.Ttl, packet.BlockHash.Hex())
 	}
-	// check if the block has blob txs
+	// Check if the block has blob txs
 	block := h.chain.GetBlockByHash(packet.BlockHash)
 	if block == nil {
 		log.Debug("GetBlobs request for unknown block", "from", peer.ID(), "req", packet)
@@ -199,6 +188,10 @@ func (h *beaconHandler) handleGetBatchBlobsPacket(peer *beacon.Peer, packet *bea
 		if data := h.getSidecarsRLP(packet.GetBatchBlobsRequest[lookups]); len(data) != 0 {
 			blobsList = append(blobsList, data)
 			bytes += len(data)
+		} else {
+			// If any of the requested blocks is not found, the response will be partial,
+			// and the client should try to fetch the missing ones separately.
+			break
 		}
 	}
 
@@ -206,7 +199,7 @@ func (h *beaconHandler) handleGetBatchBlobsPacket(peer *beacon.Peer, packet *bea
 }
 
 func (h *beaconHandler) getSidecarsRLP(blockHash common.Hash) []byte {
-	// check if the block has blob txs
+	// Check if the block has blob txs
 	block := h.chain.GetBlockByHash(blockHash)
 	if block == nil {
 		log.Debug("GetBatchBlobs request for unknown block", "req", blockHash)
@@ -245,11 +238,11 @@ func (h *beaconHandler) getSidecarsRLP(blockHash common.Hash) []byte {
 
 func (h *beaconHandler) handleBlobsRootAnnounces(peer *beacon.Peer, packet *beacon.NewBlobsRootPacket) error {
 	if !h.blobSync {
-		// blob sync is disabled, ignore the announcement
+		// Blob sync is disabled, ignore the announcement
 		return nil
 	}
 
-	// check if the block has blob txs
+	// Check if the block has blob txs
 	block := h.chain.GetBlockByHash(packet.BlockHash)
 	if block == nil {
 		log.Debug("NewBlobsRootMsg request for unknown block", "from", peer.ID(), "req", packet)
@@ -257,7 +250,8 @@ func (h *beaconHandler) handleBlobsRootAnnounces(peer *beacon.Peer, packet *beac
 	}
 	if !block.HasBlobTxs() {
 		log.Debug("NewBlobsRootMsg request for block without blobs", "from", peer.ID(), "req", packet)
-		// TODO: Suspicious peer. Should we drop it?
+		// Suspicious peer. We should drop it.
+		(*handler)(h).removePeer(peer.ID())
 		return fmt.Errorf("block %s has no blobs", packet.BlockHash.Hex())
 	}
 
@@ -266,7 +260,7 @@ func (h *beaconHandler) handleBlobsRootAnnounces(peer *beacon.Peer, packet *beac
 	if h.fs.HasSidecars(packet.BlockHash, indices) {
 		return nil
 	}
-	// request blobs from peer
+	// Request blobs from peer
 	resCh := make(chan *beacon.Response)
 	defer close(resCh)
 	ttl := uint8(1)
@@ -289,7 +283,7 @@ func (h *beaconHandler) handleBlobsRootAnnounces(peer *beacon.Peer, packet *beac
 		if err = h.fs.InsertBlobs(packet.BlockHash, blobs); err != nil {
 			return err
 		}
-		(*handler)(h).broadcastBlobs(packet.BlockHash, blobs, false)
+		(*handler)(h).announceBlobs(packet.BlockHash)
 	}
 
 	return nil
@@ -338,11 +332,11 @@ func (h *beaconHandler) retrieveSidecars(blockHash common.Hash, ttl uint8) (type
 	case res := <-resCh:
 		res.Done <- nil
 		blobs := *res.Res.(*types.BlobSidecars)
-		// notify other goroutines to stop
+		// Notify other goroutines to stop
 		close(retrievedCh)
 		log.Debug("Requested blob data from peer", "block hash", blockHash, "peer", res.Req.Peer, "sidecars", len(blobs))
 
-		// save blobs to local store
+		// Save blobs to local store
 		if err := h.fs.InsertBlobs(blockHash, blobs); err != nil {
 			log.Warn("Failed to write blob sidecars", "block hash", blockHash, "err", err)
 		}

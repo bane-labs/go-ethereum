@@ -112,7 +112,7 @@ type FileSystem interface {
 	GetSidecarsByRoot(hash common.Hash) types.BlobSidecars
 	InsertBlobs(hash common.Hash, blobs types.BlobSidecars) error
 	InsertBlobsWithoutValidation(header *types.Header, blobs types.BlobSidecars) error
-	SubscribeBlobsEvent(ch chan<- core.BlobEvent) event.Subscription
+	SubscribeAnnoBlobsEvent(ch chan<- core.AnnoBlobEvent) event.Subscription
 	ShouldRetain(blockNumberRequested *big.Int) bool
 	CheckBlobsAvailable(block *types.Block, blobs types.BlobSidecars) error
 }
@@ -159,8 +159,8 @@ type handler struct {
 	txsSub       event.Subscription
 	reannoTxsCh  chan core.ReannoTxsEvent
 	reannoTxsSub event.Subscription
-	blobsCh      chan core.BlobEvent
-	blobsSub     event.Subscription
+	annoBlobsCh  chan core.AnnoBlobEvent
+	annoBlobsSub event.Subscription
 
 	requiredBlocks map[uint64]common.Hash
 
@@ -256,16 +256,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
 	if h.blobSync {
-		allBeacons := func() []string {
-			ids := h.peers.allBeacons()
-			peers := make([]string, 0, len(ids))
-			for _, id := range ids {
-				peers = append(peers, id.ID())
-			}
-			return peers
-		}
-		h.sidecarFetcher = beaconfetch.NewSidecarFetcher(h.chain, h.fs, allBeacons, h.removePeer, h.broadcastBlobs,
-			h.fetchSidecars, (*beaconHandler)(h).RetrieveSidecarsByRoot)
+		h.sidecarFetcher = beaconfetch.NewSidecarFetcher(h.chain, h.fs, h.peers.blobPeers, h.peers.markNoBlobPeer, h.removePeer,
+			h.announceBlobs, h.fetchSidecars, (*beaconHandler)(h).RetrieveSidecarsByRoot)
 	}
 	h.chainSync = newChainSyncer(h)
 	return h, nil
@@ -606,15 +598,15 @@ func (h *handler) Start(maxPeers int) {
 
 	// start blob event handler
 	h.wg.Add(1)
-	h.blobsCh = make(chan core.BlobEvent, blobChanSize)
-	h.blobsSub = h.fs.SubscribeBlobsEvent(h.blobsCh)
-	go h.handleBlobsEvents()
+	h.annoBlobsCh = make(chan core.AnnoBlobEvent, blobChanSize)
+	h.annoBlobsSub = h.fs.SubscribeAnnoBlobsEvent(h.annoBlobsCh)
+	go h.handleAnnoBlobsEvents()
 }
 
 func (h *handler) Stop() {
 	h.txsSub.Unsubscribe()       // quits txBroadcastLoop
 	h.reannoTxsSub.Unsubscribe() // quits txReannounceLoop
-	h.blobsSub.Unsubscribe()     // quits handleBlobsEvents
+	h.annoBlobsSub.Unsubscribe() // quits handleAnnoBlobsEvents
 
 	// Quit chainSync and txsync64.
 	// After this is done, no new peers will be accepted.
@@ -851,44 +843,28 @@ func (h *handler) BroadcastRequestTxs(txHashes []common.Hash) {
 	}
 }
 
-func (h *handler) handleBlobsEvents() {
+func (h *handler) handleAnnoBlobsEvents() {
 	defer h.wg.Done()
 	for {
 		select {
-		case ev, ok := <-h.blobsCh:
+		case ev, ok := <-h.annoBlobsCh:
 			if !ok {
 				return
 			}
-			h.broadcastBlobs(ev.BlockHash, ev.Sidecars, false)
-		case <-h.blobsSub.Err():
+			h.announceBlobs(ev.BlockHash)
+		case <-h.annoBlobsSub.Err():
 			return
 		}
 	}
 }
 
-// broadcastBlobs broadcasts blobs to peers that do not yet have them.
-func (h *handler) broadcastBlobs(blockHash common.Hash, blobs types.BlobSidecars, propagate bool) {
+// announceBlobs announces the availability of blob sidecars for a given block
+// hash to all beacon peers that don't have them yet.
+func (h *handler) announceBlobs(blockHash common.Hash) {
 	peers := h.peers.beaconsWithoutBlockBlobs(blockHash)
 
-	// If propagation is requested, send to a subset of the peer
-	if propagate {
-		// Send the block to a subset of our peers
-		transfer := peers[:int(math.Sqrt(float64(len(peers))))]
-		for _, peer := range transfer {
-			peer.AsyncSendNewBlockBlobs(blockHash, blobs)
-		}
-		log.Trace("Propagated blob", "hash", blockHash, "recipients", len(transfer))
-		return
+	for _, peer := range peers {
+		peer.AsyncSendNewBlobsRoot(blockHash)
 	}
-	// Otherwise if the blob is indeed in out own chain, announce it
-	indices := make([]int, len(blobs))
-	for i := range blobs {
-		indices[i] = i
-	}
-	if h.fs.HasSidecars(blockHash, indices) {
-		for _, peer := range peers {
-			peer.AsyncSendNewBlobsRoot(blockHash)
-		}
-		log.Trace("Announced blob", "hash", blockHash, "recipients", len(peers))
-	}
+	log.Trace("Announced blob", "hash", blockHash, "recipients", len(peers))
 }

@@ -87,7 +87,6 @@ type Decoder interface {
 var beacon1 = map[uint64]msgHandler{
 	NewBlockHashesMsg: handleNewBlockhashes,
 	NewBlockMsg:       handleNewBlock,
-	NewBlobsMsg:       handleNewBlobs,
 	NewBlobsRootMsg:   handleNewBlobsRoot,
 	GetBlobsMsg:       handleGetBlobs,
 	BlobsMsg:          handleBlobs,

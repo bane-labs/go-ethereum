@@ -7,7 +7,6 @@ import (
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -51,9 +50,8 @@ type Peer struct {
 	queuedBlocks    chan *blockPropagation // Queue of blocks to broadcast to the peer
 	queuedBlockAnns chan *types.Block      // Queue of blocks to announce to the peer
 
-	knownBlobs        *knownCache         // Set of blob hashes known to be known by this peer
-	blobBroadcast     chan core.BlobEvent // Channel used to queue blobs propagation requests
-	blobRootBroadcast chan common.Hash    // Channel used to queue blobs block hash announcement requests
+	knownBlobs        *knownCache      // Set of blob hashes known to be known by this peer
+	blobRootBroadcast chan common.Hash // Channel used to queue blobs block hash announcement requests
 
 	reqDispatch chan *request  // Dispatch channel to send requests and track then until fulfillment
 	reqCancel   chan *cancel   // Dispatch channel to cancel pending requests and untrack them
@@ -76,7 +74,6 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
 		queuedBlocks:      make(chan *blockPropagation, maxQueuedBlocks),
 		queuedBlockAnns:   make(chan *types.Block, maxQueuedBlockAnns),
 		knownBlobs:        newKnownCache(maxKnownBlobs),
-		blobBroadcast:     make(chan core.BlobEvent, blobBufferSize),
 		blobRootBroadcast: make(chan common.Hash, blobBufferSize),
 		reqDispatch:       make(chan *request),
 		reqCancel:         make(chan *cancel),
@@ -225,7 +222,7 @@ func (p *Peer) ReplyBatchBlobsRLP(id uint64, blobs []rlp.RawValue) error {
 }
 
 // RequestBatchBlobs sends GetBatchBlobsMsg by request block hash.
-func (p *Peer) RequestBatchBlobs(hash []common.Hash, sink chan *Response) (*Request, error) {
+func (p *Peer) RequestBatchBlobs(hashes []common.Hash, sink chan *Response) (*Request, error) {
 	id := rand.Uint64()
 
 	req := &Request{
@@ -235,7 +232,7 @@ func (p *Peer) RequestBatchBlobs(hash []common.Hash, sink chan *Response) (*Requ
 		want: BatchBlobsMsg,
 		data: &GetBatchBlobsPacket{
 			RequestId:            id,
-			GetBatchBlobsRequest: hash,
+			GetBatchBlobsRequest: hashes,
 		},
 	}
 
@@ -256,25 +253,6 @@ func (p *Peer) markBlockBlobs(blockHash common.Hash) {
 	if !p.knownBlobs.Contains(blockHash) {
 		// If we reached the memory allowance, drop a previously known block hash
 		p.knownBlobs.Add(blockHash)
-	}
-}
-
-// sendNewBlockBlobs propagates a block's blobs to the remote peer.
-func (p *Peer) sendNewBlockBlobs(blockHash common.Hash, blobs types.BlobSidecars) error {
-	// Mark all the blobs as known, but ensure we don't overflow our limits
-	p.markBlockBlobs(blockHash)
-	return p2p.Send(p.rw, NewBlobsMsg, &NewBlobsPacket{blockHash, blobs})
-}
-
-// AsyncSendNewBlockBlobs queues a batch of blob data for propagation to a remote peer. If
-// the peer's broadcast queue is full, the event is silently dropped.
-func (p *Peer) AsyncSendNewBlockBlobs(blockHash common.Hash, blobs types.BlobSidecars) {
-	select {
-	case p.blobBroadcast <- core.BlobEvent{BlockHash: blockHash, Sidecars: blobs}:
-	case <-p.term:
-		p.Log().Debug("Dropping blob propagation for closed peer", "block hash", blockHash)
-	default:
-		p.Log().Debug("Dropping blob propagation for abnormal peer", "block hash", blockHash)
 	}
 }
 

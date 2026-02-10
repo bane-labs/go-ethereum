@@ -38,7 +38,7 @@ type ChainHeadEvent struct {
 	Header *types.Header
 }
 
-type BlobEvent struct {
+// AnnoBlockEvent is posted when new sidecars of a block are persisted.
+type AnnoBlobEvent struct {
 	BlockHash common.Hash
-	Sidecars  types.BlobSidecars
 }

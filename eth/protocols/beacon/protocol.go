@@ -25,7 +25,7 @@ var ProtocolVersions = []uint{BEACON1}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{BEACON1: 9}
+var protocolLengths = map[uint]uint64{BEACON1: 8}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -34,12 +34,11 @@ const (
 	StatusMsg         = 0x00 // Status message
 	NewBlockHashesMsg = 0x01 // New block hashes message
 	NewBlockMsg       = 0x02 // New block message
-	NewBlobsMsg       = 0x03 // New blobs message
-	NewBlobsRootMsg   = 0x04 // New blobs root message
-	GetBlobsMsg       = 0x05 // Get blobs message
-	BlobsMsg          = 0x06 // Blobs message
-	GetBatchBlobsMsg  = 0x07 // Get batch blobs message
-	BatchBlobsMsg     = 0x08 // Batch blobs message
+	NewBlobsRootMsg   = 0x03 // New blobs root message
+	GetBlobsMsg       = 0x04 // Get blobs message
+	BlobsMsg          = 0x05 // Blobs message
+	GetBatchBlobsMsg  = 0x06 // Get batch blobs message
+	BatchBlobsMsg     = 0x07 // Batch blobs message
 )
 
 var (
@@ -51,7 +50,6 @@ var (
 	errNetworkIDMismatch       = errors.New("network ID mismatch")
 	errGenesisMismatch         = errors.New("genesis mismatch")
 	errForkIDRejected          = errors.New("fork ID rejected")
-	errInvalidBlobs            = errors.New("invalid blobs packet")
 )
 
 // Packet represents a p2p message in the `beacon` protocol.
@@ -94,23 +92,6 @@ func (p *NewBlockHashesPacket) Unpack() ([]common.Hash, []uint64) {
 type NewBlockPacket struct {
 	Block *types.Block
 	TD    *big.Int
-}
-
-// NewBlobsPacket is the network packet for blobs record.
-type NewBlobsPacket struct {
-	BlockHash common.Hash
-	Sidecars  types.BlobSidecars
-}
-
-func (request *NewBlobsPacket) sanityCheck() error {
-	if len(request.Sidecars) > 0 {
-		for _, sidecar := range request.Sidecars {
-			if len(sidecar.Blobs) != len(sidecar.Commitments) || len(sidecar.Blobs) != len(sidecar.Proofs) {
-				return errInvalidBlobs
-			}
-		}
-	}
-	return nil
 }
 
 // NewBlobsRootPacket is the network packet for blobs block hash.
@@ -176,9 +157,6 @@ func (*NewBlockHashesPacket) Kind() byte   { return NewBlockHashesMsg }
 
 func (*NewBlockPacket) Name() string { return "NewBlock" }
 func (*NewBlockPacket) Kind() byte   { return NewBlockMsg }
-
-func (*NewBlobsPacket) Name() string { return "NewBlobs" }
-func (*NewBlobsPacket) Kind() byte   { return NewBlobsMsg }
 
 func (*NewBlobsRootPacket) Name() string { return "NewBlobsRoot" }
 func (*NewBlobsRootPacket) Kind() byte   { return NewBlobsRootMsg }

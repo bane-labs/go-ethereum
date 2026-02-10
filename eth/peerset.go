@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
@@ -57,6 +58,8 @@ type peerSet struct {
 	snapWait map[string]chan *snap.Peer // Peers connected on `eth` waiting for their snap extension
 	snapPend map[string]*snap.Peer      // Peers connected on the `snap` protocol, but not yet on `eth`
 
+	noBlobPeers map[string]time.Time // Peers that have not been able to provide blobs recently
+
 	lock   sync.RWMutex
 	closed bool
 	quitCh chan struct{} // Quit channel to signal termination
@@ -65,11 +68,12 @@ type peerSet struct {
 // newPeerSet creates a new peer set to track the active participants.
 func newPeerSet() *peerSet {
 	return &peerSet{
-		beacons:  make(map[string]*beaconPeer),
-		peers:    make(map[string]*ethPeer),
-		snapWait: make(map[string]chan *snap.Peer),
-		snapPend: make(map[string]*snap.Peer),
-		quitCh:   make(chan struct{}),
+		beacons:     make(map[string]*beaconPeer),
+		peers:       make(map[string]*ethPeer),
+		snapWait:    make(map[string]chan *snap.Peer),
+		snapPend:    make(map[string]*snap.Peer),
+		noBlobPeers: make(map[string]time.Time),
+		quitCh:      make(chan struct{}),
 	}
 }
 
@@ -388,4 +392,32 @@ func (ps *peerSet) close() {
 		close(ps.quitCh)
 	}
 	ps.closed = true
+}
+
+// markNoBlobPeer marks a peer as not having blobs.
+func (ps *peerSet) markNoBlobPeer(id string) {
+	ps.lock.Lock()
+	defer ps.lock.Unlock()
+
+	ps.noBlobPeers[id] = time.Now()
+}
+
+// blobPeers retrieves all of the blob peers.
+func (ps *peerSet) blobPeers() []string {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	// Filter out peers that have not been able to obtain the blob recently.
+	now := time.Now()
+	filtered := make([]string, 0, len(ps.beacons))
+	for id := range ps.beacons {
+		if timeout, ok := ps.noBlobPeers[id]; ok {
+			if now.Sub(timeout) < 30*time.Second {
+				continue
+			}
+			delete(ps.noBlobPeers, id)
+		}
+		filtered = append(filtered, id)
+	}
+	return filtered
 }
