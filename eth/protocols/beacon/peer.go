@@ -50,8 +50,9 @@ type Peer struct {
 	queuedBlocks    chan *blockPropagation // Queue of blocks to broadcast to the peer
 	queuedBlockAnns chan *types.Block      // Queue of blocks to announce to the peer
 
-	knownBlobs        *knownCache      // Set of blob hashes known to be known by this peer
-	blobRootBroadcast chan common.Hash // Channel used to queue blobs block hash announcement requests
+	blobSync         bool             // Enable blob sidecar synchronization
+	knownBlobs       *knownCache      // Set of blob hashes known to be known by this peer
+	blobRootAnnounce chan common.Hash // Channel used to queue blobs block hash announcement requests
 
 	reqDispatch chan *request  // Dispatch channel to send requests and track then until fulfillment
 	reqCancel   chan *cancel   // Dispatch channel to cancel pending requests and untrack them
@@ -66,22 +67,22 @@ type Peer struct {
 func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
 	id := p.ID().String()
 	peer := &Peer{
-		id:                id,
-		Peer:              p,
-		rw:                rw,
-		version:           version,
-		knownBlocks:       newKnownCache(maxKnownBlocks),
-		queuedBlocks:      make(chan *blockPropagation, maxQueuedBlocks),
-		queuedBlockAnns:   make(chan *types.Block, maxQueuedBlockAnns),
-		knownBlobs:        newKnownCache(maxKnownBlobs),
-		blobRootBroadcast: make(chan common.Hash, blobBufferSize),
-		reqDispatch:       make(chan *request),
-		reqCancel:         make(chan *cancel),
-		resDispatch:       make(chan *response),
-		term:              make(chan struct{}),
+		id:               id,
+		Peer:             p,
+		rw:               rw,
+		version:          version,
+		knownBlocks:      newKnownCache(maxKnownBlocks),
+		queuedBlocks:     make(chan *blockPropagation, maxQueuedBlocks),
+		queuedBlockAnns:  make(chan *types.Block, maxQueuedBlockAnns),
+		knownBlobs:       newKnownCache(maxKnownBlobs),
+		blobRootAnnounce: make(chan common.Hash, blobBufferSize),
+		reqDispatch:      make(chan *request),
+		reqCancel:        make(chan *cancel),
+		resDispatch:      make(chan *response),
+		term:             make(chan struct{}),
 	}
 	go peer.broadcastBlocks()
-	go peer.broadcastBlockBlob()
+	go peer.announceBlobRoot()
 	go peer.dispatcher()
 
 	return peer
@@ -102,6 +103,11 @@ func (p *Peer) ID() string {
 // Version retrieves the peer's negotiated `beacon` protocol version.
 func (p *Peer) Version() uint {
 	return p.version
+}
+
+// BlobSync retrieves the blob sync switch of the peer.
+func (p *Peer) BlobSync() bool {
+	return p.blobSync
 }
 
 // Head retrieves the current head hash and total difficulty of the peer.
@@ -266,7 +272,7 @@ func (p *Peer) sendNewBlobsRoot(hash common.Hash) error {
 // the peer's broadcast queue is full, the event is silently dropped.
 func (p *Peer) AsyncSendNewBlobsRoot(hash common.Hash) {
 	select {
-	case p.blobRootBroadcast <- hash:
+	case p.blobRootAnnounce <- hash:
 	case <-p.term:
 		p.Log().Debug("Dropping blob block hash propagation for closed peer", "block hash", hash)
 	default:

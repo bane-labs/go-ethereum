@@ -3,6 +3,7 @@ package eth
 import (
 	"fmt"
 	"math/big"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -24,6 +25,8 @@ const (
 	ttl = 3
 	// Maximum allotted time to return an explicitly requested blob
 	blobFetchTimeout = 500 * time.Millisecond
+	// Maximum allotted time to return a batch of blobs
+	batchBlobsFetchTimeout = 3 * time.Second
 
 	// softResponseLimit is the target maximum size of replies to data retrievals.
 	softResponseLimit = 5 * 1024 * 1024
@@ -160,7 +163,9 @@ func (h *beaconHandler) handleGetBlobsPacket(peer *beacon.Peer, packet *beacon.G
 		return fmt.Errorf("blobs not found for block hash %s", packet.BlockHash.Hex())
 	}
 
-	blobData, err := h.retrieveSidecars(packet.BlockHash, packet.Ttl-1)
+	targetPeer := peer.ID()
+	transfer := h.selectBlobTransferPeers(&targetPeer)
+	blobData, err := h.retrieveSidecars(transfer, packet.BlockHash, packet.Ttl-1)
 	if err != nil {
 		log.Debug("Failed to retrieve blobs for GetBlobs request", "from", peer.ID(), "req", packet, "err", err)
 		return err
@@ -179,18 +184,35 @@ func (h *beaconHandler) handleGetBatchBlobsPacket(peer *beacon.Peer, packet *bea
 		bytes     int
 		blobsList []rlp.RawValue
 	)
+	batchBlobsFetchTimer := time.NewTimer(batchBlobsFetchTimeout)
+	defer batchBlobsFetchTimer.Stop()
+	scChan := make(chan []byte)
+	defer close(scChan)
+	interrupt := false
 	for lookups := range packet.GetBatchBlobsRequest {
 		if bytes >= softResponseLimit || len(blobsList) >= maxBlocksServe ||
 			lookups >= 2*maxBlocksServe {
 			break
 		}
 
-		if data := h.getSidecarsRLP(packet.GetBatchBlobsRequest[lookups]); len(data) != 0 {
-			blobsList = append(blobsList, data)
-			bytes += len(data)
-		} else {
-			// If any of the requested blocks is not found, the response will be partial,
-			// and the client should try to fetch the missing ones separately.
+		go func() {
+			scChan <- h.getSidecarsRLP(peer.ID(), packet.GetBatchBlobsRequest[lookups])
+		}()
+		select {
+		case <-batchBlobsFetchTimer.C:
+			interrupt = true
+		case data := <-scChan:
+			if len(data) != 0 {
+				blobsList = append(blobsList, data)
+				bytes += len(data)
+			} else {
+				// If any of the requested blocks is not found, the response will be partial,
+				// and the client should try to fetch the missing ones separately.
+				interrupt = true
+			}
+		}
+		// If the time limit is exceeded or data cannot be obtained, exit the loop prematurely.
+		if interrupt {
 			break
 		}
 	}
@@ -198,7 +220,7 @@ func (h *beaconHandler) handleGetBatchBlobsPacket(peer *beacon.Peer, packet *bea
 	return peer.ReplyBatchBlobsRLP(packet.RequestId, blobsList)
 }
 
-func (h *beaconHandler) getSidecarsRLP(blockHash common.Hash) []byte {
+func (h *beaconHandler) getSidecarsRLP(targetPeer string, blockHash common.Hash) []byte {
 	// Check if the block has blob txs
 	block := h.chain.GetBlockByHash(blockHash)
 	if block == nil {
@@ -223,7 +245,13 @@ func (h *beaconHandler) getSidecarsRLP(blockHash common.Hash) []byte {
 		return nil
 	}
 
-	sidecars, err := h.retrieveSidecars(blockHash, 1)
+	// Retrieve all of the blob sync peers
+	transfer := h.peers.blobSyncPeers(&targetPeer)
+	if len(transfer) == 0 {
+		return nil
+	}
+
+	sidecars, err := h.retrieveSidecars([]*beaconPeer{transfer[rand.Intn(len(transfer))]}, blockHash, 1)
 	if err != nil {
 		log.Debug("Failed to retrieve blobs for GetBatchBlobs request", "req", blockHash, "err", err)
 		return nil
@@ -289,9 +317,7 @@ func (h *beaconHandler) handleBlobsRootAnnounces(peer *beacon.Peer, packet *beac
 	return nil
 }
 
-func (h *beaconHandler) retrieveSidecars(blockHash common.Hash, ttl uint8) (types.BlobSidecars, error) {
-	peers := h.peers.allBeacons()
-	transfer := peers[:min(k, len(peers))]
+func (h *beaconHandler) retrieveSidecars(transfer []*beaconPeer, blockHash common.Hash, ttl uint8) (types.BlobSidecars, error) {
 	finishedCh := make(chan struct{})
 	retrievedCh := make(chan struct{})
 	var wg sync.WaitGroup
@@ -346,10 +372,34 @@ func (h *beaconHandler) retrieveSidecars(blockHash common.Hash, ttl uint8) (type
 
 // RetrieveSidecarsByRoot retrieves blob sidecars by block hash.
 func (h *beaconHandler) RetrieveSidecarsByRoot(blockHash common.Hash) (types.BlobSidecars, error) {
-	blobData, err := h.retrieveSidecars(blockHash, ttl)
+	transfer := h.selectBlobTransferPeers(nil)
+
+	blobData, err := h.retrieveSidecars(transfer, blockHash, ttl)
 	if err != nil {
 		log.Debug("Failed to retrieve blobs for GetBlobs request", "blockHash", blockHash, "err", err)
 		return nil, err
 	}
 	return blobData, nil
+}
+
+func (h *beaconHandler) selectBlobTransferPeers(excludePeer *string) []*beaconPeer {
+	var transfer []*beaconPeer
+	blobPeers := h.peers.blobSyncPeers(excludePeer)
+	if len(blobPeers) > 0 {
+		transfer = []*beaconPeer{blobPeers[rand.Intn(len(blobPeers))]}
+	} else {
+		peers := h.peers.allBeacons()
+		if excludePeer != nil {
+			var filter []*beaconPeer
+			for _, peer := range peers {
+				if peer.ID() == *excludePeer {
+					continue
+				}
+				filter = append(filter, peer)
+			}
+			peers = filter
+		}
+		transfer = peers[:min(k, len(peers))]
+	}
+	return transfer
 }

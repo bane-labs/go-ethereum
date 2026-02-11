@@ -113,7 +113,7 @@ func (f *SidecarFetcher) loop() {
 	timeoutTicker := time.NewTicker(fetchTimeout)
 	defer timeoutTicker.Stop()
 
-	var fetchHeight uint64
+	fetchHeight := uint64(0)
 	height := f.chain.CurrentBlock().Number.Uint64()
 	minRetainBlockNumbers := uint64(params.MinEthEpochsForBlobsSidecarsRequest * params.BlocksPerEthEpoch)
 	if height > minRetainBlockNumbers {

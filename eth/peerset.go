@@ -402,7 +402,7 @@ func (ps *peerSet) markNoBlobPeer(id string) {
 	ps.noBlobPeers[id] = time.Now()
 }
 
-// blobPeers retrieves all of the blob peers.
+// blobPeers retrieves all of the filtered blob peers.
 func (ps *peerSet) blobPeers() []string {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
@@ -420,4 +420,21 @@ func (ps *peerSet) blobPeers() []string {
 		filtered = append(filtered, id)
 	}
 	return filtered
+}
+
+// blobSyncPeers retrieves all of the blob sync peers.
+func (ps *peerSet) blobSyncPeers(excludePeer *string) []*beaconPeer {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	peers := make([]*beaconPeer, 0, len(ps.beacons))
+	for id, peer := range ps.beacons {
+		if peer.BlobSync() {
+			if excludePeer != nil && id == *excludePeer {
+				continue
+			}
+			peers = append(peers, peer)
+		}
+	}
+	return peers
 }

@@ -38,13 +38,13 @@ func (p *Peer) broadcastBlocks() {
 	}
 }
 
-// broadcastBlockBlob is a write loop that schedules blob broadcasts
+// announceBlobRoot is a write loop that schedules blob broadcasts
 // to the remote peer. The goal is to have an async writer that does not lock up
 // node internals and at the same time rate limits queued data.
-func (p *Peer) broadcastBlockBlob() {
+func (p *Peer) announceBlobRoot() {
 	for {
 		select {
-		case blockHash := <-p.blobRootBroadcast:
+		case blockHash := <-p.blobRootAnnounce:
 			if err := p.sendNewBlobsRoot(blockHash); err != nil {
 				return
 			}

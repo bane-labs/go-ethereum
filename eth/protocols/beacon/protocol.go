@@ -66,6 +66,7 @@ type StatusPacket struct {
 	Head            common.Hash
 	Genesis         common.Hash
 	ForkID          forkid.ID
+	BlobSync        bool
 }
 
 // NewBlockHashesPacket is the network packet for the block announcements.

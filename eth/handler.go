@@ -322,7 +322,7 @@ func (h *handler) runBeaconPeer(peer *beaconproto.Peer, handler beaconproto.Hand
 		td      = h.chain.GetTd(hash, number)
 	)
 	forkID := forkid.NewID(h.chain.Config(), genesis, number, head.Time)
-	if err := peer.Handshake(h.networkID, td, hash, genesis.Hash(), forkID, h.forkFilter); err != nil {
+	if err := peer.Handshake(h.networkID, td, hash, genesis.Hash(), forkID, h.forkFilter, h.blobSync); err != nil {
 		peer.Log().Debug("Beacon handshake failed", "err", err)
 		return err
 	}
@@ -600,13 +600,13 @@ func (h *handler) Start(maxPeers int) {
 	h.wg.Add(1)
 	h.annoBlobsCh = make(chan core.AnnoBlobEvent, blobChanSize)
 	h.annoBlobsSub = h.fs.SubscribeAnnoBlobsEvent(h.annoBlobsCh)
-	go h.handleAnnoBlobsEvents()
+	go h.blobsAnnounceLoop()
 }
 
 func (h *handler) Stop() {
 	h.txsSub.Unsubscribe()       // quits txBroadcastLoop
 	h.reannoTxsSub.Unsubscribe() // quits txReannounceLoop
-	h.annoBlobsSub.Unsubscribe() // quits handleAnnoBlobsEvents
+	h.annoBlobsSub.Unsubscribe() // quits blobsAnnounceLoop
 
 	// Quit chainSync and txsync64.
 	// After this is done, no new peers will be accepted.
@@ -843,7 +843,7 @@ func (h *handler) BroadcastRequestTxs(txHashes []common.Hash) {
 	}
 }
 
-func (h *handler) handleAnnoBlobsEvents() {
+func (h *handler) blobsAnnounceLoop() {
 	defer h.wg.Done()
 	for {
 		select {
