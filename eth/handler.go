@@ -225,7 +225,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	addTxs := func(txs []*types.Transaction) []error {
 		return h.txpool.Add(txs, false, false)
 	}
-
 	validateMeta := func(tx common.Hash, kind byte) error {
 		if h.txpool.Has(tx) {
 			return txpool.ErrAlreadyKnown
@@ -235,8 +234,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 		return nil
 	}
-
-	h.txFetcher = fetcher.NewTxFetcher(validateMeta, addTxs, fetchTx, h.removePeer)
+	h.txFetcher = fetcher.NewTxFetcher(h.chain, validateMeta, addTxs, fetchTx, h.removePeer)
 	if h.blobSync {
 		h.sidecarFetcher = beaconfetch.NewSidecarFetcher(h.chain, h.fs, h.peers.blobPeers, h.peers.markNoBlobPeer, h.removePeer,
 			h.peers.highestNumberOfBeacons, h.announceBlobs, h.fetchSidecars, (*beaconHandler)(h).RetrieveSidecarsByRoot)
