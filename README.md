@@ -1,8 +1,6 @@
 ## Neo X node based on Go Ethereum
 
-Golang implementation of the Neo X node based on the [Ethereum protocol
-execution layer implementation](https://github.com/ethereum/go-ethereum) written in
-Go.
+Golang implementation of the Neo X node based on the [Ethereum execution layer](https://github.com/ethereum/go-ethereum).
 
 [![GoDoc](https://godoc.org/github.com/bane-labs/go-ethereum?status.svg)](https://godoc.org/github.com/bane-labs/go-ethereum)
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/bane-labs/go-ethereum?sort=semver)
@@ -13,7 +11,7 @@ published at https://github.com/bane-labs/go-ethereum/releases.
 
 ## Building the source
 
-For prerequisites and detailed build instructions please read the [Installation Instructions](https://docs.banelabs.org/development/running-a-node-in-testnet).
+For prerequisites and detailed build instructions please read the [Installation Instructions](https://xdocs.ngd.network/development/running-a-neo-x-node).
 
 Building `geth` requires both a Go (version 1.23 or later) and a C compiler. You can install
 them using your favourite package manager. Once the dependencies are installed, run
@@ -52,13 +50,13 @@ on how you can run your own `geth` instance.
 
 ### Hardware Requirements
 
-#### Member Node
+#### Seed Node
 
 Minimum:
 
 * CPU with 2+ cores
 * 4GB RAM
-* 200GB free storage space to sync the Testnet
+* 200GB free storage space to sync the Mainnet
 * 8 MBit/sec download Internet service
 
 Recommended:
@@ -74,7 +72,7 @@ Minimum:
 
 * Fast CPU with 2+ cores
 * 16GB RAM
-* 200GB free storage space to sync the Testnet
+* 200GB free storage space to sync the Mainnet
 * 8 MBit/sec download Internet service
 
 Recommended:
@@ -84,32 +82,32 @@ Recommended:
 * High-performance SSD with at least 1TB of free space
 * 25+ MBit/sec download Internet service
 
-### Full node on the Testnet Neo X network
+### Full node on the main Neo X network
 
-To run a full node on the Neo X Testnet network follow the steps below.
+To run a full node on the Neo X Mainnet network follow the steps below.
 
 1. Download the binaries from https://github.com/bane-labs/go-ethereum/releases or
    build the node with the following command:
    ```shell
    make geth
    ```
-2. Download the corresponding Neo X Testnet configuration from the
-   [GitHub repository](https://github.com/bane-labs/go-ethereum/blob/bane-main/config/genesis_testnet.json). 
-3. Download 3 pairs of R1CS files and proving key files from [Neo X MPC ceremony](https://github.com/bane-labs/mpc) for participanting ZK-DKG.
-4. Initialize node database with the downloaded Neo X testnet genesis configuration:
+2. Download the corresponding Neo X Mainnet configuration from the
+   [GitHub repository](https://github.com/bane-labs/go-ethereum/blob/bane-main/config/genesis_mainnet.json). 
+3. (Only consensus node) Download 3 pairs of R1CS files and proving key files from [Neo X MPC ceremony](https://github.com/bane-labs/mpc) for participanting ZK-DKG.
+4. Initialize node database with the downloaded Neo X Mainnet genesis configuration:
    ```shell
-   ./geth init --state.scheme hash --datadir ./nodes/node1 ./genesis_testnet.json
+   ./geth init --state.scheme hash --datadir ./node ./genesis_mainnet.json
    ```
 5. Create an account for the node operation or use an existing one. The following
    command may be used to create a new account (you'll be prompted for a password):
    ```shell
-   ./geth --datadir ./nodes/node1 account new
+   ./geth --datadir ./node account new
    ```
-6. Create an antimev keystore for participanting AMEV-dBFT or use an existing one.
+6. (Only consensus node) Create an antimev keystore for participanting AMEV-dBFT or use an existing one.
    The following command may be used to create a new keystore for your miner account
    (you'll be prompted for a password):
    ```shell
-   ./geth --datadir ./nodes/node1 antimev init <address>
+   ./geth --datadir ./node antimev init <address>
    ```
 7. Run the node either as a consensus member or as a seed node.
    1. **Running a seed node.** Seed node is a network member that does not take part
@@ -120,37 +118,31 @@ To run a full node on the Neo X Testnet network follow the steps below.
       To start the seed node use the following shell script as a template:
       ```shell
       #!/bin/bash
+      node="./node"
 
-      node="nodes/node1"
-   
-      startP2PPort=30300
-      startHttpPort=8545
-      startRPCPort=8561
-         
-      port=`expr $startP2PPort + 1`
-      httpport=`expr $startHttpPort + 1`
-      rpcport=`expr $startRPCPort + 1`
-      wsport=8570
-         
-      miner=$(<$node/node_address.txt)
-      echo "$node and the node address is $miner, rpc port $rpcport, p2p port $port"
-         
+      port=30303
+      udpport=30303
+      httpport=8551
+      rpcport=8561
+      wsport=8571
+
       nohup ./geth \
-      --networkid 12227332 \
-      --nat extip:10.148.0.2 \
+      --networkid 47763 \
+      --nat extip:127.0.0.1 \
       --port $port \
+      --discovery.port $udpport \
       --authrpc.port $rpcport \
       --identity $node \
       --maxpeers 50 \
       --syncmode full \
       --gcmode archive \
       --datadir $node \
-      --bootnodes "enr:-KO4QFuNbtvEaHsiOpEe22LyYJ9FBNDfsvzhBcohnpLcOmopXlk9sKE9JJlT9_JjVb3K0KTPvfNjjArb8c8Qe-geeoaGAY7rxy0Wg2V0aMfGhBL8z2aAgmlkgnY0gmlwhCO764eJc2VjcDI1NmsxoQNhL5qj-6ycHfDYoD3oujZuxH20AOLdU1aoT5gGGSLSaoRzbmFwwIN0Y3CCdl2DdWRwgnZd" \
-      --http.api admin,eth,debug,miner,net,txpool,personal,web3,dbft \
+      --bootnodes "enode://92eec46dd8b67ea8d8999defe0bf2b43d4c4802ed42a430843fec97dafbdc9128849261bdf1a940d431fc61f06a1317f5fc7c0386e18a9bbf951d0ccd8bf4f98@34.42.6.58:30303,enode://f289fb5c83ed39cf7d7aff2727afe70bf7951222c4a9aaef7bcbceef9fd0b53e4b6c9c0e08a50774dfd50d93e83b977932e4780934d379a6a0ac10cc44c6cfdb@34.87.188.162:30303" \
+      --http.api eth,net,txpool,web3,dbft \
       --http --http.addr 0.0.0.0 --http.port $httpport --http.vhosts "*" --http.corsdomain '*' \
       --ws --ws.addr 0.0.0.0 --ws.port $wsport --ws.api eth,net,web3 --ws.origins '*'  \
       --verbosity 3  >> $node/node.log 2>&1 &
-         
+
       sleep 3s;
       ps -ef|grep geth|grep mine|grep -v grep;
       ```
@@ -159,9 +151,9 @@ To run a full node on the Neo X Testnet network follow the steps below.
    to find yours. Refer to
    https://geth.ethereum.org/docs/fundamentals/command-line-options for more
    details about start options.
-
-   This script expects node DB directory to be `./node/node1` and the address of
-   your account to be stored at `./node/node1/node_address.txt`.
+   
+   This script expects node DB directory to be `./node` and the address of
+   your account to be stored at `./node/node_address.txt`.
    
    Once all necessary flags are applied to the `./geth` command, you may run the
    seed node by running this script.
@@ -171,31 +163,29 @@ To run a full node on the Neo X Testnet network follow the steps below.
       consensus process in watch-only mode. However, to become a block-producing
       validator the candidate must register itself via Governance contract and earn
       enough votes from the Neo X users. Please refer to the
-      [Neo X Governance documentation](https://docs.banelabs.org/governance/governance-in-neo-x)
-      and to the [Neo X candidate registration documentation](https://docs.banelabs.org/development/running-a-node-in-testnet#id-6.-registering-as-a-candidate)
+      [Neo X Governance documentation](https://xdocs.ngd.network/governance/governance-in-neo-x)
+      and to the [Neo X candidate registration documentation](https://xdocs.ngd.network/development/running-a-neo-x-node#id-4.b.5.-registering-as-a-candidate)
       for more details.
       
       To start a consensus node use `--mine` flag with addition to the script for the
       seed node. The following script may be used as a template:
       ```shell
       #!/bin/bash
-      
-      node="nodes/node1"
-      
-      startP2PPort=30300
-      startRPCPort=8561
-      
-      port=`expr $startP2PPort + $nodeIndex`
-      rpcport=`expr $startRPCPort + $nodeIndex`
-      
+      node="./node"
       miner=$(<$node/node_address.txt)
-      echo "$node and miner is $miner, rpc port $rpcport, p2p port $port"
-      
+      ​
+      port=30303
+      udpport=30303
+      httpport=8551
+      rpcport=8561
+      wsport=8571
+      ​
       nohup ./geth \
-      --networkid 12227332 \
-      --nat extip:10.148.0.2 \
+      --networkid 47763 \
+      --nat extip:127.0.0.1 \
       --port $port \
-      --mine --miner.etherbase $miner \
+      --discovery.port $udpport \
+      --mine --miner.pending.feeRecipient $miner \
       --unlock $miner \
       --password $node/password.txt \
       --antimev.password $node/password.txt \
@@ -211,9 +201,9 @@ To run a full node on the Neo X Testnet network follow the steps below.
       --syncmode full \
       --gcmode archive \
       --datadir $node \
-      --bootnodes "enr:-KO4QFuNbtvEaHsiOpEe22LyYJ9FBNDfsvzhBcohnpLcOmopXlk9sKE9JJlT9_JjVb3K0KTPvfNjjArb8c8Qe-geeoaGAY7rxy0Wg2V0aMfGhBL8z2aAgmlkgnY0gmlwhCO764eJc2VjcDI1NmsxoQNhL5qj-6ycHfDYoD3oujZuxH20AOLdU1aoT5gGGSLSaoRzbmFwwIN0Y3CCdl2DdWRwgnZd" \
+      --bootnodes "enode://92eec46dd8b67ea8d8999defe0bf2b43d4c4802ed42a430843fec97dafbdc9128849261bdf1a940d431fc61f06a1317f5fc7c0386e18a9bbf951d0ccd8bf4f98@34.42.6.58:30303,enode://f289fb5c83ed39cf7d7aff2727afe70bf7951222c4a9aaef7bcbceef9fd0b53e4b6c9c0e08a50774dfd50d93e83b977932e4780934d379a6a0ac10cc44c6cfdb@34.87.188.162:30303" \
       --verbosity 3  >> $node/node.log 2>&1 &
-      
+
       sleep 3s;
       ps -ef|grep geth|grep mine|grep -v grep;
       ```
@@ -223,14 +213,14 @@ To run a full node on the Neo X Testnet network follow the steps below.
       https://geth.ethereum.org/docs/fundamentals/command-line-options for more
       details about start options.
 
-      This script expects node DB directory to be `./node/node1`, the address of
-      the consensus node account to be stored at `./node/node1/node_address.txt` and
-      the password to be stored at `./node/node1/password.txt`.
+      This script expects node DB directory to be `./node`, the address of
+      the consensus node account to be stored at `./node/node_address.txt` and
+      the password to be stored at `./node/password.txt`.
    
       Once all necessary flags are applied to the `./geth` command, you may run the
       seed node by running this script.
 
-7. You may also start the built-in interactive
+8. You may also start the built-in interactive
    [JavaScript console](https://geth.ethereum.org/docs/interacting-with-geth/javascript-console),
    (via the trailing `console` subcommand) through which you can interact using
    [`web3` methods](https://github.com/ChainSafe/web3.js/blob/0.20.7/DOCUMENTATION.md) 
@@ -261,8 +251,6 @@ export your existing configuration:
 $ geth --your-favourite-flags dumpconfig
 ```
 
-*Note: This works only with `geth` v1.6.0 and above.*
-
 #### Docker quick start
 
 One of the quickest ways to get Ethereum up and running on your machine is by using
@@ -287,7 +275,7 @@ accessible from the outside.
 
 As a developer, sooner rather than later you'll want to start interacting with `geth` and the
 Ethereum network via your own programs and not manually through the console. To aid
-this, `geth` has built-in support for a JSON-RPC based APIs ([standard APIs](https://ethereum.github.io/execution-apis/api-documentation/)
+this, `geth` has built-in support for a JSON-RPC based APIs ([standard APIs](https://ethereum.org/en/developers/docs/apis/json-rpc/)
 and [`geth` specific APIs](https://geth.ethereum.org/docs/interacting-with-geth/rpc)).
 These can be exposed via HTTP, WebSockets and IPC (UNIX sockets on UNIX based
 platforms, and named pipes on Windows).
@@ -310,7 +298,6 @@ HTTP based JSON-RPC API options:
   * `--ws.api` API's offered over the WS-RPC interface (default: `eth,net,web3`)
   * `--ws.origins` Origins from which to accept WebSocket requests
   * `--ipcdisable` Disable the IPC-RPC server
-  * `--ipcapi` API's offered over the IPC-RPC interface (default: `admin,debug,eth,miner,net,personal,txpool,web3`)
   * `--ipcpath` Filename for IPC socket/pipe within the datadir (explicit paths escape it)
 
 You'll need to use your own programming environments' capabilities (libraries, tools, etc) to
@@ -329,113 +316,24 @@ APIs!**
 Maintaining your own private network is more involved as a lot of configurations taken for
 granted in the official networks need to be manually set up.
 
-#### Defining the private genesis state
+It is still easy to set up a network of Neo X nodes without heavy ZK computations.
 
-First, you'll need to create the genesis state of your networks, which all nodes need to be
-aware of and agree upon. This consists of a small JSON file (e.g. call it `genesis.json`):
+There are two different solutions depending on your preference:
 
-```json
-{
-  "config": {
-    "chainId": <arbitrary positive integer>,
-    "homesteadBlock": 0,
-    "eip150Block": 0,
-    "eip155Block": 0,
-    "eip158Block": 0,
-    "byzantiumBlock": 0,
-    "constantinopleBlock": 0,
-    "petersburgBlock": 0,
-    "istanbulBlock": 0,
-    "berlinBlock": 0,
-    "londonBlock": 0
-  },
-  "alloc": {},
-  "coinbase": "0x0000000000000000000000000000000000000000",
-  "difficulty": "0x20000",
-  "extraData": "",
-  "gasLimit": "0x2fefd8",
-  "nonce": "0x0000000000000042",
-  "mixhash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-  "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-  "timestamp": "0x00"
-}
-```
-
-The above fields should be fine for most purposes, although we'd recommend changing
-the `nonce` to some random value so you prevent unknown remote nodes from being able
-to connect to you. If you'd like to pre-fund some accounts for easier testing, create
-the accounts and populate the `alloc` field with their addresses.
-
-```json
-"alloc": {
-  "0x0000000000000000000000000000000000000001": {
-    "balance": "111111111"
-  },
-  "0x0000000000000000000000000000000000000002": {
-    "balance": "222222222"
-  }
-}
-```
-
-With the genesis state defined in the above JSON file, you'll need to initialize **every**
-`geth` node with it prior to starting it up to ensure all blockchain parameters are correctly
-set:
-
-```shell
-$ geth init path/to/genesis.json
-```
-
-#### Creating the rendezvous point
-
-With all nodes that you want to run initialized to the desired genesis state, you'll need to
-start a bootstrap node that others can use to find each other in your network and/or over
-the internet. The clean way is to configure and run a dedicated bootnode:
-
-```shell
-$ bootnode --genkey=boot.key
-$ bootnode --nodekey=boot.key
-```
-
-With the bootnode online, it will display an [`enode` URL](https://ethereum.org/en/developers/docs/networking-layer/network-addresses/#enode)
-that other nodes can use to connect to it and exchange peer information. Make sure to
-replace the displayed IP address information (most probably `[::]`) with your externally
-accessible IP to get the actual `enode` URL.
-
-*Note: You could also use a full-fledged `geth` node as a bootnode, but it's the less
-recommended way.*
-
-#### Starting up your member nodes
-
-With the bootnode operational and externally reachable (you can try
-`telnet <ip> <port>` to ensure it's indeed reachable), start every subsequent `geth`
-node pointed to the bootnode for peer discovery via the `--bootnodes` flag. It will
-probably also be desirable to keep the data directory of your private network separated, so
-do also specify a custom `--datadir` flag.
-
-```shell
-$ geth --datadir=path/to/custom/data/folder --bootnodes=<bootnode-enode-url-from-above>
-```
-
-*Note: Since your network will be completely cut off from the main and test networks, you'll
-also need to configure a miner to process transactions and create new blocks for you.*
-
-#### Running a private miner
-
-
-In a private network setting a single CPU miner instance is more than enough for
-practical purposes as it can produce a stable stream of blocks at the correct intervals
-without needing heavy resources (consider running on a single thread, no need for multiple
-ones either). To start a `geth` instance for mining, run it with all your usual flags, extended
-by:
-
-```shell
-$ geth <usual-flags> --mine --miner.threads=1 --miner.etherbase=0x0000000000000000000000000000000000000000
-```
-
-Which will start mining blocks and transactions on a single CPU thread, crediting all
-proceedings to the account specified by `--miner.etherbase`. You can further tune the mining
-by changing the default gas limit blocks converge to (`--miner.targetgaslimit`) and the price
-transactions are accepted at (`--miner.gasprice`).
+  * If you are looking for an eazy-to-operate test network, you can set one up with any of
+    the three following commands.
+    ```shell
+    make privnet_start
+    make privnet_start_four
+    make privnet_start_seven
+    ```
+  * If you prefer to play with Docker, you can set one up with any of the three following
+    commands.
+    ```shell
+    make docker_privnet_start
+    make docker_privnet_start_four
+    make docker_privnet_start_seven
+    ```
 
 ## Contribution
 
