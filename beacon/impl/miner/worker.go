@@ -256,33 +256,38 @@ func (w *worker) commit(block *types.Block, versionedHashes []common.Hash, reque
 
 // feedback sends signed block back to EL for execution.
 func (w *worker) feedback(block *types.Block) error {
-	payload := engine.BlockToExecutableData(block, nil, nil, nil)
-	var executionRequests []hexutil.Bytes
-	if w.chainConfig.IsPrague(block.Number(), block.Time()) {
-		executionRequests = []hexutil.Bytes{}
-	}
-
-	// Collect requests.
-	_, res, err := w.chain.ProcessState(block, nil)
-	if err != nil {
-		return err
-	}
-	for _, v := range res.Requests {
-		executionRequests = append(executionRequests, v)
-	}
-
-	// Send payload through RPC. TODO: collect and include versioned hashes if possible
-	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, executionRequests, block.Time())
-	if err != nil {
-		return err
-	}
-	if status.Status == engine.INVALID {
-		return fmt.Errorf("block rejected by EL, err: %v", *status.ValidationError)
-	}
-
 	// Lock to ensure EL RW atomicity, no concurrent reorg happens.
 	w.forkMu.Lock()
 	defer w.forkMu.Unlock()
+
+	// Send the block back to EL through RPC if not present.
+	if !w.chain.HasBlock(block.Hash(), block.NumberU64()) {
+		// Transform from block to execution payload.
+		payload := engine.BlockToExecutableData(block, nil, nil, nil)
+		var executionRequests []hexutil.Bytes
+		if w.chainConfig.IsPrague(block.Number(), block.Time()) {
+			executionRequests = []hexutil.Bytes{}
+		}
+
+		// Collect requests.
+		_, res, err := w.chain.ProcessState(block, nil)
+		if err != nil {
+			return err
+		}
+		for _, v := range res.Requests {
+			executionRequests = append(executionRequests, v)
+		}
+
+		// Send payload through RPC. TODO: collect and include versioned hashes if possible
+		status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, executionRequests, block.Time())
+		if err != nil {
+			return err
+		}
+		if status.Status == engine.INVALID {
+			return fmt.Errorf("block rejected by EL, err: %v", *status.ValidationError)
+		}
+	}
+
 	// Set head based on reorg check.
 	reorg, err := w.forker.ReorgNeeded(w.chain.CurrentHeader(), block.Header())
 	if err != nil {
