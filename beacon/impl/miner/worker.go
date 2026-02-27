@@ -72,7 +72,8 @@ type worker struct {
 	syncing atomic.Bool // The indicator whether the node is still syncing.
 
 	// Mutex to prevent parallel fork request.
-	forkMu sync.Mutex
+	forkMu           sync.Mutex
+	pendingPayloadID *engine.PayloadID
 }
 
 func newWorker(eth Backend, rpc *rpc.Client, feeRecipient common.Address, shouldPreserve func(header *types.Header) bool) *worker {
@@ -205,22 +206,27 @@ func (w *worker) requestWork(timestamp uint64) {
 
 	// Lock to ensure EL RW atomicity, no real reorg happens.
 	w.forkMu.Lock()
-	// Trigger payload build through the fork choice request.
-	resp, err := w.sendForkChoice(w.chain.CurrentHeader(), timestamp, true)
-	w.forkMu.Unlock()
-	if err != nil {
-		log.Error("Failed to prepare payload", "err", err)
-		return
+	defer w.forkMu.Unlock()
+
+	// Trigger payload build through the fork choice request, or use the existed ID.
+	if w.pendingPayloadID == nil {
+		resp, err := w.sendForkChoice(w.chain.CurrentHeader(), timestamp, true)
+		if err != nil {
+			log.Error("Failed to prepare payload", "err", err)
+			return
+		}
+		if resp.PayloadID == nil {
+			log.Error("Missing payload ID")
+			return
+		}
+		w.pendingPayloadID = resp.PayloadID
 	}
-	if resp.PayloadID == nil {
-		log.Error("Missing payload ID")
-		return
-	}
-	payload, err := w.getPayload(resp.PayloadID)
+	payload, err := w.getPayload(w.pendingPayloadID)
 	if err != nil {
 		log.Error("Failed to fetch payload", "err", err)
 		return
 	}
+	w.pendingPayloadID = nil
 
 	// Rebuild the block from execution payload.
 	var versionedHashes []common.Hash
@@ -260,32 +266,34 @@ func (w *worker) feedback(block *types.Block) error {
 	w.forkMu.Lock()
 	defer w.forkMu.Unlock()
 
-	// Send the block back to EL through RPC if not present.
-	if !w.chain.HasBlock(block.Hash(), block.NumberU64()) {
-		// Transform from block to execution payload.
-		payload := engine.BlockToExecutableData(block, nil, nil, nil)
-		var executionRequests []hexutil.Bytes
-		if w.chainConfig.IsPrague(block.Number(), block.Time()) {
-			executionRequests = []hexutil.Bytes{}
-		}
+	// Return if the block is already present in the chain.
+	if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
+		return nil
+	}
 
-		// Collect requests.
-		_, res, err := w.chain.ProcessState(block, nil)
-		if err != nil {
-			return err
-		}
-		for _, v := range res.Requests {
-			executionRequests = append(executionRequests, v)
-		}
+	// Transform from block to execution payload.
+	payload := engine.BlockToExecutableData(block, nil, nil, nil)
+	var executionRequests []hexutil.Bytes
+	if w.chainConfig.IsPrague(block.Number(), block.Time()) {
+		executionRequests = []hexutil.Bytes{}
+	}
 
-		// Send payload through RPC. TODO: collect and include versioned hashes if possible
-		status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, executionRequests, block.Time())
-		if err != nil {
-			return err
-		}
-		if status.Status == engine.INVALID {
-			return fmt.Errorf("block rejected by EL, err: %v", *status.ValidationError)
-		}
+	// Collect requests.
+	_, res, err := w.chain.ProcessState(block, nil)
+	if err != nil {
+		return err
+	}
+	for _, v := range res.Requests {
+		executionRequests = append(executionRequests, v)
+	}
+
+	// Send payload through RPC. TODO: collect and include versioned hashes if possible
+	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, executionRequests, block.Time())
+	if err != nil {
+		return err
+	}
+	if status.Status == engine.INVALID {
+		return fmt.Errorf("block rejected by EL, err: %v", *status.ValidationError)
 	}
 
 	// Set head based on reorg check.
@@ -296,13 +304,17 @@ func (w *worker) feedback(block *types.Block) error {
 	if !reorg {
 		return nil
 	}
-	// Send the latest head info to EL.
-	resp, err := w.sendForkChoice(block.Header(), block.Time(), false)
+
+	// Send the latest head info to EL, and request a block proposal if mining.
+	resp, err := w.sendForkChoice(block.Header(), uint64(time.Now().Unix()), w.isMining())
 	if err != nil {
 		return err
 	}
 	if resp.PayloadStatus.Status != engine.VALID {
 		return fmt.Errorf("set head failed, status: %v", resp.PayloadStatus.Status)
+	}
+	if resp.PayloadID != nil {
+		w.pendingPayloadID = resp.PayloadID
 	}
 	return nil
 }
