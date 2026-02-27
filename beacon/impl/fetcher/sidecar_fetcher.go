@@ -5,16 +5,31 @@ import (
 	"math/rand"
 	"time"
 
+	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
 )
 
 const (
 	maxQueueLimit = 32 // Maximum number of blocks to fetch ahead of time
 	maxRetryCount = 3  // Maximum number of retries for fetching sidecars
+)
+
+var (
+	blobAnnounceInMeter   = metrics.NewRegisteredMeter("beacon/fetcher/blob/announces/in", nil)
+	blobAnnounceOutTimer  = metrics.NewRegisteredTimer("beacon/fetcher/blob/announces/out", nil)
+	blobAnnounceDropMeter = metrics.NewRegisteredMeter("beacon/fetcher/blob/announces/drop", nil)
+	blobAnnounceDOSMeter  = metrics.NewRegisteredMeter("beacon/fetcher/blob/announces/dos", nil)
+
+	sidecarFetchMeter = metrics.NewRegisteredMeter("beacon/fetcher/sidecars", nil)
+
+	sidecarInsertFailRecords      = mapset.NewSet[common.Hash]()
+	sidecarInsertFailRecordslimit = 1000
+	sidecarInsertFailGauge        = metrics.NewRegisteredGauge("blobstorage/insert/failed", nil)
 )
 
 // SidecarRequesterFn is a callback type for sending a blob sidecar retrieval request.
@@ -38,6 +53,14 @@ type fetchingTask struct {
 	time  time.Time    // The time of the task created
 }
 
+// blobAnnounce represents a notification of a new block hash potentially having blob sidecars available.
+type blobAnnounce struct {
+	hash common.Hash // Hash of the blob's block being announced
+	time time.Time   // Timestamp of the announcement
+
+	origin string // Identifier of the peer originating the notification
+}
+
 type FileSystem interface {
 	HasSidecars(hash common.Hash, indices []int) bool
 	InsertBlobsWithoutValidation(header *types.Header, blobs types.BlobSidecars) error
@@ -53,11 +76,15 @@ type BlockChain interface {
 
 // SidecarFetcher is a blob sidecar fetcher, retrieving blob sidecars for blocks
 type SidecarFetcher struct {
+	notify chan *blobAnnounce
+
 	done chan common.Hash
 	quit chan struct{}
 
-	scheduled map[common.Hash]*fetchingTask // scheduled fetches
-	fetching  map[common.Hash]*fetchingTask // currently fetching
+	announces map[string]int                  // Per peer blobAnnounce counts to prevent memory exhaustion
+	announced map[common.Hash][]*blobAnnounce // Announced blob root hashes with the list of peers that announced them
+	scheduled map[common.Hash]*fetchingTask   // Scheduled fetches
+	fetching  map[common.Hash]*fetchingTask   // Currently fetching
 
 	// Callbacks
 	announceSidecars SidecarsAnnouncerFn // Announces sidecars to the network
@@ -76,8 +103,11 @@ type SidecarFetcher struct {
 func NewSidecarFetcher(chain BlockChain, fs FileSystem, blobPeers BlobPeersFn, markNoBlobPeer MarkNoBlobPeerFn, dropPeer PeerDropFn,
 	announceSidecars SidecarsAnnouncerFn, fetchSidecars SidecarRequesterFn, deepFetchSidecars SidecarDeepRequesterFn) *SidecarFetcher {
 	return &SidecarFetcher{
+		notify:            make(chan *blobAnnounce),
 		done:              make(chan common.Hash),
 		quit:              make(chan struct{}),
+		announces:         make(map[string]int),
+		announced:         make(map[common.Hash][]*blobAnnounce),
 		scheduled:         make(map[common.Hash]*fetchingTask),
 		fetching:          make(map[common.Hash]*fetchingTask),
 		blobPeers:         blobPeers,
@@ -101,6 +131,22 @@ func (f *SidecarFetcher) Start() {
 // operations.
 func (f *SidecarFetcher) Stop() {
 	close(f.quit)
+}
+
+// Notify announces the fetcher of the potential availability of new blobs in
+// the network.
+func (f *SidecarFetcher) Notify(peer string, hash common.Hash, time time.Time) error {
+	blobAnn := &blobAnnounce{
+		hash:   hash,
+		time:   time,
+		origin: peer,
+	}
+	select {
+	case f.notify <- blobAnn:
+		return nil
+	case <-f.quit:
+		return errTerminated
+	}
 }
 
 // Loop is the main fetcher loop, checking and processing various notification
@@ -129,6 +175,23 @@ func (f *SidecarFetcher) loop() {
 		case <-f.quit:
 			// BlockFetcher terminating, abort all operations
 			return
+
+		case notification := <-f.notify:
+			// A blob was announced, make sure the peer isn't DOSing us
+			blobAnnounceInMeter.Mark(1)
+
+			count := f.announces[notification.origin] + 1
+			if count > hashLimit {
+				log.Debug("Peer exceeded outstanding announces", "peer", notification.origin, "limit", hashLimit)
+				blobAnnounceDOSMeter.Mark(1)
+				break
+			}
+			// All is well, schedule the announce if sidecar is not yet downloading
+			if _, ok := f.fetching[notification.hash]; ok {
+				break
+			}
+			f.announces[notification.origin] = count
+			f.announced[notification.hash] = append(f.announced[notification.hash], notification)
 
 		case hash := <-f.done:
 			// A pending import finished, remove all traces of the notification
@@ -164,9 +227,23 @@ func (f *SidecarFetcher) loop() {
 				} else if cost > fetchTimeout {
 					// Reschedule the fetch
 					f.scheduled[hash] = task
+					delete(f.fetching, hash)
 				}
 			}
 			fetchHeight = earliestHeight
+
+			// Clean out any announced hashes that are too old, and decrement DOS counters
+			for hash, announces := range f.announced {
+				if time.Since(announces[0].time) > maxRetryCount*fetchTimeout {
+					for _, announce := range announces {
+						f.announces[announce.origin]--
+						if f.announces[announce.origin] <= 0 {
+							delete(f.announces, announce.origin)
+						}
+					}
+					delete(f.announced, hash)
+				}
+			}
 
 		case <-fetchTimer.C:
 			// At least one block's timer ran out, check for needing retrieval
@@ -179,7 +256,13 @@ func (f *SidecarFetcher) loop() {
 					timeout := arriveTimeout - gatherSlack
 					if time.Since(task.time) > timeout {
 						// Pick a random peer to retrieve from, reset all others
-						peer := peers[rand.Intn(len(peers))]
+						var peer string
+						// Prioritize the use of announced peer
+						if announces, ok := f.announced[hash]; ok {
+							peer = announces[rand.Intn(len(announces))].origin
+						} else {
+							peer = peers[rand.Intn(len(peers))]
+						}
 						f.forgetHash(hash)
 
 						if f.fs.HasSidecars(hash, task.block.BlobTxIndices()) {
@@ -196,6 +279,7 @@ func (f *SidecarFetcher) loop() {
 			// Send out all sidecars requests
 			for peer, hashes := range request {
 				log.Trace("Fetching scheduled sidecars", "peer", peer, "list", hashes)
+				sidecarFetchMeter.Mark(int64(len(hashes)))
 				tasks := reqTaskMap[peer]
 
 				go func(peer string, hashes []common.Hash, tasks []*fetchingTask) {
@@ -215,7 +299,7 @@ func (f *SidecarFetcher) loop() {
 						res.Done <- nil
 						list := *res.Res.(*beacon.BatchBlobsResponse)
 						for i := 0; i < len(list); i++ {
-							f.importSidecars(peer, tasks[i].block, list[i])
+							f.importSidecars(peer, tasks[i], list[i])
 						}
 						if len(list) == 0 {
 							f.markNoBlobPeer(peer)
@@ -252,18 +336,14 @@ func (f *SidecarFetcher) rescheduleFetch(fetch *time.Timer) {
 	fetch.Reset(arriveTimeout - time.Since(earliest))
 }
 
-// importBlocks spawns a new goroutine to run a block insertion into the chain. If the
-// block's number is at the same height as the current import phase, it updates
-// the phase states accordingly.
-func (f *SidecarFetcher) importSidecars(peer string, block *types.Block, sidecars types.BlobSidecars) {
+// importSidecars spawns a new goroutine to run sidecars insertion into the chain.
+func (f *SidecarFetcher) importSidecars(peer string, task *fetchingTask, sidecars types.BlobSidecars) {
+	block := task.block
 	// Run the import on a new thread
 	log.Debug("Importing propagated sidecars", "peer", peer, "number", block.NumberU64(), "hash", block.Hash())
 	go func() {
 		// Quickly validate the sidecars and propagate the sidecars if it passes
-		switch err := f.fs.CheckBlobsAvailable(block, sidecars); err {
-		case nil:
-			// All ok, quickly propagate to our peers
-		default:
+		if err := f.fs.CheckBlobsAvailable(block, sidecars); err != nil {
 			// Something went very wrong, drop the peer
 			log.Error("Propagated sidecars verification failed", "peer", peer, "number", block.Number(), "hash", block.Hash(), "err", err)
 			f.dropPeer(peer)
@@ -274,10 +354,15 @@ func (f *SidecarFetcher) importSidecars(peer string, block *types.Block, sidecar
 
 		// Run the actual import and log any issues
 		if err := f.fs.InsertBlobsWithoutValidation(block.Header(), sidecars); err != nil {
+			if sidecarInsertFailRecords.Cardinality() < sidecarInsertFailRecordslimit {
+				sidecarInsertFailRecords.Add(block.Hash())
+				sidecarInsertFailGauge.Update(int64(sidecarInsertFailRecords.Cardinality()))
+			}
 			log.Debug("Propagated sidecars import failed", "peer", peer, "number", block.Number(), "hash", block.Hash(), "err", err)
 			return
 		}
 		// If import succeeded, announce the sidecars
+		blobAnnounceOutTimer.UpdateSince(task.time)
 		go f.announceSidecars(block.Hash())
 	}()
 }
@@ -285,6 +370,16 @@ func (f *SidecarFetcher) importSidecars(peer string, block *types.Block, sidecar
 // forgetHash removes all traces of a sidecar fetch from the fetcher's
 // internal state.
 func (f *SidecarFetcher) forgetHash(hash common.Hash) {
+	// Remove all pending announces and decrement DOS counters
+	if announceMap, ok := f.announced[hash]; ok {
+		for _, announce := range announceMap {
+			f.announces[announce.origin]--
+			if f.announces[announce.origin] <= 0 {
+				delete(f.announces, announce.origin)
+			}
+		}
+		delete(f.announced, hash)
+	}
 	// Remove any pending fetches
 	delete(f.scheduled, hash)
 	delete(f.fetching, hash)

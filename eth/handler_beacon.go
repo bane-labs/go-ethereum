@@ -270,51 +270,7 @@ func (h *beaconHandler) handleBlobsRootAnnounces(peer *beacon.Peer, packet *beac
 		return nil
 	}
 
-	// Check if the block has blob txs
-	block := h.chain.GetBlockByHash(packet.BlockHash)
-	if block == nil {
-		log.Debug("NewBlobsRootMsg request for unknown block", "from", peer.ID(), "req", packet)
-		return fmt.Errorf("unknown block hash %s", packet.BlockHash.Hex())
-	}
-	if !block.HasBlobTxs() {
-		log.Debug("NewBlobsRootMsg request for block without blobs", "from", peer.ID(), "req", packet)
-		// Suspicious peer. We should drop it.
-		(*handler)(h).removePeer(peer.ID())
-		return fmt.Errorf("block %s has no blobs", packet.BlockHash.Hex())
-	}
-
-	// Check if it exists locally
-	indices := block.BlobTxIndices()
-	if h.fs.HasSidecars(packet.BlockHash, indices) {
-		return nil
-	}
-	// Request blobs from peer
-	resCh := make(chan *beacon.Response)
-	defer close(resCh)
-	ttl := uint8(1)
-	req, err := peer.RequestBlobs(packet.BlockHash, resCh, ttl)
-	if err != nil {
-		log.Debug("Failed to get blob data from peer", "block hash", packet.BlockHash, "peer", peer.ID(), "err", err)
-		return err
-	}
-	defer req.Close()
-	timeout := time.NewTimer(blobFetchTimeout * time.Duration(ttl))
-	defer timeout.Stop()
-	select {
-	case <-timeout.C:
-		return fmt.Errorf("not found blob data for block hash %s", packet.BlockHash.Hex())
-	case res := <-resCh:
-		res.Done <- nil
-		blobs := *res.Res.(*types.BlobSidecars)
-		log.Debug("Requested blob data from peer", "block hash", packet.BlockHash, "peer", res.Req.Peer, "sidecars", len(blobs))
-
-		if err = h.fs.InsertBlobs(packet.BlockHash, blobs); err != nil {
-			return err
-		}
-		(*handler)(h).announceBlobs(packet.BlockHash)
-	}
-
-	return nil
+	return h.sidecarFetcher.Notify(peer.ID(), packet.BlockHash, time.Now())
 }
 
 func (h *beaconHandler) retrieveSidecars(transfer []*beaconPeer, blockHash common.Hash, ttl uint8) (types.BlobSidecars, error) {
