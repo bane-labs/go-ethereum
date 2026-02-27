@@ -2200,13 +2200,13 @@ func (c *DBFT) Start(chain ChainHeaderReader, inserter ChainInsertFn) {
 			}
 		}
 
+		// Subscribe for minted blocks.
+		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
+
 		log.Info("Starting dBFT engine",
 			"last height", c.lastIndex,
 			"last timestamp", c.lastTimestamp)
 		c.dbft.Start(c.lastTimestamp * NsInS)
-
-		// Subscribe for minted blocks.
-		c.chainHeadSub = c.chain.SubscribeChainHeadEvent(c.chainHeadEvents)
 
 		go c.eventLoop()
 	}
