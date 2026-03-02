@@ -828,7 +828,14 @@ func (d *Downloader) fetchHead(p *peerConnection) (head *types.Header, pivot *ty
 	mode := d.getMode()
 
 	// Request the advertised remote head block and wait for the response
+	p.lock.Lock()
+	if p.beacon == nil {
+		p.lock.Unlock()
+		return nil, nil, errUnknownPeer
+	}
 	latest, _ := p.beacon.Head()
+	p.lock.Unlock()
+
 	fetch := 1
 	if mode == SnapSync {
 		fetch = 2 // head + pivot headers
