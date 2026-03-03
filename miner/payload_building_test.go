@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/filesystem"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
@@ -101,6 +102,7 @@ type testWorkerBackend struct {
 	db      ethdb.Database
 	txPool  *txpool.TxPool
 	chain   *core.BlockChain
+	fs      *core.FileSystem
 	genesis *core.Genesis
 }
 
@@ -122,12 +124,18 @@ func newTestWorkerBackend(t *testing.T, chainConfig *params.ChainConfig, engine 
 	if err != nil {
 		t.Fatalf("core.NewBlockChain failed: %v", err)
 	}
+	bs := filesystem.NewEphemeralBlobStorage(t)
+	fs, err := core.NewFileSystem(chain, new(mockBlobPool), bs)
+	if err != nil {
+		t.Fatalf("core.NewFileSystem failed: %v", err)
+	}
 	pool := legacypool.New(testTxPoolConfig, chain)
 	txpool, _ := txpool.New(testTxPoolConfig.PriceLimit, chain, []txpool.SubPool{pool})
 
 	return &testWorkerBackend{
 		db:      db,
 		chain:   chain,
+		fs:      fs,
 		txPool:  txpool,
 		genesis: gspec,
 	}
@@ -135,6 +143,7 @@ func newTestWorkerBackend(t *testing.T, chainConfig *params.ChainConfig, engine 
 
 func (b *testWorkerBackend) BlockChain() *core.BlockChain { return b.chain }
 func (b *testWorkerBackend) TxPool() *txpool.TxPool       { return b.txPool }
+func (b *testWorkerBackend) FileSystem() *core.FileSystem { return b.fs }
 
 func newTestWorker(t *testing.T, chainConfig *params.ChainConfig, engine consensus.Engine, db ethdb.Database, blocks int) (*Miner, *testWorkerBackend) {
 	backend := newTestWorkerBackend(t, chainConfig, engine, db, blocks)

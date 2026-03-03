@@ -45,6 +45,7 @@ func startSimulatedBeaconEthService(t *testing.T, genesis *core.Genesis, period 
 			NoDiscovery: true,
 			MaxPeers:    0,
 		},
+		BlobStoragePath: "./blobs",
 	})
 	if err != nil {
 		t.Fatal("can't create node:", err)

@@ -53,7 +53,7 @@ services:
         --netrestrict 172.200.0.0/24 \
         --dbft.loglevel debug \
         --mine \
-        --miner.etherbase="0x$$(cat ${SINGLE_NODE0_DIR}/node_address.txt)" \
+        --miner.pending.feeRecipient="0x$$(cat ${SINGLE_NODE0_DIR}/node_address.txt)" \
         --antimev.password=${SINGLE_NODE0_DIR}/password.txt
     volumes:
       - ../privnet:/privnet
@@ -94,7 +94,7 @@ services:
         --netrestrict 172.200.0.0/24 \
         --dbft.loglevel debug \
         --mine \
-        --miner.etherbase="0x$$(cat ${SINGLE_NODE1_DIR}/node_address.txt)" \
+        --miner.pending.feeRecipient="0x$$(cat ${SINGLE_NODE1_DIR}/node_address.txt)" \
         --antimev.password=${SINGLE_NODE1_DIR}/password.txt
     volumes:
       - ../privnet:/privnet

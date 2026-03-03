@@ -36,6 +36,8 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/filesystem"
+	"github.com/ethereum/go-ethereum/core/filesystem/primitives"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/pruner"
@@ -82,6 +84,7 @@ type Ethereum struct {
 	localTxTracker *locals.TxTracker
 	dbftSrv        *dbftproto.Service
 	blockchain     *core.BlockChain
+	filesystem     *core.FileSystem
 
 	handler *handler
 	discmix *enode.FairMix
@@ -304,6 +307,22 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		stack.RegisterLifecycle(eth.localTxTracker)
 	}
 
+	blobStorage, err := filesystem.NewBlobStorage(
+		filesystem.WithBlobRetentionEpochs(primitives.Epoch(stack.Config().BlobRetentionEpoch)),
+		filesystem.WithBasePath(stack.Config().BlobStoragePath),
+		filesystem.WithLayout(stack.Config().BlobStorageLayout), // This is validated in the Action func for BlobStorageLayout.
+		filesystem.WithSaveFsync(stack.Config().BlobSaveFsync),
+		filesystem.WithChainConfig(chainConfig),
+	)
+	if err != nil {
+		return nil, err
+	}
+	blobStorage.WarmCache()
+	eth.filesystem, err = core.NewFileSystem(eth.blockchain, blobPool, blobStorage)
+	if err != nil {
+		return nil, err
+	}
+
 	// Permit the downloader to use the trie cache allowance during fast sync
 	cacheLimit := cacheConfig.TrieCleanLimit + cacheConfig.TrieDirtyLimit + cacheConfig.SnapshotLimit
 	if eth.handler, err = newHandler(&handlerConfig{
@@ -316,6 +335,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		BloomCache:     uint64(cacheLimit),
 		EventMux:       eth.eventMux,
 		RequiredBlocks: config.RequiredBlocks,
+		FileSystem:     eth.filesystem,
+		BlobSync:       stack.Config().BlobSync,
 	}); err != nil {
 		return nil, err
 	}
@@ -566,7 +587,7 @@ func (s *Ethereum) StartMining() error {
 
 		go s.beacon.StartMining()
 		if bft != nil {
-			go bft.Start(s.blockchain, s.beacon.InsertBlock)
+			go bft.Start(s.blockchain, s.beacon.InsertBlock, s.filesystem)
 		}
 	}
 	return nil
@@ -590,6 +611,7 @@ func (s *Ethereum) Miner() *miner.Miner { return s.miner }
 
 func (s *Ethereum) AccountManager() *accounts.Manager  { return s.accountManager }
 func (s *Ethereum) BlockChain() *core.BlockChain       { return s.blockchain }
+func (s *Ethereum) FileSystem() *core.FileSystem       { return s.filesystem }
 func (s *Ethereum) TxPool() *txpool.TxPool             { return s.txPool }
 func (s *Ethereum) EventMux() *event.TypeMux           { return s.eventMux }
 func (s *Ethereum) Engine() consensus.Engine           { return s.engine }

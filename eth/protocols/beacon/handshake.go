@@ -18,7 +18,7 @@ const (
 
 // Handshake executes the eth protocol handshake, negotiating version number,
 // network IDs, difficulties, head and genesis blocks.
-func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis common.Hash, forkID forkid.ID, forkFilter forkid.Filter) error {
+func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis common.Hash, forkID forkid.ID, forkFilter forkid.Filter, blobSync bool) error {
 	// Send out own handshake in a new thread
 	errc := make(chan error, 2)
 
@@ -32,6 +32,7 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 			Head:            head,
 			Genesis:         genesis,
 			ForkID:          forkID,
+			BlobSync:        blobSync,
 		})
 	}()
 	go func() {
@@ -81,5 +82,6 @@ func (p *Peer) readStatus(network uint64, status *StatusPacket, genesis common.H
 	if err := forkFilter(status.ForkID); err != nil {
 		return fmt.Errorf("%w: %v", errForkIDRejected, err)
 	}
+	p.blobSync = status.BlobSync
 	return nil
 }

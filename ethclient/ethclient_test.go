@@ -100,6 +100,7 @@ func newTestBackend(config *node.Config) (*node.Node, []*types.Block, error) {
 	if config == nil {
 		config = new(node.Config)
 	}
+	config.BlobStoragePath = "./blobs"
 	n, err := node.New(config)
 	if err != nil {
 		return nil, nil, fmt.Errorf("can't create new node: %v", err)

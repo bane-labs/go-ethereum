@@ -888,7 +888,7 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 		if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(req.SealingProposal.Number, bigOne)) && c.lastBlockExtra.SignatureScheme() == dbftutil.ExtraV1ThresholdScheme {
 			return fmt.Errorf("invalid parent hash after NeoXAMEV with threshold signing scheme: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
 		}
-		// Genesis block  is hard-coded, thus its hash (as a parent hash) must always match
+		// Genesis block is hard-coded, thus its hash (as a parent hash) must always match
 		// the one that prepareRequest declares as a parent hash, otherwise it's an error.
 		if c.dbft.BlockIndex <= 1 {
 			return fmt.Errorf("invalid parent: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
@@ -2140,9 +2140,10 @@ func (c *DBFT) Authorize(signer common.Address, signFn SignerFn, amevKeystore *a
 
 // Start initializes last block cache, fetches fresh proposal from miner, starts
 // DBFT engine event loop and starts dBFT consensus process.
-func (c *DBFT) Start(chain ChainHeaderReader, inserter ChainInsertFn) {
+func (c *DBFT) Start(chain ChainHeaderReader, inserter ChainInsertFn, fs FSWriter) {
 	if c.dbftStarted.CompareAndSwap(false, true) {
 		c.chain = chain
+		c.blockQueue.fs = fs
 		c.blockQueue.SetChain(chain, inserter)
 		c.staticPool = newStaticPool(c.chain)
 

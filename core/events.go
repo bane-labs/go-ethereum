@@ -17,6 +17,7 @@
 package core
 
 import (
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -35,4 +36,9 @@ type ChainEvent struct {
 
 type ChainHeadEvent struct {
 	Header *types.Header
+}
+
+// AnnoBlockEvent is posted when new sidecars of a block are persisted.
+type AnnoBlobEvent struct {
+	BlockHash common.Hash
 }

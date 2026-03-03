@@ -44,3 +44,72 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 
 	return backend.Handle(peer, ann)
 }
+
+func handleNewBlobsRoot(backend Backend, msg Decoder, peer *Peer) error {
+	ann := new(NewBlobsRootPacket)
+	if err := msg.Decode(ann); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+
+	log.Debug("Receive NewBlobsRoot announcement", "from", peer.id, "blockHash", ann.BlockHash)
+
+	peer.markBlockBlobs(ann.BlockHash)
+	return backend.Handle(peer, ann)
+}
+
+func handleGetBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	req := new(GetBlobsPacket)
+	if err := msg.Decode(req); err != nil {
+		return fmt.Errorf("msg %v, decode err: %v", GetBlobsMsg, err)
+	}
+
+	log.Debug("Receive GetBlobs request", "from", peer.id, "req", req)
+
+	if req.Ttl < 1 {
+		log.Debug("GetBlobs request reached TTL limit", "from", peer.id, "req", req)
+		return fmt.Errorf("invalid GetBlobs request, as the TTL limit has been reached, req block hash %s", req.BlockHash.Hex())
+	}
+
+	return backend.Handle(peer, req)
+}
+
+func handleBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	ann := new(BlobsPacket)
+	if err := msg.Decode(ann); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+
+	err := peer.dispatchResponse(&Response{
+		id:   ann.RequestId,
+		code: BlobsMsg,
+		Res:  &ann.Sidecars,
+	}, nil)
+	log.Debug("Receive Blobs response", "from", peer.id, "requestId", ann.RequestId, "sidecars", len(ann.Sidecars), "err", err)
+	return nil
+}
+
+func handleGetBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	req := new(GetBatchBlobsPacket)
+	if err := msg.Decode(req); err != nil {
+		return fmt.Errorf("msg %v, decode err: %v", GetBatchBlobsMsg, err)
+	}
+
+	log.Debug("Receive GetBatchBlobs request", "from", peer.id, "req", req)
+
+	return backend.Handle(peer, req)
+}
+
+func handleBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	res := new(BatchBlobsPacket)
+	if err := msg.Decode(res); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+
+	err := peer.dispatchResponse(&Response{
+		id:   res.RequestId,
+		code: BatchBlobsMsg,
+		Res:  &res.BatchBlobsResponse,
+	}, nil)
+	log.Debug("Receive BatchBlobs response", "from", peer.id, "requestId", res.RequestId, "batchBlobs", len(res.BatchBlobsResponse), "err", err)
+	return nil
+}

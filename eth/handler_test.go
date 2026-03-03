@@ -209,6 +209,11 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 	}
 	txpool := newTestTxPool()
 
+	filesystem, err := core.NewFileSystem(chain, nil, nil)
+	if err != nil {
+		panic(err)
+	}
+
 	handler, _ := newHandler(&handlerConfig{
 		Database:   db,
 		Chain:      chain,
@@ -216,6 +221,7 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 		Network:    1,
 		Sync:       downloader.SnapSync,
 		BloomCache: 1,
+		FileSystem: filesystem,
 	})
 	handler.Start(1000)
 

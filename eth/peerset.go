@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
@@ -57,6 +58,8 @@ type peerSet struct {
 	snapWait map[string]chan *snap.Peer // Peers connected on `eth` waiting for their snap extension
 	snapPend map[string]*snap.Peer      // Peers connected on the `snap` protocol, but not yet on `eth`
 
+	noBlobPeers map[string]time.Time // Peers that have not been able to provide blobs recently
+
 	lock   sync.RWMutex
 	closed bool
 	quitCh chan struct{} // Quit channel to signal termination
@@ -65,11 +68,12 @@ type peerSet struct {
 // newPeerSet creates a new peer set to track the active participants.
 func newPeerSet() *peerSet {
 	return &peerSet{
-		beacons:  make(map[string]*beaconPeer),
-		peers:    make(map[string]*ethPeer),
-		snapWait: make(map[string]chan *snap.Peer),
-		snapPend: make(map[string]*snap.Peer),
-		quitCh:   make(chan struct{}),
+		beacons:     make(map[string]*beaconPeer),
+		peers:       make(map[string]*ethPeer),
+		snapWait:    make(map[string]chan *snap.Peer),
+		snapPend:    make(map[string]*snap.Peer),
+		noBlobPeers: make(map[string]time.Time),
+		quitCh:      make(chan struct{}),
 	}
 }
 
@@ -244,10 +248,25 @@ func (ps *peerSet) beaconsWithoutBlock(hash common.Hash) []*beaconPeer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
-	list := make([]*beaconPeer, 0, len(ps.peers))
+	list := make([]*beaconPeer, 0, len(ps.beacons))
 	for _, b := range ps.beacons {
 		if !b.KnownBlock(hash) {
 			list = append(list, b)
+		}
+	}
+	return list
+}
+
+// beaconsWithoutBlockBlobs retrieves a list of peers that do not have a given blob in
+// their set of known hashes.
+func (ps *peerSet) beaconsWithoutBlockBlobs(hash common.Hash) []*beaconPeer {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	list := make([]*beaconPeer, 0, len(ps.beacons))
+	for _, p := range ps.beacons {
+		if !p.KnownBlockBlobs(hash) {
+			list = append(list, p)
 		}
 	}
 	return list
@@ -275,6 +294,18 @@ func (ps *peerSet) allPeers() []*ethPeer {
 
 	list := make([]*ethPeer, 0, len(ps.peers))
 	for _, p := range ps.peers {
+		list = append(list, p)
+	}
+	return list
+}
+
+// allBeacons retrieves all of the beacon peers.
+func (ps *peerSet) allBeacons() []*beaconPeer {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	list := make([]*beaconPeer, 0, len(ps.beacons))
+	for _, p := range ps.beacons {
 		list = append(list, p)
 	}
 	return list
@@ -361,4 +392,49 @@ func (ps *peerSet) close() {
 		close(ps.quitCh)
 	}
 	ps.closed = true
+}
+
+// markNoBlobPeer marks a peer as not having blobs.
+func (ps *peerSet) markNoBlobPeer(id string) {
+	ps.lock.Lock()
+	defer ps.lock.Unlock()
+
+	ps.noBlobPeers[id] = time.Now()
+}
+
+// blobPeers retrieves all of the filtered blob peers.
+func (ps *peerSet) blobPeers() []string {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	// Filter out peers that have not been able to obtain the blob recently.
+	now := time.Now()
+	filtered := make([]string, 0, len(ps.beacons))
+	for id := range ps.beacons {
+		if timeout, ok := ps.noBlobPeers[id]; ok {
+			if now.Sub(timeout) < 30*time.Second {
+				continue
+			}
+			delete(ps.noBlobPeers, id)
+		}
+		filtered = append(filtered, id)
+	}
+	return filtered
+}
+
+// blobSyncPeers retrieves all of the blob sync peers.
+func (ps *peerSet) blobSyncPeers(excludePeer *string) []*beaconPeer {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	peers := make([]*beaconPeer, 0, len(ps.beacons))
+	for id, peer := range ps.beacons {
+		if peer.BlobSync() {
+			if excludePeer != nil && id == *excludePeer {
+				continue
+			}
+			peers = append(peers, peer)
+		}
+	}
+	return peers
 }

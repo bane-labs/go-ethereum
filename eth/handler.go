@@ -106,6 +106,17 @@ type Beacon interface {
 	EnqueueBlock(peer string, block *types.Block)
 }
 
+// FileSystem is enough of a FileSystem to satisfy [Service].
+type FileSystem interface {
+	HasSidecars(hash common.Hash, indices []int) bool
+	GetSidecarsByRoot(hash common.Hash) types.BlobSidecars
+	InsertBlobs(hash common.Hash, blobs types.BlobSidecars) error
+	InsertBlobsWithoutValidation(header *types.Header, blobs types.BlobSidecars) error
+	SubscribeAnnoBlobsEvent(ch chan<- core.AnnoBlobEvent) event.Subscription
+	ShouldRetain(blockNumberRequested *big.Int) bool
+	CheckBlobsAvailable(block *types.Block, blobs types.BlobSidecars) error
+}
+
 // handlerConfig is the collection of initialization parameters to create a full
 // node network handler.
 type handlerConfig struct {
@@ -118,6 +129,8 @@ type handlerConfig struct {
 	BloomCache     uint64                 // Megabytes to alloc for snap sync bloom
 	EventMux       *event.TypeMux         // Legacy event mux, deprecate for `feed`
 	RequiredBlocks map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
+	FileSystem     FileSystem             // File system for blob sidecars
+	BlobSync       bool                   // Whether to sync blob sidecars
 }
 
 type handler struct {
@@ -133,16 +146,21 @@ type handler struct {
 	chain    *core.BlockChain
 	maxPeers int
 
-	downloader *downloader.Downloader
-	beacon     Beacon
-	txFetcher  *fetcher.TxFetcher
-	peers      *peerSet
+	downloader     *downloader.Downloader
+	beacon         Beacon
+	fs             FileSystem
+	blobSync       bool
+	txFetcher      *fetcher.TxFetcher
+	sidecarFetcher *beaconfetch.SidecarFetcher
+	peers          *peerSet
 
 	eventMux     *event.TypeMux
 	txsCh        chan core.NewTxsEvent
 	txsSub       event.Subscription
 	reannoTxsCh  chan core.ReannoTxsEvent
 	reannoTxsSub event.Subscription
+	annoBlobsCh  chan core.AnnoBlobEvent
+	annoBlobsSub event.Subscription
 
 	requiredBlocks map[uint64]common.Hash
 
@@ -172,6 +190,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		chain:          config.Chain,
 		peers:          newPeerSet(),
 		requiredBlocks: config.RequiredBlocks,
+		fs:             config.FileSystem,
+		blobSync:       config.BlobSync,
 		quitSync:       make(chan struct{}),
 		handlerDoneCh:  make(chan struct{}),
 		handlerStartCh: make(chan struct{}),
@@ -235,6 +255,10 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return h.txpool.Add(txs, false, false)
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
+	if h.blobSync {
+		h.sidecarFetcher = beaconfetch.NewSidecarFetcher(h.chain, h.fs, h.peers.blobPeers, h.peers.markNoBlobPeer, h.removePeer,
+			h.announceBlobs, h.fetchSidecars, (*beaconHandler)(h).RetrieveSidecarsByRoot)
+	}
 	h.chainSync = newChainSyncer(h)
 	return h, nil
 }
@@ -298,7 +322,7 @@ func (h *handler) runBeaconPeer(peer *beaconproto.Peer, handler beaconproto.Hand
 		td      = h.chain.GetTd(hash, number)
 	)
 	forkID := forkid.NewID(h.chain.Config(), genesis, number, head.Time)
-	if err := peer.Handshake(h.networkID, td, hash, genesis.Hash(), forkID, h.forkFilter); err != nil {
+	if err := peer.Handshake(h.networkID, td, hash, genesis.Hash(), forkID, h.forkFilter, h.blobSync); err != nil {
 		peer.Log().Debug("Beacon handshake failed", "err", err)
 		return err
 	}
@@ -571,11 +595,18 @@ func (h *handler) Start(maxPeers int) {
 	// start peer handler tracker
 	h.wg.Add(1)
 	go h.protoTracker()
+
+	// start blob event handler
+	h.wg.Add(1)
+	h.annoBlobsCh = make(chan core.AnnoBlobEvent, blobChanSize)
+	h.annoBlobsSub = h.fs.SubscribeAnnoBlobsEvent(h.annoBlobsCh)
+	go h.blobsAnnounceLoop()
 }
 
 func (h *handler) Stop() {
 	h.txsSub.Unsubscribe()       // quits txBroadcastLoop
 	h.reannoTxsSub.Unsubscribe() // quits txReannounceLoop
+	h.annoBlobsSub.Unsubscribe() // quits blobsAnnounceLoop
 
 	// Quit chainSync and txsync64.
 	// After this is done, no new peers will be accepted.
@@ -638,6 +669,15 @@ func (h *handler) fetchHeader(id string, hash common.Hash, sink chan *eth.Respon
 // fetchBodies is the bridge to use a hash array to get the block bodies from `eth` protocol.
 func (h *handler) fetchBodies(id string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 	return h.peers.peer(id).RequestBodies(hashes, sink)
+}
+
+// fetchSidecars is the bridge to use a hash array to get the blob sidecars from `beacon` protocol.
+func (h *handler) fetchSidecars(id string, hashes []common.Hash, sink chan *beaconproto.Response) (*beaconproto.Request, error) {
+	peer := h.peers.beacon(id)
+	if peer == nil {
+		return nil, errors.New("unknown beacon peer")
+	}
+	return peer.RequestBatchBlobs(hashes, sink)
 }
 
 // BroadcastTransactions will propagate a batch of transactions
@@ -801,4 +841,30 @@ func (h *handler) BroadcastRequestTxs(txHashes []common.Hash) {
 			}
 		}
 	}
+}
+
+func (h *handler) blobsAnnounceLoop() {
+	defer h.wg.Done()
+	for {
+		select {
+		case ev, ok := <-h.annoBlobsCh:
+			if !ok {
+				return
+			}
+			h.announceBlobs(ev.BlockHash)
+		case <-h.annoBlobsSub.Err():
+			return
+		}
+	}
+}
+
+// announceBlobs announces the availability of blob sidecars for a given block
+// hash to all beacon peers that don't have them yet.
+func (h *handler) announceBlobs(blockHash common.Hash) {
+	peers := h.peers.beaconsWithoutBlockBlobs(blockHash)
+
+	for _, peer := range peers {
+		peer.AsyncSendNewBlobsRoot(blockHash)
+	}
+	log.Trace("Announced blob", "hash", blockHash, "recipients", len(peers))
 }

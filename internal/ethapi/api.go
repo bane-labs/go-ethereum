@@ -696,6 +696,74 @@ func (api *BlockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rp
 	return result, nil
 }
 
+func (api *BlockChainAPI) GetBlobSidecars(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash, fullBlob *bool) ([]map[string]interface{}, error) {
+	showBlob := true
+	if fullBlob != nil {
+		showBlob = *fullBlob
+	}
+	block, err := api.b.BlockByNumberOrHash(ctx, blockNrOrHash)
+	if block == nil || err != nil {
+		// When the block doesn't exist, the RPC method should return JSON null
+		// as per specification.
+		return nil, nil
+	}
+
+	var blobTxs []*types.Transaction
+	txs := block.Transactions()
+	for _, tx := range txs {
+		if tx.Type() != types.BlobTxType {
+			continue
+		}
+		blobTxs = append(blobTxs, tx)
+	}
+	if len(blobTxs) == 0 {
+		return nil, nil
+	}
+	result := make([]map[string]interface{}, len(blobTxs))
+	for i, tx := range blobTxs {
+		sidecar, err := api.b.BlobSidecarByRoot(ctx, block.Hash(), uint64(i))
+		if err != nil || sidecar == nil {
+			return nil, nil
+		}
+		result[i] = marshalBlobSidecar(block.Header(), tx.Hash(), sidecar, showBlob)
+	}
+	return result, nil
+}
+
+func (api *BlockChainAPI) GetBlobSidecarByTxHash(ctx context.Context, hash common.Hash, fullBlob *bool) (map[string]interface{}, error) {
+	showBlob := true
+	if fullBlob != nil {
+		showBlob = *fullBlob
+	}
+	found, tx, blockHash, _, _ := api.b.GetTransaction(hash)
+	if !found || tx.Type() != types.BlobTxType {
+		return nil, nil
+	}
+	block, err := api.b.BlockByHash(ctx, blockHash)
+	if block == nil || err != nil {
+		// When the block doesn't exist, the RPC method should return JSON null
+		// as per specification.
+		return nil, nil
+	}
+
+	txs := block.Transactions()
+	var index uint64
+	for _, tx := range txs {
+		if tx.Type() != types.BlobTxType {
+			continue
+		}
+		if tx.Hash() == hash {
+			sidecar, err := api.b.BlobSidecarByRoot(ctx, blockHash, index)
+			if err != nil || sidecar == nil {
+				return nil, nil
+			}
+			return marshalBlobSidecar(block.Header(), hash, sidecar, showBlob), nil
+		}
+		index++
+	}
+	return nil, nil
+}
+
 // ChainContextBackend provides methods required to implement ChainContext.
 type ChainContextBackend interface {
 	Engine() consensus.Engine
@@ -1582,6 +1650,34 @@ func marshalReceipt(receipt *types.Receipt, blockHash common.Hash, blockNumber u
 	// If the ContractAddress is 20 0x0 bytes, assume it is not a contract creation
 	if receipt.ContractAddress != (common.Address{}) {
 		fields["contractAddress"] = receipt.ContractAddress
+	}
+	return fields
+}
+
+func marshalBlobSidecar(header *types.Header, txHash common.Hash, sidecar *types.BlobTxSidecar, fullBlob bool) map[string]interface{} {
+	fields := map[string]interface{}{
+		"blockHash":   header.Hash(),
+		"blockNumber": hexutil.EncodeUint64(header.Number.Uint64()),
+		"txHash":      txHash,
+	}
+	fields["blobSidecar"] = marshalBlob(sidecar, fullBlob)
+	return fields
+}
+
+func marshalBlob(blobTxSidecar *types.BlobTxSidecar, fullBlob bool) map[string]interface{} {
+	fields := map[string]interface{}{
+		"blobs":       blobTxSidecar.Blobs,
+		"commitments": blobTxSidecar.Commitments,
+		"proofs":      blobTxSidecar.Proofs,
+	}
+	if !fullBlob {
+		var blobs []common.Hash
+		for _, blob := range blobTxSidecar.Blobs {
+			var value common.Hash
+			copy(value[:], blob[:32])
+			blobs = append(blobs, value)
+		}
+		fields["blobs"] = blobs
 	}
 	return fields
 }

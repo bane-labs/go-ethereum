@@ -192,6 +192,7 @@ privnet_stop: privnet_bootnode_stop privnet_nodes_stop
 privnet_clean: privnet_stop
 	@echo "Cleaning the nodes database files from $(MAIN_DIR)"
 	@find $(MAIN_DIR)/* -type d -name 'geth' -print -exec rm -rf {} +
+	@find $(MAIN_DIR)/* -type d -name 'blobs' -print -exec rm -rf {} +
 	@find $(MAIN_DIR)/* -type s,f -not \( -path '*/keystore/*' -or -path '*/antimev-keystore' -or -name '*.json' -or -name '*.txt' -or -name '*.key' -or -name '*.md' \) -print -exec rm -f {} +
 
 $(SINGLE_DIR)/$(NODE0)/geth:

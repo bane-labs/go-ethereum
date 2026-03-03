@@ -175,6 +175,13 @@ const (
 	BlobTxPointEvaluationPrecompileGas = 50000   // Gas price for the point evaluation precompile.
 
 	HistoryServeWindow = 8192 // Number of blocks to serve historical block hashes for, EIP-2935.
+
+	BlocksPerEthEpoch = 32 // Number of blocks in each epoch, this is a mock parameter simulate Eth PoS.
+)
+
+// Blob request parameters.
+var (
+	MinEthEpochsForBlobsSidecarsRequest uint64 = 8192 // MinEthEpochsForBlobsSidecarsRequest is the minimum number of epochs the node will keep the blobs for.
 )
 
 // Bls12381G1MultiExpDiscountTable is the gas discount table for BLS12-381 G1 multi exponentiation operation

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -89,7 +90,7 @@ func newTester(t *testing.T, confOverride func(*ethconfig.Config)) *tester {
 	workspace := t.TempDir()
 
 	// Create a networkless protocol stack and start an Ethereum service within
-	stack, err := node.New(&node.Config{DataDir: workspace, UseLightweightKDF: true, Name: testInstance})
+	stack, err := node.New(&node.Config{DataDir: workspace, UseLightweightKDF: true, Name: testInstance, BlobStoragePath: path.Join(workspace, "blobs")})
 	if err != nil {
 		t.Fatalf("failed to create node: %v", err)
 	}
