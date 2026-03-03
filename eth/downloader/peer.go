@@ -83,10 +83,24 @@ func newPeerConnection(id string, version uint, peer ethPeer, logger log.Logger)
 
 // ConnectBeacon connects a downloader peer with a beacon peer.
 func (p *peerConnection) ConnectBeacon(peer beaconPeer) error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	if p.beacon != nil {
 		return errAlreadyRegistered
 	} else {
 		p.beacon = peer
+		return nil
+	}
+}
+
+// DisconnectBeacon disconnects a downloader peer from its beacon peer.
+func (p *peerConnection) DisconnectBeacon() error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	if p.beacon == nil {
+		return errNotRegistered
+	} else {
+		p.beacon = nil
 		return nil
 	}
 }
@@ -250,7 +264,10 @@ func (ps *peerSet) ConnectBeacon(id string, beacon beaconPeer) error {
 		ps.lock.Unlock()
 		return errNotRegistered
 	}
-	p.ConnectBeacon(beacon)
+	err := p.ConnectBeacon(beacon)
+	if err != nil {
+		return err
+	}
 	ps.lock.Unlock()
 
 	ps.events.Send(&peeringEvent{peer: p, join: true})
@@ -284,7 +301,10 @@ func (ps *peerSet) DisconnectBeacon(id string) error {
 		ps.lock.Unlock()
 		return errNotRegistered
 	}
-	p.beacon = nil
+	err := p.DisconnectBeacon()
+	if err != nil {
+		return err
+	}
 	ps.lock.Unlock()
 
 	ps.events.Send(&peeringEvent{peer: p, join: false})

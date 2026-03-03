@@ -2339,8 +2339,7 @@ func (bc *BlockChain) reorg(oldHead *types.Header, newHead *types.Header) error 
 		// the ancestor of new head while these two blocks are not consecutive
 		log.Info("Extend chain", "add", len(newChain), "number", newChain[0].Number, "hash", newChain[0].Hash())
 		blockReorgAddMeter.Mark(int64(len(newChain)))
-	} else {
-		// len(newChain) == 0 && len(oldChain) > 0
+	} else if len(newChain) == 0 && len(oldChain) > 0 {
 		// rewind the canonical chain to a lower point.
 		log.Error("Impossible reorg, please file an issue", "oldnum", oldHead.Number, "oldhash", oldHead.Hash(), "oldblocks", len(oldChain), "newnum", newHead.Number, "newhash", newHead.Hash(), "newblocks", len(newChain))
 	}
