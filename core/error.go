@@ -58,6 +58,10 @@ var (
 	// by a transaction is higher than what's left in the block.
 	ErrGasLimitReached = errors.New("gas limit reached")
 
+	// ErrGasLimitOverflow is returned by the gas pool if the remaining gas
+	// exceeds the maximum value of uint64.
+	ErrGasLimitOverflow = errors.New("gas limit overflow")
+
 	// ErrEnvelopeNumberLimitReached is returned if the number of envelope transactions
 	// in the block has reached the limit and is going to break the limit.
 	ErrEnvelopeNumberLimitReached = errors.New("envelope number limit reached")
