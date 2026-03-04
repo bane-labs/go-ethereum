@@ -2,6 +2,48 @@
 
 This document outlines major changes between releases.
 
+## 0.5.2 "Polarization" (4 Mar 2026)
+
+This patch-release introduces several improvements to complete Neo X as a
+v1.15 Geth implementation. Without creating a new consensus client program or
+performing a "The Merge"-like consensus algorithm change, our nodes now switch
+to the CL-EL model and support post-merge behaviors. A configurable blob file
+system for EIP-4844 data persistence is also added, with BSC-like JSON APIs for
+related queries.
+
+This version doesn't introduce any hard fork in the genesis file or DB change
+which may require reinitialization or resynchronization, but there's a protocol
+migration of the P2P network. As a result, nodes before v0.5.2 will no longer
+receive EL block broadcasts for synchronization. So please perform this upgrade
+as soon as possible.
+
+Follow the instructions below to upgrade your node from v0.5.1 to v0.5.2:
+
+1. Download new binary file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. If you are running a miner node, rename the `--miner.etherbase` flag in your
+   start script/command to `--miner.pending.feeRecipient`.
+5. Start the node.
+
+New features:
+* support EL-level blob data storage and JSON APIs for EIP-4844 (#526)
+
+Behaviour changes:
+* add a minimized CL implementation and switch to post-merge mining
+  (#538, #546, #551, #564)
+* create a beacon protocol and move the block broadcast message to the CL
+  (#542, #547, #549, #560)
+* remove EL reorg judgement and other deprecated pre-merge behaviors (#543)
+
+Improvements:
+* improve snap synchronization for short chains (#535, #536)
+
+Bugs fixed:
+* fix possible panics in gas price query caused by uninitiated variables (#534)
+* fix DKG synchronization failure caused by blocks before #491 (#556)
+* fix DKG synchronization failure caused by missing group initialization (#557)
+
 ## 0.5.1 "Ornamentation" (7 Nov 2025)
 
 This patch-release supports an event subscription from dBFT and improves the
