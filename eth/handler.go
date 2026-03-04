@@ -663,19 +663,27 @@ func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
 
 // fetchHeader is the bridge to use a hash to get the header from `eth` protocol.
 func (h *handler) fetchHeader(id string, hash common.Hash, sink chan *eth.Response) (*eth.Request, error) {
-	return h.peers.peer(id).RequestOneHeader(hash, sink)
+	peer := h.peers.peer(id)
+	if peer == nil {
+		return nil, errPeerNotRegistered
+	}
+	return peer.RequestOneHeader(hash, sink)
 }
 
 // fetchBodies is the bridge to use a hash array to get the block bodies from `eth` protocol.
 func (h *handler) fetchBodies(id string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
-	return h.peers.peer(id).RequestBodies(hashes, sink)
+	peer := h.peers.peer(id)
+	if peer == nil {
+		return nil, errPeerNotRegistered
+	}
+	return peer.RequestBodies(hashes, sink)
 }
 
 // fetchSidecars is the bridge to use a hash array to get the blob sidecars from `beacon` protocol.
 func (h *handler) fetchSidecars(id string, hashes []common.Hash, sink chan *beaconproto.Response) (*beaconproto.Request, error) {
 	peer := h.peers.beacon(id)
 	if peer == nil {
-		return nil, errors.New("unknown beacon peer")
+		return nil, errPeerNotRegistered
 	}
 	return peer.RequestBatchBlobs(hashes, sink)
 }
