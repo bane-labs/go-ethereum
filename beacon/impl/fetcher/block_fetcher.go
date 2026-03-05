@@ -455,7 +455,7 @@ func (f *BlockFetcher) loop() {
 			for peer, hashes := range request {
 				log.Trace("Fetching scheduled headers", "peer", peer, "list", hashes)
 
-				go func(peer string) {
+				go func(peer string, hashes []common.Hash) {
 					if f.fetchingHook != nil {
 						f.fetchingHook(hashes)
 					}
@@ -487,7 +487,7 @@ func (f *BlockFetcher) loop() {
 							}
 						}(hash)
 					}
-				}(peer)
+				}(peer, hashes)
 			}
 			// Schedule the next fetch if blocks are still pending
 			f.rescheduleFetch(fetchTimer)
