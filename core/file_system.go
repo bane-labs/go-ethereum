@@ -56,7 +56,7 @@ func (fs *FileSystem) CommitSealBlockHash(block *types.Block) error {
 		}
 		originTx := fs.blobPool.Get(tx.Hash())
 		if originTx == nil {
-			log.Error("blob tx %s not found in blob pool", tx.Hash())
+			log.Error("blob tx not found in blob pool", "tx_hash", tx.Hash())
 			return errBlobTxNotFound
 		}
 		blobs = append(blobs, originTx.BlobTxSidecar())
