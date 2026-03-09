@@ -23,10 +23,12 @@ import (
 	"fmt"
 	gomath "math"
 	"math/big"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/GoPlusSecurity/goplus-usm/client"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/antimev"
@@ -60,6 +62,9 @@ const estimateGasErrorRatio = 0.015
 // baseFeeCacheCap is a capacity of nextBaseFee cache containing the cached
 // BasedFee values calculated for the recently requested heights.
 const baseFeeCacheCap = 5
+
+// usmClientKey is the authentication key used to create a client.USMEVMClient
+const usmClientKey = "usmClientKey"
 
 var errBlobTxNotSupported = errors.New("signing blob transactions not supported")
 var errSubClosed = errors.New("chain subscription closed")
@@ -1503,6 +1508,7 @@ type TransactionAPI struct {
 	b         Backend
 	nonceLock *AddrLocker
 	signer    types.Signer
+	usmClient *client.USMEVMClient
 
 	// nextBaseFeeCache is an LRU cache of block BaseFee.
 	nextBaseFeeCache *baseFeeCache
@@ -1894,6 +1900,9 @@ func (api *TransactionAPI) SendRawTransaction(ctx context.Context, input hexutil
 		}
 	}
 
+	if err := api.detectTxRisks(input); err != nil {
+		return common.Hash{}, err
+	}
 	return SubmitTransaction(ctx, api.b, tx)
 }
 
@@ -1915,6 +1924,10 @@ func (api *TransactionAPI) SendRawTransactionSync(ctx context.Context, input hex
 			}
 			tx = tx.WithBlobTxSidecar(sc)
 		}
+	}
+
+	if err := api.detectTxRisks(input); err != nil {
+		return nil, err
 	}
 
 	ch := make(chan core.ChainEvent, 128)
@@ -1992,6 +2005,45 @@ func (api *TransactionAPI) SendRawTransactionSync(ctx context.Context, input hex
 			}
 		}
 	}
+}
+
+func (api *TransactionAPI) detectTxRisks(input hexutil.Bytes) error {
+	if api.usmClient == nil {
+		key, found := os.LookupEnv(usmClientKey)
+		if !found {
+			return fmt.Errorf("USMEVMClient key not found")
+		}
+		usmClient, err := client.NewUSMEVMClient(
+			client.WithKey(key),
+			client.WithTimeOut(30*time.Second),
+		)
+		if err != nil {
+			return fmt.Errorf("init USMEVMClient error: %w", err)
+		}
+		api.usmClient = usmClient
+	}
+
+	res, err := api.usmClient.DialDetectWithRawTX(context.Background(), hexutil.Encode(input))
+	if err != nil {
+		return fmt.Errorf("detect raw transaction error: %w", err)
+	}
+	if res.IsIntercept {
+		sb := new(strings.Builder)
+		sb.WriteString("Your transaction is intercepted.")
+		if len(res.RiskInfo) > 0 {
+			for _, info := range res.RiskInfo {
+				sb.WriteString(info.RiskType)
+				if len(info.RiskList) > 0 {
+					sb.WriteString(":")
+					sb.WriteString(strings.Join(info.RiskList, ","))
+				}
+				sb.WriteString(".")
+			}
+		}
+		// error info format example: "Your transaction is intercepted.ADDRESS_DETECT:honeypot_related_address."
+		return errors.New(sb.String())
+	}
+	return nil
 }
 
 // Sign calculates an ECDSA signature for:
