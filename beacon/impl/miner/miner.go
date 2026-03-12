@@ -1,6 +1,7 @@
 package miner
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -65,6 +66,16 @@ func (miner *Miner) DispatchBlock(block *types.Block) error {
 		return nil
 	}
 	return miner.worker.feedback(block)
+}
+
+// RequestNewPayload triggers a new block building manually.
+// It returns an error if the miner is not currently mining.
+func (miner *Miner) RequestNewPayload() error {
+	if !miner.worker.isMining() {
+		return errors.New("working not mining")
+	}
+	miner.worker.startCh <- struct{}{}
+	return nil
 }
 
 // update keeps track of the downloader events. Please be aware that this is a one shot type of update loop.

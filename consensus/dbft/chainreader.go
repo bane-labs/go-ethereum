@@ -28,6 +28,9 @@ type ChainHeaderReader interface {
 // ChainInsertFn is a callback type to insert a block into the local chain.
 type ChainInsertFn func(*types.Block) error
 
+// RefreshProposalFn is a callback type to request a new proposal from the miner.
+type RefreshProposalFn func() error
+
 // SyncingFn is a callback type to check whether the node is syncing.
 type SyncingFn func() bool
 
