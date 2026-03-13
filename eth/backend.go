@@ -403,7 +403,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.handler.connectBeacon(eth.beacon)
 	if bft != nil {
 		// Connect BFT to beacon protocol
-		bft.WithBeacon(eth.beacon.BlockBroadcaster(), eth.beacon.SubscribeSyncingEvents, eth.beacon.Syncing)
+		bft.WithBeacon(eth.beacon.BlockBroadcaster(), eth.beacon.RefreshPendingPayload, eth.beacon.SubscribeSyncingEvents, eth.beacon.Syncing)
 	}
 
 	// Successful startup; push a marker and check previous unclean shutdowns.

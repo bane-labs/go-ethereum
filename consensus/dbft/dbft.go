@@ -245,6 +245,7 @@ type DBFT struct {
 	// mutex since every access point is controlled by eventLoop, thus, not concurrent.
 	sealingProposal     *types.Header
 	sealingTransactions types.Transactions
+	refreshProposal     RefreshProposalFn
 
 	// sealingState, sealingBlock and sealingReceipts are Primary-only set of fields got
 	// after sealingProposal construction and processing. These fields are not protected
@@ -1573,9 +1574,11 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 }
 
 // WithBeacon initializes beacon protocol related channels and functions.
-func (c *DBFT) WithBeacon(ch chan<- *types.Block, subSyncing SubscribeSyncingFn, syncing SyncingFn) {
+func (c *DBFT) WithBeacon(ch chan<- *types.Block, refreshProposal RefreshProposalFn, subSyncing SubscribeSyncingFn, syncing SyncingFn) {
 	// The channel to broadcast new blocks in beacon protocol.
 	c.scope.Track(c.blockFeed.Subscribe(ch))
+	// The callback to request a new block proposal for view change.
+	c.refreshProposal = refreshProposal
 	// The direct checker of miner working state.
 	c.syncingSub = subSyncing(c.syncingEvents)
 	c.syncing = syncing
@@ -2392,7 +2395,16 @@ events:
 		// from miner.
 		if newView > oldView {
 			log.Info("Change view detected, waiting for new sealing task to be submitted by miner", "old view", oldView, "new view", newView)
-			err := c.waitForNewSealingProposal(uint64(c.dbft.Context.BlockIndex), true)
+			// The new miner logic will not refresh the proposal automatically, thus we need to request here.
+			c.lastProposalLock.Lock()
+			c.lastProposal = nil
+			c.lastProposalLock.Unlock()
+			err := c.refreshProposal()
+			if err != nil {
+				log.Error("Failed to request sealing proposal after view change", "err", err.Error())
+			}
+			// Then wait for the new proposal to be submitted by miner and update dBFT context with the new proposal data.
+			err = c.waitForNewSealingProposal(uint64(c.dbft.Context.BlockIndex), true)
 			if err != nil {
 				if errors.Is(err, errShutdown) {
 					break events

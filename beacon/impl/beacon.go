@@ -105,6 +105,13 @@ func (b *Beacon) StopMining() {
 	b.miner.Stop()
 }
 
+// RefreshPendingPayload requests a new block proposal from the miner. This new block will be
+// committed to the consensus engine through the backend, should only be used by BFT consensus
+// after view change happens, to trigger the new proposal generation and view update in miner.
+func (b *Beacon) RefreshPendingPayload() error {
+	return b.miner.RequestNewPayload()
+}
+
 // Close closes the beacon client service.
 func (b *Beacon) Close() error {
 	b.miner.Close()
