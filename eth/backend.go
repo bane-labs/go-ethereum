@@ -539,7 +539,7 @@ func (s *Ethereum) StartMining() error {
 		// Configure the local mining address
 		eb := s.config.Miner.PendingFeeRecipient
 		if eb == (common.Address{}) {
-			err := errors.New("etherbase must be explicitly specified")
+			err := errors.New("miner pending fee recipient must be explicitly specified")
 			log.Error("Cannot start mining without etherbase", "err", err)
 			return fmt.Errorf("etherbase missing: %v", err)
 		}
