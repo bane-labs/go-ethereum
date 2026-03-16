@@ -2,6 +2,27 @@
 
 This document outlines major changes between releases.
 
+## 0.5.3 "Quenchation" (16 Mar 2026)
+
+This patch-release introduces several improvements and bug fixes for v0.5.2.
+It's highly recommended to upgrade from v0.5.2, especially on Mainnet.
+
+Follow the instructions below to upgrade your node from v0.5.2 to v0.5.3:
+
+1. Download new binary file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. Start the node.
+
+Improvements:
+* refresh sealing proposal when CV happens (#577)
+* update the error message of etherbase missing (#580)
+* reduce the log level of missing blob tx (#586)
+
+Bugs fixed:
+* exclude tx blob sidecar in `OnTransaction` callback (#581)
+* fix blob error handling for block committed by dBFT (#584)
+
 ## 0.5.2 "Polarization" (4 Mar 2026)
 
 This patch-release introduces several improvements to complete Neo X as a
