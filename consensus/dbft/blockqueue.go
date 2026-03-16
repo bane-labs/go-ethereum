@@ -44,8 +44,7 @@ func (bq *blockQueue) PutBlock(b *types.Block) error {
 	}
 
 	if err := bq.fs.CommitSealBlockHash(b); err != nil {
-		log.Error("Failed to commit seal block hash into filesystem", "number", b.NumberU64(), "hash", hash, "err", err)
-		return err
+		log.Warn("Failed to commit seal block hash into filesystem", "number", b.NumberU64(), "hash", hash, "err", err)
 	}
 
 	if err := bq.insertChain(b); err != nil {
