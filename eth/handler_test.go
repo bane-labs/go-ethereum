@@ -141,10 +141,11 @@ func (p *testTxPool) ReannounceTransactions(txs []*types.Transaction) []error {
 }
 
 // Pending returns all the transactions known to the pool
-func (p *testTxPool) Pending(filter txpool.PendingFilter) map[common.Address][]*txpool.LazyTransaction {
+func (p *testTxPool) Pending(filter txpool.PendingFilter) (map[common.Address][]*txpool.LazyTransaction, int) {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
+	var count int
 	batches := make(map[common.Address][]*types.Transaction)
 	for _, tx := range p.pool {
 		from, _ := types.Sender(types.HomesteadSigner{}, tx)
@@ -165,9 +166,10 @@ func (p *testTxPool) Pending(filter txpool.PendingFilter) map[common.Address][]*
 				Gas:       tx.Gas(),
 				BlobGas:   tx.BlobGas(),
 			})
+			count++
 		}
 	}
-	return pending
+	return pending, count
 }
 
 // SubscribeTransactions should return an event subscription of NewTxsEvent and
