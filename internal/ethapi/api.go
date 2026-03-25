@@ -995,22 +995,6 @@ func (api *BlockChainAPI) SimulateV1(ctx context.Context, opts simOpts, blockNrO
 	return sim.execute(ctx, opts.BlockStateCalls)
 }
 
-// CallAtState executes the given transaction on the specified state with the given header.
-//
-// Note, this function performs changes in the given state and thus, it's a user's responsibility
-// to back up the original state if needed.
-func (api *BlockChainAPI) CallAtState(ctx context.Context, args TransactionArgs, state *state.StateDB, header *types.Header) (hexutil.Bytes, error) {
-	result, err := DoCallAtState(ctx, api.b, args, state, header, nil, nil, api.b.RPCEVMTimeout(), api.b.RPCGasCap())
-	if err != nil {
-		return nil, err
-	}
-	// If the result contains a revert reason, try to unpack and return it.
-	if len(result.Revert()) > 0 {
-		return nil, newRevertError(result.Revert())
-	}
-	return result.Return(), result.Err
-}
-
 // DoEstimateGas returns the lowest possible gas limit that allows the transaction to run
 // successfully at block `blockNrOrHash`. It returns error if the transaction would revert, or if
 // there are unexpected failures. The gas limit is capped by both `args.Gas` (if non-nil &

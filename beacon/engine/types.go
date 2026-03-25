@@ -268,11 +268,11 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 	if data.BaseFeePerGas != nil && (data.BaseFeePerGas.Sign() == -1 || data.BaseFeePerGas.BitLen() > 256) {
 		return nil, fmt.Errorf("invalid baseFeePerGas: %v", data.BaseFeePerGas)
 	}
-	var blobHashes = make([]common.Hash, 0, len(txs))
-	for _, tx := range txs {
-		blobHashes = append(blobHashes, tx.BlobHashes()...)
-	}
 	// TODO: add this check back when we have versioned hashes in the payload feedback.
+	// var blobHashes = make([]common.Hash, 0, len(txs))
+	// for _, tx := range txs {
+	// 	blobHashes = append(blobHashes, tx.BlobHashes()...)
+	// }
 	// if len(blobHashes) != len(versionedHashes) {
 	// 	return nil, fmt.Errorf("invalid number of versionedHashes: %v blobHashes: %v", versionedHashes, blobHashes)
 	// }

@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/common/mclock"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
@@ -333,7 +334,7 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 			case errors.Is(err, txpool.ErrUnderpriced) || errors.Is(err, txpool.ErrReplaceUnderpriced) || errors.Is(err, txpool.ErrTxGasPriceTooLow):
 				underpriced++
 
-			case errors.Is(err, txpool.ErrKZGVerificationError):
+			case errors.Is(err, core.ErrKZGVerificationError):
 				// KZG verification failed, terminate transaction processing immediately.
 				// Since KZG verification is computationally expensive, this acts as a
 				// defensive measure against potential DoS attacks.

@@ -243,7 +243,7 @@ func (fs *FileSystem) CheckBlobsAvailable(block *types.Block, blobs types.BlobSi
 	}
 
 	for i, blobHashes := range txBlobHashes {
-		if err := ValidateBlobSidecar(blobHashes, blobs[i]); err != nil {
+		if err := ValidateBlobSidecar(blobs[i], blobHashes); err != nil {
 			return err
 		}
 	}

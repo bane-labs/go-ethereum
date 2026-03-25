@@ -1371,7 +1371,7 @@ func newStaticPool(chain ChainHeaderReader) *legacypool.LegacyPool {
 
 // initStaticPool initializes the static pool with the provided parent header.
 func (c *DBFT) initStaticPool(parent *types.Header, state *state.StateDB) error {
-	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, state, &txpool.EmptyReservationHandle{}, false)
+	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, state, txpool.NewReservationTracker().NewHandle(-1), false)
 }
 
 // validateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
@@ -1387,12 +1387,8 @@ func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transa
 	}
 
 	// Ensure the gasprice is high enough to replace the envelope transaction
-	baseFee := head.BaseFee
-	base := new(uint256.Int)
-	if baseFee != nil {
-		base.SetFromBig(baseFee)
-	}
-	if decryptedTx.EffectiveGasTipCmp(envelope, base) < 0 {
+	baseFee := uint256.MustFromBig(head.BaseFee)
+	if decryptedTx.EffectiveGasTipCmp(envelope, baseFee) < 0 {
 		return errDecryptedUnderpriced
 	}
 

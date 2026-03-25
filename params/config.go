@@ -1488,7 +1488,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsCancun:         c.IsCancun(num, timestamp),
 		IsPrague:         c.IsPrague(num, timestamp),
 		IsOsaka:          c.IsOsaka(num, timestamp),
-		IsAmsterdam:      isMerge && c.IsAmsterdam(num, timestamp),
+		IsAmsterdam:      c.IsAmsterdam(num, timestamp),
 		IsVerkle:         isVerkle,
 		IsEIP4762:        isVerkle,
 	}

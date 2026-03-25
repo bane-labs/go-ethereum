@@ -2014,8 +2014,8 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 
 		// Figure out the dev account address.
 		// setEtherbase has been called above, configuring the miner address from command line flags.
-		if cfg.Miner.Etherbase != (common.Address{}) {
-			developer = accounts.Account{Address: cfg.Miner.Etherbase}
+		if cfg.Miner.PendingFeeRecipient != (common.Address{}) {
+			developer = accounts.Account{Address: cfg.Miner.PendingFeeRecipient}
 		} else if accs := ks.Accounts(); len(accs) > 0 {
 			developer = ks.Accounts()[0]
 		} else {
@@ -2026,7 +2026,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		}
 		// Make sure the address is configured as fee recipient, otherwise
 		// the miner will fail to start.
-		cfg.Miner.Etherbase = developer.Address
+		cfg.Miner.PendingFeeRecipient = developer.Address
 
 		// try to unlock the first keystore account
 		if len(ks.Accounts()) > 0 {

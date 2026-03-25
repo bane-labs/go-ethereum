@@ -115,7 +115,7 @@ var PrecompiledContractsNeoXDKG = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x02}): &sha256hash{},
 	common.BytesToAddress([]byte{0x03}): &ripemd160hash{},
 	common.BytesToAddress([]byte{0x04}): &dataCopy{},
-	common.BytesToAddress([]byte{0x05}): &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{0x05}): &bigModExp{eip2565: true, eip7823: false, eip7883: false},
 	common.BytesToAddress([]byte{0x06}): &bn256AddIstanbul{},
 	common.BytesToAddress([]byte{0x07}): &bn256ScalarMulIstanbul{},
 	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},

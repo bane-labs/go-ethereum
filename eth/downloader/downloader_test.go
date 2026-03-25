@@ -120,6 +120,7 @@ func (dl *downloadTester) newPeer(id string, version uint, blocks []*types.Block
 		id:              id,
 		chain:           newTestBlockchain(blocks),
 		withholdHeaders: make(map[common.Hash]struct{}),
+		withholdBodies:  make(map[common.Hash]struct{}),
 	}
 	dl.peers[id] = peer
 
@@ -164,6 +165,7 @@ type downloadTesterPeer struct {
 	chain *core.BlockChain
 
 	withholdHeaders map[common.Hash]struct{}
+	withholdBodies  map[common.Hash]struct{}
 }
 
 func unmarshalRlpHeaders(rlpdata []rlp.RawValue) []*types.Header {
@@ -284,7 +286,13 @@ func (dlp *downloadTesterPeer) RequestBodies(hashes []common.Hash, sink chan *et
 	)
 	hasher := trie.NewStackTrie(nil)
 	for i, body := range bodies {
-		txsHashes[i] = types.DeriveSha(types.Transactions(body.Transactions), hasher)
+		hash := types.DeriveSha(types.Transactions(body.Transactions), hasher)
+		if _, ok := dlp.withholdBodies[hash]; ok {
+			txsHashes = append(txsHashes[:i], txsHashes[i+1:]...)
+			uncleHashes = append(uncleHashes[:i], uncleHashes[i+1:]...)
+			continue
+		}
+		txsHashes[i] = hash
 		uncleHashes[i] = types.CalcUncleHash(body.Uncles)
 	}
 	req := &eth.Request{
@@ -445,7 +453,10 @@ func TestCanonicalSynchronisation68Full(t *testing.T) { testCanonSync(t, eth.ETH
 func TestCanonicalSynchronisation68Snap(t *testing.T) { testCanonSync(t, eth.ETH68, SnapSync) }
 
 func testCanonSync(t *testing.T, protocol uint, mode SyncMode) {
-	tester := newTester(t)
+	success := make(chan struct{})
+	tester := newTesterWithNotification(t, func() {
+		close(success)
+	})
 	defer tester.terminate()
 
 	// Create a small enough block chain to download
@@ -656,7 +667,11 @@ func TestCancel68Full(t *testing.T) { testCancel(t, eth.ETH68, FullSync) }
 func TestCancel68Snap(t *testing.T) { testCancel(t, eth.ETH68, SnapSync) }
 
 func testCancel(t *testing.T, protocol uint, mode SyncMode) {
-	tester := newTester(t)
+	complete := make(chan struct{})
+	success := func() {
+		close(complete)
+	}
+	tester := newTesterWithNotification(t, success)
 	defer tester.terminate()
 
 	chain := testChainBase.shorten(MaxHeaderFetch)
@@ -735,7 +750,10 @@ func TestEmptyShortCircuit68Full(t *testing.T) { testEmptyShortCircuit(t, eth.ET
 func TestEmptyShortCircuit68Snap(t *testing.T) { testEmptyShortCircuit(t, eth.ETH68, SnapSync) }
 
 func testEmptyShortCircuit(t *testing.T, protocol uint, mode SyncMode) {
-	tester := newTester(t)
+	success := make(chan struct{})
+	tester := newTesterWithNotification(t, func() {
+		close(success)
+	})
 	defer tester.terminate()
 
 	// Create a block chain to download

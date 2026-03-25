@@ -27,6 +27,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/mclock"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -1952,7 +1953,7 @@ func TestTransactionProtocolViolation(t *testing.T) {
 				func(txs []*types.Transaction) []error {
 					var errs []error
 					for range txs {
-						errs = append(errs, txpool.ErrKZGVerificationError)
+						errs = append(errs, core.ErrKZGVerificationError)
 					}
 					return errs
 				},
