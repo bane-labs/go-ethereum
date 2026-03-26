@@ -26,7 +26,6 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -221,9 +220,6 @@ type Config struct {
 	EnablePersonal bool `toml:"-"`
 
 	DBEngine string `toml:",omitempty"`
-
-	// DBFTStatistics is the dBFT statistics calculation configuration.
-	DBFTStatistics dbft.StatisticsConfig `toml:",omitempty"`
 
 	// BlobSync enables blob sidecar data syncing.
 	BlobSync bool `toml:",omitempty"`

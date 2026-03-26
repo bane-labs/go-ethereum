@@ -23,7 +23,6 @@ import (
 	"runtime"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/nat"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -74,8 +73,7 @@ var DefaultConfig = Config{
 		MaxPeers:   50,
 		NAT:        nat.Any(),
 	},
-	DBEngine:       "", // Use whatever exists, will default to Pebble if non-existent and supported
-	DBFTStatistics: dbft.DefaultStatistics,
+	DBEngine: "", // Use whatever exists, will default to Pebble if non-existent and supported
 }
 
 // DefaultDataDir is the default data directory to use for the databases and other

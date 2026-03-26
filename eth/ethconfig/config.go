@@ -223,10 +223,10 @@ type Config struct {
 // CreateConsensusEngine creates a consensus engine for the given chain config.
 // Clique is allowed for now to live standalone, but ethash is forbidden and can
 // only exist on already merged networks.
-func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, statisticsCfg dbft.StatisticsConfig) (consensus.Engine, error) {
+func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database) (consensus.Engine, error) {
 	// TODO: config TTD correctly and move this check back after Clique
 	if config.DBFT != nil {
-		bft, err := dbft.New(config, db, statisticsCfg)
+		bft, err := dbft.New(config, db)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create dBFT engine: %w", err)
 		}
