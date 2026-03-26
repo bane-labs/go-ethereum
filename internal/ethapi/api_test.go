@@ -600,12 +600,6 @@ func (b testBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.R
 func (b testBackend) BlobSidecarByRoot(ctx context.Context, hash common.Hash, index uint64) (*types.BlobTxSidecar, error) {
 	panic("implement me")
 }
-func (b testBackend) GetTd(hash common.Hash, number uint64) *big.Int {
-	if b.pending != nil && hash == b.pending.Hash() {
-		return nil
-	}
-	return big.NewInt(1)
-}
 func (b testBackend) GetEVM(ctx context.Context, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockContext *vm.BlockContext) *vm.EVM {
 	if vmConfig == nil {
 		vmConfig = b.chain.GetVMConfig()

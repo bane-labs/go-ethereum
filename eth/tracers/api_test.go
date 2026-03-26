@@ -122,10 +122,6 @@ func (b *testBackend) GetCanonicalTransaction(txHash common.Hash) (bool, *types.
 	return tx != nil, tx, hash, blockNumber, index
 }
 
-func (b *testBackend) GetTd(hash common.Hash, number uint64) *big.Int {
-	return b.chain.GetTd(hash, number)
-}
-
 func (b *testBackend) TxIndexDone() bool {
 	return true
 }

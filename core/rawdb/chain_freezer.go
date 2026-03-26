@@ -359,7 +359,7 @@ func (f *chainFreezer) freezeRange(nfdb *nofreezedb, number, limit uint64) (hash
 func (f *chainFreezer) Ancient(kind string, number uint64) ([]byte, error) {
 	// Lookup the entry in the underlying ancient store, assuming that
 	// headers and hashes are always available.
-	if kind == ChainFreezerHeaderTable || kind == ChainFreezerHashTable {
+	if kind == ChainFreezerHeaderTable || kind == ChainFreezerHashTable || kind == ChainFreezerDifficultyTable {
 		return f.ancients.Ancient(kind, number)
 	}
 	tail, err := f.ancients.Tail()

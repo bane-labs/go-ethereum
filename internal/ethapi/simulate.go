@@ -149,10 +149,6 @@ func (m *simChainHeadReader) GetHeaderByHash(hash common.Hash) *types.Header {
 	return header
 }
 
-func (m *simChainHeadReader) GetTd(hash common.Hash, number uint64) *big.Int {
-	return nil
-}
-
 // simulator is a stateful object that simulates a series of blocks.
 // it is not safe for concurrent use.
 type simulator struct {
@@ -564,8 +560,4 @@ func (b *simBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types
 
 func (b *simBackend) CurrentHeader() *types.Header {
 	return b.b.CurrentHeader()
-}
-
-func (b *simBackend) GetTd(hash common.Hash, number uint64) *big.Int {
-	return b.b.GetTd(hash, number)
 }

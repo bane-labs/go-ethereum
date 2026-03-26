@@ -784,7 +784,6 @@ type ChainContextBackend interface {
 	HeaderByHash(context.Context, common.Hash) (*types.Header, error)
 	CurrentHeader() *types.Header
 	ChainConfig() *params.ChainConfig
-	GetTd(hash common.Hash, number uint64) *big.Int
 }
 
 // ChainContext is an implementation of core.ChainContext. It's main use-case
@@ -829,10 +828,6 @@ func (context *ChainContext) GetHeaderByNumber(number uint64) *types.Header {
 func (context *ChainContext) GetHeaderByHash(hash common.Hash) *types.Header {
 	header, _ := context.b.HeaderByHash(context.ctx, hash)
 	return header
-}
-
-func (context *ChainContext) GetTd(hash common.Hash, number uint64) *big.Int {
-	return context.b.GetTd(hash, number)
 }
 
 func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, header *types.Header, overrides *override.StateOverride, blockOverrides *override.BlockOverrides, timeout time.Duration, globalGasCap uint64) (*core.ExecutionResult, error) {
