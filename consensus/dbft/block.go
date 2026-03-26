@@ -86,9 +86,9 @@ func (b *Block) Signature() []byte {
 
 // Sign implements [dbft.Block] interface.
 func (b *Block) Sign(key dbft.PrivateKey) error {
-	sighash, err := key.(*Signer).signBlock(b.header.Extra, dbftRLP(b.header))
+	sighash, err := key.(*Signer).signBlock(b.header.Extra, b.header)
 	if err != nil {
-		return fmt.Errorf("failed to sign dbftRLP header: %w", err)
+		return fmt.Errorf("failed to sign header: %w", err)
 	}
 
 	b.localSignatureBytes = sighash
@@ -100,7 +100,7 @@ func (b *Block) Verify(pub dbft.PublicKey, sign []byte) error {
 	extra := dbftutil.Extra(b.header.Extra)
 	switch v := extra.Version(); v {
 	case dbftutil.ExtraV0:
-		sealHash := HonestSealHashV0(b.header)
+		sealHash := honestSealHashKeccaak256(b.header, false)
 		pubkey, err := ecrypto.Ecrecover(sealHash.Bytes(), sign)
 		if err != nil {
 			return fmt.Errorf("failed to recover public key from signature: %w", err)
@@ -108,10 +108,10 @@ func (b *Block) Verify(pub dbft.PublicKey, sign []byte) error {
 		if pub.(*PublicKey).Account != ecrypto.PubkeyBytesToAddress(pubkey) {
 			return errors.New("invalid block signature")
 		}
-	case dbftutil.ExtraV1, dbftutil.ExtraV2:
+	case dbftutil.ExtraV1, dbftutil.ExtraV2, dbftutil.ExtraV3:
 		switch ss := extra.SignatureScheme(); ss {
-		case dbftutil.ExtraV1ECDSAScheme:
-			sealHash := HonestSealHashV0(b.header)
+		case dbftutil.ECDSAScheme:
+			sealHash := honestSealHashKeccaak256(b.header, v == dbftutil.ExtraV3)
 			pubkey, err := ecrypto.Ecrecover(sealHash.Bytes(), sign)
 			if err != nil {
 				return fmt.Errorf("failed to recover public key from signature: %w", err)
@@ -119,7 +119,7 @@ func (b *Block) Verify(pub dbft.PublicKey, sign []byte) error {
 			if pub.(*PublicKey).Account != ecrypto.PubkeyBytesToAddress(pubkey) {
 				return errors.New("invalid block signature")
 			}
-		case dbftutil.ExtraV1ThresholdScheme:
+		case dbftutil.ThresholdScheme:
 			// We don't have a way to verify signature share, because the only way to
 			// verify is to collect at least M shares and verify *the group* of shares
 			// against *the global* public key. Hence, always consider Commit as valid

@@ -18,6 +18,7 @@
     "neoXDKGBlock": 0,
     "neoXAMEVBlock": 0,
     "neoXEthSigBlock": 0,
+    "neoXSSZSigBlock": 5,
     "cancunTime": 0,
     "pragueTime": 0,
     "blobSchedule": {

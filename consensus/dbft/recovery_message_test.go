@@ -41,7 +41,7 @@ func TestRecoverMessage_RLP(t *testing.T) {
 			ExcessBlobGas:    nil,
 			ParentBeaconRoot: nil,
 		},
-		TxHashes:         []common.Hash{common.Hash{}},
+		TxHashes:         []common.Hash{{}},
 		ParentSealHashV0: common.Hash{1, 2, 3},
 		ParentExtra:      []byte{1, 2, 3},
 	}

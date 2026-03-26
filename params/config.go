@@ -409,6 +409,7 @@ type ChainConfig struct {
 	NeoXDKGBlock    *big.Int `json:"neoXDKGBlock,omitempty"`    // Block-based switch to DKG related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
 	NeoXAMEVBlock   *big.Int `json:"neoXAMEVBlock,omitempty"`   // Block-based switch to anti-MEV related logic for dBFT (nil = no fork, 0 = already activated)
 	NeoXEthSigBlock *big.Int `json:"neoXEthSigBlock,omitempty"` // Block-based switch to fix block signature from NeoXAMEVBlock (nil = no fork, 0 = already activated)
+	NeoXSSZSigBlock *big.Int `json:"neoXSSZSigBlock,omitempty"` // Block-based switch to ZK-friendly block signature (nil = no fork, 0 = already activated)
 	CancunTime      *uint64  `json:"cancunTime,omitempty"`      // Cancun switch time (nil = no fork, 0 = already on cancun)
 	PragueTime      *uint64  `json:"pragueTime,omitempty"`      // Prague switch time (nil = no fork, 0 = already on prague)
 	OsakaTime       *uint64  `json:"osakaTime,omitempty"`       // Osaka switch time (nil = no fork, 0 = already on osaka)
@@ -675,6 +676,11 @@ func (c *ChainConfig) IsNeoXEthSig(num *big.Int) bool {
 	return c.IsLondon(num) && isBlockForked(c.NeoXEthSigBlock, num)
 }
 
+// IsNeoXSSZSig returns whether time is either equal to the NeoXSSZSig fork time or greater.
+func (c *ChainConfig) IsNeoXSSZSig(num *big.Int) bool {
+	return c.IsLondon(num) && isBlockForked(c.NeoXSSZSigBlock, num)
+}
+
 // IsCancun returns whether time is either equal to the Cancun fork time or greater.
 func (c *ChainConfig) IsCancun(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.CancunTime, time)
@@ -769,6 +775,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "neoXDKGBlock", block: c.NeoXDKGBlock, optional: true},
 		{name: "neoXAMEVBlock", block: c.NeoXAMEVBlock, optional: true},
 		{name: "neoXEthSigBlock", block: c.NeoXEthSigBlock, optional: true},
+		{name: "neoXSSZSigBlock", block: c.NeoXSSZSigBlock, optional: true},
 		{name: "cancunTime", timestamp: c.CancunTime, optional: true},
 		{name: "pragueTime", timestamp: c.PragueTime, optional: true},
 		{name: "osakaTime", timestamp: c.OsakaTime, optional: true},
@@ -918,6 +925,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	}
 	if isForkBlockIncompatible(c.NeoXEthSigBlock, newcfg.NeoXEthSigBlock, headNumber) {
 		return newBlockCompatError("NeoXEthSig fork block", c.NeoXEthSigBlock, newcfg.NeoXEthSigBlock)
+	}
+	if isForkBlockIncompatible(c.NeoXSSZSigBlock, newcfg.NeoXSSZSigBlock, headNumber) {
+		return newBlockCompatError("NeoXSSZSig fork block", c.NeoXSSZSigBlock, newcfg.NeoXSSZSigBlock)
 	}
 	if isForkTimestampIncompatible(c.CancunTime, newcfg.CancunTime, headTimestamp) {
 		return newTimestampCompatError("Cancun fork timestamp", c.CancunTime, newcfg.CancunTime)

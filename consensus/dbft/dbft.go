@@ -63,6 +63,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
+	ssz "github.com/ferranbt/fastssz"
 	"github.com/holiman/uint256"
 	"github.com/nspcc-dev/dbft"
 	"github.com/nspcc-dev/dbft/timer"
@@ -630,7 +631,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 	// treshold may be empty if some error occurs during calculation. Don't
 	// check it, we always have multisig as a backup scheme.
 	h.MixDigest = threshold
-	h.Extra = append(h.Extra[:dbftutil.ExtraVersionLen+dbftutil.ExtraV1SignatureSchemeLen], multisig.Bytes()...)
+	h.Extra = append(h.Extra[:dbftutil.ExtraVersionLen+dbftutil.SignatureSchemeLen], multisig.Bytes()...)
 
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: pre.finalTransactions, Withdrawals: ethBlock.Withdrawals()}
@@ -748,7 +749,7 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 	// Enforce V1 signing scheme startign from NeoXAMEV+1 height to be able to
 	// use block signature fallback mechanism starting from NeoXAMEV height.
 	if c.chain.Config().IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne)) {
-		header.Extra = append(header.Extra[:dbftutil.ExtraVersionLen+dbftutil.ExtraV1SignatureSchemeLen], multisig.Bytes()...)
+		header.Extra = append(header.Extra[:dbftutil.ExtraVersionLen+dbftutil.SignatureSchemeLen], multisig.Bytes()...)
 	}
 
 	// Update state root, transactions root, receipts hash and bloom.
@@ -830,7 +831,7 @@ func (c *DBFT) verifyCommitCb(p dbft.ConsensusPayload[common.Hash]) error {
 	switch v {
 	case dbftutil.ExtraV0:
 		expectedLen = crypto.SignatureLength
-	case dbftutil.ExtraV1, dbftutil.ExtraV2:
+	case dbftutil.ExtraV1, dbftutil.ExtraV2, dbftutil.ExtraV3:
 		if c.config.enforceECDSASignatures || (!isAMEV && c.chain.Config().IsNeoXAMEV(new(big.Int).Add(h, bigOne))) {
 			expectedLen = crypto.SignatureLength
 		} else {
@@ -875,10 +876,10 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 	// A separate check for post-NeoXAMEV block signing scheme since it depends
 	// on runtime node configuration.
 	extra := dbftutil.Extra(req.SealingProposal.Extra)
-	if c.chain.Config().IsNeoXAMEV(req.SealingProposal.Number) && (extra.Version() == dbftutil.ExtraV1 || extra.Version() == dbftutil.ExtraV2) {
-		var expected = dbftutil.ExtraV1ThresholdScheme
+	if c.chain.Config().IsNeoXAMEV(req.SealingProposal.Number) && extra.Version() != dbftutil.ExtraV0 {
+		var expected = dbftutil.ThresholdScheme
 		if c.config.enforceECDSASignatures {
-			expected = dbftutil.ExtraV1ECDSAScheme
+			expected = dbftutil.ECDSAScheme
 		}
 		if extra.SignatureScheme() != expected {
 			return fmt.Errorf("%w: expected %d, got %d", dbftutil.ErrUnexpectedBlockSignatureScheme, expected, extra.SignatureScheme())
@@ -886,7 +887,7 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 	}
 
 	if req.SealingProposal.ParentHash != c.lastBlockHash {
-		if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(req.SealingProposal.Number, bigOne)) && c.lastBlockExtra.SignatureScheme() == dbftutil.ExtraV1ThresholdScheme {
+		if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(req.SealingProposal.Number, bigOne)) && c.lastBlockExtra.SignatureScheme() == dbftutil.ThresholdScheme {
 			return fmt.Errorf("invalid parent hash after NeoXAMEV with threshold signing scheme: expected %s, got %s", c.lastBlockHash, req.SealingProposal.ParentHash)
 		}
 		// Genesis block is hard-coded, thus its hash (as a parent hash) must always match
@@ -1488,7 +1489,7 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 	switch v := dbftutil.Extra(block.header.Extra).Version(); v {
 	case dbftutil.ExtraV0:
 		return res, nil
-	case dbftutil.ExtraV1, dbftutil.ExtraV2:
+	case dbftutil.ExtraV1, dbftutil.ExtraV2, dbftutil.ExtraV3:
 		// Enforce multisignature-based signing scheme for NeoXAMEV-1 height or if
 		// enforcing configured.
 		cfg := c.chain.Config()
@@ -1520,7 +1521,12 @@ func (c *DBFT) getBlockWitness(pub *tpke.PublicKey, block *Block) ([]byte, error
 				}
 			}
 		}
-		msg := dbftRLP(block.header)
+		var msg []byte
+		if v == dbftutil.ExtraV1 || v == dbftutil.ExtraV2 {
+			msg = dbftRLP(block.header)
+		} else {
+			msg = dbftSSZ(block.header)
+		}
 		c.lock.RLock()
 		ks := c.amevKeystore
 		c.lock.RUnlock()
@@ -1676,7 +1682,7 @@ func (c *DBFT) Signers(header *types.Header) ([]common.Address, error) {
 	}
 	var (
 		signers = make([]common.Address, len(sigs))
-		h       = HonestSealHashV0(header).Bytes()
+		h       = honestSealHashKeccaak256(header, false).Bytes()
 	)
 	for i := range sigs {
 		pubkey, err := crypto.Ecrecover(h, sigs[i])
@@ -1752,8 +1758,10 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 		cfg           = chain.Config()
 		isAMEV        = cfg.IsNeoXAMEV(header.Number)
 		isEthSig      = cfg.IsNeoXEthSig(header.Number)
+		isSSZSig      = cfg.IsNeoXSSZSig(header.Number)
 		isV1Extra     = isAMEV || cfg.IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne))
 		isV2Extra     = isEthSig || cfg.IsNeoXEthSig(new(big.Int).Add(header.Number, bigOne))
+		isV3Extra     = isSSZSig || cfg.IsNeoXSSZSig(new(big.Int).Add(header.Number, bigOne))
 		expectedExtra = dbftutil.ExtraV0
 		extra         = dbftutil.Extra(header.Extra)
 	)
@@ -1763,13 +1771,16 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if isV2Extra {
 		expectedExtra = dbftutil.ExtraV2
 	}
+	if isV3Extra {
+		expectedExtra = dbftutil.ExtraV3
+	}
 	if v := extra.Version(); v != expectedExtra {
 		return fmt.Errorf("%w: expected %d, got %d", dbftutil.ErrUnexpectedExtraVersion, expectedExtra, v)
 	}
 
 	// Check that extra-data contains hashable part filled.
 	var expectedHashableExtraLen = dbftutil.HashableExtraV0Len
-	if isV1Extra || isV2Extra {
+	if isV1Extra || isV2Extra || isV3Extra {
 		expectedHashableExtraLen = dbftutil.HashableExtraV1Len
 	}
 	if len(header.Extra) < expectedHashableExtraLen {
@@ -1782,14 +1793,14 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 			m        = crypto.GetBFTHonestNodeCount(n)
 			expected int
 		)
-		if isV1Extra || isV2Extra {
-			if !isAMEV && extra.SignatureScheme() != dbftutil.ExtraV1ECDSAScheme {
-				return fmt.Errorf("%w for pre-NeoXAMEV block: expected %d, got %d", dbftutil.ErrUnexpectedBlockSignatureScheme, dbftutil.ExtraV1ECDSAScheme, extra.SignatureScheme())
+		if isV1Extra || isV2Extra || isV3Extra {
+			if !isAMEV && extra.SignatureScheme() != dbftutil.ECDSAScheme {
+				return fmt.Errorf("%w for pre-NeoXAMEV block: expected %d, got %d", dbftutil.ErrUnexpectedBlockSignatureScheme, dbftutil.ECDSAScheme, extra.SignatureScheme())
 			}
 			switch ss := extra.SignatureScheme(); ss {
-			case dbftutil.ExtraV1ECDSAScheme:
+			case dbftutil.ECDSAScheme:
 				expected = dbftutil.HashableExtraV1Len + m*crypto.SignatureLength + n*common.AddressLength
-			case dbftutil.ExtraV1ThresholdScheme:
+			case dbftutil.ThresholdScheme:
 				expected = dbftutil.HashableExtraV1Len + tpke.PublicKeyLen + tpke.SignatureLen
 			default:
 				return fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedBlockSignatureScheme, ss)
@@ -1802,7 +1813,7 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 		}
 
 		// Ensure that the mix digest is not zero.
-		if !isV1Extra && !isV2Extra && header.MixDigest == (common.Hash{}) {
+		if !isV1Extra && !isV2Extra && !isV3Extra && header.MixDigest == (common.Hash{}) {
 			return errInvalidMixDigest
 		}
 	}
@@ -1918,7 +1929,7 @@ func (c *DBFT) verifyCascadingFields(chain consensus.ChainHeaderReader, header *
 	if !isSealed {
 		return nil
 	}
-	return c.verifySeal(header, parents, parent)
+	return c.verifySeal(header, parent)
 }
 
 // VerifyUncles implements consensus.Engine, always returning an error for any
@@ -1934,7 +1945,7 @@ func (c *DBFT) VerifyUncles(chain consensus.ChainReader, block *types.Block) err
 // consensus protocol requirements. The method accepts an optional list of parent
 // headers that aren't yet part of the local blockchain to generate the snapshots
 // from.
-func (c *DBFT) verifySeal(header *types.Header, parents []*types.Header, parent *types.Header) error {
+func (c *DBFT) verifySeal(header *types.Header, parent *types.Header) error {
 	// Verifying the genesis block is not supported
 	number := header.Number.Uint64()
 	if number == 0 {
@@ -1986,9 +1997,9 @@ func (c *DBFT) verifyExtra(sealHashBytes []byte, extra dbftutil.Extra, parentNex
 			return fmt.Errorf("%w: %s", errUnauthorizedSigner, err)
 		}
 		return nil
-	case dbftutil.ExtraV1, dbftutil.ExtraV2:
+	case dbftutil.ExtraV1, dbftutil.ExtraV2, dbftutil.ExtraV3:
 		switch ss := extra.SignatureScheme(); ss {
-		case dbftutil.ExtraV1ECDSAScheme:
+		case dbftutil.ECDSAScheme:
 			vals, sigs, err := extra.ECDSASigners(len(c.config.StandByValidators))
 			if err != nil {
 				return fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
@@ -2001,7 +2012,7 @@ func (c *DBFT) verifyExtra(sealHashBytes []byte, extra dbftutil.Extra, parentNex
 			case dbftutil.ExtraV0:
 				expected = parentNextConsensus
 			case dbftutil.ExtraV1, dbftutil.ExtraV2:
-				var offset = dbftutil.ExtraVersionLen + dbftutil.ExtraV1SignatureSchemeLen
+				var offset = dbftutil.ExtraVersionLen + dbftutil.SignatureSchemeLen
 				expected.SetBytes(parentExtra[offset : offset+common.HashLength])
 			default:
 				return fmt.Errorf("%w of parent block: %d", dbftutil.ErrUnexpectedExtraVersion, pv)
@@ -2015,7 +2026,7 @@ func (c *DBFT) verifyExtra(sealHashBytes []byte, extra dbftutil.Extra, parentNex
 				return fmt.Errorf("%w: %s", errUnauthorizedSigner, err)
 			}
 			return nil
-		case dbftutil.ExtraV1ThresholdScheme:
+		case dbftutil.ThresholdScheme:
 			// Resolve the threshold signature and check against global public key.
 			pub, sig, err := extra.ThresholdSigners()
 			if err != nil {
@@ -2056,17 +2067,19 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	// signatures) are treated as changeable and are not filled in during Prepare.
 	if chain.Config().IsNeoXAMEV(new(big.Int).Add(header.Number, bigOne)) {
 		var extraVersion dbftutil.ExtraVersion
-		if chain.Config().IsNeoXEthSig(new(big.Int).Add(header.Number, bigOne)) {
+		if chain.Config().IsNeoXSSZSig(new(big.Int).Add(header.Number, bigOne)) {
+			extraVersion = dbftutil.ExtraV3
+		} else if chain.Config().IsNeoXEthSig(new(big.Int).Add(header.Number, bigOne)) {
 			extraVersion = dbftutil.ExtraV2
 		} else {
 			extraVersion = dbftutil.ExtraV1
 		}
-		var sigScheme dbftutil.ExtraV1SignatureScheme
+		var sigScheme dbftutil.SignatureScheme
 		// Enforce multisignature block signing if we're not at NeoXAMEV yet.
 		if c.config.enforceECDSASignatures || !chain.Config().IsNeoXAMEV(header.Number) {
-			sigScheme = dbftutil.ExtraV1ECDSAScheme
+			sigScheme = dbftutil.ECDSAScheme
 		} else {
-			sigScheme = dbftutil.ExtraV1ThresholdScheme
+			sigScheme = dbftutil.ThresholdScheme
 		}
 		header.Extra = []byte{byte(extraVersion), byte(sigScheme)}
 	} else {
@@ -2275,7 +2288,7 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 			return fmt.Errorf("can't verify sealing task: failed to get parent from chain: expected %s, got %s", c.lastBlockHash, b.ParentHash())
 		}
 		// Parent hash is constant starting from NeoXAMEV+1 height in case if threshold signature is used by parent.
-		if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(b.Number(), bigOne)) && dbftutil.Extra(parent.Extra).SignatureScheme() == dbftutil.ExtraV1ThresholdScheme {
+		if c.chain.Config().IsNeoXAMEV(new(big.Int).Sub(b.Number(), bigOne)) && dbftutil.Extra(parent.Extra).SignatureScheme() == dbftutil.ThresholdScheme {
 			return fmt.Errorf("invalid sealing task: parent hash mismatch with NeoXAMEV fork enabled and threshold signature scheme: expected %s, got %s", c.lastBlockHash, b.ParentHash())
 		}
 
@@ -2468,6 +2481,9 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 }
 
 func (c *DBFT) getBlockExtraVersion(height *big.Int) dbftutil.ExtraVersion {
+	if c.chain.Config().IsNeoXSSZSig(height) || c.chain.Config().IsNeoXSSZSig(new(big.Int).Add(height, bigOne)) {
+		return dbftutil.ExtraV3
+	}
 	if c.chain.Config().IsNeoXEthSig(height) || c.chain.Config().IsNeoXEthSig(new(big.Int).Add(height, bigOne)) {
 		return dbftutil.ExtraV2
 	}
@@ -2701,13 +2717,13 @@ func honestSealHash(header *types.Header) ([]byte, error) {
 	)
 	switch v := extra.Version(); v {
 	case dbftutil.ExtraV0:
-		sealHash = HonestSealHashV0(header).Bytes()
-	case dbftutil.ExtraV1, dbftutil.ExtraV2:
+		sealHash = honestSealHashKeccaak256(header, false).Bytes()
+	case dbftutil.ExtraV1, dbftutil.ExtraV2, dbftutil.ExtraV3:
 		switch ss := extra.SignatureScheme(); ss {
-		case dbftutil.ExtraV1ECDSAScheme:
-			sealHash = HonestSealHashV0(header).Bytes()
-		case dbftutil.ExtraV1ThresholdScheme:
-			b := HonestSealHashV1(header).Bytes()
+		case dbftutil.ECDSAScheme:
+			sealHash = honestSealHashKeccaak256(header, v == dbftutil.ExtraV3).Bytes()
+		case dbftutil.ThresholdScheme:
+			b := honestSealHashBLS12381(header, v == dbftutil.ExtraV3).Bytes()
 			sealHash = b[:]
 		default:
 			return sealHash, fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedBlockSignatureScheme, ss)
@@ -2718,21 +2734,31 @@ func honestSealHash(header *types.Header) ([]byte, error) {
 	return sealHash, nil
 }
 
-// HonestSealHashV0 returns the hash of a block prior to it being sealed. It differs
+// honestSealHashKeccaak256 returns the hash of a block prior to it being sealed. It differs
 // from WorkerSealHash in that all block fields except Extra's signature bytes are being
 // hashed. This hash represents a Keccaak256 hash of header.
-func HonestSealHashV0(header *types.Header) (hash common.Hash) {
+func honestSealHashKeccaak256(header *types.Header, ssz bool) common.Hash {
+	var b []byte
+	if ssz {
+		b = dbftSSZ(header)
+	} else {
+		b = dbftRLP(header)
+	}
 	hasher := sha3.NewLegacyKeccak256()
-	encodeSigHeader(hasher, header)
-	hasher.(crypto.KeccakState).Read(hash[:])
-	return hash
+	return common.Hash(hasher.Sum(b))
 }
 
-// HonestSealHashV1 returns the hash of a block prior to it being sealed. It differs
+// honestSealHashBLS12381 returns the hash of a block prior to it being sealed. It differs
 // from WorkerSealHash in that all block fields except Extra's signature bytes are being
 // hashed. This hash represents a G2 point on BLS12381 curve.
-func HonestSealHashV1(header *types.Header) *bls12381.G2Affine {
-	res, _ := bls12381.HashToG2(dbftRLP(header), tpke.Domain)
+func honestSealHashBLS12381(header *types.Header, ssz bool) *bls12381.G2Affine {
+	var b []byte
+	if ssz {
+		b = dbftSSZ(header)
+	} else {
+		b = dbftRLP(header)
+	}
+	res, _ := bls12381.HashToG2(b, tpke.Domain)
 	return &res
 }
 
@@ -2744,12 +2770,6 @@ func HonestSealHashV1(header *types.Header) *bls12381.G2Affine {
 // panics. This is done to avoid accidentally using both forms (signature present
 // or not), which could be abused to produce different hashes for the same header.
 func dbftRLP(header *types.Header) []byte {
-	b := new(bytes.Buffer)
-	encodeSigHeader(b, header)
-	return b.Bytes()
-}
-
-func encodeSigHeader(w io.Writer, header *types.Header) {
 	var hashableExtraLen int
 	switch v := dbftutil.Extra(header.Extra).Version(); v {
 	case dbftutil.ExtraV0:
@@ -2759,6 +2779,7 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 	default:
 		panic(fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, v)) // a dangerous program bug
 	}
+	b := new(bytes.Buffer)
 	enc := []interface{}{
 		header.ParentHash,
 		header.UncleHash,
@@ -2794,9 +2815,63 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 	if header.RequestsHash != nil {
 		enc = append(enc, header.RequestsHash)
 	}
-	if err := rlp.Encode(w, enc); err != nil {
+	if err := rlp.Encode(b, enc); err != nil {
 		panic("can't encode: " + err.Error())
 	}
+	return b.Bytes()
+}
+
+// dbftSSZ returns the SSZ bytes which needs to be signed for the proof-of-authority
+// sealing. The SSZ to sign consists of the entire header apart from the 65 byte signature
+// contained at the end of the extra data.
+func dbftSSZ(header *types.Header) []byte {
+	var hashableExtraLen int
+	switch v := dbftutil.Extra(header.Extra).Version(); v {
+	case dbftutil.ExtraV3:
+		hashableExtraLen = dbftutil.HashableExtraV1Len
+	default:
+		panic(fmt.Errorf("%w: %d", dbftutil.ErrUnexpectedExtraVersion, v)) // a dangerous program bug
+	}
+	b := make([]byte, 0)
+	b = append(b, header.ParentHash.Bytes()...)  // 32
+	b = append(b, header.UncleHash.Bytes()...)   // 32
+	b = append(b, header.Coinbase.Bytes()...)    // 20
+	b = append(b, header.Root.Bytes()...)        // 32
+	b = append(b, header.TxHash.Bytes()...)      // 32
+	b = append(b, header.ReceiptHash.Bytes()...) // 32
+	b = append(b, header.Bloom.Bytes()...)       // 256
+	// Difficulty and number are safe in uint64.
+	ssz.MarshalUint64(b, header.Difficulty.Uint64()) // 8
+	ssz.MarshalUint64(b, header.Number.Uint64())     // 8
+	ssz.MarshalUint64(b, header.GasLimit)            // 8
+	ssz.MarshalUint64(b, header.GasUsed)             // 8
+	ssz.MarshalUint64(b, header.Time)                // 8
+	// Extra length is fixed in dBFT, but depends on extra version.
+	b = append(b, header.Extra[:hashableExtraLen]...) // 1 or 34
+	b = append(b, header.MixDigest.Bytes()...)        // 32
+	// We use nonce as int, to store primary index.
+	ssz.MarshalUint64(b, header.Nonce.Uint64()) // 8
+
+	if header.BaseFee != nil {
+		// BaseFee is defined as uint256, ref https://github.com/OffchainLabs/prysm/blob/v7.0.0/specrefs/containers.yml#L708.
+		b = append(b, marshalAsUint256(header.BaseFee)...) // 32
+	}
+	if header.WithdrawalsHash != nil {
+		b = append(b, header.WithdrawalsHash.Bytes()...) // 32
+	}
+	if header.BlobGasUsed != nil {
+		ssz.MarshalUint64(b, *header.BlobGasUsed) // 8
+	}
+	if header.ExcessBlobGas != nil {
+		ssz.MarshalUint64(b, *header.ExcessBlobGas) // 8
+	}
+	if header.ParentBeaconRoot != nil {
+		b = append(b, header.ParentBeaconRoot.Bytes()...) // 32
+	}
+	if header.RequestsHash != nil {
+		b = append(b, header.RequestsHash.Bytes()...) // 32
+	}
+	return b
 }
 
 // Close implements consensus.Engine.
@@ -2991,10 +3066,6 @@ func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) (common.Hash,
 	return multisig, threshold
 }
 
-func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
-	return blockNum%uint64(len(c.config.StandByValidators)) == 0
-}
-
 func unpackContractExecutionResult(res interface{}, result *core.ExecutionResult, contractAbi abi.ABI, method string) error {
 	if len(result.Revert()) > 0 {
 		reason, errUnpack := abi.UnpackRevert(result.Revert())
@@ -3005,4 +3076,16 @@ func unpackContractExecutionResult(res interface{}, result *core.ExecutionResult
 		}
 	}
 	return contractAbi.UnpackIntoInterface(&res, method, result.Return())
+}
+
+// marshalAsUint256 converts a big.Int to a little-endian encoded uint256.
+func marshalAsUint256(v *big.Int) []byte {
+	res := make([]byte, 32)
+	bytes := v.Bytes()
+	if len(bytes) > 32 {
+		log.Crit("big integer overflow uint256", v)
+	}
+	slices.Reverse(bytes)
+	copy(res, bytes)
+	return res
 }

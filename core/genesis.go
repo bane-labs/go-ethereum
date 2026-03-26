@@ -592,9 +592,9 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *triedb.Database) (*types.Blo
 			if block.MixDigest() != expected {
 				return nil, fmt.Errorf("inconsistent MixHash (NextConsensus) genesis block setting: expected %s, got %s", expected, block.MixDigest())
 			}
-		case byte(dbftutil.ExtraV1), byte(dbftutil.ExtraV2):
+		case byte(dbftutil.ExtraV1), byte(dbftutil.ExtraV2), byte(dbftutil.ExtraV3):
 			switch extra[1] {
-			case byte(dbftutil.ExtraV1ECDSAScheme):
+			case byte(dbftutil.ECDSAScheme):
 				vals, _, err := dbftutil.Extra(extra).ECDSASigners(n)
 				if err != nil {
 					return nil, fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)
@@ -603,7 +603,7 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *triedb.Database) (*types.Blo
 				if block.MixDigest() != expected {
 					return nil, fmt.Errorf("inconsistent MixHash (NextConsensus) genesis block setting: expected %s, got %s", expected, block.MixDigest())
 				}
-			case byte(dbftutil.ExtraV1ThresholdScheme):
+			case byte(dbftutil.ThresholdScheme):
 				pub, _, err := dbftutil.Extra(extra).ThresholdSigners()
 				if err != nil {
 					return nil, fmt.Errorf("failed to retrieve validators and signatures from header: %w", err)

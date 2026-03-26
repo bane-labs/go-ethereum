@@ -58,7 +58,7 @@ func (c *commit) DecodeRLP(s *rlp.Stream) error {
 // share returns [tpke.SignatureShare] unpacked from commit's signature in case of
 // [dbftutil.ExtraV1] commit version. No error is returned for other commit versions.
 func (c *commit) share() (*tpke.SignatureShare, error) {
-	if c.version != dbftutil.ExtraV1 && c.version != dbftutil.ExtraV2 {
+	if c.version == dbftutil.ExtraV0 {
 		return nil, nil
 	}
 	if c.shareCache == nil {
