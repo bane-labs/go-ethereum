@@ -47,6 +47,10 @@ type BlobPeersFn func() []string
 // MarkNoBlobPeerFn is a callback type to mark a peer as not having blobs.
 type MarkNoBlobPeerFn func(id string)
 
+// HighestHeaderNumberFn is a callback type to retrieve the highest header number seen,
+// used to determine when to fetch sidecars for new blocks.
+type HighestHeaderNumberFn func() (uint64, bool)
+
 // fetchingTask represents a scheduled sidecar fetching operation.
 type fetchingTask struct {
 	block *types.Block // The block to fetch sidecars for
@@ -87,10 +91,11 @@ type SidecarFetcher struct {
 	fetching  map[common.Hash]*fetchingTask   // Currently fetching
 
 	// Callbacks
-	announceSidecars SidecarsAnnouncerFn // Announces sidecars to the network
-	blobPeers        BlobPeersFn         // Retrieves all known blob peers
-	markNoBlobPeer   MarkNoBlobPeerFn    // Marks a peer as not having blobs, to avoid scheduling future fetches to it
-	dropPeer         PeerDropFn          // Drops a peer for misbehaving
+	announceSidecars    SidecarsAnnouncerFn   // Announces sidecars to the network
+	blobPeers           BlobPeersFn           // Retrieves all known blob peers
+	markNoBlobPeer      MarkNoBlobPeerFn      // Marks a peer as not having blobs, to avoid scheduling future fetches to it
+	dropPeer            PeerDropFn            // Drops a peer for misbehaving
+	highestHeaderNumber HighestHeaderNumberFn // Highest header number seen, used to determine when to fetch sidecars for new blocks
 
 	fetchSidecars     SidecarRequesterFn     // Fetcher function to retrieve the blob sidecars of a block
 	deepFetchSidecars SidecarDeepRequesterFn // Deep-fetcher function to retrieve blob sidecars of a block
@@ -100,24 +105,26 @@ type SidecarFetcher struct {
 }
 
 // NewSidecarFetcher creates a sidecar fetcher to retrieve blob sidecars.
-func NewSidecarFetcher(chain BlockChain, fs FileSystem, blobPeers BlobPeersFn, markNoBlobPeer MarkNoBlobPeerFn, dropPeer PeerDropFn,
-	announceSidecars SidecarsAnnouncerFn, fetchSidecars SidecarRequesterFn, deepFetchSidecars SidecarDeepRequesterFn) *SidecarFetcher {
+func NewSidecarFetcher(chain BlockChain, fs FileSystem, blobPeers BlobPeersFn, markNoBlobPeer MarkNoBlobPeerFn,
+	dropPeer PeerDropFn, highestHeaderNumber HighestHeaderNumberFn, announceSidecars SidecarsAnnouncerFn,
+	fetchSidecars SidecarRequesterFn, deepFetchSidecars SidecarDeepRequesterFn) *SidecarFetcher {
 	return &SidecarFetcher{
-		notify:            make(chan *blobAnnounce),
-		done:              make(chan common.Hash),
-		quit:              make(chan struct{}),
-		announces:         make(map[string]int),
-		announced:         make(map[common.Hash][]*blobAnnounce),
-		scheduled:         make(map[common.Hash]*fetchingTask),
-		fetching:          make(map[common.Hash]*fetchingTask),
-		blobPeers:         blobPeers,
-		markNoBlobPeer:    markNoBlobPeer,
-		dropPeer:          dropPeer,
-		announceSidecars:  announceSidecars,
-		fetchSidecars:     fetchSidecars,
-		deepFetchSidecars: deepFetchSidecars,
-		fs:                fs,
-		chain:             chain,
+		notify:              make(chan *blobAnnounce),
+		done:                make(chan common.Hash),
+		quit:                make(chan struct{}),
+		announces:           make(map[string]int),
+		announced:           make(map[common.Hash][]*blobAnnounce),
+		scheduled:           make(map[common.Hash]*fetchingTask),
+		fetching:            make(map[common.Hash]*fetchingTask),
+		blobPeers:           blobPeers,
+		markNoBlobPeer:      markNoBlobPeer,
+		dropPeer:            dropPeer,
+		highestHeaderNumber: highestHeaderNumber,
+		announceSidecars:    announceSidecars,
+		fetchSidecars:       fetchSidecars,
+		deepFetchSidecars:   deepFetchSidecars,
+		fs:                  fs,
+		chain:               chain,
 	}
 }
 
@@ -159,14 +166,31 @@ func (f *SidecarFetcher) loop() {
 	timeoutTicker := time.NewTicker(fetchTimeout)
 	defer timeoutTicker.Stop()
 
+	// Determine the initial fetch height, which is the earliest block that may
+	// still have sidecars being propagated for it.
 	fetchHeight := uint64(0)
-	height := f.chain.CurrentBlock().Number.Uint64()
+	reinitFetchHeight := false
 	minRetainBlockNumbers := uint64(params.MinEthEpochsForBlobsSidecarsRequest * params.BlocksPerEthEpoch)
+	height := f.chain.CurrentBlock().Number.Uint64()
 	if height > minRetainBlockNumbers {
 		fetchHeight = height - minRetainBlockNumbers
 	}
 
 	for {
+		// Reinitialize fetch height based on the highest header number seen, to avoid missing sidecars for new blocks.
+		if !reinitFetchHeight {
+			if height, found := f.highestHeaderNumber(); found {
+				reinitFetchHeight = found
+				if height > minRetainBlockNumbers {
+					recommendedFetchHeight := height - minRetainBlockNumbers
+					if fetchHeight < recommendedFetchHeight {
+						fetchHeight = recommendedFetchHeight
+						log.Info("Reinitial fetch height set based on highest header number", "height", fetchHeight)
+					}
+				}
+			}
+		}
+
 		// Schedule new sidecar fetches if below the limit
 		f.scheduleNextSidecars(&fetchHeight, fetchTimer)
 

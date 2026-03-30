@@ -356,6 +356,21 @@ func (ps *peerSet) peerWithHighestTD() (*beacon.Peer, *eth.Peer) {
 	return bestBeacon, bestPeer
 }
 
+func (ps *peerSet) highestNumberOfBeacons() (uint64, bool) {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	highestHeadNumber := uint64(0)
+	found := false
+	for _, b := range ps.beacons {
+		if _, _, headNumber := b.Head(); headNumber > highestHeadNumber {
+			highestHeadNumber = headNumber
+			found = true
+		}
+	}
+	return highestHeadNumber, found
+}
+
 // close disconnects all peers.
 func (ps *peerSet) close() {
 	ps.lock.Lock()
