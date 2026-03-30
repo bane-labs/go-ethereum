@@ -76,7 +76,8 @@ func (p *snapPeer) info() *snapPeerInfo {
 // beaconPeerInfo represents a short summary of the `beacon` sub-protocol metadata known
 // about a connected peer.
 type beaconPeerInfo struct {
-	Version uint `json:"version"` // Beacon protocol version negotiated
+	Version    uint   `json:"version"`    // Beacon protocol version negotiated
+	HeadNumber uint64 `json:"headNumber"` // Latest block number known by the peer
 }
 
 // beaconPeer is a wrapper around beacon.Peer to maintain a few extra metadata.
@@ -86,7 +87,9 @@ type beaconPeer struct {
 
 // info gathers and returns some `beacon` protocol metadata known about a peer.
 func (p *beaconPeer) info() *beaconPeerInfo {
+	_, _, headNumber := p.Head()
 	return &beaconPeerInfo{
-		Version: p.Version(),
+		Version:    p.Version(),
+		HeadNumber: headNumber,
 	}
 }

@@ -347,7 +347,7 @@ func (ps *peerSet) peerWithHighestTD() (*beacon.Peer, *eth.Peer) {
 		bestTd     *big.Int
 	)
 	for _, b := range ps.beacons {
-		if _, td := b.Head(); bestPeer == nil || td.Cmp(bestTd) > 0 {
+		if _, td, _ := b.Head(); bestPeer == nil || td.Cmp(bestTd) > 0 {
 			if p := ps.peers[b.ID()]; p != nil {
 				bestBeacon, bestPeer, bestTd = b.Peer, p.Peer, td
 			}

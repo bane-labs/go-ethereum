@@ -94,6 +94,16 @@ var beacon1 = map[uint64]msgHandler{
 	BatchBlobsMsg:     handleBatchBlobs,
 }
 
+var beacon2 = map[uint64]msgHandler{
+	NewBlockHashesMsg: handleNewBlockhashes,
+	NewBlockMsg:       handleNewBlock,
+	NewBlobsRootMsg:   handleNewBlobsRoot,
+	GetBlobsMsg:       handleGetBlobs,
+	BlobsMsg:          handleBlobs,
+	GetBatchBlobsMsg:  handleGetBatchBlobs,
+	BatchBlobsMsg:     handleBatchBlobs,
+}
+
 // handleMessage is invoked whenever an inbound message is received from a
 // remote peer on the `beacon` protocol. The remote connection is torn down upon
 // returning any error.
@@ -108,7 +118,14 @@ func handleMessage(backend Backend, peer *Peer) error {
 	}
 	defer msg.Discard()
 
-	var handlers = beacon1
+	var handlers map[uint64]msgHandler
+	if peer.version == BEACON1 {
+		handlers = beacon1
+	} else if peer.version == BEACON2 {
+		handlers = beacon2
+	} else {
+		return fmt.Errorf("unknown beacon protocol version: %v", peer.version)
+	}
 
 	// Track the amount of time it takes to serve the request and run the handler
 	if metrics.Enabled() {

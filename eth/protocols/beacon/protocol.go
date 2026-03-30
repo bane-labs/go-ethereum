@@ -13,6 +13,7 @@ import (
 // Constants to match up protocol versions and messages
 const (
 	BEACON1 = 1
+	BEACON2 = 2
 )
 
 // ProtocolName is the official short name of the `beacon` protocol used during
@@ -21,11 +22,11 @@ const ProtocolName = "beacon"
 
 // ProtocolVersions are the supported versions of the `beacon` protocol (first
 // is primary).
-var ProtocolVersions = []uint{BEACON1}
+var ProtocolVersions = []uint{BEACON1, BEACON2}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{BEACON1: 8}
+var protocolLengths = map[uint]uint64{BEACON1: 8, BEACON2: 8}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -58,12 +59,24 @@ type Packet interface {
 	Kind() byte   // Kind returns the message type.
 }
 
-// StatusPacket is the network packet for the status message.
-type StatusPacket struct {
+// StatusPacket1 is the network packet for the status message.
+type StatusPacket1 struct {
 	ProtocolVersion uint32
 	NetworkID       uint64
 	TD              *big.Int
 	Head            common.Hash
+	Genesis         common.Hash
+	ForkID          forkid.ID
+	BlobSync        bool
+}
+
+// StatusPacket2 is the network packet for the status message.
+type StatusPacket2 struct {
+	ProtocolVersion uint32
+	NetworkID       uint64
+	TD              *big.Int
+	Head            common.Hash
+	HeadNumber      uint64
 	Genesis         common.Hash
 	ForkID          forkid.ID
 	BlobSync        bool
@@ -150,8 +163,11 @@ type BatchBlobsRLPPacket struct {
 	BatchBlobsRLPResponse
 }
 
-func (*StatusPacket) Name() string { return "Status" }
-func (*StatusPacket) Kind() byte   { return StatusMsg }
+func (*StatusPacket1) Name() string { return "Status" }
+func (*StatusPacket1) Kind() byte   { return StatusMsg }
+
+func (*StatusPacket2) Name() string { return "Status" }
+func (*StatusPacket2) Kind() byte   { return StatusMsg }
 
 func (*NewBlockHashesPacket) Name() string { return "NewBlockHashes" }
 func (*NewBlockHashesPacket) Kind() byte   { return NewBlockHashesMsg }
