@@ -57,13 +57,6 @@ func (m *mockBackend) TxPool() *txpool.TxPool {
 	return m.txPool
 }
 
-type mockBlobPool struct {
-}
-
-func (bp *mockBlobPool) Get(hash common.Hash) *types.Transaction {
-	return nil
-}
-
 type testBlockChain struct {
 	root          common.Hash
 	config        *params.ChainConfig
