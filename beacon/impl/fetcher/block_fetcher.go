@@ -82,6 +82,9 @@ type chainFinalizedHeightFn func() uint64
 // chainInsertFn is a callback type to insert a block into the local chain.
 type chainInsertFn func(*types.Block) error
 
+// downloadInformFn is a callback type to announce a block to the local downloader.
+type downloadInformFn func(*types.Block) error
+
 // PeerDropFn is a callback type for dropping a peer detected as malicious.
 type PeerDropFn func(id string)
 
@@ -170,6 +173,7 @@ type BlockFetcher struct {
 	chainHeight          chainHeightFn          // Retrieves the current chain's height
 	chainFinalizedHeight chainFinalizedHeightFn // Retrieves the current chain's finalized height
 	insertChain          chainInsertFn          // Injects a block into the chain
+	informDownload       downloadInformFn       // Informs a block to the downloader
 	dropPeer             PeerDropFn             // Drops a peer for misbehaving
 
 	fetchHeader HeaderRequesterFn // Fetcher function to retrieve the header of an announced block
@@ -185,8 +189,9 @@ type BlockFetcher struct {
 
 // NewBlockFetcher creates a block fetcher to retrieve blocks based on hash announcements.
 func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBlock BlockBroadcasterFn,
-	chainHeight chainHeightFn, chainFinalizedHeight chainFinalizedHeightFn, insertChain chainInsertFn, dropPeer PeerDropFn,
-	fetchHeader HeaderRequesterFn, fetchBodies BodyRequesterFn) *BlockFetcher {
+	chainHeight chainHeightFn, chainFinalizedHeight chainFinalizedHeightFn, insertChain chainInsertFn,
+	informDownload downloadInformFn, dropPeer PeerDropFn, fetchHeader HeaderRequesterFn, fetchBodies BodyRequesterFn,
+) *BlockFetcher {
 	return &BlockFetcher{
 		notify:               make(chan *blockAnnounce),
 		inject:               make(chan *blockOrHeaderInject),
@@ -209,6 +214,7 @@ func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, b
 		chainHeight:          chainHeight,
 		chainFinalizedHeight: chainFinalizedHeight,
 		insertChain:          insertChain,
+		informDownload:       informDownload,
 		dropPeer:             dropPeer,
 		fetchHeader:          fetchHeader,
 		fetchBodies:          fetchBodies,
@@ -342,15 +348,7 @@ func (f *BlockFetcher) loop() {
 			if f.queueChangeHook != nil {
 				f.queueChangeHook(hash, false)
 			}
-			// If too high up the chain or phase, continue later
 			number := op.number()
-			if number > height+1 {
-				f.queue.Push(op, -int64(number))
-				if f.queueChangeHook != nil {
-					f.queueChangeHook(hash, true)
-				}
-				break
-			}
 			// Otherwise if fresh and still unknown, try and import
 			finalizedHeight := f.chainFinalizedHeight()
 			if (number+maxUncleDist < height) || number <= finalizedHeight || f.getBlock(hash) != nil {
@@ -379,11 +377,6 @@ func (f *BlockFetcher) loop() {
 				break
 			}
 			// If we have a valid block number, check that it's potentially useful
-			if dist := int64(notification.number) - int64(f.chainHeight()); dist < -maxUncleDist || dist > maxQueueDist {
-				log.Debug("Peer discarded announcement by distance", "peer", notification.origin, "number", notification.number, "hash", notification.hash, "distance", dist)
-				blockAnnounceDropMeter.Mark(1)
-				break
-			}
 			finalized := f.chainFinalizedHeight()
 			if notification.number <= finalized {
 				log.Debug("Peer discarded announcement by finality", "peer", notification.origin, "number", notification.number, "hash", notification.hash, "finalized", finalized)
@@ -762,13 +755,6 @@ func (f *BlockFetcher) enqueue(peer string, header *types.Header, block *types.B
 		f.forgetHash(hash)
 		return
 	}
-	// Discard any past or too distant blocks
-	if dist := int64(number) - int64(f.chainHeight()); dist < -maxUncleDist || dist > maxQueueDist {
-		log.Debug("Discarded delivered header or block, too far away", "peer", peer, "number", number, "hash", hash, "distance", dist)
-		blockBroadcastDropMeter.Mark(1)
-		f.forgetHash(hash)
-		return
-	}
 	// Discard any block that is below the current finalized height
 	finalizedHeight := f.chainFinalizedHeight()
 	if number <= finalizedHeight {
@@ -806,21 +792,6 @@ func (f *BlockFetcher) importBlocks(op *blockOrHeaderInject) {
 	// Run the import on a new thread
 	log.Debug("Importing propagated block", "peer", peer, "number", block.Number(), "hash", hash)
 	go func() {
-		// If the parent's unknown, abort insertion
-		parent := f.getBlock(block.ParentHash())
-		if parent == nil {
-			log.Debug("Unknown parent of propagated block", "peer", peer, "number", block.Number(), "hash", hash, "parent", block.ParentHash())
-			// forget block first, then re-queue
-			f.done <- hash
-			time.Sleep(reQueueBlockTimeout)
-			f.requeue <- op
-			return
-		}
-
-		if block.Header().EmptyWithdrawalsHash() {
-			block = block.WithWithdrawals(make([]*types.Withdrawal, 0))
-		}
-
 		defer func() { f.done <- hash }()
 		// Quickly validate the header and propagate the block if it passes
 		switch err := f.verifyHeader(block.Header()); err {
@@ -829,6 +800,13 @@ func (f *BlockFetcher) importBlocks(op *blockOrHeaderInject) {
 			blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 			go f.broadcastBlock(block, true)
 
+		case consensus.ErrUnknownAncestor:
+			// The header parent is unknown, we may need this to start syncing
+			if err := f.informDownload(block); err != nil {
+				log.Error("Failed to inform downloader", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
+			}
+			// Direct return, no insert or broadcast
+			return
 		case consensus.ErrFutureBlock:
 			log.Error("Received future block", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
 			f.dropPeer(peer)

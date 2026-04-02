@@ -504,7 +504,12 @@ func setupBlocks(t *testing.T, ethservice *eth.Ethereum, n int, parent *types.He
 		}
 
 		envelope := getNewEnvelope(t, api, parent, w, h)
-		execResp, err := api.newPayload(*envelope.ExecutionPayload, []common.Hash{}, h, envelope.Requests, false)
+		var requestsHash *common.Hash
+		if envelope.Requests != nil {
+			h := types.CalcRequestsHash(envelope.Requests)
+			requestsHash = &h
+		}
+		execResp, err := api.newPayload(*envelope.ExecutionPayload, []common.Hash{}, h, requestsHash, false)
 		if err != nil {
 			t.Fatalf("can't execute payload: %v", err)
 		}

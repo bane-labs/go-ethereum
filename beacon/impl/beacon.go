@@ -61,8 +61,8 @@ func (b *Beacon) StartBlockFetcher(broadcastBlock fetcher.BlockBroadcasterFn, dr
 
 	b.broadcastBlock = broadcastBlock
 	b.blockFetcher = fetcher.NewBlockFetcher(b.chain.GetBlockByHash, validator,
-		broadcastBlock, heighter, finalizeHeighter, b.InsertBlock, dropPeer,
-		fetchHeader, fetchBodies)
+		broadcastBlock, heighter, finalizeHeighter, b.InsertBlock, b.InformDownloader,
+		dropPeer, fetchHeader, fetchBodies)
 	b.blockFetcher.Start()
 }
 
@@ -78,7 +78,12 @@ func (b *Beacon) NotifyBlockAnnon(peer string, hash common.Hash, number uint64, 
 
 // InsertBlock is a universal block insert function to feed block back to EL.
 func (b *Beacon) InsertBlock(block *types.Block) error {
-	return b.miner.DispatchBlock(block)
+	return b.miner.DispatchBlock(block, true)
+}
+
+// InformDownloader announces a new block to the EL downloader.
+func (b *Beacon) InformDownloader(block *types.Block) error {
+	return b.miner.DispatchBlock(block, false)
 }
 
 // Mining returns whether the beacon client is mining.

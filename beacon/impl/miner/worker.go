@@ -10,7 +10,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -233,7 +232,12 @@ func (w *worker) requestWork(timestamp uint64) {
 	for _, commitment := range payload.BlobsBundle.Commitments {
 		versionedHashes = append(versionedHashes, convertKzgCommitmentToVersionedHash(commitment))
 	}
-	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, &types.EmptyRootHash, payload.Requests)
+	var requestsHash *common.Hash
+	if payload.Requests != nil {
+		h := types.CalcRequestsHash(payload.Requests)
+		requestsHash = &h
+	}
+	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, &types.EmptyRootHash, requestsHash)
 	if err != nil {
 		log.Error("Failed to rebuild full block", "err", err)
 		return
@@ -261,7 +265,7 @@ func (w *worker) commit(block *types.Block, versionedHashes []common.Hash, reque
 }
 
 // feedback sends signed block back to EL for execution.
-func (w *worker) feedback(block *types.Block) error {
+func (w *worker) feedback(block *types.Block, reorgCheck bool) error {
 	// Lock to ensure EL RW atomicity, no concurrent reorg happens.
 	w.forkMu.Lock()
 	defer w.forkMu.Unlock()
@@ -273,22 +277,9 @@ func (w *worker) feedback(block *types.Block) error {
 
 	// Transform from block to execution payload.
 	payload := engine.BlockToExecutableData(block, nil, nil, nil)
-	var executionRequests []hexutil.Bytes
-	if w.chainConfig.IsPrague(block.Number(), block.Time()) {
-		executionRequests = []hexutil.Bytes{}
-	}
-
-	// Collect requests.
-	_, res, err := w.chain.ProcessState(block, nil)
-	if err != nil {
-		return err
-	}
-	for _, v := range res.Requests {
-		executionRequests = append(executionRequests, v)
-	}
 
 	// Send payload through RPC. TODO: collect and include versioned hashes if possible
-	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, executionRequests, block.Time())
+	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, block.RequestsHash(), block.Time())
 	if err != nil {
 		return err
 	}
@@ -297,12 +288,14 @@ func (w *worker) feedback(block *types.Block) error {
 	}
 
 	// Set head based on reorg check.
-	reorg, err := w.forker.ReorgNeeded(w.chain.CurrentHeader(), block.Header())
-	if err != nil {
-		return err
-	}
-	if !reorg {
-		return nil
+	if reorgCheck {
+		reorg, err := w.forker.ReorgNeeded(w.chain.CurrentHeader(), block.Header())
+		if err != nil {
+			return err
+		}
+		if !reorg {
+			return nil
+		}
 	}
 
 	// Send the latest head info to EL, and request a block proposal if mining.
@@ -310,7 +303,7 @@ func (w *worker) feedback(block *types.Block) error {
 	if err != nil {
 		return err
 	}
-	if resp.PayloadStatus.Status != engine.VALID {
+	if resp.PayloadStatus.Status == engine.INVALID {
 		return fmt.Errorf("set head failed, status: %v", resp.PayloadStatus.Status)
 	}
 	if resp.PayloadID != nil {
@@ -381,7 +374,7 @@ func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloa
 }
 
 // sendPayload sends new block back to EL through RPC.
-func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, executionRequests []hexutil.Bytes, timestamp uint64) (engine.PayloadStatusV1, error) {
+func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash, timestamp uint64) (engine.PayloadStatusV1, error) {
 	var newPayloadMethod string
 	var status engine.PayloadStatusV1
 	switch w.chain.Config().LatestFork(timestamp) {
@@ -394,7 +387,7 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 	default:
 		return engine.PayloadStatusV1{}, fmt.Errorf("fork %s is not supported for engine_getPayload", w.chain.Config().LatestFork(timestamp).String())
 	}
-	err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, executionRequests)
+	err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, requestsHash)
 	if err != nil {
 		return engine.PayloadStatusV1{}, err
 	}

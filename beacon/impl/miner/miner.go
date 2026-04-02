@@ -55,17 +55,8 @@ func New(eth Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Addre
 }
 
 // DispatchBlock sends back mined block to EL.
-func (miner *Miner) DispatchBlock(block *types.Block) error {
-	// If snap sync is running, deny importing weird blocks. This is a problematic
-	// clause when starting up a new network, because snap-syncing miners might not
-	// accept each others' blocks until a restart. Unfortunately we haven't figured
-	// out a way yet where nodes can decide unilaterally whether the network is new
-	// or not. This should be fixed if we figure out a solution.
-	if !miner.backend.Synced() {
-		log.Warn("Syncing, discarded propagated block", "number", block.Number(), "hash", block.Hash())
-		return nil
-	}
-	return miner.worker.feedback(block)
+func (miner *Miner) DispatchBlock(block *types.Block, trustful bool) error {
+	return miner.worker.feedback(block, trustful)
 }
 
 // RequestNewPayload triggers a new block building manually.

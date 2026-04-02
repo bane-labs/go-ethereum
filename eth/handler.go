@@ -176,8 +176,7 @@ type handler struct {
 	// channels for fetcher, syncer, txsyncLoop
 	quitSync chan struct{}
 
-	chainSync *chainSyncer
-	wg        sync.WaitGroup
+	wg sync.WaitGroup
 
 	handlerStartCh chan struct{}
 	handlerDoneCh  chan struct{}
@@ -267,7 +266,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		h.sidecarFetcher = beaconfetch.NewSidecarFetcher(h.chain, h.fs, h.peers.blobPeers, h.peers.markNoBlobPeer, h.removePeer,
 			h.announceBlobs, h.fetchSidecars, (*beaconHandler)(h).RetrieveSidecarsByRoot)
 	}
-	h.chainSync = newChainSyncer(h)
 	return h, nil
 }
 
@@ -341,17 +339,6 @@ func (h *handler) runBeaconPeer(peer *beaconproto.Peer, handler beaconproto.Hand
 	}
 	defer h.unregisterBeacon(peer.ID())
 
-	p := h.peers.beacon(peer.ID())
-	if p == nil {
-		return errors.New("peer dropped during handling")
-	}
-	// Register the peer in the downloader. If the downloader considers it banned, we disconnect
-	if err := h.downloader.RegisterBeacon(peer.ID(), peer); err != nil {
-		peer.Log().Error("Failed to register peer in eth syncer", "err", err)
-		return err
-	}
-	h.chainSync.handlePeerEvent()
-
 	return handler(peer)
 }
 
@@ -417,7 +404,6 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 			return err
 		}
 	}
-	h.chainSync.handlePeerEvent()
 
 	// Propagate existing transactions. new transactions appearing
 	// after this will be sent via broadcasts.
@@ -530,8 +516,6 @@ func (h *handler) unregisterBeacon(id string) {
 	// Remove the `beacon` peer if it exists
 	logger.Debug("Removing Beacon peer")
 
-	h.downloader.UnregisterBeacon(id)
-
 	if err := h.peers.unregisterBeacon(id); err != nil {
 		logger.Error("Beacon peer removal failed", "err", err)
 	}
@@ -589,8 +573,7 @@ func (h *handler) Start(maxPeers int) {
 	go h.txReannounceLoop()
 
 	// start sync handlers
-	h.wg.Add(1)
-	go h.chainSync.loop()
+	h.txFetcher.Start()
 
 	// start peer handler tracker
 	h.wg.Add(1)
@@ -608,6 +591,9 @@ func (h *handler) Stop() {
 	h.blockRange.stop()
 	h.reannoTxsSub.Unsubscribe() // quits txReannounceLoop
 	h.annoBlobsSub.Unsubscribe() // quits blobsAnnounceLoop
+
+	h.txFetcher.Stop()
+	h.downloader.Terminate()
 
 	// Quit chainSync and txsync64.
 	// After this is done, no new peers will be accepted.
