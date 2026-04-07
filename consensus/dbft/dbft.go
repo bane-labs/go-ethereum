@@ -2697,7 +2697,7 @@ func honestSealHash(header *types.Header) ([]byte, error) {
 // hashed. This hash represents a Keccaak256 hash of header.
 func HonestSealHashV0(header *types.Header) (hash common.Hash) {
 	hasher := sha3.NewLegacyKeccak256()
-	encodeSigHeader(hasher, header)
+	EncodeSigHeader(hasher, header)
 	hasher.(crypto.KeccakState).Read(hash[:])
 	return hash
 }
@@ -2719,11 +2719,11 @@ func HonestSealHashV1(header *types.Header) *bls12381.G2Affine {
 // or not), which could be abused to produce different hashes for the same header.
 func dbftRLP(header *types.Header) []byte {
 	b := new(bytes.Buffer)
-	encodeSigHeader(b, header)
+	EncodeSigHeader(b, header)
 	return b.Bytes()
 }
 
-func encodeSigHeader(w io.Writer, header *types.Header) {
+func EncodeSigHeader(w io.Writer, header *types.Header) {
 	var hashableExtraLen int
 	switch v := dbftutil.Extra(header.Extra).Version(); v {
 	case dbftutil.ExtraV0:
