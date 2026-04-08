@@ -744,7 +744,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 		headerFetcher, // Headers are always retrieved
 		func() error { return d.fetchBodies(chainOffset, beaconMode) },   // Bodies are retrieved during normal and snap sync
 		func() error { return d.fetchReceipts(chainOffset, beaconMode) }, // Receipts are retrieved during snap sync
-		func() error { return d.processHeaders(origin+1, td, ttd, beaconMode) },
+		func() error { return d.processHeaders(origin + 1) },
 	}
 	if mode == SnapSync {
 		d.pivotLock.Lock()
@@ -1366,11 +1366,10 @@ func (d *Downloader) fetchReceipts(from uint64, beaconMode bool) error {
 // processHeaders takes batches of retrieved headers from an input channel and
 // keeps processing and scheduling them into the header chain and downloader's
 // queue until the stream ends or a failure occurs.
-func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode bool) error {
+func (d *Downloader) processHeaders(origin uint64) error {
 	var (
-		mode       = d.getMode()
-		gotHeaders = false // Wait for batches of headers to process
-		timer      = time.NewTimer(time.Second)
+		mode  = d.getMode()
+		timer = time.NewTimer(time.Second)
 	)
 	defer timer.Stop()
 
@@ -1389,46 +1388,11 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 					case <-d.cancelCh:
 					}
 				}
-				// If we're in legacy sync mode, we need to check total difficulty
-				// violations from malicious peers. That is not needed in beacon
-				// mode and we can skip to terminating sync.
-				if !beaconMode {
-					// If no headers were retrieved at all, the peer violated its TD promise that it had a
-					// better chain compared to ours. The only exception is if its promised blocks were
-					// already imported by other means (e.g. fetcher):
-					//
-					// R <remote peer>, L <local node>: Both at block 10
-					// R: Mine block 11, and propagate it to L
-					// L: Queue block 11 for import
-					// L: Notice that R's head and TD increased compared to ours, start sync
-					// L: Import of block 11 finishes
-					// L: Sync begins, and finds common ancestor at 11
-					// L: Request new headers up from 11 (R's TD was higher, it must have something)
-					// R: Nothing to give
-					head := d.blockchain.CurrentBlock()
-					if !gotHeaders && td.Cmp(d.blockchain.GetTd(head.Hash(), head.Number.Uint64())) > 0 {
-						return errStallingPeer
-					}
-					// If snap or light syncing, ensure promised headers are indeed delivered. This is
-					// needed to detect scenarios where an attacker feeds a bad pivot and then bails out
-					// of delivering the post-pivot blocks that would flag the invalid content.
-					//
-					// This check cannot be executed "as is" for full imports, since blocks may still be
-					// queued for processing when the header download completes. However, as long as the
-					// peer gave us something useful, we're already happy/progressed (above check).
-					if mode == SnapSync {
-						head := d.blockchain.CurrentHeader()
-						if td.Cmp(d.blockchain.GetTd(head.Hash(), head.Number.Uint64())) > 0 {
-							return errStallingPeer
-						}
-					}
-				}
 				return nil
 			}
 			// Otherwise split the chunk of headers into batches and process them
 			headers, hashes, scheduled := task.headers, task.hashes, false
 
-			gotHeaders = true
 			for len(headers) > 0 {
 				// Terminate if something failed in between processing chunks
 				select {
@@ -1446,14 +1410,14 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 
 				// Split the headers around the chain cutoff
 				var cutoff int
-				if mode == SnapSync && d.chainCutoffNumber != 0 {
+				if mode == ethconfig.SnapSync && d.chainCutoffNumber != 0 {
 					cutoff = sort.Search(len(chunkHeaders), func(i int) bool {
 						return chunkHeaders[i].Number.Uint64() >= d.chainCutoffNumber
 					})
 				}
 				// Insert the header chain into the ancient store (with block bodies and
 				// receipts set to nil) if they fall before the cutoff.
-				if mode == SnapSync && cutoff != 0 {
+				if mode == ethconfig.SnapSync && cutoff != 0 {
 					if n, err := d.blockchain.InsertHeadersBeforeCutoff(chunkHeaders[:cutoff]); err != nil {
 						log.Warn("Failed to insert ancient header chain", "number", chunkHeaders[n].Number, "hash", chunkHashes[n], "parent", chunkHeaders[n].ParentHash, "err", err)
 						return fmt.Errorf("%w: %v", errInvalidChain, err)
@@ -1474,7 +1438,7 @@ func (d *Downloader) processHeaders(origin uint64, td, ttd *big.Int, beaconMode 
 				//
 				// Skip the bodies/receipts retrieval scheduling before the cutoff in snap
 				// sync if chain pruning is configured.
-				if mode == SnapSync && cutoff != 0 {
+				if mode == ethconfig.SnapSync && cutoff != 0 {
 					chunkHeaders = chunkHeaders[cutoff:]
 					chunkHashes = chunkHashes[cutoff:]
 				}
