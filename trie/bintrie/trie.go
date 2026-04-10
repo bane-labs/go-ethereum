@@ -191,7 +191,7 @@ func (t *BinaryTrie) GetAccount(addr common.Address) (*types.StateAccount, error
 	case *InternalNode:
 		values, err = r.GetValuesAtStem(key[:StemSize], t.nodeResolver)
 	case *StemNode:
-		values = r.Values
+		values, err = r.GetValuesAtStem(key[:StemSize], t.nodeResolver)
 	case Empty:
 		return nil, nil
 	default:
