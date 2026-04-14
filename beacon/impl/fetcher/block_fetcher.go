@@ -803,10 +803,11 @@ func (f *BlockFetcher) importBlocks(op *blockOrHeaderInject) {
 		case consensus.ErrUnknownAncestor:
 			// The header parent is unknown, we may need this to start syncing
 			if err := f.informDownload(block); err != nil {
-				log.Error("Failed to inform downloader", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
+				log.Error("Received untrusted block", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
+				f.dropPeer(peer)
 			}
-			// Direct return, no insert or broadcast
 			return
+
 		case consensus.ErrFutureBlock:
 			log.Error("Received future block", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
 			f.dropPeer(peer)

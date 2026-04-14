@@ -30,6 +30,7 @@ import (
 
 	"github.com/dchest/siphash"
 	beaconfetch "github.com/ethereum/go-ethereum/beacon/impl/fetcher"
+	beaconSync "github.com/ethereum/go-ethereum/beacon/impl/synchronizer"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/dbft"
@@ -106,6 +107,7 @@ type txPool interface {
 }
 
 type Beacon interface {
+	StartSynchronizer(lightSync beaconSync.LightSyncFn)
 	StartBlockFetcher(
 		broadcastBlock beaconfetch.BlockBroadcasterFn, dropPeer beaconfetch.PeerDropFn,
 		fetchHeader beaconfetch.HeaderRequesterFn, fetchBodies beaconfetch.BodyRequesterFn,
@@ -272,6 +274,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 // connectBeacon connects beacon client to the protocols, and inits its handler.
 func (h *handler) connectBeacon(beacon Beacon) {
 	h.beacon = beacon
+	h.beacon.StartSynchronizer(h.downloader.BeaconLightSync)
 	h.beacon.StartBlockFetcher(h.BroadcastBlock, h.removePeer, h.fetchHeader, h.fetchBodies)
 }
 

@@ -54,9 +54,10 @@ func New(eth Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Addre
 	return miner
 }
 
-// DispatchBlock sends back mined block to EL.
-func (miner *Miner) DispatchBlock(block *types.Block, trustful bool) error {
-	return miner.worker.feedback(block, trustful)
+// DispatchBlock sends back a mined block to EL. This will perform reorg checks if
+// required.
+func (miner *Miner) DispatchBlock(block *types.Block, reorgCheck bool) error {
+	return miner.worker.feedback(block, reorgCheck)
 }
 
 // RequestNewPayload triggers a new block building manually.

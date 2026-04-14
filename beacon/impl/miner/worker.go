@@ -256,7 +256,8 @@ func (w *worker) commit(block *types.Block, versionedHashes []common.Hash, reque
 	select {
 	case w.taskCh <- &task{block: block, versionedHashes: versionedHashes, requests: requests, createdAt: time.Now()}:
 		log.Info("Commit new sealing work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
-			"txs", len(block.Transactions()), "gas", block.GasUsed(), "elapsed", common.PrettyDuration(time.Since(start)))
+			"txs", len(block.Transactions()), "withdrawals", len(block.Withdrawals()), "gas", block.GasUsed(),
+			"elapsed", common.PrettyDuration(time.Since(start)))
 
 	case <-w.exitCh:
 		log.Info("Worker has exited")
@@ -287,8 +288,9 @@ func (w *worker) feedback(block *types.Block, reorgCheck bool) error {
 		return fmt.Errorf("block rejected by EL, err: %v", *status.ValidationError)
 	}
 
-	// Set head based on reorg check.
-	if reorgCheck {
+	// Set head based on reorg check. But if the block is not inserted to EL database,
+	// we pass this check. It's possible that the EL needs a force signal to start.
+	if reorgCheck && status.Status == engine.VALID {
 		reorg, err := w.forker.ReorgNeeded(w.chain.CurrentHeader(), block.Header())
 		if err != nil {
 			return err
