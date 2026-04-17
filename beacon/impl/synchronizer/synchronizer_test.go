@@ -10,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -73,7 +74,7 @@ func newTestSynchronizer(chain []*types.Block, complete completeFn) *Synchronize
 			}
 		}
 	}
-	return New(chain[0], lightVerify, lightSync, complete)
+	return New(chain[0], lightVerify, lightSync, complete, memorydb.New())
 }
 
 func TestSynchronizerStatic(t *testing.T) {

@@ -49,9 +49,9 @@ func (b *Beacon) StartSynchronizer(lightSync synchronizer.LightSyncFn) {
 	localHead := b.chain.CurrentBlock()
 	// Take a block that can't be reorged. As we defined in worker feedback, n-1 is the finalized block.
 	if localHead.Number.Sign() > 0 {
-		b.synchronizer = synchronizer.New(b.chain.GetBlockByHash(localHead.ParentHash), light.VerifyHeaders, lightSync, b.ForceBlock)
+		b.synchronizer = synchronizer.New(b.chain.GetBlockByHash(localHead.ParentHash), light.VerifyHeaders, lightSync, b.ForceBlock, b.chain.TrieDB().Disk())
 	} else {
-		b.synchronizer = synchronizer.New(b.chain.GetBlockByHash(localHead.Hash()), light.VerifyHeaders, lightSync, b.ForceBlock)
+		b.synchronizer = synchronizer.New(b.chain.GetBlockByHash(localHead.Hash()), light.VerifyHeaders, lightSync, b.ForceBlock, b.chain.TrieDB().Disk())
 	}
 	b.synchronizer.Start()
 }

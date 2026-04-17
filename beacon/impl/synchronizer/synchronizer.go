@@ -7,7 +7,9 @@ import (
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -55,6 +57,7 @@ type Synchronizer struct {
 	pendingChains map[common.Hash]Choice // map of pending sync targets, key is the earliest header
 	lock          sync.RWMutex           // Mutex to protect the synchronizer state
 	needStart     atomic.Bool            // Whether the outside light sync needs a start signal
+	db            ethdb.KeyValueStore    // The database to store the latest trusted head for beacon sync
 
 	startCh chan *types.Header // Channel to signal the synchronizer to start
 
@@ -64,7 +67,7 @@ type Synchronizer struct {
 }
 
 // New creates a new synchronizer with the given local head as the trusted header.
-func New(localFinalized *types.Block, lightVerify LightVerifyFn, lightSync LightSyncFn, complete completeFn) *Synchronizer {
+func New(localFinalized *types.Block, lightVerify LightVerifyFn, lightSync LightSyncFn, complete completeFn, db ethdb.KeyValueStore) *Synchronizer {
 	s := &Synchronizer{
 		trustedHead:   localFinalized,
 		latestHead:    localFinalized,
@@ -73,6 +76,15 @@ func New(localFinalized *types.Block, lightVerify LightVerifyFn, lightSync Light
 		lightVerify:   lightVerify,
 		lightSync:     lightSync,
 		complete:      complete,
+		db:            db,
+	}
+	// Try to load the latest trusted head for beacon sync from database, in case of restart.
+	if trustedHead := rawdb.ReadBeaconSyncTrustedHead(s.db); trustedHead != nil {
+		if trustedHead.Number().Cmp(localFinalized.Number()) > 0 {
+			s.trustedHead = trustedHead
+			s.latestHead = trustedHead
+			log.Info("Loaded trusted head from database", "hash", trustedHead.Hash(), "number", trustedHead.NumberU64())
+		}
 	}
 	go s.lightSync(s.BeaconExtend, s.startCh)
 	return s
@@ -258,4 +270,5 @@ func (s *Synchronizer) finalize() {
 			}
 		}
 	}
+	rawdb.WriteBeaconSyncTrustedHead(s.db, s.trustedHead)
 }
