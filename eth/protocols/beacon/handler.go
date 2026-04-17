@@ -95,13 +95,15 @@ var beacon1 = map[uint64]msgHandler{
 }
 
 var beacon2 = map[uint64]msgHandler{
-	NewBlockHashesMsg: handleNewBlockhashes,
-	NewBlockMsg:       handleNewBlock,
-	NewBlobsRootMsg:   handleNewBlobsRoot,
-	GetBlobsMsg:       handleGetBlobs,
-	BlobsMsg:          handleBlobs,
-	GetBatchBlobsMsg:  handleGetBatchBlobs,
-	BatchBlobsMsg:     handleBatchBlobs,
+	NewBlockHashesMsg:  handleNewBlockhashes,
+	NewBlockMsg:        handleNewBlock,
+	NewBlobsRootMsg:    handleNewBlobsRoot,
+	GetBlobsMsg:        handleGetBlobs,
+	BlobsMsg:           handleBlobs,
+	GetBatchBlobsMsg:   handleGetBatchBlobs,
+	BatchBlobsMsg:      handleBatchBlobs,
+	GetTransactionsMsg: handleGetTransactions,
+	TransactionsMsg:    handleTransactions,
 }
 
 // handleMessage is invoked whenever an inbound message is received from a

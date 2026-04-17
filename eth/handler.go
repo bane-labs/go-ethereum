@@ -941,12 +941,12 @@ func (st *blockRangeState) currentRange() eth.BlockRangeUpdatePacket {
 	return *st.next.Load()
 }
 
-// BroadcastRequestTxs will send GetPooledTransactionsMsg to neighbor peers
-func (h *handler) BroadcastRequestTxs(txHashes []common.Hash) {
+// RequestTransactions will send GetTransactionsMsg to neighbor peers.
+func (h *handler) RequestTransactions(txHashes []common.Hash) {
 	if len(txHashes) == 0 {
 		return
 	}
-	peers := h.peers.all()
+	peers := h.peers.allBeacons()
 	for i := 0; i <= len(txHashes)/maxHashesCount; i++ {
 		start := i * maxHashesCount
 		stop := (i + 1) * maxHashesCount
@@ -956,13 +956,11 @@ func (h *handler) BroadcastRequestTxs(txHashes []common.Hash) {
 		if start == stop {
 			break
 		}
-		// Broadcast RequestTxs
+		// Broadcast request to all neighbors.
 		for _, peer := range peers {
-			err := peer.RequestTxs(txHashes[start:stop])
+			err := peer.RequestTransactions(txHashes[start:stop])
 			if err != nil {
-				log.Error("BroadcastRequestTxs", "txHashes", txHashes,
-					"peer", peer.ID(),
-					"error", err)
+				log.Error("Failed to request transactions", "txHashes", txHashes, "peer", peer.ID(), "error", err)
 			}
 		}
 	}

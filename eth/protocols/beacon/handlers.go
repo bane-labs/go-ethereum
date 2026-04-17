@@ -149,3 +149,29 @@ func handleBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
 	log.Debug("Receive BatchBlobs response", "from", peer.id, "requestId", res.RequestId, "batchBlobs", len(res.BatchBlobsResponse), "err", err)
 	return nil
 }
+
+func handleGetTransactions(backend Backend, msg Decoder, peer *Peer) error {
+	req := new(GetTransactionsPacket)
+	if err := msg.Decode(req); err != nil {
+		return fmt.Errorf("msg %v, decode err: %v", GetTransactionsMsg, err)
+	}
+
+	log.Debug("Receive GetTransactions request", "from", peer.id, "req", req)
+
+	return backend.Handle(peer, req)
+}
+
+func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
+	res := new(TransactionsPacket)
+	if err := msg.Decode(res); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+	for i, tx := range res.TransactionsResponse {
+		// Validate and mark the remote transaction
+		if tx == nil {
+			return fmt.Errorf("%w: transaction %d is nil", errDecode, i)
+		}
+	}
+
+	return backend.Handle(peer, res)
+}

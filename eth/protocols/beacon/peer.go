@@ -282,6 +282,26 @@ func (p *Peer) AsyncSendNewBlobsRoot(hash common.Hash) {
 	}
 }
 
+// ReplyTransactionsRLP is the response to RequestTxs.
+func (p *Peer) ReplyTransactionsRLP(id uint64, hashes []common.Hash, txs []rlp.RawValue) error {
+	return p2p.Send(p.rw, TransactionsMsg, &TransactionsRLPPacket{
+		RequestId:               id,
+		TransactionsRLPResponse: txs,
+	})
+}
+
+// RequestTransactions fetches a batch of transactions from a remote node.
+func (p *Peer) RequestTransactions(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of transactions", "count", len(hashes))
+	id := rand.Uint64()
+
+	requestTracker.Track(p.id, p.version, GetTransactionsMsg, TransactionsMsg, id)
+	return p2p.Send(p.rw, GetTransactionsMsg, &GetTransactionsPacket{
+		RequestId:              id,
+		GetTransactionsRequest: hashes,
+	})
+}
+
 // knownCache is a cache for known hashes.
 type knownCache struct {
 	hashes mapset.Set[common.Hash]
