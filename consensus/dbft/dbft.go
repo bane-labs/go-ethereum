@@ -1157,7 +1157,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 
 		// Now validate decrypted transactions and construct final list of transactions for the block.
 		parent := c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
-		state, err := c.chain.StateAt(parent.Root)
+		state, err := c.chain.StateAt(parent)
 		if err != nil {
 			return fmt.Errorf("failed to get parent state: %w", err)
 		}
