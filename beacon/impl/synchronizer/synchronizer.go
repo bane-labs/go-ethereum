@@ -19,7 +19,6 @@ const (
 )
 
 var (
-	errOldLightHeader       = errors.New("light header too old")
 	errInvalidLightHeader   = errors.New("invalid light header")
 	errTooManyPendingChains = errors.New("too many pending header chains")
 	errExtendStartMismatch  = errors.New("extend start mismatch")
@@ -111,12 +110,21 @@ func (s *Synchronizer) Update(newFinalized *types.Block, newLatest *types.Block)
 func (s *Synchronizer) NotifyNewHead(block *types.Block) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	// Shortcut for an old block.
 	if block.NumberU64() < s.latestHead.NumberU64() {
-		return errOldLightHeader
+		return nil
 	}
 	// The new head can interact with the light chain, but not verifiable by EL.
 	// Then we extend the light chain and anounce safe head to EL.
 	if block.NumberU64() == s.latestHead.NumberU64() {
+		// Shortcut for an old block.
+		if s.latestHead.Hash() == s.trustedHead.Hash() {
+			return nil
+		}
+		// Shortcut for the same block.
+		if block.Hash() == s.latestHead.Hash() {
+			return nil
+		}
 		// If the new block reorgs the latest head, then update.
 		if !s.lightVerify([]*types.Header{s.trustedHead.Header(), block.Header()}) {
 			return errInvalidLightHeader
