@@ -20,7 +20,6 @@ package web3ext
 var Modules = map[string]string{
 	"admin":  AdminJs,
 	"clique": CliqueJs,
-	"dbft":   DbftJs,
 	"debug":  DebugJs,
 	"eth":    EthJs,
 	"miner":  MinerJs,
@@ -84,52 +83,6 @@ web3._extend({
 			getter: 'clique_proposals'
 		}),
 	]
-});
-`
-
-const DbftJs = `
-web3._extend({
-	property: 'dbft',
-	methods: [
-		new web3._extend.Method({
-			name: 'getSigners',
-			call: 'dbft_getSigners',
-			params: 1,
-			inputFormatter: [web3._extend.formatters.inputBlockNumberFormatter]
-		}),
-		new web3._extend.Method({
-			name: 'getValidators',
-			call: 'dbft_getValidators',
-			params: 1,
-			inputFormatter: [web3._extend.formatters.inputBlockNumberFormatter]
-		}),
-		new web3._extend.Method({
-			name: 'getSignersAtHash',
-			call: 'dbft_getSignersAtHash',
-			params: 1
-		}),
-		new web3._extend.Method({
-			name: 'getValidatorsAtHash',
-			call: 'dbft_getValidatorsAtHash',
-			params: 1
-		}),
-		new web3._extend.Method({
-			name: 'status',
-			call: 'dbft_status',
-			params: 1,
-			inputFormatter: [null]
-		}),
-		new web3._extend.Method({
-			name: 'getPrimary',
-			call: 'dbft_getPrimary',
-			params: 1,
-		}),
-		new web3._extend.Method({
-			name: 'getCoinbase',
-			call: 'dbft_getCoinbase',
-			params: 1,
-		}),
-	],
 });
 `
 
