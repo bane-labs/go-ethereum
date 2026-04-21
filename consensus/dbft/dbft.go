@@ -53,11 +53,9 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
-	"github.com/ethereum/go-ethereum/internal/telemetry"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
 	"github.com/nspcc-dev/dbft"
 	"github.com/nspcc-dev/dbft/timer"
@@ -608,11 +606,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: pre.finalTransactions, Withdrawals: ethBlock.Withdrawals()}
-	res, err := c.FinalizeAndAssemble(context.Background(), c.chain, h, pre.finalState, &body, pre.finalReceipts)
-	if err != nil {
-		log.Crit("Failed to finalize and assemble final Block",
-			"err", err)
-	}
+	res := core.AssembleBlock(c, c.chain, h, pre.finalState, &body, pre.finalReceipts)
 
 	return &Block{
 		header:              res.Header(),
@@ -727,11 +721,7 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: dbftBlock.transactions, Withdrawals: ethBlock.Withdrawals()}
-	res, err := c.FinalizeAndAssemble(context.Background(), c.chain, header, state, &body, result.Receipts)
-	if err != nil {
-		log.Crit("Failed to finalize and assemble proposed block",
-			"err", err)
-	}
+	res := core.AssembleBlock(c, c.chain, header, state, &body, result.Receipts)
 
 	c.sealingProposal = res.Header()
 	c.sealingState = state
@@ -2070,52 +2060,6 @@ func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header,
 		state.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
 	}
 	// No block rewards in PoA, so the state remains as is
-}
-
-// FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
-// nor block rewards given, and returns the final block.
-func (c *DBFT) FinalizeAndAssemble(ctx context.Context, chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (result *types.Block, err error) {
-	ctx, _, spanEnd := telemetry.StartSpan(ctx, "consensus.dbft.FinalizeAndAssemble",
-		telemetry.Int64Attribute("block.number", int64(header.Number.Uint64())),
-		telemetry.Int64Attribute("txs.count", int64(len(body.Transactions))),
-		telemetry.Int64Attribute("withdrawals.count", int64(len(body.Withdrawals))),
-	)
-	defer spanEnd(&err)
-
-	shanghai := chain.Config().IsShanghai(header.Number, header.Time)
-	if !shanghai {
-		if len(body.Withdrawals) > 0 {
-			return nil, errors.New("withdrawals set before Shanghai activation")
-		}
-	}
-	cancun := chain.Config().IsCancun(header.Number, header.Time)
-	if !cancun {
-		if header.ParentBeaconRoot != nil {
-			return nil, errors.New("parentBeaconRoot set before Cancun activation")
-		}
-	}
-	prague := chain.Config().IsPrague(header.Number, header.Time)
-	if !prague {
-		if header.RequestsHash != nil {
-			return nil, errors.New("RequestsHash set before Prague activation")
-		}
-	}
-
-	// Finalize and assemble the block.
-	_, _, finalizeSpanEnd := telemetry.StartSpan(ctx, "consensus.dbft.Finalize")
-	c.Finalize(chain, header, state, body)
-	finalizeSpanEnd(nil)
-
-	// Assign the final state root to header.
-	_, _, rootSpanEnd := telemetry.StartSpan(ctx, "consensus.dbft.IntermediateRoot")
-	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
-	rootSpanEnd(nil)
-
-	// Assemble the final block.
-	_, _, blockSpanEnd := telemetry.StartSpan(ctx, "consensus.dbft.NewBlock")
-	b := types.NewBlock(header, body, receipts, trie.NewStackTrie(nil))
-	blockSpanEnd(nil)
-	return b, nil
 }
 
 // Authorize injects a private key into the consensus engine to mint new blocks
