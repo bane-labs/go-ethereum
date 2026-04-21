@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	maxPendingChain    = 128 // Max number of pending header chains to keep in memory
-	ExpectedHeadersNum = 128 // The expected number of headers in extending
+	maxPendingChain    = 128  // Max number of pending header chains to keep in memory
+	ExpectedHeadersNum = 1024 // The expected number of headers in extending
 )
 
 var (
