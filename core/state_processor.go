@@ -66,7 +66,7 @@ func (p *StateProcessor) chainConfig() *params.ChainConfig {
 func (p *StateProcessor) Process(ctx context.Context, block *types.Block, statedb *state.StateDB, cfg vm.Config) (*ProcessResult, error) {
 	var (
 		config        = p.chainConfig()
-		receipts      types.Receipts
+		receipts      = make(types.Receipts, 0, len(block.Transactions()))
 		envelopeCount = uint64(0)
 		header        = block.Header()
 		blockHash     = block.Hash()
