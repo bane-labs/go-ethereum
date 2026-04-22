@@ -19,7 +19,9 @@ package eth
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
+	"slices"
 	"sync"
 	"time"
 
@@ -272,31 +274,12 @@ func (ps *peerSet) beaconsWithoutBlockBlobs(hash common.Hash) []*beaconPeer {
 	return list
 }
 
-// peersWithoutTransaction retrieves a list of peers that do not have a given
-// transaction in their set of known hashes.
-func (ps *peerSet) peersWithoutTransaction(hash common.Hash) []*ethPeer {
+// all returns all current peers.
+func (ps *peerSet) all() []*ethPeer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
-	list := make([]*ethPeer, 0, len(ps.peers))
-	for _, p := range ps.peers {
-		if !p.KnownTransaction(hash) {
-			list = append(list, p)
-		}
-	}
-	return list
-}
-
-// allPeers retrieves all of the peers.
-func (ps *peerSet) allPeers() []*ethPeer {
-	ps.lock.RLock()
-	defer ps.lock.RUnlock()
-
-	list := make([]*ethPeer, 0, len(ps.peers))
-	for _, p := range ps.peers {
-		list = append(list, p)
-	}
-	return list
+	return slices.Collect(maps.Values(ps.peers))
 }
 
 // allBeacons retrieves all of the beacon peers.
@@ -304,11 +287,7 @@ func (ps *peerSet) allBeacons() []*beaconPeer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
-	list := make([]*beaconPeer, 0, len(ps.beacons))
-	for _, p := range ps.beacons {
-		list = append(list, p)
-	}
-	return list
+	return slices.Collect(maps.Values(ps.beacons))
 }
 
 // headPeers retrieves a specified number list of peers.

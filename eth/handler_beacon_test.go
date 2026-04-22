@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/event"
@@ -61,10 +60,6 @@ func testBroadcastBlock(t *testing.T, peers, bcasts int) {
 		sinks[i] = new(testBeaconHandler)
 	}
 	// Interconnect all the sink handlers with the source handler
-	var (
-		genesis = source.chain.Genesis()
-		td      = source.chain.GetTd(genesis.Hash(), genesis.NumberU64())
-	)
 	for i, sink := range sinks {
 		sink := sink // Closure for gorotuine below
 
@@ -80,7 +75,7 @@ func testBroadcastBlock(t *testing.T, peers, bcasts int) {
 		go source.handler.runBeaconPeer(sourcePeer, func(peer *beacon.Peer) error {
 			return beacon.Handle((*beaconHandler)(source.handler), peer)
 		})
-		if err := sinkPeer.Handshake(1, td, genesis.Hash(), genesis.Hash(), forkid.NewIDWithChain(source.chain), forkid.NewFilter(source.chain), false); err != nil {
+		if err := sinkPeer.Handshake(1, source.chain, false); err != nil {
 			t.Fatalf("failed to run protocol handshake")
 		}
 		go beacon.Handle(sink, sinkPeer)
@@ -149,11 +144,7 @@ func testBroadcastMalformedBlock(t *testing.T, protocol uint) {
 		return beacon.Handle((*beaconHandler)(source.handler), peer)
 	})
 	// Run the handshake locally to avoid spinning up a sink handler
-	var (
-		genesis = source.chain.Genesis()
-		td      = source.chain.GetTd(genesis.Hash(), genesis.NumberU64())
-	)
-	if err := sink.Handshake(1, td, genesis.Hash(), genesis.Hash(), forkid.NewIDWithChain(source.chain), forkid.NewFilter(source.chain), false); err != nil {
+	if err := sink.Handshake(1, source.chain, false); err != nil {
 		t.Fatalf("failed to run protocol handshake")
 	}
 	// After the handshake completes, the source handler should stream the sink

@@ -296,7 +296,6 @@ type config struct {
 	antiMEVEnablingHeight  int64
 	enforceECDSASignatures bool
 	logLevel               *zap.AtomicLevel
-	statisticsConfig       StatisticsConfig
 }
 
 // zkFiles represents ZK-DKG configuration about R1CS and PK files.
@@ -312,30 +311,17 @@ type zkFiles struct {
 
 // New creates a DBFT proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(chainCfg *params.ChainConfig, _ ethdb.Database, statisticsCfg StatisticsConfig) (*DBFT, error) {
+func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	cfg := &config{
 		DBFTConfig:            chainCfg.DBFT,
 		dkgEnablingHeight:     -1,
 		antiMEVEnablingHeight: -1,
-		statisticsConfig:      DefaultStatistics,
 	}
 	if cfg.SecondsPerBlock == 0 {
 		return nil, errors.New("zero-period dBFT chain is not supported")
 	}
 	if cfg.Coinbase == (common.Address{}) {
 		return nil, errors.New("empty dBFT Coinbase is not allowed, need to specify mining rewards receiver")
-	}
-	if statisticsCfg != (StatisticsConfig{}) {
-		if statisticsCfg.DefaultStatisticsPeriod > 0 {
-			cfg.statisticsConfig.DefaultStatisticsPeriod = statisticsCfg.DefaultStatisticsPeriod
-		}
-		if statisticsCfg.MaxStatisticsPeriod > 0 {
-			cfg.statisticsConfig.MaxStatisticsPeriod = statisticsCfg.MaxStatisticsPeriod
-		}
-
-		if cfg.statisticsConfig.MaxStatisticsPeriod < cfg.statisticsConfig.DefaultStatisticsPeriod {
-			return nil, fmt.Errorf("max statistics period %d is less than default %d", cfg.statisticsConfig.MaxStatisticsPeriod, cfg.statisticsConfig.DefaultStatisticsPeriod)
-		}
 	}
 	// Set any missing consensus parameters to their defaults
 	bftCfg := *cfg.DBFTConfig
@@ -1371,7 +1357,7 @@ func newStaticPool(chain ChainHeaderReader) *legacypool.LegacyPool {
 
 // initStaticPool initializes the static pool with the provided parent header.
 func (c *DBFT) initStaticPool(parent *types.Header, state *state.StateDB) error {
-	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, state, &txpool.EmptyReservationHandle{}, false)
+	return c.staticPool.InitStatic(legacypool.DefaultConfig.PriceLimit, parent, state, txpool.NewReservationTracker().NewHandle(-1), false)
 }
 
 // validateDecryptedTx checks the validity of the transaction to determine whether the outer envelope transaction should be replaced.
@@ -1387,7 +1373,7 @@ func (c *DBFT) validateDecryptedTx(head *types.Header, decryptedTx *types.Transa
 	}
 
 	// Ensure the gasprice is high enough to replace the envelope transaction
-	baseFee := head.BaseFee
+	baseFee := uint256.MustFromBig(head.BaseFee)
 	if decryptedTx.EffectiveGasTipCmp(envelope, baseFee) < 0 {
 		return errDecryptedUnderpriced
 	}
@@ -2803,15 +2789,6 @@ func (c *DBFT) Close() error {
 	}
 	log.Info("dBFT engine stopped")
 	return nil
-}
-
-// APIs implements consensus.Engine, returning the user facing RPC API to allow
-// controlling the signer voting.
-func (c *DBFT) APIs(chain consensus.ChainHeaderReader) []rpc.API {
-	return []rpc.API{{
-		Namespace: "dbft",
-		Service:   &API{chain: chain, bft: c, config: c.config.statisticsConfig},
-	}}
 }
 
 // SubscribeEnvelopeEvent creates a subscription that fires for all new envelopes that enter the consensus engine.

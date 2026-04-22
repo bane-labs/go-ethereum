@@ -136,22 +136,3 @@ func (h *ReservationHandle) Has(address common.Address) bool {
 	id, exists := h.tracker.accounts[address]
 	return exists && id != h.id
 }
-
-// EmptyReservationHandle is a no-op implementation of the Reserver interface.
-type EmptyReservationHandle struct {
-}
-
-// Hold implements the Reserver interface.
-func (h *EmptyReservationHandle) Hold(addr common.Address) error {
-	return nil
-}
-
-// Release implements the Reserver interface.
-func (h *EmptyReservationHandle) Release(addr common.Address) error {
-	return nil
-}
-
-// Has implements the Reserver interface.
-func (h *EmptyReservationHandle) Has(address common.Address) bool {
-	return false
-}

@@ -38,7 +38,7 @@ const (
 // syncTransactions starts sending all currently pending transactions to the given peer.
 func (h *handler) syncTransactions(p *eth.Peer) {
 	var hashes []common.Hash
-	for _, batch := range h.txpool.Pending(txpool.PendingFilter{OnlyPlainTxs: true}) {
+	for _, batch := range h.txpool.Pending(txpool.PendingFilter{BlobTxs: false}) {
 		for _, tx := range batch {
 			hashes = append(hashes, tx.Hash)
 		}
@@ -127,10 +127,6 @@ func (cs *chainSyncer) loop() {
 			cs.forced = true
 
 		case <-cs.handler.quitSync:
-			// Disable all insertion on the blockchain. This needs to happen before
-			// terminating the downloader because the downloader waits for blockchain
-			// inserts, and these can take a long time to finish.
-			cs.handler.chain.StopInsert()
 			cs.handler.downloader.Terminate()
 			if cs.doneCh != nil {
 				<-cs.doneCh

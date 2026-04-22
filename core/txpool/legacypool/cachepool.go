@@ -16,7 +16,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -561,12 +560,6 @@ func (pool *CachePool) GetRLP(hash common.Hash) []byte {
 // For the cache pool, this method will return nothing for now.
 func (pool *CachePool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 	return nil
-}
-
-// GetBlobs is not supported by the cache pool, it is just here to
-// implement the txpool.SubPool interface.
-func (pool *CachePool) GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg4844.Proof) {
-	return nil, nil
 }
 
 // Has returns an indicator whether txpool has a transaction cached with the

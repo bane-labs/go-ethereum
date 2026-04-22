@@ -2,9 +2,9 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth all test lint fmt clean devtools help privnet_nodes_stop privnet_bootnode_stop privnet_stop privnet_clean privnet_start privnet_start_four privnet_start_seven
+.PHONY: geth evm all test lint fmt clean devtools help privnet_nodes_stop privnet_bootnode_stop privnet_stop privnet_clean privnet_start privnet_start_four privnet_start_seven
 
-GETHBIN = ./build/bin
+GOBIN = ./build/bin
 GO ?= latest
 GORUN = go run
 
@@ -89,7 +89,7 @@ RESTRICTED_NETWORK = 127.0.0.0/24
 NAT_POLICY = none
 
 define run_bootnode
-    @$(GETHBIN)/bootnode -nodekey $(1)/$(BOOTNODE)/bootnode.key \
+    @$(GOBIN)/bootnode -nodekey $(1)/$(BOOTNODE)/bootnode.key \
     	-addr :$(BOOTNODE_PORT) \
     	-verbosity $(BOOTNODE_LOGLEVEL) > $(1)/$(BOOTNODE)/bootnode.log 2>&1 &
 endef
@@ -103,7 +103,7 @@ define run_miner_node
 endef
 
 define run_node
-	@$(GETHBIN)/geth --datadir $(1)/$(2) \
+	@$(GOBIN)/geth --datadir $(1)/$(2) \
 		--port $(3) \
 		--bootnodes "enode://$$(cat $(1)/$(BOOTNODE)/bootnode_address.txt)@127.0.0.1:0?discport=$(BOOTNODE_PORT)" \
 		--networkid "$$(cat $(1)/networkid.txt)" \
@@ -127,14 +127,20 @@ define run_node
 endef
 
 define init_node
-    @$(GETHBIN)/geth init --datadir $(1)/$(2) $(1)/$(GENESIS_WORK_JSON) > $(1)/$(2)/geth_init.log 2>&1
+    @$(GOBIN)/geth init --datadir $(1)/$(2) $(1)/$(GENESIS_WORK_JSON) > $(1)/$(2)/geth_init.log 2>&1
 endef
 
 #? geth: Build geth.
 geth:
 	$(GORUN) build/ci.go install ./cmd/geth
 	@echo "Done building."
-	@echo "Run \"$(GETHBIN)/geth\" to launch geth."
+	@echo "Run \"$(GOBIN)/geth\" to launch geth."
+
+#? evm: Build evm.
+evm:
+	$(GORUN) build/ci.go install ./cmd/evm
+	@echo "Done building."
+	@echo "Run \"$(GOBIN)/evm\" to launch evm."
 
 #? all: Build all packages and executables.
 all:
@@ -155,7 +161,7 @@ fmt:
 #? clean: Clean go cache, built executables, and the auto generated folder.
 clean:
 	go clean -cache
-	rm -fr build/_workspace/pkg/ $(GETHBIN)/*
+	rm -fr build/_workspace/pkg/ $(GOBIN)/*
 
 # The devtools target installs tools required for 'go generate'.
 # You need to put $GOBIN (or $GOPATH/bin) in your PATH to use 'go generate'.

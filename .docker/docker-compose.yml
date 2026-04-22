@@ -28,6 +28,9 @@ services:
     container_name: miner0
     env_file:
       - .env
+    networks:
+      default:
+        ipv4_address: 172.200.0.2
     command:
       - sh
       - -c
@@ -49,7 +52,7 @@ services:
         --allow-insecure-unlock \
         --password ${SINGLE_NODE0_DIR}/password.txt \
         --metrics \
-        --nat none \
+        --nat extip:172.200.0.2 \
         --netrestrict 172.200.0.0/24 \
         --dbft.loglevel debug \
         --mine \
@@ -69,6 +72,9 @@ services:
     container_name: miner1
     env_file:
       - .env
+    networks:
+      default:
+        ipv4_address: 172.200.0.3
     command:
       - sh
       - -c
@@ -90,7 +96,7 @@ services:
         --allow-insecure-unlock \
         --password ${SINGLE_NODE1_DIR}/password.txt \
         --metrics \
-        --nat none \
+        --nat extip:172.200.0.3 \
         --netrestrict 172.200.0.0/24 \
         --dbft.loglevel debug \
         --mine \
@@ -110,6 +116,9 @@ services:
     container_name: node0
     env_file:
       - .env
+    networks:
+      default:
+        ipv4_address: 172.200.0.4
     command:
       - sh
       - -c
@@ -131,7 +140,7 @@ services:
         --allow-insecure-unlock \
         --password ${SINGLE_NODE2_DIR}/password.txt \
         --metrics \
-        --nat none \
+        --nat extip:172.200.0.4 \
         --netrestrict 172.200.0.0/24 \
         --dbft.loglevel debug
     volumes:

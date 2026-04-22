@@ -342,7 +342,7 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		attributes.Withdrawals = nil
 	case forks.Shanghai:
 		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
-	case forks.Cancun, forks.Prague:
+	case forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
 		forkChoiceMethod = "engine_forkchoiceUpdatedV3"
 	default:
 		return engine.ForkChoiceResponse{}, fmt.Errorf("fork %s is not supported for engine_forkchoiceUpdated", w.chain.Config().LatestFork(timestamp).String())
@@ -389,7 +389,7 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 		newPayloadMethod = "engine_newPayloadV2"
 	case forks.Cancun:
 		newPayloadMethod = "engine_newPayloadV3"
-	case forks.Prague:
+	case forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
 		newPayloadMethod = "engine_newPayloadV4"
 	default:
 		return engine.PayloadStatusV1{}, fmt.Errorf("fork %s is not supported for engine_getPayload", w.chain.Config().LatestFork(timestamp).String())
