@@ -453,8 +453,11 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.eventMux, eth.feeRecipient, eth.shouldPreserve)
 	eth.handler.connectBeacon(eth.beacon)
 	if bft != nil {
+		syncing := func() bool {
+			return eth.beacon.Syncing() || !eth.Synced()
+		}
 		// Connect BFT to beacon protocol
-		bft.WithBeacon(eth.beacon.BlockBroadcaster(), eth.beacon.RefreshPendingPayload, eth.beacon.SubscribeSyncingEvents, eth.beacon.Syncing)
+		bft.WithBeacon(eth.beacon.BlockBroadcaster(), eth.beacon.RefreshPendingPayload, eth.beacon.SubscribeSyncingEvents, syncing)
 	}
 
 	// Successful startup; push a marker and check previous unclean shutdowns.

@@ -161,11 +161,6 @@ func (miner *Miner) Mining() bool {
 	return miner.worker.isMining()
 }
 
-// Syncing returns whether the miner is currently syncing.
-func (miner *Miner) Syncing() bool {
-	return miner.worker.syncing.Load()
-}
-
 // SubscribeSyncingEvents subscribes to syncing status changes, should only be used in CL.
 func (miner *Miner) SubscribeSyncingEvents(ch chan<- bool) event.Subscription {
 	return miner.scope.Track(miner.syncingFeed.Subscribe(ch))

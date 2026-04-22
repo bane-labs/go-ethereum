@@ -83,6 +83,8 @@ func (d *Downloader) BeaconLightSync(extend beaconSync.BeaconExtendFn, start cha
 		}
 		// If there's no new headers to sync
 		if len(metas) < 2 {
+			// Notify the synchronizer nothing to extend, and wait for a new start signal to recover
+			extend(headers, metas, nil, nil)
 			shouldSync.Store(false)
 			continue
 		}

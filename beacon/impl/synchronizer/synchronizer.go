@@ -55,7 +55,7 @@ type Synchronizer struct {
 	latestHead    *types.Block           // The block believed to be the latest block
 	pendingChains map[common.Hash]Choice // map of pending sync targets, key is the earliest header
 	lock          sync.RWMutex           // Mutex to protect the synchronizer state
-	needStart     atomic.Bool            // Whether the outside light sync needs a start signal
+	syncing       atomic.Bool            // Whether the synchronizer is syncing
 	db            ethdb.KeyValueStore    // The database to store the latest trusted head for beacon sync
 
 	startCh chan *types.Header // Channel to signal the synchronizer to start
@@ -92,7 +92,7 @@ func New(localFinalized *types.Block, lightVerify LightVerifyFn, lightSync Light
 // Start starts the initial sync
 func (s *Synchronizer) Start() {
 	s.startCh <- s.trustedHead.Header()
-	s.needStart.Store(false)
+	s.syncing.Store(true)
 }
 
 // Update updates the trusted header, without any verification.
@@ -182,9 +182,9 @@ func (s *Synchronizer) NotifyNewHead(block *types.Block) error {
 	}
 	s.merge(block.ParentHash())
 	// If there's no light syncing trying to connect the pending chains, then start one.
-	if s.needStart.Load() {
+	if !s.syncing.Load() {
 		s.startCh <- s.trustedHead.Header()
-		s.needStart.Store(false)
+		s.syncing.Store(true)
 	}
 	return nil
 }
@@ -194,8 +194,12 @@ func (s *Synchronizer) NotifyNewHead(block *types.Block) error {
 func (s *Synchronizer) BeaconExtend(verifiedHeaders []*types.Header, metas []common.Hash, finalized *types.Block, latest *types.Block) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	if len(verifiedHeaders) < 2 {
+		s.syncing.Store(false)
+		return nil
+	}
 	if verifiedHeaders[0].Hash() != s.trustedHead.Hash() {
-		s.needStart.Store(true)
+		s.syncing.Store(false)
 		return errExtendStartMismatch
 	}
 	// Try to connect pending chains.
@@ -217,7 +221,7 @@ func (s *Synchronizer) BeaconExtend(verifiedHeaders []*types.Header, metas []com
 	// The process using this callback can stop as well, but there's no signal.
 	// Please take ExpectedHeadersNum as the batch size of light sync.
 	if connected || len(verifiedHeaders) < ExpectedHeadersNum {
-		s.needStart.Store(true)
+		s.syncing.Store(false)
 		s.complete(s.trustedHead)
 	}
 	return nil
@@ -226,6 +230,11 @@ func (s *Synchronizer) BeaconExtend(verifiedHeaders []*types.Header, metas []com
 // Stop closes the synchronizer.
 func (s *Synchronizer) Stop() {
 	close(s.startCh)
+}
+
+// Syncing returns whether the synchronizer is currently syncing.
+func (s *Synchronizer) Syncing() bool {
+	return s.syncing.Load()
 }
 
 // merge connects pending chain choices when a latest block changes.

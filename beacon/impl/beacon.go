@@ -97,9 +97,10 @@ func (b *Beacon) InsertBlock(block *types.Block) error {
 	if err := b.miner.DispatchBlock(block, true); err != nil {
 		return err
 	}
-	// Update the synchronizer if the EL chain is extended.
-	latest := b.chain.CurrentHeader()
-	b.synchronizer.Update(b.chain.GetBlockByHash(latest.ParentHash), b.chain.GetBlockByHash(latest.Hash()))
+	// Update the synchronizer if the EL chain is extended, here only evaluate the height.
+	if latest := b.chain.CurrentHeader(); latest.Number.Cmp(block.Number()) >= 0 {
+		b.synchronizer.Update(b.chain.GetBlockByHash(latest.ParentHash), b.chain.GetBlockByHash(latest.Hash()))
+	}
 	return nil
 }
 
@@ -136,7 +137,7 @@ func (b *Beacon) Mining() bool {
 
 // Syncing returns whether the beacon client is syncing.
 func (b *Beacon) Syncing() bool {
-	return b.miner.Syncing()
+	return b.synchronizer.Syncing()
 }
 
 func (b *Beacon) SubscribeSyncingEvents(ch chan<- bool) event.Subscription {
