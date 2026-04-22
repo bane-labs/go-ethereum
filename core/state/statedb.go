@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -125,6 +126,9 @@ type StateDB struct {
 	// Per-transaction access list
 	accessList   *accessList
 	accessEvents *AccessEvents
+
+	// Per-transaction state access footprint for EIP-7928
+	stateReadList *bal.StateAccessList
 
 	// Transient storage
 	transientStorage transientStorage
@@ -315,6 +319,11 @@ func (s *StateDB) Exist(addr common.Address) bool {
 func (s *StateDB) Empty(addr common.Address) bool {
 	so := s.getStateObject(addr)
 	return so == nil || so.empty()
+}
+
+// Touch accesses the specific account without returning anything.
+func (s *StateDB) Touch(addr common.Address) {
+	s.getStateObject(addr)
 }
 
 // GetBalance retrieves the balance from the given address or 0 if object not found
@@ -579,6 +588,9 @@ func (s *StateDB) deleteStateObject(addr common.Address) {
 // getStateObject retrieves a state object given by the address, returning nil if
 // the object is not found or was deleted in this execution context.
 func (s *StateDB) getStateObject(addr common.Address) *stateObject {
+	// Record state access regardless of whether the account exists.
+	s.stateReadList.AddAccount(addr)
+
 	// Prefer live objects if any is available
 	if obj := s.stateObjects[addr]; obj != nil {
 		return obj
@@ -784,7 +796,7 @@ func (s *StateDB) LogsForBurnAccounts() []*types.Log {
 // Finalise finalises the state by removing the destructed objects and clears
 // the journal as well as the refunds. Finalise, however, will not push any updates
 // into the tries just yet. Only IntermediateRoot or Commit will do that.
-func (s *StateDB) Finalise(deleteEmptyObjects bool) {
+func (s *StateDB) Finalise(deleteEmptyObjects bool) *bal.StateAccessList {
 	addressesToPrefetch := make([]common.Address, 0, len(s.journal.dirties))
 	for addr := range s.journal.dirties {
 		obj, exist := s.stateObjects[addr]
@@ -800,6 +812,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 		if obj.selfDestructed || (deleteEmptyObjects && obj.empty()) {
 			delete(s.stateObjects, obj.address)
 			s.markDelete(addr)
+
 			// We need to maintain account deletions explicitly (will remain
 			// set indefinitely). Note only the first occurred self-destruct
 			// event is tracked.
@@ -822,6 +835,8 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
 	s.clearJournalAndRefund()
+
+	return s.stateReadList
 }
 
 // IntermediateRoot computes the current root hash of the state trie.
@@ -1415,6 +1430,10 @@ func (s *StateDB) Prepare(rules params.Rules, sender, coinbase common.Address, d
 	}
 	// Reset transient storage at the beginning of transaction execution
 	s.transientStorage = newTransientStorage()
+
+	if rules.IsAmsterdam {
+		s.stateReadList = bal.NewStateAccessList()
+	}
 }
 
 // AddAddressToAccessList adds the given address to the access list

@@ -290,11 +290,7 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 	}
 
 	if isPrecompile {
-		var stateDB StateDB
-		if evm.chainRules.IsAmsterdam {
-			stateDB = evm.StateDB
-		}
-		ret, gas, err = RunPrecompiledContract(stateDB, p, addr, input, gas, evm.Config.Tracer)
+		ret, gas, err = RunPrecompiledContract(evm.StateDB, p, addr, input, gas, evm.Config.Tracer, evm.chainRules)
 	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
 		// The target address is blacklisted by policy, so revert directly.
 		ret, err = nil, ErrExecutionReverted
@@ -360,11 +356,7 @@ func (evm *EVM) CallCode(caller common.Address, addr common.Address, input []byt
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		var stateDB StateDB
-		if evm.chainRules.IsAmsterdam {
-			stateDB = evm.StateDB
-		}
-		ret, gas, err = RunPrecompiledContract(stateDB, p, addr, input, gas, evm.Config.Tracer)
+		ret, gas, err = RunPrecompiledContract(evm.StateDB, p, addr, input, gas, evm.Config.Tracer, evm.chainRules)
 	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
 		// The target address is blacklisted by policy, so revert directly.
 		ret, err = nil, ErrExecutionReverted
@@ -410,11 +402,7 @@ func (evm *EVM) DelegateCall(originCaller common.Address, caller common.Address,
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		var stateDB StateDB
-		if evm.chainRules.IsAmsterdam {
-			stateDB = evm.StateDB
-		}
-		ret, gas, err = RunPrecompiledContract(stateDB, p, addr, input, gas, evm.Config.Tracer)
+		ret, gas, err = RunPrecompiledContract(evm.StateDB, p, addr, input, gas, evm.Config.Tracer, evm.chainRules)
 	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
 		// The target address is blacklisted by policy, so revert directly.
 		ret, err = nil, ErrExecutionReverted
@@ -469,11 +457,7 @@ func (evm *EVM) StaticCall(caller common.Address, addr common.Address, input []b
 	evm.StateDB.AddBalance(addr, new(uint256.Int), tracing.BalanceChangeTouchAccount)
 
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		var stateDB StateDB
-		if evm.chainRules.IsAmsterdam {
-			stateDB = evm.StateDB
-		}
-		ret, gas, err = RunPrecompiledContract(stateDB, p, addr, input, gas, evm.Config.Tracer)
+		ret, gas, err = RunPrecompiledContract(evm.StateDB, p, addr, input, gas, evm.Config.Tracer, evm.chainRules)
 	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
 		// The target address is blacklisted by policy, so revert directly.
 		ret, err = nil, ErrExecutionReverted
