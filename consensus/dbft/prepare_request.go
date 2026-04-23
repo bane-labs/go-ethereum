@@ -15,7 +15,7 @@ type prepareRequest struct {
 	// pre-NeoXAMEV fork. Starting from NeoXAMEV+1 height these fields are filled
 	// only if multisignature signing scheme is enforced, hence marked as optional
 	// for RLP serialization.
-	ParentSealHashV0 common.Hash `rlp:optional`
+	ParentSealHashV0 common.Hash `rlp:"optional"`
 	ParentExtra      []byte      `rlp:"optional"`
 }
 

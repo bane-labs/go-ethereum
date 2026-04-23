@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/nspcc-dev/dbft"
 )
 
@@ -31,16 +32,22 @@ func (s *Signer) Sign(msg []byte) ([]byte, error) {
 }
 
 // signBlock signs block RLP bytes using the given extra version and signing scheme.
-func (s *Signer) signBlock(extra dbftutil.Extra, blockRLP []byte) ([]byte, error) {
+func (s *Signer) signBlock(extra dbftutil.Extra, header *types.Header) ([]byte, error) {
 	switch v := extra.Version(); v {
 	case dbftutil.ExtraV0:
-		return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, blockRLP)
-	case dbftutil.ExtraV1, dbftutil.ExtraV2:
+		return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, dbftRLP(header))
+	case dbftutil.ExtraV1, dbftutil.ExtraV2, dbftutil.ExtraV3:
+		var encode []byte
+		if v == dbftutil.ExtraV1 || v == dbftutil.ExtraV2 {
+			encode = dbftRLP(header)
+		} else {
+			encode = dbftSSZ(header)
+		}
 		switch ss := extra.SignatureScheme(); ss {
-		case dbftutil.ExtraV1ECDSAScheme:
-			return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, blockRLP)
-		case dbftutil.ExtraV1ThresholdScheme:
-			share, err := s.AmevKeystore.SignShare(blockRLP, v == dbftutil.ExtraV1)
+		case dbftutil.ECDSAScheme:
+			return s.SignFn(accounts.Account{Address: s.Signer}, accounts.MimetypeTextPlain, encode)
+		case dbftutil.ThresholdScheme:
+			share, err := s.AmevKeystore.SignShare(encode, v == dbftutil.ExtraV1)
 			if err != nil {
 				return nil, fmt.Errorf("failed to sign share: %w", err)
 			}
