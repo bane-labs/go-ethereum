@@ -273,8 +273,16 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 			}
 		}
 		log.Info("Forkchoice requested sync to new head", context...)
-		if err := api.eth.Downloader().BeaconSync(api.eth.SyncMode(), header, finalized); err != nil {
-			return engine.STATUS_SYNCING, err
+		// The PathDB doesn't work with chains shorter than 128 blocks. So we started
+		// BeaconSync until the chain length reached 128 blocks.
+		delaySync := false
+		if api.eth.BlockChain().TrieDB().Scheme() == rawdb.PathScheme && header.Number.Uint64() < 128 {
+			delaySync = true
+		}
+		if !delaySync {
+			if err := api.eth.Downloader().BeaconSync(api.eth.SyncMode(), header, finalized); err != nil {
+				return engine.STATUS_SYNCING, err
+			}
 		}
 		return engine.STATUS_SYNCING, nil
 	}
