@@ -879,7 +879,7 @@ func (p *BlobPool) Reset(oldHead, newHead *types.Header) {
 	}
 	// Flush out any blobs from limbo that are older than the latest finality
 	if p.chain.Config().IsCancun(newHead.Number, newHead.Time) {
-		p.limbo.finalize(p.chain.CurrentFinalBlock(), newHead)
+		p.limbo.finalize(p.chain.CurrentFinalBlock())
 	}
 	// Reset the price heap for the new set of basefee/blobfee pairs
 	var (
@@ -2094,8 +2094,8 @@ func (p *BlobPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool
 	}
 }
 
-// SubscribeTransactions registers a subscription for reannounce transaction events,
-// supporting feeding only pending transactions.
+// SubscribeReannoTransactions registers a subscription for reannounce transaction
+// events, supporting feeding only pending transactions.
 func (p *BlobPool) SubscribeReannoTransactions(ch chan<- core.ReannoTxsEvent) event.Subscription {
 	// Disable SubscribeReannoTransactions
 	return nil
