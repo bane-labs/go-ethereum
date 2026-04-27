@@ -130,36 +130,39 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 
 	// If there is an ongoing round and it's time to epoch change.
 	if snapshot.initDone && currentHeight >= snapshot.EpochStartHeight+epochDuration {
-		// In case the node missed the whole sharing period.
-		if !keystore.IsSharing() {
-			keystore.OnSharePeriodStart(false)
-		}
-		indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
-		if indexOfSharing > 0 {
-			if err := c.syncThisRoundSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
-				return fmt.Errorf("failed to sync sharing DKG, err: %v", err)
+		// Only operate when the round in snapshot is the lastest for the keystore, otherwise ignore.
+		if snapshot.Round == uint64(keystore.Round())+1 {
+			// In case the node missed the whole sharing period.
+			if !keystore.IsSharing() {
+				keystore.OnSharePeriodStart(false)
 			}
-		}
-		// If indexOfSharing is 0, then selfPvss should be nil.
-		// Ref https://github.com/bane-labs/go-ethereum/blob/4c9105ea2bc246729db0540fce2df02074e21087/contracts/solidity/KeyManagement.sol#L113.
-		selfPvss, err := getSharePVSS(c.backend, snapshot.Round, uint64(indexOfSharing), state, h)
-		if err != nil {
-			return fmt.Errorf("failed to fetch spvss, err: %v", err)
-		}
-		aggregatedCommitment, err := getAggregatedCommitment(c.backend, snapshot.Round, state, h)
-		if err != nil {
-			return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
-		}
-		lastCommitment, err := getAggregatedCommitment(c.backend, snapshot.Round-1, state, h)
-		if err != nil {
-			return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
-		}
-		err = keystore.OnEpochChange(selfPvss, aggregatedCommitment, lastCommitment, indexOfSharing > 0)
-		if err != nil {
-			return fmt.Errorf("failed to change keystore epoch, err: %v", err)
-		}
-		if !suspended {
-			log.Info("DKG reached targetHeight", "round", snapshot.Round, "currentHeight", currentHeight, "aggregatedCommitment", hex.EncodeToString(aggregatedCommitment))
+			indexOfSharing := slices.Index(snapshot.PendingCNs, amevAddress) + 1
+			if indexOfSharing > 0 {
+				if err := c.syncThisRoundSecrets(snapshot, keystore, indexOfSharing, state, h); err != nil {
+					return fmt.Errorf("failed to sync sharing DKG, err: %v", err)
+				}
+			}
+			// If indexOfSharing is 0, then selfPvss should be nil.
+			// Ref https://github.com/bane-labs/go-ethereum/blob/4c9105ea2bc246729db0540fce2df02074e21087/contracts/solidity/KeyManagement.sol#L113.
+			selfPvss, err := getSharePVSS(c.backend, snapshot.Round, uint64(indexOfSharing), state, h)
+			if err != nil {
+				return fmt.Errorf("failed to fetch spvss, err: %v", err)
+			}
+			aggregatedCommitment, err := getAggregatedCommitment(c.backend, snapshot.Round, state, h)
+			if err != nil {
+				return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
+			}
+			lastCommitment, err := getAggregatedCommitment(c.backend, snapshot.Round-1, state, h)
+			if err != nil {
+				return fmt.Errorf("failed to fetch aggregated commitment, err: %v", err)
+			}
+			err = keystore.OnEpochChange(selfPvss, aggregatedCommitment, lastCommitment, indexOfSharing > 0)
+			if err != nil {
+				return fmt.Errorf("failed to change keystore epoch, err: %v", err)
+			}
+			if !suspended {
+				log.Info("DKG reached targetHeight", "round", snapshot.Round, "currentHeight", currentHeight, "aggregatedCommitment", hex.EncodeToString(aggregatedCommitment))
+			}
 		}
 		snapshot.reset()
 	}
