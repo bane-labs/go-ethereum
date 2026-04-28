@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/antimev"
 	beaconImpl "github.com/ethereum/go-ethereum/beacon/impl"
+	beaconMiner "github.com/ethereum/go-ethereum/beacon/impl/miner"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -449,8 +450,13 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	stack.RegisterLifecycle(eth)
 
 	// Set up local beacon client
+	var txCacheFilter beaconMiner.TransactionFilterFn
+	if bft != nil {
+		txCacheFilter = bft.FilterMissingTransaction
+	}
 	eth.internalRPC = stack.Attach()
-	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.eventMux, eth.feeRecipient, eth.shouldPreserve)
+	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.eventMux, eth.feeRecipient,
+		eth.shouldPreserve, txCacheFilter)
 	eth.handler.connectBeacon(eth.beacon)
 	if bft != nil {
 		syncing := func() bool {
@@ -458,7 +464,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			return eth.beacon.Syncing() || eth.Syncing()
 		}
 		// Connect BFT to beacon protocol
-		bft.WithBeacon(eth.beacon.BlockBroadcaster(), eth.beacon.RefreshPendingPayload, eth.beacon.SubscribeSyncingEvents, syncing)
+		bft.WithBeacon(eth.beacon.BlockBroadcaster(), eth.beacon.RefreshPendingPayload,
+			eth.beacon.SubscribeTransactionEvents, eth.beacon.SubscribeSyncingEvents, syncing)
 	}
 
 	// Successful startup; push a marker and check previous unclean shutdowns.

@@ -196,7 +196,8 @@ type DBFT struct {
 	// buffered txs channel.
 	requestTxs func(hashed []common.Hash)
 	txCbList   atomic.Value
-	txs        chan *types.Transaction
+	txSub      event.Subscription
+	txEvents   chan *types.Transaction
 
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
@@ -343,7 +344,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		signerConfig: types.LatestSigner(chainCfg),
 
 		messages:        make(chan Payload, msgsChCap),
-		txs:             make(chan *types.Transaction, txSubCap),
+		txEvents:        make(chan *types.Transaction, txSubCap),
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
 		syncingEvents:   make(chan bool, 2),
 
@@ -1560,11 +1561,14 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 }
 
 // WithBeacon initializes beacon protocol related channels and functions.
-func (c *DBFT) WithBeacon(ch chan<- *types.Block, refreshProposal RefreshProposalFn, subSyncing SubscribeSyncingFn, syncing SyncingFn) {
+func (c *DBFT) WithBeacon(ch chan<- *types.Block, refreshProposal RefreshProposalFn,
+	subMissingTx SubscribeMissingTxFn, subSyncing SubscribeSyncingFn, syncing SyncingFn) {
 	// The channel to broadcast new blocks in beacon protocol.
 	c.scope.Track(c.blockFeed.Subscribe(ch))
 	// The callback to request a new block proposal for view change.
 	c.refreshProposal = refreshProposal
+	// The channel to receive transactions from CL.
+	c.txSub = subMissingTx(c.txEvents)
 	// The direct checker of miner working state.
 	c.syncingSub = subSyncing(c.syncingEvents)
 	c.syncing = syncing
@@ -2342,8 +2346,8 @@ events:
 			}
 			log.Debug("received message", fields...)
 			c.dbft.OnReceive(&msg)
-		case tx := <-c.txs:
-			c.dbft.OnTransaction(&Transaction{Tx: tx})
+		case tx := <-c.txEvents:
+			c.dbft.OnTransaction(&Transaction{Tx: tx.WithoutBlobTxSidecar()})
 		case h := <-c.chainHeadEvents:
 			c.handleChainBlock(h.Header, true)
 		case err := <-c.chainHeadSub.Err():
@@ -2407,20 +2411,19 @@ events:
 	}
 	c.dbft.Timer.Stop()
 	c.chainHeadSub.Unsubscribe()
+	c.txSub.Unsubscribe()
 	c.syncingSub.Unsubscribe()
 	c.eventLoopRunning.Store(false)
 drainLoop:
 	for {
 		select {
 		case <-c.messages:
-		case <-c.txs:
 		case <-c.chainHeadEvents:
 		default:
 			break drainLoop
 		}
 	}
 	close(c.messages)
-	close(c.txs)
 	close(c.chainHeadEvents)
 	close(c.eventLoopToCloseCh)
 	log.Info("dBFT event loop stopped")
@@ -2463,25 +2466,24 @@ func (c *DBFT) getBlockExtraVersion(height *big.Int) dbftutil.ExtraVersion {
 	return dbftutil.ExtraV0
 }
 
-// OnTransaction is a dBFT callback that reacts on new incoming transaction arrived
-// via P2P. It's important to call this callback on every incoming transaction
-// skipping mempool filtering for proper dBFT functioning.
-func (c *DBFT) OnTransaction(txs []*types.Transaction) {
+// FilterMissingTransaction is a dBFT helper to filter transactions that are known as missing.
+func (c *DBFT) FilterMissingTransaction(txs []*types.Transaction) []*types.Transaction {
 	if c.dbft == nil || !c.dbftStarted.Load() {
-		log.Debug("Skip txs batch handling: dbft is inactive or not started yet")
-		return
+		return nil
 	}
 
-	var cbList = c.txCbList.Load()
+	known := make([]*types.Transaction, 0, len(txs))
+	cbList := c.txCbList.Load()
 	if cbList != nil {
 		for _, tx := range txs {
 			tx = tx.WithoutBlobTxSidecar()
 			_, found := slices.BinarySearchFunc(cbList.([]common.Hash), tx.Hash(), common.Hash.Cmp)
 			if found {
-				c.txs <- tx
+				known = append(known, tx)
 			}
 		}
 	}
+	return known
 }
 
 func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion) *Payload {

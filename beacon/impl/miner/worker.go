@@ -26,6 +26,9 @@ const (
 
 	// chainHeadChanSize is the size of channel listening to ChainHeadEvent.
 	chainHeadChanSize = 10
+
+	// transactionCacheSize is the max size of pending transaction cache.
+	transactionCacheSize = 512
 )
 
 // newWorkReq represents a request for new sealing work submitting.
@@ -71,8 +74,9 @@ type worker struct {
 	syncing atomic.Bool // The indicator whether the node is still syncing.
 
 	// Mutex to prevent parallel fork request.
-	forkMu           sync.Mutex
-	pendingPayloadID *engine.PayloadID
+	forkMu              sync.RWMutex
+	pendingPayloadID    *engine.PayloadID
+	pendingTransactions types.Transactions
 }
 
 func newWorker(eth Backend, rpc *rpc.Client, feeRecipient common.Address, shouldPreserve func(header *types.Header) bool) *worker {
@@ -259,6 +263,8 @@ func (w *worker) requestWork(timestamp uint64) {
 func (w *worker) commit(block *types.Block, versionedHashes []common.Hash, requests [][]byte, start time.Time) error {
 	select {
 	case w.taskCh <- &task{block: block, versionedHashes: versionedHashes, requests: requests, createdAt: time.Now()}:
+		// Cache the new block's transactions for potential future use, e.g. for BFT missing transaction request.
+		w.pendingTransactions = block.Transactions()
 		log.Info("Commit new sealing work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
 			"txs", len(block.Transactions()), "withdrawals", len(block.Withdrawals()), "gas", block.GasUsed(),
 			"elapsed", common.PrettyDuration(time.Since(start)))
@@ -267,6 +273,40 @@ func (w *worker) commit(block *types.Block, versionedHashes []common.Hash, reque
 		log.Info("Worker has exited")
 	}
 	return nil
+}
+
+// getTransaction tries to find a transaction from the pending transaction cache.
+func (w *worker) getTransaction(hash common.Hash) *types.Transaction {
+	// The pending payload is also protected by the fork mutex, here we borrow it.
+	w.forkMu.RLock()
+	defer w.forkMu.RUnlock()
+
+	for _, tx := range w.pendingTransactions {
+		if tx.Hash() == hash {
+			return tx
+		}
+	}
+	return nil
+}
+
+// cacheTransactions adds transactions to the pending transaction cache, so mark as
+// seen during this round of consensus.
+func (w *worker) cacheTransactions(txs []*types.Transaction) {
+	w.forkMu.Lock()
+	defer w.forkMu.Unlock()
+	// If the transaction is already in the cache, skip it.
+	for _, tx := range txs {
+		for _, pendingTx := range w.pendingTransactions {
+			if pendingTx.Hash() == tx.Hash() {
+				continue
+			}
+		}
+		// Ignore remote transaction if the cache is full.
+		if len(w.pendingTransactions) >= transactionCacheSize {
+			return
+		}
+		w.pendingTransactions = append(w.pendingTransactions, tx)
+	}
 }
 
 // feedback sends signed block back to EL for execution.

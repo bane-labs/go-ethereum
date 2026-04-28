@@ -36,3 +36,6 @@ type SyncingFn func() bool
 
 // SubscribeSyncingFn is a callback type to subscribe to syncing status changes.
 type SubscribeSyncingFn func(ch chan<- bool) event.Subscription
+
+// SubscribeMissingTxFn is a callback type to subscribe to missing transaction responses.
+type SubscribeMissingTxFn func(ch chan<- *types.Transaction) event.Subscription

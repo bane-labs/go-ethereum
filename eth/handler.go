@@ -33,7 +33,6 @@ import (
 	beaconSync "github.com/ethereum/go-ethereum/beacon/impl/synchronizer"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
-	"github.com/ethereum/go-ethereum/consensus/dbft"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
@@ -114,6 +113,8 @@ type Beacon interface {
 	)
 	NotifyBlockAnnon(peer string, hash common.Hash, number uint64, time time.Time)
 	EnqueueBlock(peer string, block *types.Block)
+	GetTransaction(hash common.Hash) *types.Transaction
+	NotifyTransactions(txs []*types.Transaction)
 }
 
 // FileSystem is enough of a FileSystem to satisfy [Service].
@@ -247,20 +248,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 		return p.RequestTxs(hashes)
 	}
-	var bft *dbft.DBFT
-	switch t := h.chain.Engine().(type) {
-	case *dbft.DBFT:
-		bft = t
-	case *beacon.Beacon:
-		switch inner := t.InnerEngine().(type) {
-		case *dbft.DBFT:
-			bft = inner
-		}
-	}
 	addTxs := func(txs []*types.Transaction) []error {
-		if bft != nil {
-			bft.OnTransaction(txs)
-		}
 		return h.txpool.Add(txs, false, false)
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)

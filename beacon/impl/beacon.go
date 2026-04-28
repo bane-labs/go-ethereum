@@ -30,11 +30,13 @@ type Beacon struct {
 	wg             sync.WaitGroup
 }
 
-// New creates a mock beacon client with basic mining functionality.
-func New(eth miner.Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address, shouldPreserve func(header *types.Header) bool) *Beacon {
+// New creates a mock beacon client with basic mining functionality. It supports customized
+// fork choice rules and transaction filtering for messages from P2P beacon protocol.
+func New(eth miner.Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address,
+	shouldPreserve miner.ShouldPreserveFn, txFilter miner.TransactionFilterFn) *Beacon {
 	b := &Beacon{
 		chain:   eth.BlockChain(),
-		miner:   miner.New(eth, rpc, mux, coinbase, shouldPreserve),
+		miner:   miner.New(eth, rpc, mux, coinbase, shouldPreserve, txFilter),
 		blockCh: make(chan *types.Block),
 	}
 
@@ -159,6 +161,23 @@ func (b *Beacon) StopMining() {
 // after view change happens, to trigger the new proposal generation and view update in miner.
 func (b *Beacon) RefreshPendingPayload() error {
 	return b.miner.RequestNewPayload()
+}
+
+// GetTransaction tries to find a transaction from the consensus level. This is useful for BFT
+// consensus, if a transaction is replaced or evited in the EL txpool.
+func (b *Beacon) GetTransaction(hash common.Hash) *types.Transaction {
+	return b.miner.GetTransaction(hash)
+}
+
+// NotifyTransactions notifies the miner about transactions seen in the beacon protocol.
+func (b *Beacon) NotifyTransactions(txs []*types.Transaction) {
+	b.miner.NotifyTransactions(txs)
+}
+
+// SubscribeTransactionEvents subscribes to transaction events from the miner.
+// This is useful for BFT consensus to listen on missing transaction responses.
+func (b *Beacon) SubscribeTransactionEvents(ch chan<- *types.Transaction) event.Subscription {
+	return b.miner.SubscribeTransactionEvents(ch)
 }
 
 // Close closes the beacon client service.
