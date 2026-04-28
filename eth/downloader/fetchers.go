@@ -69,15 +69,12 @@ func (d *Downloader) fetchHeadersByHash(p *peerConnection, hash common.Hash, amo
 	}
 }
 
-// fetchHeadersByNumber is a blocking version of Peer.RequestHeadersByNumber which
-// handles all the cancellation, interruption and timeout mechanisms of a data
-// retrieval to allow blocking API calls.
-func (d *Downloader) fetchHeadersByNumber(p *peerConnection, number uint64, amount int, skip int, reverse bool) ([]*types.Header, []common.Hash, error) {
+func (d *Downloader) fetchBodiesByHash(p *peerConnection, hashes []common.Hash) ([]*eth.BlockBody, [][]common.Hash, error) {
 	// Create the response sink and send the network request
 	start := time.Now()
 	resCh := make(chan *eth.Response)
 
-	req, err := p.peer.RequestHeadersByNumber(number, amount, skip, reverse, resCh)
+	req, err := p.peer.RequestBodies(hashes, resCh)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -94,22 +91,22 @@ func (d *Downloader) fetchHeadersByNumber(p *peerConnection, number uint64, amou
 		return nil, nil, errCanceled
 
 	case <-timeoutTimer.C:
-		// Header retrieval timed out, update the metrics
-		p.log.Debug("Header request timed out", "elapsed", ttl)
-		headerTimeoutMeter.Mark(1)
+		// Body retrieval timed out, update the metrics
+		p.log.Debug("Body request timed out", "elapsed", ttl)
+		bodyTimeoutMeter.Mark(1)
 
 		return nil, nil, errTimeout
 
 	case res := <-resCh:
-		// Headers successfully retrieved, update the metrics
-		headerReqTimer.Update(time.Since(start))
-		headerInMeter.Mark(int64(len(*res.Res.(*eth.BlockHeadersRequest))))
+		// Bodies successfully retrieved, update the metrics
+		bodyReqTimer.Update(time.Since(start))
+		bodyInMeter.Mark(int64(len(*res.Res.(*eth.BlockBodiesResponse))))
 
 		// Don't reject the packet even if it turns out to be bad, downloader will
-		// disconnect the peer on its own terms. Simply delivery the headers to
+		// disconnect the peer on its own terms. Simply delivery the bodies to
 		// be processed by the caller
 		res.Done <- nil
 
-		return *res.Res.(*eth.BlockHeadersRequest), res.Meta.([]common.Hash), nil
+		return *res.Res.(*eth.BlockBodiesResponse), res.Meta.([][]common.Hash), nil
 	}
 }

@@ -672,6 +672,7 @@ var knownMetadataKeys = [][]byte{
 	uncleanShutdownKey, badBlockKey, transitionStatusKey, skeletonSyncStatusKey,
 	persistentStateIDKey, trieJournalKey, snapshotSyncStatusKey, snapSyncStatusFlagKey,
 	filterMapsRangeKey, headStateHistoryIndexKey, VerkleTransitionStatePrefix,
+	beaconSyncTrustedHeadKey,
 }
 
 // printChainMetadata prints out chain metadata to stderr.

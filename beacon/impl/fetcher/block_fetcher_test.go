@@ -87,7 +87,8 @@ func newTester() *fetcherTester {
 		drops:   make(map[string]bool),
 	}
 	tester.fetcher = NewBlockFetcher(tester.getBlock, tester.verifyHeader, tester.broadcastBlock,
-		tester.chainHeight, tester.chainFinalizedHeight, tester.insertChain, tester.dropPeer, nil, nil)
+		tester.chainHeight, tester.chainFinalizedHeight, tester.insertChain, tester.informDownload,
+		tester.dropPeer, nil, nil)
 	tester.fetcher.Start()
 
 	return tester
@@ -144,6 +145,11 @@ func (f *fetcherTester) insertChain(block *types.Block) error {
 	f.hashes = append(f.hashes, block.Hash())
 	f.blocks[block.Hash()] = block
 
+	return nil
+}
+
+// informDownload announces a new block to the downloader.
+func (f *fetcherTester) informDownload(block *types.Block) error {
 	return nil
 }
 

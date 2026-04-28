@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
-	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -29,13 +28,11 @@ import (
 )
 
 // Tests that snap sync is disabled after a successful sync cycle.
-func TestSnapSyncDisabling68(t *testing.T) {
-	testSnapSyncDisabling(t, beacon.BEACON1, eth.ETH68, snap.SNAP1)
-}
+func TestSnapSyncDisabling68(t *testing.T) { testSnapSyncDisabling(t, eth.ETH68, snap.SNAP1) }
 
 // Tests that snap sync gets disabled as soon as a real block is successfully
 // imported into the blockchain.
-func testSnapSyncDisabling(t *testing.T, beaconVer uint, ethVer uint, snapVer uint) {
+func testSnapSyncDisabling(t *testing.T, ethVer uint, snapVer uint) {
 	t.Parallel()
 
 	// Create an empty handler and ensure it's in snap sync mode
@@ -52,24 +49,8 @@ func testSnapSyncDisabling(t *testing.T, beaconVer uint, ethVer uint, snapVer ui
 	}
 	defer full.close()
 
-	// Sync up the two handlers via `beacon`, `eth` and `snap`
-	caps := []p2p.Cap{{Name: "beacon", Version: beaconVer}, {Name: "eth", Version: ethVer}, {Name: "snap", Version: snapVer}}
-
-	emptyPipeBeacon, fullPipeBeacon := p2p.MsgPipe()
-	defer emptyPipeBeacon.Close()
-	defer fullPipeBeacon.Close()
-
-	emptyPeerBeacon := beacon.NewPeer(beaconVer, p2p.NewPeer(enode.ID{1}, "", caps), emptyPipeBeacon)
-	fullPeerBeacon := beacon.NewPeer(beaconVer, p2p.NewPeer(enode.ID{1}, "", caps), fullPipeBeacon)
-	defer emptyPeerBeacon.Close()
-	defer fullPeerBeacon.Close()
-
-	go empty.handler.runBeaconPeer(emptyPeerBeacon, func(peer *beacon.Peer) error {
-		return beacon.Handle((*beaconHandler)(empty.handler), peer)
-	})
-	go full.handler.runBeaconPeer(fullPeerBeacon, func(peer *beacon.Peer) error {
-		return beacon.Handle((*beaconHandler)(full.handler), peer)
-	})
+	// Sync up the two handlers via both `eth` and `snap`
+	caps := []p2p.Cap{{Name: "eth", Version: ethVer}, {Name: "snap", Version: snapVer}}
 
 	emptyPipeEth, fullPipeEth := p2p.MsgPipe()
 	defer emptyPipeEth.Close()
@@ -104,9 +85,7 @@ func testSnapSyncDisabling(t *testing.T, beaconVer uint, ethVer uint, snapVer ui
 	time.Sleep(250 * time.Millisecond)
 
 	// Check that snap sync was disabled
-	beacon, peer := empty.handler.peers.peerWithHighestTD()
-	op := peerToSyncOp(ethconfig.SnapSync, beacon, peer)
-	if err := empty.handler.doSync(op); err != nil {
+	if err := empty.handler.downloader.BeaconSync(ethconfig.SnapSync, full.chain.CurrentBlock(), nil); err != nil {
 		t.Fatal("sync failed:", err)
 	}
 	// Downloader internally has to wait for a timer (3s) to be expired before

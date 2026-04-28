@@ -98,3 +98,28 @@ func WriteSnapSyncStatusFlag(db ethdb.KeyValueWriter, flag uint8) {
 		log.Crit("Failed to store sync status flag", "err", err)
 	}
 }
+
+// ReadBeaconSyncTrustedHead retrieves the latest trusted head for beacon sync, which is supposed to be the latest finalized block.
+func ReadBeaconSyncTrustedHead(db ethdb.KeyValueReader) *types.Block {
+	data, _ := db.Get(beaconSyncTrustedHeadKey)
+	if len(data) == 0 {
+		return nil
+	}
+	head := new(types.Block)
+	if err := rlp.DecodeBytes(data, head); err != nil {
+		log.Error("Invalid beacon sync trusted head RLP", "err", err)
+		return nil
+	}
+	return head
+}
+
+// WriteBeaconSyncTrustedHead stores the latest trusted head for beacon sync, which is supposed to be the latest finalized block.
+func WriteBeaconSyncTrustedHead(db ethdb.KeyValueWriter, head *types.Block) {
+	data, err := rlp.EncodeToBytes(head)
+	if err != nil {
+		log.Crit("Failed to RLP encode head", "err", err)
+	}
+	if err := db.Put(beaconSyncTrustedHeadKey, data); err != nil {
+		log.Crit("Failed to store beacon sync trusted head", "err", err)
+	}
+}

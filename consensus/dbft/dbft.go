@@ -1828,16 +1828,16 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if !cancun && header.ParentBeaconRoot != nil {
 		return fmt.Errorf("invalid parentBeaconRoot, have %x, expected nil", header.ParentBeaconRoot)
 	}
-
+	// Verify existence / non-existence of requestsHash.
 	prague := chain.Config().IsPrague(header.Number, header.Time)
-	if !prague {
-		if header.RequestsHash != nil {
-			return fmt.Errorf("invalid RequestsHash, have %#x, expected nil", header.RequestsHash)
-		}
-	} else {
-		if header.RequestsHash == nil {
-			return errors.New("header has nil RequestsHash after Prague")
-		}
+	if prague && header.RequestsHash == nil {
+		return errors.New("missing requestsHash")
+	}
+	if prague && header.RequestsHash.Cmp(types.EmptyRequestsHash) != 0 {
+		return fmt.Errorf("invalid requestsHash: have %x, expected %x", header.RequestsHash, &types.EmptyRequestsHash)
+	}
+	if !prague && header.RequestsHash != nil {
+		return fmt.Errorf("invalid requestsHash, have %x, expected nil", header.RequestsHash)
 	}
 	// All basic checks passed, verify cascading fields
 	return c.verifyCascadingFields(chain, header, parents, isSealed)
@@ -2697,7 +2697,7 @@ func honestSealHash(header *types.Header) ([]byte, error) {
 // hashed. This hash represents a Keccaak256 hash of header.
 func HonestSealHashV0(header *types.Header) (hash common.Hash) {
 	hasher := sha3.NewLegacyKeccak256()
-	encodeSigHeader(hasher, header)
+	EncodeSigHeader(hasher, header)
 	hasher.(crypto.KeccakState).Read(hash[:])
 	return hash
 }
@@ -2719,11 +2719,11 @@ func HonestSealHashV1(header *types.Header) *bls12381.G2Affine {
 // or not), which could be abused to produce different hashes for the same header.
 func dbftRLP(header *types.Header) []byte {
 	b := new(bytes.Buffer)
-	encodeSigHeader(b, header)
+	EncodeSigHeader(b, header)
 	return b.Bytes()
 }
 
-func encodeSigHeader(w io.Writer, header *types.Header) {
+func EncodeSigHeader(w io.Writer, header *types.Header) {
 	var hashableExtraLen int
 	switch v := dbftutil.Extra(header.Extra).Version(); v {
 	case dbftutil.ExtraV0:

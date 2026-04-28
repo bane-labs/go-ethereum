@@ -21,7 +21,6 @@ package downloader
 
 import (
 	"errors"
-	"math/big"
 	"sync"
 	"time"
 
@@ -47,22 +46,15 @@ type peerConnection struct {
 
 	rates   *msgrate.Tracker         // Tracker to hone in on the number of items retrievable per second
 	lacking map[common.Hash]struct{} // Set of hashes not to request (didn't have previously)
-
-	beacon beaconPeer
-	peer   ethPeer
+	peer    Peer
 
 	version uint       // Eth protocol version number to switch strategies
 	log     log.Logger // Contextual logger to add extra infos to peer logs
 	lock    sync.RWMutex
 }
 
-// beaconPeer encapsulates the methods required to know head information.
-type beaconPeer interface {
-	Head() (common.Hash, *big.Int)
-}
-
-// ethPeer encapsulates the methods required to synchronise with a remote full peer.
-type ethPeer interface {
+// Peer encapsulates the methods required to synchronise with a remote full peer.
+type Peer interface {
 	RequestHeadersByHash(common.Hash, int, int, bool, chan *eth.Response) (*eth.Request, error)
 	RequestHeadersByNumber(uint64, int, int, bool, chan *eth.Response) (*eth.Request, error)
 
@@ -71,37 +63,13 @@ type ethPeer interface {
 }
 
 // newPeerConnection creates a new downloader peer.
-func newPeerConnection(id string, version uint, peer ethPeer, logger log.Logger) *peerConnection {
+func newPeerConnection(id string, version uint, peer Peer, logger log.Logger) *peerConnection {
 	return &peerConnection{
 		id:      id,
 		lacking: make(map[common.Hash]struct{}),
 		peer:    peer,
 		version: version,
 		log:     logger,
-	}
-}
-
-// ConnectBeacon connects a downloader peer with a beacon peer.
-func (p *peerConnection) ConnectBeacon(peer beaconPeer) error {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-	if p.beacon != nil {
-		return errAlreadyRegistered
-	} else {
-		p.beacon = peer
-		return nil
-	}
-}
-
-// DisconnectBeacon disconnects a downloader peer from its beacon peer.
-func (p *peerConnection) DisconnectBeacon() error {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-	if p.beacon == nil {
-		return errNotRegistered
-	} else {
-		p.beacon = nil
-		return nil
 	}
 }
 
@@ -249,27 +217,6 @@ func (ps *peerSet) Register(p *peerConnection) error {
 	ps.peers[p.id] = p
 	ps.lock.Unlock()
 
-	if p.beacon != nil && p.peer != nil {
-		ps.events.Send(&peeringEvent{peer: p, join: true})
-	}
-	return nil
-}
-
-// RegisterBeacon connects a peer with its beacon, or returns an error if the
-// peer is not known.
-func (ps *peerSet) ConnectBeacon(id string, beacon beaconPeer) error {
-	ps.lock.Lock()
-	p, ok := ps.peers[id]
-	if !ok {
-		ps.lock.Unlock()
-		return errNotRegistered
-	}
-	err := p.ConnectBeacon(beacon)
-	if err != nil {
-		return err
-	}
-	ps.lock.Unlock()
-
 	ps.events.Send(&peeringEvent{peer: p, join: true})
 	return nil
 }
@@ -285,26 +232,6 @@ func (ps *peerSet) Unregister(id string) error {
 	}
 	delete(ps.peers, id)
 	ps.rates.Untrack(id)
-	ps.lock.Unlock()
-
-	if p.beacon != nil && p.peer != nil {
-		ps.events.Send(&peeringEvent{peer: p, join: false})
-	}
-	return nil
-}
-
-// DisconnectBeacon removes the beacon connection from a remote peer.
-func (ps *peerSet) DisconnectBeacon(id string) error {
-	ps.lock.Lock()
-	p, ok := ps.peers[id]
-	if !ok || p.beacon == nil {
-		ps.lock.Unlock()
-		return errNotRegistered
-	}
-	err := p.DisconnectBeacon()
-	if err != nil {
-		return err
-	}
 	ps.lock.Unlock()
 
 	ps.events.Send(&peeringEvent{peer: p, join: false})

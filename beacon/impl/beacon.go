@@ -6,7 +6,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/beacon/impl/fetcher"
 	"github.com/ethereum/go-ethereum/beacon/impl/miner"
+	"github.com/ethereum/go-ethereum/beacon/impl/synchronizer"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/dbft/light"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
@@ -21,8 +23,9 @@ type DBFT interface {
 type Beacon struct {
 	chain          *core.BlockChain
 	miner          *miner.Miner
-	blockCh        chan *types.Block
+	synchronizer   *synchronizer.Synchronizer
 	blockFetcher   *fetcher.BlockFetcher
+	blockCh        chan *types.Block
 	broadcastBlock fetcher.BlockBroadcasterFn
 	wg             sync.WaitGroup
 }
@@ -38,6 +41,19 @@ func New(eth miner.Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common
 	b.wg.Add(1)
 	go b.minedBroadcastLoop()
 	return b
+}
+
+// InitSync starts the beacon synchronizer, to find the latest trusted head and trigger the EL
+// synchronization on the canonical chain.
+func (b *Beacon) StartSynchronizer(lightSync synchronizer.LightSyncFn) {
+	localHead := b.chain.CurrentBlock()
+	// Take a block that can't be reorged. As we defined in worker feedback, n-1 is the finalized block.
+	if localHead.Number.Sign() > 0 {
+		b.synchronizer = synchronizer.New(b.chain.GetBlockByHash(localHead.ParentHash), light.VerifyHeaders, lightSync, b.ForceBlock, b.chain.TrieDB().Disk())
+	} else {
+		b.synchronizer = synchronizer.New(b.chain.GetBlockByHash(localHead.Hash()), light.VerifyHeaders, lightSync, b.ForceBlock, b.chain.TrieDB().Disk())
+	}
+	b.synchronizer.Start()
 }
 
 // StartBlockFetcher enables the block fetching functionality of the beacon client.
@@ -61,8 +77,8 @@ func (b *Beacon) StartBlockFetcher(broadcastBlock fetcher.BlockBroadcasterFn, dr
 
 	b.broadcastBlock = broadcastBlock
 	b.blockFetcher = fetcher.NewBlockFetcher(b.chain.GetBlockByHash, validator,
-		broadcastBlock, heighter, finalizeHeighter, b.InsertBlock, dropPeer,
-		fetchHeader, fetchBodies)
+		broadcastBlock, heighter, finalizeHeighter, b.InsertBlock, b.InformNewBlock,
+		dropPeer, fetchHeader, fetchBodies)
 	b.blockFetcher.Start()
 }
 
@@ -78,7 +94,40 @@ func (b *Beacon) NotifyBlockAnnon(peer string, hash common.Hash, number uint64, 
 
 // InsertBlock is a universal block insert function to feed block back to EL.
 func (b *Beacon) InsertBlock(block *types.Block) error {
-	return b.miner.DispatchBlock(block)
+	if err := b.miner.DispatchBlock(block, true); err != nil {
+		return err
+	}
+	// Update the synchronizer if the EL chain is extended, here only evaluate the height.
+	if latest := b.chain.CurrentHeader(); latest.Number.Cmp(block.Number()) >= 0 {
+		b.synchronizer.Update(b.chain.GetBlockByHash(latest.ParentHash), b.chain.GetBlockByHash(latest.Hash()))
+	}
+	return nil
+}
+
+// ForceBlock is a force block insert function to enforce start the EL synchronization.
+// This is only used by CL synchronizer when the trustful target block is found.
+func (b *Beacon) ForceBlock(block *types.Block) error {
+	return b.miner.DispatchBlock(block, false)
+}
+
+// InformNewBlock announces a new but not verifiable block to the synchronizer.
+func (b *Beacon) InformNewBlock(block *types.Block) error {
+	// Synchronizer only send supposed finalized block as latest block to EL, so that
+	// prevent reorg signals. The current EL will restart sync if there's a reorg.
+	err := b.synchronizer.NotifyNewHead(block)
+	if err != nil {
+		return err
+	}
+	// So if the EL reached the finalized number, then we need another signal to insert
+	// the final block and ends the sync.
+	if block.ParentHash() == b.chain.CurrentBlock().Hash() {
+		err := b.chain.Engine().VerifyHeader(b.chain, block.Header())
+		if err != nil {
+			return err
+		}
+		b.miner.DispatchBlock(block, true)
+	}
+	return nil
 }
 
 // Mining returns whether the beacon client is mining.
@@ -88,7 +137,7 @@ func (b *Beacon) Mining() bool {
 
 // Syncing returns whether the beacon client is syncing.
 func (b *Beacon) Syncing() bool {
-	return b.miner.Syncing()
+	return b.synchronizer.Syncing()
 }
 
 func (b *Beacon) SubscribeSyncingEvents(ch chan<- bool) event.Subscription {
@@ -116,6 +165,7 @@ func (b *Beacon) RefreshPendingPayload() error {
 func (b *Beacon) Close() error {
 	b.miner.Close()
 	b.blockFetcher.Stop()
+	b.synchronizer.Stop()
 	close(b.blockCh)
 	b.wg.Wait()
 
