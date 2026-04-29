@@ -171,9 +171,6 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 		if tx == nil {
 			return fmt.Errorf("%w: transaction %d is nil", errDecode, i)
 		}
-		if tx.BlobTxSidecar() != nil {
-			return fmt.Errorf("%w: transaction %d has blob sidecar", errDecode, i)
-		}
 	}
 	log.Debug("Receive Transactions response", "from", peer.id, "requestId", res.RequestId, "transactions", len(res.TransactionsResponse))
 	return backend.Handle(peer, res)

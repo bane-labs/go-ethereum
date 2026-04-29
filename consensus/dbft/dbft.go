@@ -2476,7 +2476,6 @@ func (c *DBFT) FilterMissingTransaction(txs []*types.Transaction) []*types.Trans
 	cbList := c.txCbList.Load()
 	if cbList != nil {
 		for _, tx := range txs {
-			tx = tx.WithoutBlobTxSidecar()
 			_, found := slices.BinarySearchFunc(cbList.([]common.Hash), tx.Hash(), common.Hash.Cmp)
 			if found {
 				known = append(known, tx)

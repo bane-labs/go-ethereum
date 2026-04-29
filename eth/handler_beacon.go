@@ -2,6 +2,7 @@ package eth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"math/rand"
@@ -405,8 +406,8 @@ func (h *beaconHandler) handleGetTransactionsPacket(peer *beacon.Peer, packet *b
 		if tx == nil {
 			continue
 		}
-		// Encode without blob sidecat, we don't need it for consensus retrieval and it can be large.
-		encoded, err := rlp.EncodeToBytes(tx.WithoutBlobTxSidecar())
+		// Encode the full transaction, even though the blob sidecar is large.
+		encoded, err := rlp.EncodeToBytes(tx)
 		if err != nil {
 			log.Error("Failed to encoded transaction in beacon handler", "hash", hash, "err", err)
 			return err
@@ -419,6 +420,19 @@ func (h *beaconHandler) handleGetTransactionsPacket(peer *beacon.Peer, packet *b
 }
 
 func (h *beaconHandler) handleTransactions(peer *beacon.Peer, packet *beacon.TransactionsPacket) error {
+	// If we receive any blob transactions missing sidecars, or with
+	// sidecars that don't correspond to the versioned hashes reported
+	// in the header, disconnect from the sending peer.
+	for _, tx := range packet.TransactionsResponse {
+		if tx.Type() == types.BlobTxType {
+			if tx.BlobTxSidecar() == nil {
+				return errors.New("received sidecar-less blob transaction")
+			}
+			if err := tx.BlobTxSidecar().ValidateBlobCommitmentHashes(tx.BlobHashes()); err != nil {
+				return err
+			}
+		}
+	}
 	h.beacon.NotifyTransactions(packet.TransactionsResponse)
 	return nil
 }
