@@ -127,7 +127,7 @@ define run_node
 endef
 
 define init_node
-    @$(GOBIN)/geth init --datadir $(1)/$(2) $(1)/$(GENESIS_WORK_JSON) > $(1)/$(2)/geth_init.log 2>&1
+    @$(GOBIN)/geth init --state.scheme hash --datadir $(1)/$(2) $(1)/$(GENESIS_WORK_JSON) > $(1)/$(2)/geth_init.log 2>&1
 endef
 
 #? geth: Build geth.
