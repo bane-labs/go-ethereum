@@ -370,7 +370,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 	blobStorage.WarmCache()
-	eth.filesystem, err = core.NewFileSystem(eth.blockchain, eth.blobTxPool, blobStorage)
+	eth.filesystem, err = core.NewFileSystem(eth.blockchain,
+		func(hash common.Hash) *types.Transaction {
+			return eth.blobTxPool.Get(hash)
+		}, blobStorage)
 	if err != nil {
 		return nil, err
 	}
@@ -458,6 +461,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.eventMux, eth.feeRecipient,
 		eth.shouldPreserve, txCacheFilter)
 	eth.handler.connectBeacon(eth.beacon)
+	eth.filesystem.SetGetTransactionFn(func(hash common.Hash) *types.Transaction {
+		if tx := eth.blobTxPool.Get(hash); tx != nil {
+			return tx
+		}
+		return eth.beacon.GetTransaction(hash)
+	})
 	if bft != nil {
 		syncing := func() bool {
 			log.Debug("Syncing status", "beacon", eth.beacon.Syncing(), "eth", eth.Syncing())
