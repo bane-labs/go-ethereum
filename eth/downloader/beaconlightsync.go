@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"math/rand"
 	"sync/atomic"
 	"time"
 
@@ -19,7 +20,10 @@ import (
 func (d *Downloader) BeaconLightSync(extend beaconSync.BeaconExtendFn, start chan *types.Header) error {
 	var trustedHeader *types.Header
 	var shouldSync atomic.Bool
+	timeoutTimer := time.NewTimer(time.Second)
+	defer timeoutTimer.Stop()
 	for {
+		timeoutTimer.Reset(time.Second)
 		// If the node is going down, unblock
 		select {
 		case header, ok := <-start:
@@ -33,26 +37,21 @@ func (d *Downloader) BeaconLightSync(extend beaconSync.BeaconExtendFn, start cha
 			if trustedHeader == nil || trustedHeader.Number.Uint64() < header.Number.Uint64() {
 				trustedHeader = header
 			}
-		default:
+		case <-d.quitCh:
+			return nil
+		case <-timeoutTimer.C:
 		}
 		// Do nothing if should wait
 		if !shouldSync.Load() {
-			time.Sleep(time.Second * 3)
 			continue
 		}
 		// Pick a random peer to sync from and keep retrying if none are yet
 		// available due to fresh startup
-		d.peers.lock.RLock()
-		var peer *peerConnection
-		for _, peer = range d.peers.peers {
-			break
-		}
-		d.peers.lock.RUnlock()
-
-		if peer == nil {
-			time.Sleep(time.Second)
+		peers := d.peers.AllPeers()
+		if len(peers) == 0 {
 			continue
 		}
+		peer := peers[rand.Intn(len(peers))]
 		// Found a peer, attempt to retrieve the header whilst blocking and
 		// retry if it fails for whatever reason
 		log.Debug("Attempting to retrieve new headers", "peer", peer.id)
@@ -65,20 +64,17 @@ func (d *Downloader) BeaconLightSync(extend beaconSync.BeaconExtendFn, start cha
 			}
 			log.Debug("Failed to fetch new headers", "err", err)
 			d.dropPeer(peer.id)
-			time.Sleep(time.Second)
 			continue
 		}
 		if len(headers) == 0 {
 			log.Debug("Received empty new headers")
 			d.dropPeer(peer.id)
-			time.Sleep(time.Second)
 			continue
 		}
 		// Head header retrieved, if the hash matches, start the verification
 		if metas[0] != trustedHeader.Hash() {
 			log.Debug("Received invalid new headers start", "want", trustedHeader.Hash(), "have", metas[0])
 			d.dropPeer(peer.id)
-			time.Sleep(time.Second)
 			continue
 		}
 		// If there's no new headers to sync
@@ -93,7 +89,6 @@ func (d *Downloader) BeaconLightSync(extend beaconSync.BeaconExtendFn, start cha
 		if !valid {
 			log.Debug("Received invalid new headers", "start", trustedHeader.Hash(), "end", headers[len(headers)-1].Hash())
 			d.dropPeer(peer.id)
-			time.Sleep(time.Second)
 			continue
 		}
 		// If the verification is successful, update the trusted hash and repeat until
@@ -109,13 +104,11 @@ func (d *Downloader) BeaconLightSync(extend beaconSync.BeaconExtendFn, start cha
 			}
 			log.Debug("Failed to fetch new bodies", "err", err)
 			d.dropPeer(peer.id)
-			time.Sleep(time.Second)
 			continue
 		}
 		if len(bodies) != 2 {
 			log.Debug("Received invalid number of new bodies", "len", len(bodies))
 			d.dropPeer(peer.id)
-			time.Sleep(time.Second)
 			continue
 		}
 		// Verify the bodies match the headers, if not, retry
@@ -136,7 +129,6 @@ func (d *Downloader) BeaconLightSync(extend beaconSync.BeaconExtendFn, start cha
 		if finalizedBlock.Hash() != trusted.Hash() || latestBlock.Hash() != latest.Hash() {
 			log.Debug("Received invalid new bodies", "trusted", trusted.Hash(), "latest", latest.Hash())
 			d.dropPeer(peer.id)
-			time.Sleep(time.Second)
 			continue
 		}
 
