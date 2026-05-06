@@ -578,6 +578,11 @@ func (h *handler) Start(maxPeers int) {
 	// start sync handlers
 	h.txFetcher.Start()
 
+	// start sidecar fetcher if blob sync is enabled
+	if h.blobSync {
+		h.sidecarFetcher.Start()
+	}
+
 	// start peer handler tracker
 	h.wg.Add(1)
 	go h.protoTracker()
@@ -596,6 +601,9 @@ func (h *handler) Stop() {
 	h.annoBlobsSub.Unsubscribe() // quits blobsAnnounceLoop
 
 	h.txFetcher.Stop()
+	if h.blobSync {
+		h.sidecarFetcher.Stop()
+	}
 	h.downloader.Terminate()
 
 	// Quit chainSync and txsync64.
