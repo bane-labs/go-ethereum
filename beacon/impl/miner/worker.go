@@ -297,31 +297,40 @@ func (w *worker) getTransaction(hash common.Hash) *types.Transaction {
 				commitments := make([]kzg4844.Commitment, len(blobHashes))
 				var version byte
 				var proofs []kzg4844.Proof
+				// Build a map from versioned hash to index for O(1) lookups.
+				hashToIndex := make(map[common.Hash]int, len(w.pendingVersionedHashes))
+				for idx, vHash := range w.pendingVersionedHashes {
+					hashToIndex[vHash] = idx
+				}
 				// The sidecar has different format based on its version.
 				if w.isCellProofEnabled {
 					version = types.BlobSidecarVersion1
 					proofs = make([]kzg4844.Proof, len(blobHashes)*kzg4844.CellProofsPerBlob)
 					for i, blobHash := range blobHashes {
-						for m, vHash := range w.pendingVersionedHashes {
-							if vHash == blobHash {
-								copy(blobs[i][:], w.pendingBlobs.Blobs[m])
-								copy(commitments[i][:], w.pendingBlobs.Commitments[m])
-								for n := range kzg4844.CellProofsPerBlob {
-									copy(proofs[i*kzg4844.CellProofsPerBlob+n][:], w.pendingBlobs.Proofs[m*kzg4844.CellProofsPerBlob+n])
-								}
+						m, exists := hashToIndex[blobHash]
+						if exists {
+							copy(blobs[i][:], w.pendingBlobs.Blobs[m])
+							copy(commitments[i][:], w.pendingBlobs.Commitments[m])
+							for n := range kzg4844.CellProofsPerBlob {
+								copy(proofs[i*kzg4844.CellProofsPerBlob+n][:], w.pendingBlobs.Proofs[m*kzg4844.CellProofsPerBlob+n])
 							}
+						} else {
+							log.Error("Blob is missing in the cache", "txhash", hash, "blobhash", blobHash)
+							return nil
 						}
 					}
 				} else {
 					version = types.BlobSidecarVersion0
 					proofs = make([]kzg4844.Proof, len(blobHashes))
 					for i, blobHash := range blobHashes {
-						for m, vHash := range w.pendingVersionedHashes {
-							if vHash == blobHash {
-								copy(blobs[i][:], w.pendingBlobs.Blobs[m])
-								copy(commitments[i][:], w.pendingBlobs.Commitments[m])
-								copy(proofs[i][:], w.pendingBlobs.Proofs[m])
-							}
+						m, exists := hashToIndex[blobHash]
+						if exists {
+							copy(blobs[i][:], w.pendingBlobs.Blobs[m])
+							copy(commitments[i][:], w.pendingBlobs.Commitments[m])
+							copy(proofs[i][:], w.pendingBlobs.Proofs[m])
+						} else {
+							log.Error("Blob is missing in the cache", "txhash", hash, "blobhash", blobHash)
+							return nil
 						}
 					}
 				}
@@ -339,12 +348,15 @@ func (w *worker) getTransaction(hash common.Hash) *types.Transaction {
 func (w *worker) cacheTransactions(txs []*types.Transaction) {
 	w.forkMu.Lock()
 	defer w.forkMu.Unlock()
+	// Build a map from versioned hash to index for O(1) lookups.
+	hashToIndex := make(map[common.Hash]int, len(w.pendingTransactions))
+	for idx, tx := range w.pendingTransactions {
+		hashToIndex[tx.Hash()] = idx
+	}
 	// If the transaction is already in the cache, skip it.
 	for _, tx := range txs {
-		for _, pendingTx := range w.pendingTransactions {
-			if pendingTx.Hash() == tx.Hash() {
-				continue
-			}
+		if _, exists := hashToIndex[tx.Hash()]; exists {
+			continue
 		}
 		// Ignore remote transaction if the cache is full.
 		if len(w.pendingTransactions) >= transactionCacheSize {
@@ -356,7 +368,19 @@ func (w *worker) cacheTransactions(txs []*types.Transaction) {
 			if sidecar == nil {
 				continue
 			}
-			if w.isCellProofEnabled && tx.BlobTxSidecar().Version == types.BlobSidecarVersion0 {
+			switch tx.BlobTxSidecar().Version {
+			case types.BlobSidecarVersion0:
+				if w.isCellProofEnabled {
+					continue
+				}
+			case types.BlobSidecarVersion1:
+				if !w.isCellProofEnabled {
+					continue
+				}
+			default:
+				continue
+			}
+			if err := core.ValidateBlobSidecar(sidecar, tx.BlobHashes()); err != nil {
 				continue
 			}
 			w.pendingTransactions = append(w.pendingTransactions, tx.WithoutBlobTxSidecar())
