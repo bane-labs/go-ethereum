@@ -246,7 +246,7 @@ type DBFT struct {
 	// mutex since every access point is controlled by eventLoop, thus, not concurrent.
 	sealingProposal     *types.Header
 	sealingTransactions types.Transactions
-	refreshProposal     RefreshProposalFn
+	refreshProposal     func() error
 
 	// sealingState, sealingBlock and sealingReceipts are Primary-only set of fields got
 	// after sealingProposal construction and processing. These fields are not protected
@@ -1561,16 +1561,15 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 }
 
 // WithBeacon initializes beacon protocol related channels and functions.
-func (c *DBFT) WithBeacon(ch chan<- *types.Block, refreshProposal RefreshProposalFn,
-	subMissingTx SubscribeMissingTxFn, subSyncing SubscribeSyncingFn, syncing SyncingFn) {
+func (c *DBFT) WithBeacon(beacon Beacon, syncing SyncingFn) {
 	// The channel to broadcast new blocks in beacon protocol.
-	c.scope.Track(c.blockFeed.Subscribe(ch))
+	c.scope.Track(c.blockFeed.Subscribe(beacon.BlockBroadcaster()))
 	// The callback to request a new block proposal for view change.
-	c.refreshProposal = refreshProposal
+	c.refreshProposal = beacon.RefreshPendingPayload
 	// The channel to receive transactions from CL.
-	c.txSub = subMissingTx(c.txEvents)
+	c.txSub = beacon.SubscribeTransactionEvents(c.txEvents)
 	// The direct checker of miner working state.
-	c.syncingSub = subSyncing(c.syncingEvents)
+	c.syncingSub = beacon.SubscribeSyncingEvents(c.syncingEvents)
 	c.syncing = syncing
 }
 

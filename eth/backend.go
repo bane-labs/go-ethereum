@@ -473,8 +473,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			return eth.beacon.Syncing() || eth.Syncing()
 		}
 		// Connect BFT to beacon protocol
-		bft.WithBeacon(eth.beacon.BlockBroadcaster(), eth.beacon.RefreshPendingPayload,
-			eth.beacon.SubscribeTransactionEvents, eth.beacon.SubscribeSyncingEvents, syncing)
+		bft.WithBeacon(eth.beacon, syncing)
 	}
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
