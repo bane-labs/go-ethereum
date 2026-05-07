@@ -51,8 +51,6 @@ type Choice struct {
 // for finding the latest and trusted chain head and announceing it to the EL API,
 // to trigger the EL synchronization on the canonical chain.
 // NOTE: This implementation only supports one-block reorg.
-// TODO: Use database to implement a cache of trusted header, so that we can resume
-// the light sync process after restart.
 type Synchronizer struct {
 	trustedHead   *types.Block           // The block believed to be the latest finalized block
 	latestHead    *types.Block           // The block believed to be the latest block
