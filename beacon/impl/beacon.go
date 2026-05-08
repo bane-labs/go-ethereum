@@ -32,11 +32,11 @@ type Beacon struct {
 
 // New creates a mock beacon client with basic mining functionality. It supports customized
 // fork choice rules and transaction filtering for messages from P2P beacon protocol.
-func New(eth miner.Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address,
+func New(eth miner.Backend, downloader miner.Downloader, rpc *rpc.Client, coinbase common.Address,
 	shouldPreserve miner.ShouldPreserveFn, txFilter miner.TransactionFilterFn) *Beacon {
 	b := &Beacon{
 		chain:   eth.BlockChain(),
-		miner:   miner.New(eth, rpc, mux, coinbase, shouldPreserve, txFilter),
+		miner:   miner.New(eth, downloader, rpc, coinbase, shouldPreserve, txFilter),
 		blockCh: make(chan *types.Block),
 	}
 
