@@ -271,7 +271,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 	filterSystem := utils.RegisterFilterAPI(stack, backend, &cfg.Eth)
 
 	// Configure GraphQL if requested.
-	if ctx.IsSet(utils.GraphQLEnabledFlag.Name) {
+	if ctx.Bool(utils.GraphQLEnabledFlag.Name) {
 		utils.RegisterGraphQLService(stack, backend, filterSystem, &cfg.Node)
 	}
 	// Add the Ethereum Stats daemon if requested.
