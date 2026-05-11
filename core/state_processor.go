@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/telemetry"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/holiman/uint256"
 )
 
 // StateProcessor is a basic Processor, which takes care of transitioning
@@ -272,9 +273,9 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, evm *vm.EVM) {
 	msg := &Message{
 		From:      params.SystemAddress,
 		GasLimit:  30_000_000,
-		GasPrice:  common.Big0,
-		GasFeeCap: common.Big0,
-		GasTipCap: common.Big0,
+		GasPrice:  uint256.NewInt(0),
+		GasFeeCap: uint256.NewInt(0),
+		GasTipCap: uint256.NewInt(0),
 		To:        &params.BeaconRootsAddress,
 		Data:      beaconRoot[:],
 	}
@@ -299,9 +300,9 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 	msg := &Message{
 		From:      params.SystemAddress,
 		GasLimit:  30_000_000,
-		GasPrice:  common.Big0,
-		GasFeeCap: common.Big0,
-		GasTipCap: common.Big0,
+		GasPrice:  uint256.NewInt(0),
+		GasFeeCap: uint256.NewInt(0),
+		GasTipCap: uint256.NewInt(0),
 		To:        &params.HistoryStorageAddress,
 		Data:      prevHash.Bytes(),
 	}
@@ -339,9 +340,9 @@ func processRequestsSystemCall(requests *[][]byte, evm *vm.EVM, requestType byte
 	msg := &Message{
 		From:      params.SystemAddress,
 		GasLimit:  30_000_000,
-		GasPrice:  common.Big0,
-		GasFeeCap: common.Big0,
-		GasTipCap: common.Big0,
+		GasPrice:  uint256.NewInt(0),
+		GasFeeCap: uint256.NewInt(0),
+		GasTipCap: uint256.NewInt(0),
 		To:        &addr,
 	}
 	evm.SetTxContext(NewEVMTxContext(msg))
@@ -456,9 +457,9 @@ func applyLocalSystemCall(to common.Address, data []byte, evm *vm.EVM) error {
 	msg := &Message{
 		From:      params.SystemAddress,
 		GasLimit:  30_000_000,
-		GasPrice:  common.Big0,
-		GasFeeCap: common.Big0,
-		GasTipCap: common.Big0,
+		GasPrice:  uint256.NewInt(0),
+		GasFeeCap: uint256.NewInt(0),
+		GasTipCap: uint256.NewInt(0),
 		To:        &to,
 		Data:      data,
 	}
