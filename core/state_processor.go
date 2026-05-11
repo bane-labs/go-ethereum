@@ -79,35 +79,25 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	if hooks := cfg.Tracer; hooks != nil {
 		tracingStateDB = state.NewHookedState(statedb, hooks)
 	}
-
 	// Mutate the block and state according to any hard-fork specs
 	if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	var (
-		context             vm.BlockContext
+		context             = NewEVMBlockContext(header, p.chain, nil)
 		signer              = types.MakeSigner(config, header.Number, header.Time)
+		evm                 = vm.NewEVM(context, tracingStateDB, config, cfg)
 		envelopeNumberLimit = statedb.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetMaxEnvelopesPerBlockStateHash()).Big().Uint64()
 	)
-
-	// Apply pre-execution system calls.
-	context = NewEVMBlockContext(header, p.chain, nil)
-	evm := vm.NewEVM(context, tracingStateDB, config, cfg)
 	defer evm.Release()
-
-	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
-		ProcessBeaconBlockRoot(*beaconRoot, evm)
-	}
-	if config.IsPrague(block.Number(), block.Time()) || config.IsUBT(block.Number(), block.Time()) {
-		ProcessParentBlockHash(block.ParentHash(), evm)
-	}
+	// Run the pre-execution system calls
+	PreExecution(ctx, block.BeaconRoot(), block.ParentHash(), config, evm, block.Number(), block.Time())
 	if config.DBFT != nil {
 		err := ProcessOnPersist(evm)
 		if err != nil {
 			return nil, fmt.Errorf("could not apply OnPersist [%v]: %w", block.Hash().Hex(), err)
 		}
 	}
-
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		// Check against envelope number policy
@@ -137,11 +127,11 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		allLogs = append(allLogs, receipt.Logs...)
 		spanEnd(nil)
 	}
-	requests, err := postExecution(ctx, config, block, allLogs, evm)
+	// Run the post-execution system calls
+	requests, err := PostExecution(ctx, config, block.Number(), block.Time(), allLogs, evm)
 	if err != nil {
 		return nil, err
 	}
-
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.chain.Engine().Finalize(p.chain, header, tracingStateDB, block.Body())
 
@@ -153,28 +143,44 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	}, nil
 }
 
-// postExecution processes the post-execution system calls if Prague is enabled.
-func postExecution(ctx context.Context, config *params.ChainConfig, block *types.Block, allLogs []*types.Log, evm *vm.EVM) (requests [][]byte, err error) {
+// PreExecution processes pre-execution system calls.
+func PreExecution(ctx context.Context, beaconRoot *common.Hash, parent common.Hash, config *params.ChainConfig, evm *vm.EVM, number *big.Int, time uint64) {
+	_, _, spanEnd := telemetry.StartSpan(ctx, "core.preExecution")
+	defer spanEnd(nil)
+
+	// EIP-4788
+	if beaconRoot != nil {
+		ProcessBeaconBlockRoot(*beaconRoot, evm)
+	}
+	// EIP-2935
+	if config.IsPrague(number, time) || config.IsUBT(number, time) {
+		ProcessParentBlockHash(parent, evm)
+	}
+}
+
+// PostExecution processes post-execution system calls when Prague is enabled.
+// If Prague is not activated, it returns null requests to differentiate from
+// empty requests.
+func PostExecution(ctx context.Context, config *params.ChainConfig, number *big.Int, time uint64, allLogs []*types.Log, evm *vm.EVM) (requests [][]byte, err error) {
 	_, _, spanEnd := telemetry.StartSpan(ctx, "core.postExecution")
 	defer spanEnd(&err)
 
 	// Read requests if Prague is enabled.
-	if config.IsPrague(block.Number(), block.Time()) {
+	if config.IsPrague(number, time) {
 		requests = [][]byte{}
 		// EIP-6110
 		if err := ParseDepositLogs(&requests, allLogs, config); err != nil {
-			return requests, fmt.Errorf("failed to parse deposit logs: %w", err)
+			return nil, fmt.Errorf("failed to parse deposit logs: %w", err)
 		}
 		// EIP-7002
 		if err := ProcessWithdrawalQueue(&requests, evm); err != nil {
-			return requests, fmt.Errorf("failed to process withdrawal queue: %w", err)
+			return nil, fmt.Errorf("failed to process withdrawal queue: %w", err)
 		}
 		// EIP-7251
 		if err := ProcessConsolidationQueue(&requests, evm); err != nil {
-			return requests, fmt.Errorf("failed to process consolidation queue: %w", err)
+			return nil, fmt.Errorf("failed to process consolidation queue: %w", err)
 		}
 	}
-
 	return requests, nil
 }
 
