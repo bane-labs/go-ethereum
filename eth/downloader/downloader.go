@@ -667,6 +667,11 @@ func (d *Downloader) Terminate() {
 	d.Cancel()
 }
 
+// Syncing returns whether the downloader is currently running a synchronisation.
+func (d *Downloader) Syncing() bool {
+	return d.synchronising.Load() || d.skeleton.Syncing()
+}
+
 // fetchBodies iteratively downloads the scheduled block bodies, taking any
 // available peers, reserving a chunk of blocks for each, waiting for delivery
 // and also periodically checking for timeouts.

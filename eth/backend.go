@@ -454,7 +454,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.handler.connectBeacon(eth.beacon)
 	if bft != nil {
 		syncing := func() bool {
-			return eth.beacon.Syncing() || !eth.Synced()
+			return eth.beacon.Syncing() || eth.Syncing()
 		}
 		// Connect BFT to beacon protocol
 		bft.WithBeacon(eth.beacon.BlockBroadcaster(), eth.beacon.RefreshPendingPayload, eth.beacon.SubscribeSyncingEvents, syncing)
@@ -863,4 +863,11 @@ func (s *Ethereum) SyncMode() ethconfig.SyncMode {
 	}
 	// Nope, we're really full syncing
 	return ethconfig.FullSync
+}
+
+// Syncing returns true if the node downloader is still syncing.
+// NOTE: the method Synced() now returns if the node has the latest head,
+// so CL needs another method to check downloader state directly.
+func (s *Ethereum) Syncing() bool {
+	return s.handler.downloader.Syncing()
 }
