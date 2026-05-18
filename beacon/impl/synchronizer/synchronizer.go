@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	maxPendingChain    = 128  // Max number of pending header chains to keep in memory
-	ExpectedHeadersNum = 1024 // The expected number of headers in extending
+	maxPendingChain    = 128 // Max number of pending header chains to keep in memory
+	ExpectedHeadersNum = 512 // The expected number of headers in extending
+	ScratchSpaceLen    = 128 // The length of the scratch space for light sync
 )
 
 var (
@@ -32,7 +33,7 @@ type LightVerifyFn func(headers []*types.Header) bool
 type LightSyncFn func(extend BeaconExtendFn, start chan *types.Header) error
 
 // BeaconExtendFn is a callback type for extending the trusted header chain with headers received from the network.
-type BeaconExtendFn func(verifiedHeaders []*types.Header, metas []common.Hash, finalized *types.Block, latest *types.Block) error
+type BeaconExtendFn func(verifiedHeaderHashes []common.Hash, completed bool, finalized *types.Block, latest *types.Block) error
 
 // completeFn is a callback type for synchronizer is synced but still receiving notifications.
 type completeFn func(block *types.Block) error
@@ -191,21 +192,21 @@ func (s *Synchronizer) NotifyNewHead(block *types.Block) error {
 
 // BeaconExtend tries to extend the trusted header chain with the untrusted but verified
 // headers received from the network, and returns the new latest trusted header.
-func (s *Synchronizer) BeaconExtend(verifiedHeaders []*types.Header, metas []common.Hash, finalized *types.Block, latest *types.Block) error {
+func (s *Synchronizer) BeaconExtend(verifiedHeaderHashes []common.Hash, completed bool, finalized *types.Block, latest *types.Block) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if len(verifiedHeaders) < 2 {
+	if len(verifiedHeaderHashes) < 2 {
 		s.syncing.Store(false)
 		return nil
 	}
-	if verifiedHeaders[0].Hash() != s.trustedHead.Hash() {
+	if verifiedHeaderHashes[0] != s.trustedHead.Hash() {
 		s.syncing.Store(false)
 		return errExtendStartMismatch
 	}
 	// Try to connect pending chains.
 	connected := false
 	for h, choice := range s.pendingChains {
-		if slices.Index(metas, h) > -1 {
+		if slices.Index(verifiedHeaderHashes, h) > -1 {
 			if choice.finalized.NumberU64() > finalized.NumberU64() {
 				finalized = choice.finalized
 				latest = choice.latest
@@ -218,9 +219,8 @@ func (s *Synchronizer) BeaconExtend(verifiedHeaders []*types.Header, metas []com
 	s.finalize()
 	log.Info("Beacon trust successfully extended", "head", s.trustedHead.Hash(), "number", s.trustedHead.NumberU64())
 	// If the trust is extended to the latest, then mark syncing as stopped.
-	// The process using this callback can stop as well, but there's no signal.
-	// Please take ExpectedHeadersNum as the batch size of light sync.
-	if connected || len(verifiedHeaders) < ExpectedHeadersNum {
+	// The process using this callback can stop as well.
+	if connected || completed {
 		s.syncing.Store(false)
 		s.complete(s.trustedHead)
 	}
