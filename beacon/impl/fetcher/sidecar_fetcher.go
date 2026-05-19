@@ -53,8 +53,10 @@ type HighestHeaderNumberFn func() (uint64, bool)
 
 // fetchingTask represents a scheduled sidecar fetching operation.
 type fetchingTask struct {
-	block *types.Block // The block to fetch sidecars for
-	time  time.Time    // The time of the task created
+	block        *types.Block // The block to fetch sidecars for
+	time         time.Time    // The time of the task created
+	fetchingTime time.Time    // The time when the fetch was attempted
+	retryCount   int          // The number of times the task has been retried
 }
 
 // blobAnnounce represents a notification of a new block hash potentially having blob sidecars available.
@@ -225,8 +227,7 @@ func (f *SidecarFetcher) loop() {
 			// Periodically clean out any abandoned fetches
 			earliestHeight := fetchHeight
 			for hash, task := range f.fetching {
-				cost := time.Since(task.time)
-				if cost > maxRetryCount*fetchTimeout {
+				if task.retryCount > maxRetryCount {
 					f.forgetHash(hash)
 					if f.chain.GetBlockByHash(hash) == nil {
 						// If a block is found to be missing, then the fetchHeight
@@ -241,14 +242,14 @@ func (f *SidecarFetcher) loop() {
 					// Deep-fetch sidecars if normal fetch failed multiple times
 					go func() {
 						if _, err := f.deepFetchSidecars(hash); err != nil {
-							log.Error("Deep-fetching sidecars failed", "hash", hash, "err", err)
+							log.Warn("Deep-fetching sidecars failed", "hash", hash, "err", err)
 							return
 						} else {
 							f.done <- hash
 							f.announceSidecars(hash)
 						}
 					}()
-				} else if cost > fetchTimeout {
+				} else if time.Since(task.fetchingTime) > fetchTimeout {
 					// Reschedule the fetch
 					f.scheduled[hash] = task
 					delete(f.fetching, hash)
@@ -295,6 +296,7 @@ func (f *SidecarFetcher) loop() {
 						} else {
 							request[peer] = append(request[peer], hash)
 							reqTaskMap[peer] = append(reqTaskMap[peer], task)
+							task.fetchingTime = time.Now()
 							f.fetching[hash] = task
 						}
 					}
@@ -314,6 +316,11 @@ func (f *SidecarFetcher) loop() {
 						return
 					}
 					defer req.Close()
+
+					// The count is incremented only when the request is successful.
+					for _, task := range tasks {
+						task.retryCount++
+					}
 
 					timeout := time.NewTimer(2 * fetchTimeout) // 2x leeway before dropping the peer
 					defer timeout.Stop()
@@ -369,7 +376,7 @@ func (f *SidecarFetcher) importSidecars(peer string, task *fetchingTask, sidecar
 		// Quickly validate the sidecars and propagate the sidecars if it passes
 		if err := f.fs.CheckBlobsAvailable(block, sidecars); err != nil {
 			// Something went very wrong, drop the peer
-			log.Error("Propagated sidecars verification failed", "peer", peer, "number", block.Number(), "hash", block.Hash(), "err", err)
+			log.Debug("Propagated sidecars verification failed", "peer", peer, "number", block.Number(), "hash", block.Hash(), "err", err)
 			f.dropPeer(peer)
 			return
 		}

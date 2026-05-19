@@ -24,7 +24,7 @@ const (
 	// ttl is the time-to-live for blob requests.
 	ttl = 3
 	// Maximum allotted time to return an explicitly requested blob
-	blobFetchTimeout = 500 * time.Millisecond
+	blobFetchTimeout = 5 * time.Second
 	// Maximum allotted time to return a batch of blobs
 	batchBlobsFetchTimeout = 3 * time.Second
 
