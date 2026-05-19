@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/internal/telemetry"
 	"github.com/ethereum/go-ethereum/log"
@@ -74,6 +75,7 @@ type environment struct {
 	receipts []*types.Receipt
 	sidecars []*types.BlobTxSidecar
 	blobs    int
+	bal      *bal.ConstructionBlockAccessList
 
 	witness *stateless.Witness
 }
@@ -211,7 +213,7 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 	}
 
 	// Collect consensus-layer requests if Prague is enabled.
-	requests, err := core.PostExecution(ctx, miner.chainConfig, work.header.Number, work.header.Time, allLogs, work.evm, uint32(work.tcount+1))
+	requests, bal, err := core.PostExecution(ctx, miner.chainConfig, work.header.Number, work.header.Time, allLogs, work.evm, uint32(work.tcount+1))
 	if err != nil {
 		return &newPayloadResult{err: err}
 	}
@@ -219,9 +221,14 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 		reqHash := types.CalcRequestsHash(requests)
 		work.header.RequestsHash = &reqHash
 	}
+	work.bal.Merge(bal)
+
+	// Apply the consensus-specific post-transaction changes
+	miner.engine.Finalize(miner.chain, work.header, work.state, &body, uint32(work.tcount+1), work.bal)
+
 	// Assemble the block for delivery.
 	_, _, assembleSpanEnd := telemetry.StartSpan(ctx, "miner.AssembleBlock")
-	block := core.AssembleBlock(miner.engine, miner.chain, work.header, work.state, &body, work.receipts)
+	block := core.AssembleBlock(miner.chain, work.header, work.state, &body, work.receipts, work.bal)
 	assembleSpanEnd(nil)
 
 	return &newPayloadResult{
@@ -326,10 +333,7 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 		return nil, err
 	}
 	// Run pre-execution system calls
-	core.PreExecution(ctx, header.ParentBeaconRoot, header.ParentHash, miner.chainConfig, env.evm, header.Number, header.Time)
-	if miner.chain.Config().DBFT != nil {
-		core.ProcessOnPersist(env.evm)
-	}
+	env.bal.Merge(core.PreExecution(ctx, header.ParentBeaconRoot, header.ParentHash, miner.chainConfig, env.evm, header.Number, header.Time))
 	return env, nil
 }
 
@@ -348,6 +352,7 @@ func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase
 		}
 	}
 	state.StartPrefetcher("miner", bundle)
+
 	// Note the passed coinbase may be different with header.Coinbase.
 	return &environment{
 		signer:   types.MakeSigner(miner.chainConfig, header.Number, header.Time),
@@ -356,6 +361,7 @@ func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase
 		coinbase: coinbase,
 		gasPool:  core.NewGasPool(header.GasLimit),
 		header:   header,
+		bal:      bal.NewConstructionBlockAccessList(),
 		witness:  state.Witness(),
 		evm:      vm.NewEVM(core.NewEVMBlockContext(header, miner.chain, &coinbase), state, miner.chainConfig, vm.Config{}),
 	}, nil
@@ -377,7 +383,7 @@ func (miner *Miner) commitTransaction(ctx context.Context, env *environment, tx 
 			return nil
 		}
 	}
-	receipt, err := miner.applyTransaction(env, tx)
+	receipt, bal, err := miner.applyTransaction(env, tx)
 	if err != nil {
 		return err
 	}
@@ -388,6 +394,7 @@ func (miner *Miner) commitTransaction(ctx context.Context, env *environment, tx 
 	if isEnvelope {
 		env.ecount++
 	}
+	env.bal.Merge(bal)
 	return nil
 }
 
@@ -404,7 +411,7 @@ func (miner *Miner) commitBlobTransaction(env *environment, tx *types.Transactio
 	if env.blobs+len(sc.Blobs) > maxBlobs {
 		return errors.New("max data blobs reached")
 	}
-	receipt, err := miner.applyTransaction(env, tx)
+	receipt, bal, err := miner.applyTransaction(env, tx)
 	if err != nil {
 		return err
 	}
@@ -416,23 +423,24 @@ func (miner *Miner) commitBlobTransaction(env *environment, tx *types.Transactio
 	env.size += txNoBlob.Size()
 	*env.header.BlobGasUsed += receipt.BlobGasUsed
 	env.tcount++
+	env.bal.Merge(bal)
 	return nil
 }
 
 // applyTransaction runs the transaction. If execution fails, state and gas pool are reverted.
-func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*types.Receipt, error) {
+func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*types.Receipt, *bal.ConstructionBlockAccessList, error) {
 	var (
 		snap = env.state.Snapshot()
 		gp   = env.gasPool.Snapshot()
 	)
-	receipt, err := core.ApplyTransaction(env.evm, env.gasPool, env.state, env.header, tx)
+	receipt, bal, err := core.ApplyTransaction(env.evm, env.gasPool, env.state, env.header, tx)
 	if err != nil {
 		env.state.RevertToSnapshot(snap)
 		env.gasPool.Set(gp)
-		return nil, err
+		return nil, nil, err
 	}
 	env.header.GasUsed = env.gasPool.Used()
-	return receipt, nil
+	return receipt, bal, nil
 }
 
 func (miner *Miner) commitTransactions(ctx context.Context, env *environment, plainTxs, blobTxs *transactionsByPriceAndNonce, interrupt *atomic.Int32) error {

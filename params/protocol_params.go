@@ -187,6 +187,16 @@ const (
 
 	MaxBlockSize = 8_388_608 // maximum size of an RLP-encoded block
 
+	// BALItemCost is the gas-cost divisor for the EIP-7928 block access list
+	// size constraint: bal_items <= block_gas_limit / BALItemCost, where
+	// bal_items counts every distinct address in the BAL plus every storage
+	// key (writes + reads) carried by those accounts.
+	//
+	// The value (2000) is set deliberately below COLD_SLOAD_COST (2100) so
+	// the bound has a small safety margin for system-contract accesses that
+	// don't consume block gas.
+	BALItemCost uint64 = 2000
+
 	BlocksPerEthEpoch = 32 // Number of blocks in each epoch, this is a mock parameter simulate Eth PoS.
 )
 
