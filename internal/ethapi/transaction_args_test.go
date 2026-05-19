@@ -325,6 +325,7 @@ func (b *backendMock) MaxEnvelopeGas(ctx context.Context) (*big.Int, error) {
 	return big.NewInt(42), nil
 }
 func (b *backendMock) BlobBaseFee(ctx context.Context) *big.Int { return big.NewInt(42) }
+func (b *backendMock) BaseFee(ctx context.Context) *big.Int     { return big.NewInt(42) }
 
 func (b *backendMock) CurrentHeader() *types.Header     { return b.current }
 func (b *backendMock) ChainConfig() *params.ChainConfig { return b.config }
