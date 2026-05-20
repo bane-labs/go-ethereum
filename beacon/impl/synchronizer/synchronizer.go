@@ -195,7 +195,7 @@ func (s *Synchronizer) NotifyNewHead(block *types.Block) error {
 func (s *Synchronizer) BeaconExtend(verifiedHeaderHashes []common.Hash, completed bool, finalized *types.Block, latest *types.Block) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if len(verifiedHeaderHashes) < 2 {
+	if len(verifiedHeaderHashes) < 2 || finalized == nil || latest == nil {
 		s.syncing.Store(false)
 		return nil
 	}
