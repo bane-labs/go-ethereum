@@ -4,7 +4,6 @@ import (
 	"errors"
 	"math/rand"
 	"sort"
-	"sync/atomic"
 	"time"
 
 	beaconSync "github.com/ethereum/go-ethereum/beacon/impl/synchronizer"
@@ -43,7 +42,6 @@ type beaconLightResponse struct {
 type beaconLightSyncer struct {
 	trustedHeader *types.Header                  // The header that has been extended to
 	startHead     uint64                         // The head number of the first header batch to request
-	syncing       atomic.Bool                    // Whether the light sync should be running, used to coordinate the start and stop of the light sync process
 	requests      map[uint64]*beaconLightRequest // Map of pending header requests, keyed by request ID for easy lookup on response
 	requestFails  chan *beaconLightRequest       // Channel to receive failed requests for rescheduling
 	responses     chan *beaconLightResponse      // Channel to receive successful responses for processing
@@ -53,18 +51,20 @@ type beaconLightSyncer struct {
 	scratchOwners []string               // Peer IDs owning chunks of the scratch space (pend or delivered)
 	scratchHead   uint64                 // Block number of the first item in the scratch space
 
-	downloader *Downloader
-	extend     beaconSync.BeaconExtendFn
+	downloader      *Downloader
+	extend          beaconSync.BeaconExtendFn
+	completeSyncing func()
 }
 
-func newBeaconLightSyncer(downloader *Downloader, extend beaconSync.BeaconExtendFn) *beaconLightSyncer {
+func newBeaconLightSyncer(completeSyncing func(), downloader *Downloader, extend beaconSync.BeaconExtendFn) *beaconLightSyncer {
 	return &beaconLightSyncer{
-		requests:     make(map[uint64]*beaconLightRequest),
-		requestFails: make(chan *beaconLightRequest),
-		responses:    make(chan *beaconLightResponse),
-		idles:        make(map[string]*peerConnection),
-		downloader:   downloader,
-		extend:       extend,
+		requests:        make(map[uint64]*beaconLightRequest),
+		requestFails:    make(chan *beaconLightRequest),
+		responses:       make(chan *beaconLightResponse),
+		idles:           make(map[string]*peerConnection),
+		downloader:      downloader,
+		extend:          extend,
+		completeSyncing: completeSyncing,
 	}
 }
 
@@ -79,9 +79,11 @@ func (b *beaconLightSyncer) loop(start chan *types.Header) error {
 		b.idles[peer.id] = peer
 	}
 
+	completed := true
+	var cancel chan struct{}
 	for {
-		if b.syncing.Load() {
-			b.assignTasks(b.responses, b.requestFails, b.downloader.cancelCh)
+		if !completed {
+			b.assignTasks(b.responses, b.requestFails, cancel)
 		}
 		// If the node is going down, unblock
 		select {
@@ -101,26 +103,31 @@ func (b *beaconLightSyncer) loop(start chan *types.Header) error {
 			if !ok {
 				return nil
 			}
-			if !b.syncing.Load() {
-				if b.trustedHeader == nil || b.trustedHeader.Number.Uint64() < header.Number.Uint64() {
-					// If the header is newer than the current trusted header, update the trusted header and start syncing
-					b.syncing.Store(true)
-					b.trustedHeader = header
-					b.startHead = header.Number.Uint64()
+			if b.trustedHeader == nil || b.trustedHeader.Number.Uint64() < header.Number.Uint64() {
+				log.Info("Starting beacon light sync", "head", header.Number.Uint64())
+				// If the header is newer than the current trusted header, update the trusted header and start syncing
+				b.trustedHeader = header
+				b.startHead = header.Number.Uint64()
+				completed = false
+				cancel = make(chan struct{})
 
-					b.scratchSpace = make([]*beaconLightResponse, beaconSync.ScratchSpaceLen)
-					b.scratchOwners = make([]string, beaconSync.ScratchSpaceLen)
-					b.scratchHead = header.Number.Uint64()
-				}
+				b.scratchSpace = make([]*beaconLightResponse, beaconSync.ScratchSpaceLen)
+				b.scratchOwners = make([]string, beaconSync.ScratchSpaceLen)
+				b.scratchHead = header.Number.Uint64()
 			}
 		case req := <-b.requestFails:
 			b.revertRequest(req)
 
 		case res := <-b.responses:
-			b.processResponse(res)
-
-			// If the light sync process is complete, reset the state and wait for a new start signal to recover
-			if !b.syncing.Load() {
+			if syncCompleted, err := b.processResponse(res); err != nil {
+				// If the response is invalid, ignore it
+				log.Debug("Invalid beacon light response received", "err", err)
+			} else if syncCompleted {
+				// If the light sync process is complete, reset the state and wait for a new start signal to recover
+				log.Info("Beacon light sync complete", "head", b.trustedHeader.Number.Uint64())
+				b.completeSyncing()
+				completed = syncCompleted
+				close(cancel)
 				b.requests = make(map[uint64]*beaconLightRequest)
 				b.scratchSpace = nil
 				b.scratchHead = 0
@@ -392,11 +399,6 @@ func (b *beaconLightSyncer) revertRequest(req *beaconLightRequest) {
 	}
 	close(req.stale)
 
-	if !b.syncing.Load() {
-		log.Trace("Not reverting header request since we're not syncing", "peer", req.peer, "reqid", req.id)
-		return
-	}
-
 	// Remove the request from the tracked set
 	delete(b.requests, req.id)
 
@@ -409,7 +411,7 @@ func (b *beaconLightSyncer) revertRequest(req *beaconLightRequest) {
 	b.scratchOwners[(head-b.scratchHead)/beaconSync.ExpectedHeadersNum] = ""
 }
 
-func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) {
+func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) (completed bool, err error) {
 	res.peer.log.Trace("Processing header response", "head", res.headers[0].Number, "hash", res.headers[0].Hash(), "count", len(res.headers))
 
 	// Whether the response is valid, we can mark the peer as idle and notify
@@ -423,7 +425,7 @@ func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) {
 		// gets fulfilled successfully. It should not be possible to deliver a
 		// response to a non-existing request.
 		res.peer.log.Error("Unexpected header packet")
-		return
+		return false, errors.New("Unexpected header packet")
 	}
 	delete(b.requests, res.reqid)
 
@@ -435,29 +437,27 @@ func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) {
 
 	// If there's still a gap in the head of the scratch space, abort
 	if b.scratchSpace[0] == nil {
-		return
+		return false, nil
 	}
 	// Try to consume any head headers, validating the boundary conditions
 	for b.scratchSpace[0] != nil {
 		nextResp := b.scratchSpace[0]
 		if len(nextResp.metas) < 2 {
-			// Notify the synchronizer nothing to extend, and wait for a new start signal to recover
-			b.extend(nextResp.metas, true, nil, nil)
-			b.syncing.Store(false)
-			return
+			// Nothing to extend, and wait for a new start signal to recover
+			return true, nil
 		}
 
 		if b.trustedHeader.Hash() != nextResp.metas[0] {
 			log.Debug("Received invalid new headers start", "want", b.trustedHeader.Hash(), "have", nextResp.metas[0])
 
 			b.scratchSpace[0] = nil
+			b.downloader.dropPeer(b.scratchOwners[0])
 			b.scratchOwners[0] = ""
 			break
 		}
 
 		log.Debug("Successfully fetch light headers", "start", nextResp.headers[0].Hash(), "blocks", len(nextResp.headers))
 
-		completed := false
 		requestCount := beaconSync.ExpectedHeadersNum
 		if b.scratchHead != b.startHead {
 			requestCount += rollBackBlocks
@@ -466,16 +466,16 @@ func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) {
 			completed = true
 		}
 		// Try to extend the chain trusted to pending headers from the network
-		if err := b.extend(nextResp.metas, completed, nextResp.finalizedBlock, nextResp.latestBlock); err != nil {
+		var linked bool
+		var err error
+		if linked, err = b.extend(nextResp.metas, nextResp.finalizedBlock, nextResp.latestBlock); err != nil {
 			// Wait for a new start signal to recover
-			b.syncing.Store(false)
-			return
+			return true, nil
 		}
 		b.trustedHeader = nextResp.headers[len(nextResp.headers)-2]
-		// If there's no new headers to handle
-		if completed {
-			b.syncing.Store(false)
-			return
+		// If the chain is not extended and we have more headers, keep consuming, otherwise wait for the next batch to extend
+		if completed || linked {
+			return true, nil
 		}
 
 		// Response consumed, shift the download window forward
@@ -486,13 +486,14 @@ func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) {
 
 		b.scratchHead += beaconSync.ExpectedHeadersNum
 	}
+	return false, nil
 }
 
 // BeaconLightSync is a light client protocol for only dBFT to verify the beacon
 // sync target header by hash. This grants the consensus layer the ability to
 // verify the beacon sync target header without executing the chain history, but
 // only checking the signatures against the NextConsensus specification.
-func (d *Downloader) BeaconLightSync(extend beaconSync.BeaconExtendFn, start chan *types.Header) error {
-	lightSync := newBeaconLightSyncer(d, extend)
+func (d *Downloader) BeaconLightSync(completeSyncing func(), extend beaconSync.BeaconExtendFn, start chan *types.Header) error {
+	lightSync := newBeaconLightSyncer(completeSyncing, d, extend)
 	return lightSync.loop(start)
 }

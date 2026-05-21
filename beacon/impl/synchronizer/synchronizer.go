@@ -30,10 +30,10 @@ type LightVerifyFn func(headers []*types.Header) bool
 
 // LightSyncFn is a callback type for finding the latest trusted header with dBFT light client rules.
 // Methods implement this should properly return after the start channel is closed.
-type LightSyncFn func(extend BeaconExtendFn, start chan *types.Header) error
+type LightSyncFn func(completeSyncing func(), extend BeaconExtendFn, start chan *types.Header) error
 
 // BeaconExtendFn is a callback type for extending the trusted header chain with headers received from the network.
-type BeaconExtendFn func(verifiedHeaderHashes []common.Hash, completed bool, finalized *types.Block, latest *types.Block) error
+type BeaconExtendFn func(verifiedHeaderHashes []common.Hash, finalized *types.Block, latest *types.Block) (linked bool, err error)
 
 // completeFn is a callback type for synchronizer is synced but still receiving notifications.
 type completeFn func(block *types.Block) error
@@ -86,7 +86,7 @@ func New(localFinalized *types.Block, lightVerify LightVerifyFn, lightSync Light
 			log.Info("Loaded trusted head from database", "hash", trustedHead.Hash(), "number", trustedHead.NumberU64())
 		}
 	}
-	go s.lightSync(s.BeaconExtend, s.startCh)
+	go s.lightSync(s.CompleteSyncing,s.BeaconExtend, s.startCh)
 	return s
 }
 
@@ -192,16 +192,12 @@ func (s *Synchronizer) NotifyNewHead(block *types.Block) error {
 
 // BeaconExtend tries to extend the trusted header chain with the untrusted but verified
 // headers received from the network, and returns the new latest trusted header.
-func (s *Synchronizer) BeaconExtend(verifiedHeaderHashes []common.Hash, completed bool, finalized *types.Block, latest *types.Block) error {
+func (s *Synchronizer) BeaconExtend(verifiedHeaderHashes []common.Hash, finalized *types.Block, latest *types.Block) (linked bool, err error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if len(verifiedHeaderHashes) < 2 || finalized == nil || latest == nil {
-		s.syncing.Store(false)
-		return nil
-	}
+
 	if verifiedHeaderHashes[0] != s.trustedHead.Hash() {
-		s.syncing.Store(false)
-		return errExtendStartMismatch
+		return false, errExtendStartMismatch
 	}
 	// Try to connect pending chains.
 	connected := false
@@ -220,11 +216,10 @@ func (s *Synchronizer) BeaconExtend(verifiedHeaderHashes []common.Hash, complete
 	log.Info("Beacon trust successfully extended", "head", s.trustedHead.Hash(), "number", s.trustedHead.NumberU64())
 	// If the trust is extended to the latest, then mark syncing as stopped.
 	// The process using this callback can stop as well.
-	if connected || completed {
-		s.syncing.Store(false)
+	if connected  {
 		s.complete(s.trustedHead)
 	}
-	return nil
+	return connected, nil
 }
 
 // Stop closes the synchronizer.
@@ -235,6 +230,11 @@ func (s *Synchronizer) Stop() {
 // Syncing returns whether the synchronizer is currently syncing.
 func (s *Synchronizer) Syncing() bool {
 	return s.syncing.Load()
+}
+
+// CompleteSyncing marks the synchronizer as synced, and the next notification will trigger the sync process again.
+func (s *Synchronizer) CompleteSyncing() {
+	s.syncing.Store(false)
 }
 
 // merge connects pending chain choices when a latest block changes.
