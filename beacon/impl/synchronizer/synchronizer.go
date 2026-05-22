@@ -30,7 +30,7 @@ type LightVerifyFn func(headers []*types.Header) bool
 
 // LightSyncFn is a callback type for finding the latest trusted header with dBFT light client rules.
 // Methods implement this should properly return after the start channel is closed.
-type LightSyncFn func(completeSyncing func(), extend BeaconExtendFn, start chan *types.Header) error
+type LightSyncFn func(extend BeaconExtendFn, complete func(), start chan *types.Header) error
 
 // BeaconExtendFn is a callback type for extending the trusted header chain with headers received from the network.
 type BeaconExtendFn func(verifiedHeaderHashes []common.Hash, finalized *types.Block, latest *types.Block) (linked bool, err error)
@@ -86,7 +86,7 @@ func New(localFinalized *types.Block, lightVerify LightVerifyFn, lightSync Light
 			log.Info("Loaded trusted head from database", "hash", trustedHead.Hash(), "number", trustedHead.NumberU64())
 		}
 	}
-	go s.lightSync(s.CompleteSyncing,s.BeaconExtend, s.startCh)
+	go s.lightSync(s.BeaconExtend, s.Stop, s.startCh)
 	return s
 }
 
@@ -214,27 +214,29 @@ func (s *Synchronizer) BeaconExtend(verifiedHeaderHashes []common.Hash, finalize
 	s.latestHead = latest
 	s.finalize()
 	log.Info("Beacon trust successfully extended", "head", s.trustedHead.Hash(), "number", s.trustedHead.NumberU64())
-	// If the trust is extended to the latest, then mark syncing as stopped.
-	// The process using this callback can stop as well.
-	if connected  {
+	// If the trust is extended to the latest, send the first head signal.
+	if connected {
 		s.complete(s.trustedHead)
 	}
+	// The light sync using this callback should stop depends on the connected result,
+	// but should wait for the close signal to close, so that can be restarted when necessary.
 	return connected, nil
 }
 
-// Stop closes the synchronizer.
+// Stop marks the synchronizer as stopped, and the next notification will trigger
+// the sync process again.
 func (s *Synchronizer) Stop() {
+	s.syncing.Store(false)
+}
+
+// Close closes the synchronizer.
+func (s *Synchronizer) Close() {
 	close(s.startCh)
 }
 
 // Syncing returns whether the synchronizer is currently syncing.
 func (s *Synchronizer) Syncing() bool {
 	return s.syncing.Load()
-}
-
-// CompleteSyncing marks the synchronizer as synced, and the next notification will trigger the sync process again.
-func (s *Synchronizer) CompleteSyncing() {
-	s.syncing.Store(false)
 }
 
 // merge connects pending chain choices when a latest block changes.

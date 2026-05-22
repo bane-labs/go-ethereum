@@ -56,21 +56,21 @@ type beaconLightSyncer struct {
 
 	terminate chan struct{} // Termination channel to abort sync
 
-	extend          beaconSync.BeaconExtendFn
-	completeSyncing func()
+	extend   beaconSync.BeaconExtendFn // Callback to extend the beacon trust
+	complete func()                    // Callback to signal sync completion
 }
 
-func newBeaconLightSyncer(peers *peerSet, drop peerDropFn, terminate chan struct{}, extend beaconSync.BeaconExtendFn, completeSyncing func()) *beaconLightSyncer {
+func newBeaconLightSyncer(peers *peerSet, drop peerDropFn, terminate chan struct{}, extend beaconSync.BeaconExtendFn, complete func()) *beaconLightSyncer {
 	return &beaconLightSyncer{
-		requests:        make(map[uint64]*beaconLightRequest),
-		requestFails:    make(chan *beaconLightRequest),
-		responses:       make(chan *beaconLightResponse),
-		idles:           make(map[string]*peerConnection),
-		peers:           peers,
-		drop:            drop,
-		terminate:       terminate,
-		extend:          extend,
-		completeSyncing: completeSyncing,
+		requests:     make(map[uint64]*beaconLightRequest),
+		requestFails: make(chan *beaconLightRequest),
+		responses:    make(chan *beaconLightResponse),
+		idles:        make(map[string]*peerConnection),
+		peers:        peers,
+		drop:         drop,
+		terminate:    terminate,
+		extend:       extend,
+		complete:     complete,
 	}
 }
 
@@ -125,22 +125,23 @@ func (b *beaconLightSyncer) loop(start chan *types.Header) error {
 			b.revertRequest(req)
 
 		case res := <-b.responses:
-			if syncCompleted, err := b.processResponse(res); err != nil {
+			if shouldComplete, err := b.processResponse(res); err != nil {
 				// If the response is invalid, ignore it
 				log.Debug("Invalid beacon light response received", "err", err)
-			} else if syncCompleted {
-				// If the light sync process is complete, reset the state and wait for a new start signal to recover
-				log.Info("Beacon light sync complete", "head", b.trustedHeader.Number.Uint64())
-				b.completeSyncing()
-				completed = syncCompleted
+			} else if shouldComplete {
+				// Call the complete callback and close the cancel channel to stop the sync
+				b.complete()
+				completed = true
 				close(cancel)
+				// Reset the state and wait for a new start signal to recover
 				b.requests = make(map[uint64]*beaconLightRequest)
 				b.scratchSpace = nil
 				b.scratchHead = 0
 				b.scratchOwners = nil
 				b.startHead = 0
+				log.Info("Beacon light sync complete", "head", b.trustedHeader.Number.Uint64())
 			}
-			// We still have work to do, loop and repeat
+			// Otherwise there's still work to do, loop and repeat
 
 		case <-b.terminate:
 			return nil
@@ -541,7 +542,7 @@ func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) (completed
 // sync target header by hash. This grants the consensus layer the ability to
 // verify the beacon sync target header without executing the chain history, but
 // only checking the signatures against the NextConsensus specification.
-func (d *Downloader) BeaconLightSync(completeSyncing func(), extend beaconSync.BeaconExtendFn, start chan *types.Header) error {
-	lightSync := newBeaconLightSyncer(d.peers, d.dropPeer, d.quitCh, extend, completeSyncing)
+func (d *Downloader) BeaconLightSync(extend beaconSync.BeaconExtendFn, complete func(), start chan *types.Header) error {
+	lightSync := newBeaconLightSyncer(d.peers, d.dropPeer, d.quitCh, extend, complete)
 	return lightSync.loop(start)
 }

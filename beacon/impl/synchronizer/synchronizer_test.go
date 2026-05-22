@@ -28,7 +28,7 @@ func newTestSynchronizer(chain []*types.Block, complete completeFn) *Synchronize
 	lightVerify := func(headers []*types.Header) bool {
 		return true
 	}
-	lightSync := func(completeSyncing func(), extend BeaconExtendFn, start chan *types.Header) error {
+	lightSync := func(extend BeaconExtendFn, complete func(), start chan *types.Header) error {
 		var trustedHeader *types.Header
 		var shouldSync atomic.Bool
 		for {
@@ -68,12 +68,12 @@ func newTestSynchronizer(chain []*types.Block, complete completeFn) *Synchronize
 			completed := len(newBlocks) < ExpectedHeadersNum
 			if _, err := extend(metas, newBlocks[len(newBlocks)-2], newBlocks[len(newBlocks)-1]); err != nil {
 				shouldSync.Store(false)
-				completeSyncing()
+				complete()
 				continue
 			}
 			if completed {
 				shouldSync.Store(false)
-				completeSyncing()
+				complete()
 			}
 		}
 	}
