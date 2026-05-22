@@ -78,8 +78,8 @@ type ExecutionResult struct {
 	RequestsHash         *common.Hash          `json:"requestsHash,omitempty"`
 	Requests             [][]byte              `json:"requests"`
 
-	BlockAccessList     *bal.BlockAccessList `json:"blockAccessList,omitempty"`
-	BlockAccessListHash *common.Hash         `json:"blockAccessListHash,omitempty"`
+	BlockAccessList     hexutil.Bytes `json:"blockAccessList,omitempty"`
+	BlockAccessListHash *common.Hash  `json:"blockAccessListHash,omitempty"`
 }
 
 type executionResultMarshaling struct {
@@ -192,6 +192,9 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		Difficulty:  pre.Env.Difficulty,
 		GasLimit:    pre.Env.GasLimit,
 		GetHash:     getHash,
+	}
+	if pre.Env.SlotNumber != nil {
+		vmContext.SlotNum = *pre.Env.SlotNumber
 	}
 	// If currentBaseFee is defined, add it to the vmContext and to the state DB.
 	if pre.Env.BaseFee != nil {
@@ -402,10 +405,14 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		execRs.Requests = requests
 	}
 	if isAmsterdam {
-		bal := blockAccessList.ToEncodingObj()
-		balHash := bal.Hash()
+		encoded := blockAccessList.ToEncodingObj()
+		balRLP, err := rlp.EncodeToBytes(encoded)
+		if err != nil {
+			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not encode BAL: %v", err))
+		}
+		balHash := encoded.Hash()
 		execRs.BlockAccessListHash = &balHash
-		execRs.BlockAccessList = bal
+		execRs.BlockAccessList = balRLP
 	}
 
 	// Re-create statedb instance with new root for MPT mode
