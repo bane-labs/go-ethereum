@@ -45,24 +45,30 @@ type beaconLightSyncer struct {
 	requests      map[uint64]*beaconLightRequest // Map of pending header requests, keyed by request ID for easy lookup on response
 	requestFails  chan *beaconLightRequest       // Channel to receive failed requests for rescheduling
 	responses     chan *beaconLightResponse      // Channel to receive successful responses for processing
-	idles         map[string]*peerConnection     // Map of idle peers available for assignment, keyed by peer ID for easy lookup
+
+	peers *peerSet                   // Set of peers we can sync from
+	idles map[string]*peerConnection // Map of idle peers available for assignment, keyed by peer ID for easy lookup
+	drop  peerDropFn                 // Drops a peer for misbehaving
 
 	scratchSpace  []*beaconLightResponse // Scratch space to accumulate response in (first = recent)
 	scratchOwners []string               // Peer IDs owning chunks of the scratch space (pend or delivered)
 	scratchHead   uint64                 // Block number of the first item in the scratch space
 
-	downloader      *Downloader
+	terminate chan struct{} // Termination channel to abort sync
+
 	extend          beaconSync.BeaconExtendFn
 	completeSyncing func()
 }
 
-func newBeaconLightSyncer(completeSyncing func(), downloader *Downloader, extend beaconSync.BeaconExtendFn) *beaconLightSyncer {
+func newBeaconLightSyncer(peers *peerSet, drop peerDropFn, terminate chan struct{}, extend beaconSync.BeaconExtendFn, completeSyncing func()) *beaconLightSyncer {
 	return &beaconLightSyncer{
 		requests:        make(map[uint64]*beaconLightRequest),
 		requestFails:    make(chan *beaconLightRequest),
 		responses:       make(chan *beaconLightResponse),
 		idles:           make(map[string]*peerConnection),
-		downloader:      downloader,
+		peers:           peers,
+		drop:            drop,
+		terminate:       terminate,
 		extend:          extend,
 		completeSyncing: completeSyncing,
 	}
@@ -72,10 +78,10 @@ func (b *beaconLightSyncer) loop(start chan *types.Header) error {
 	// Start tracking idle peers for task assignments
 	peering := make(chan *peeringEvent, 64) // arbitrary buffer, just some burst protection
 
-	peeringSub := b.downloader.peers.SubscribeEvents(peering)
+	peeringSub := b.peers.SubscribeEvents(peering)
 	defer peeringSub.Unsubscribe()
 
-	for _, peer := range b.downloader.peers.AllPeers() {
+	for _, peer := range b.peers.AllPeers() {
 		b.idles[peer.id] = peer
 	}
 
@@ -136,7 +142,7 @@ func (b *beaconLightSyncer) loop(start chan *types.Header) error {
 			}
 			// We still have work to do, loop and repeat
 
-		case <-b.downloader.quitCh:
+		case <-b.terminate:
 			return nil
 		}
 	}
@@ -149,10 +155,10 @@ func (b *beaconLightSyncer) assignTasks(success chan *beaconLightResponse, fail 
 		peers: make([]*peerConnection, 0, len(b.idles)),
 		caps:  make([]int, 0, len(b.idles)),
 	}
-	targetTTL := b.downloader.peers.rates.TargetTimeout()
+	targetTTL := b.peers.rates.TargetTimeout()
 	for _, peer := range b.idles {
 		idlers.peers = append(idlers.peers, peer)
-		idlers.caps = append(idlers.caps, b.downloader.peers.rates.Capacity(peer.id, eth.BlockHeadersMsg, targetTTL))
+		idlers.caps = append(idlers.caps, b.peers.rates.Capacity(peer.id, eth.BlockHeadersMsg, targetTTL))
 	}
 	if len(idlers.peers) == 0 {
 		return
@@ -234,7 +240,7 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 	defer netreq.Close()
 
 	// Wait until the response arrives, the request is cancelled or times out
-	ttl := b.downloader.peers.rates.TargetTimeout()
+	ttl := b.peers.rates.TargetTimeout()
 
 	timeoutTimer := time.NewTimer(ttl)
 	defer timeoutTimer.Stop()
@@ -248,10 +254,10 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 		// Header retrieval timed out, update the metrics
 		peer.log.Warn("Header request timed out, dropping peer", "elapsed", ttl)
 		headerTimeoutMeter.Mark(1)
-		b.downloader.peers.rates.Update(peer.id, eth.BlockHeadersMsg, 0, 0)
+		b.peers.rates.Update(peer.id, eth.BlockHeadersMsg, 0, 0)
 		b.scheduleRevertRequest(req)
 
-		b.downloader.dropPeer(peer.id)
+		b.drop(peer.id)
 
 	case res := <-resCh:
 		// Headers successfully retrieved, update the metrics
@@ -259,7 +265,7 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 		metas := res.Meta.([]common.Hash)
 
 		headerReqTimer.Update(time.Since(start))
-		b.downloader.peers.rates.Update(peer.id, eth.BlockHeadersMsg, res.Time, len(headers))
+		b.peers.rates.Update(peer.id, eth.BlockHeadersMsg, res.Time, len(headers))
 
 		switch {
 		case len(headers) == 0:
@@ -294,14 +300,14 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 			if !valid {
 				log.Debug("Received invalid new headers", "start", headers[0].Hash(), "end", headers[len(headers)-1].Hash())
 				b.scheduleRevertRequest(req)
-				b.downloader.dropPeer(peer.id)
+				b.drop(peer.id)
 				return
 			}
 			// If the verification is successful, update the trusted hash and repeat until
 			// the light chain is extended. Here we take n-1, since n may get reorg
 			trusted := headers[len(headers)-2]
 			latest := headers[len(headers)-1]
-			bodies, _, err := b.downloader.fetchBodiesByHash(peer, []common.Hash{trusted.Hash(), latest.Hash()})
+			bodies, _, err := b.fetchBodiesByHash(peer, req.cancel, []common.Hash{trusted.Hash(), latest.Hash()})
 			if err != nil {
 				// If downloader is canceled, then abort and wait for a new start
 				if err == errCanceled {
@@ -310,13 +316,13 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 				}
 				log.Debug("Failed to fetch new bodies", "err", err)
 				b.scheduleRevertRequest(req)
-				b.downloader.dropPeer(peer.id)
+				b.drop(peer.id)
 				return
 			}
 			if len(bodies) != 2 {
 				log.Debug("Received invalid number of new bodies", "len", len(bodies))
 				b.scheduleRevertRequest(req)
-				b.downloader.dropPeer(peer.id)
+				b.drop(peer.id)
 				return
 			}
 			// Verify the bodies match the headers, if not, retry
@@ -337,7 +343,7 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 			if finalizedBlock.Hash() != trusted.Hash() || latestBlock.Hash() != latest.Hash() {
 				log.Debug("Received invalid new bodies", "trusted", trusted.Hash(), "latest", latest.Hash())
 				b.scheduleRevertRequest(req)
-				b.downloader.dropPeer(peer.id)
+				b.drop(peer.id)
 				return
 			}
 			select {
@@ -352,6 +358,48 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 			case <-req.cancel:
 			}
 		}
+	}
+}
+
+func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) ([]*eth.BlockBody, [][]common.Hash, error) {
+	// Create the response sink and send the network request
+	start := time.Now()
+	resCh := make(chan *eth.Response)
+
+	req, err := p.peer.RequestBodies(hashes, resCh)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer req.Close()
+
+	// Wait until the response arrives, the request is cancelled or times out
+	ttl := b.peers.rates.TargetTimeout()
+
+	timeoutTimer := time.NewTimer(ttl)
+	defer timeoutTimer.Stop()
+
+	select {
+	case <-cancel:
+		return nil, nil, errCanceled
+
+	case <-timeoutTimer.C:
+		// Body retrieval timed out, update the metrics
+		p.log.Debug("Body request timed out", "elapsed", ttl)
+		bodyTimeoutMeter.Mark(1)
+
+		return nil, nil, errTimeout
+
+	case res := <-resCh:
+		// Bodies successfully retrieved, update the metrics
+		bodyReqTimer.Update(time.Since(start))
+		bodyInMeter.Mark(int64(len(*res.Res.(*eth.BlockBodiesResponse))))
+
+		// Don't reject the packet even if it turns out to be bad, downloader will
+		// disconnect the peer on its own terms. Simply delivery the bodies to
+		// be processed by the caller
+		res.Done <- nil
+
+		return *res.Res.(*eth.BlockBodiesResponse), res.Meta.([][]common.Hash), nil
 	}
 }
 
@@ -451,7 +499,7 @@ func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) (completed
 			log.Debug("Received invalid new headers start", "want", b.trustedHeader.Hash(), "have", nextResp.metas[0])
 
 			b.scratchSpace[0] = nil
-			b.downloader.dropPeer(b.scratchOwners[0])
+			b.drop(b.scratchOwners[0])
 			b.scratchOwners[0] = ""
 			break
 		}
@@ -494,6 +542,6 @@ func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) (completed
 // verify the beacon sync target header without executing the chain history, but
 // only checking the signatures against the NextConsensus specification.
 func (d *Downloader) BeaconLightSync(completeSyncing func(), extend beaconSync.BeaconExtendFn, start chan *types.Header) error {
-	lightSync := newBeaconLightSyncer(completeSyncing, d, extend)
+	lightSync := newBeaconLightSyncer(d.peers, d.dropPeer, d.quitCh, extend, completeSyncing)
 	return lightSync.loop(start)
 }
