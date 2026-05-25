@@ -67,6 +67,16 @@ type BlobTx struct {
 	S *uint256.Int
 }
 
+// BlobTxSidecarV0 contains the blobs of a blob transaction.
+type BlobTxSidecarV0 struct {
+	Blobs       []kzg4844.Blob       // Blobs needed by the blob pool
+	Commitments []kzg4844.Commitment // Commitments needed by the blob pool
+	Proofs      []kzg4844.Proof      // Proofs needed by the blob pool
+}
+
+// BlobSidecarV0s is a slice of blob transaction sidecars.
+type BlobSidecarV0s []*BlobTxSidecarV0
+
 // BlobTxSidecar contains the blobs of a blob transaction.
 type BlobTxSidecar struct {
 	Version     byte                 // Version

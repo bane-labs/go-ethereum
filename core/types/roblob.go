@@ -5,10 +5,20 @@ import (
 	"math/big"
 )
 
-const BlobSidecarSize = 131190 // defined to match blob sidecar size in rlp codegen
+const BlobSidecarSize = 137423 // defined to match blob sidecar size in rlp codegen
 
 type BlobSidecar struct {
 	BlobTxSidecar
+	BlockNumber *big.Int // The block number this blob sidecar is associated with.
+	BlockTime   uint64   // The block time this blob sidecar is associated with.
+	Index       uint64   // The index of this blob sidecar within the block.
+}
+
+// BlobSidecarV0 represents the old blob sidecar format before versioning, which
+// only contains the BlobTxSidecar fields. This is used for decoding legacy blob
+// sidecars that were encoded without a version byte.
+type BlobSidecarV0 struct {
+	BlobTxSidecarV0
 	BlockNumber *big.Int // The block number this blob sidecar is associated with.
 	BlockTime   uint64   // The block time this blob sidecar is associated with.
 	Index       uint64   // The index of this blob sidecar within the block.
