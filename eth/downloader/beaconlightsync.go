@@ -207,7 +207,7 @@ func (b *beaconLightSyncer) assignTasks(success chan *beaconLightResponse, fail 
 			count: beaconSync.ExpectedHeadersNum,
 		}
 		// If it's not the first task, roll back `rollBackBlocks` blocks to ensure a better match.
-		if b.scratchHead != b.startHead {
+		if req.head != b.startHead {
 			req.head -= rollBackBlocks
 			req.count += rollBackBlocks
 		}
@@ -448,13 +448,21 @@ func (b *beaconLightSyncer) revertRequest(req *beaconLightRequest) {
 	}
 	close(req.stale)
 
+	select {
+	case <-req.cancel:
+		// Sync cycle got cancelled
+		log.Trace("Header request cancelled, not reverting", "peer", req.peer, "reqid", req.id)
+		return
+	default:
+	}
+
 	// Remove the request from the tracked set
 	delete(b.requests, req.id)
 
 	// Remove the request from the tracked set and mark the task as not-pending,
 	// ready for rescheduling
 	head := req.head
-	if b.scratchHead != b.startHead {
+	if head != b.startHead {
 		head += rollBackBlocks
 	}
 	b.scratchOwners[(head-b.scratchHead)/beaconSync.ExpectedHeadersNum] = ""
@@ -479,7 +487,7 @@ func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) (completed
 	delete(b.requests, res.reqid)
 
 	head := res.headers[0].Number.Uint64()
-	if b.scratchHead != b.startHead {
+	if head != b.startHead {
 		head += rollBackBlocks
 	}
 	b.scratchSpace[(head-b.scratchHead)/beaconSync.ExpectedHeadersNum] = res
