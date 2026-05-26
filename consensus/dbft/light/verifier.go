@@ -32,7 +32,7 @@ func VerifyHeaders(headers []*types.Header) bool {
 		if current.Number.Cmp(new(big.Int).Add(parent.Number, big.NewInt(1))) != 0 {
 			return false
 		}
-		if current.Time <= parent.Time {
+		if current.Time < parent.Time {
 			return false
 		}
 		expectConsensus := parent.MixDigest

@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	maxPendingChain    = 128  // Max number of pending header chains to keep in memory
-	ExpectedHeadersNum = 1024 // The expected number of headers in extending
+	maxPendingChain    = 128 // Max number of pending header chains to keep in memory
+	ExpectedHeadersNum = 512 // The expected number of headers in extending
+	ScratchSpaceLen    = 128 // The length of the scratch space for light sync
 )
 
 var (
@@ -29,10 +30,10 @@ type LightVerifyFn func(headers []*types.Header) bool
 
 // LightSyncFn is a callback type for finding the latest trusted header with dBFT light client rules.
 // Methods implement this should properly return after the start channel is closed.
-type LightSyncFn func(extend BeaconExtendFn, start chan *types.Header) error
+type LightSyncFn func(extend BeaconExtendFn, complete func(), start chan *types.Header) error
 
 // BeaconExtendFn is a callback type for extending the trusted header chain with headers received from the network.
-type BeaconExtendFn func(verifiedHeaders []*types.Header, metas []common.Hash, finalized *types.Block, latest *types.Block) error
+type BeaconExtendFn func(verifiedHeaderHashes []common.Hash, finalized *types.Block, latest *types.Block) (linked bool, err error)
 
 // completeFn is a callback type for synchronizer is synced but still receiving notifications.
 type completeFn func(block *types.Block) error
@@ -85,7 +86,7 @@ func New(localFinalized *types.Block, lightVerify LightVerifyFn, lightSync Light
 			log.Info("Loaded trusted head from database", "hash", trustedHead.Hash(), "number", trustedHead.NumberU64())
 		}
 	}
-	go s.lightSync(s.BeaconExtend, s.startCh)
+	go s.lightSync(s.BeaconExtend, s.Stop, s.startCh)
 	return s
 }
 
@@ -191,21 +192,17 @@ func (s *Synchronizer) NotifyNewHead(block *types.Block) error {
 
 // BeaconExtend tries to extend the trusted header chain with the untrusted but verified
 // headers received from the network, and returns the new latest trusted header.
-func (s *Synchronizer) BeaconExtend(verifiedHeaders []*types.Header, metas []common.Hash, finalized *types.Block, latest *types.Block) error {
+func (s *Synchronizer) BeaconExtend(verifiedHeaderHashes []common.Hash, finalized *types.Block, latest *types.Block) (linked bool, err error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	if len(verifiedHeaders) < 2 {
-		s.syncing.Store(false)
-		return nil
-	}
-	if verifiedHeaders[0].Hash() != s.trustedHead.Hash() {
-		s.syncing.Store(false)
-		return errExtendStartMismatch
+
+	if verifiedHeaderHashes[0] != s.trustedHead.Hash() {
+		return false, errExtendStartMismatch
 	}
 	// Try to connect pending chains.
 	connected := false
 	for h, choice := range s.pendingChains {
-		if slices.Index(metas, h) > -1 {
+		if slices.Index(verifiedHeaderHashes, h) > -1 {
 			if choice.finalized.NumberU64() > finalized.NumberU64() {
 				finalized = choice.finalized
 				latest = choice.latest
@@ -217,18 +214,23 @@ func (s *Synchronizer) BeaconExtend(verifiedHeaders []*types.Header, metas []com
 	s.latestHead = latest
 	s.finalize()
 	log.Info("Beacon trust successfully extended", "head", s.trustedHead.Hash(), "number", s.trustedHead.NumberU64())
-	// If the trust is extended to the latest, then mark syncing as stopped.
-	// The process using this callback can stop as well, but there's no signal.
-	// Please take ExpectedHeadersNum as the batch size of light sync.
-	if connected || len(verifiedHeaders) < ExpectedHeadersNum {
-		s.syncing.Store(false)
+	// If the trust is extended to the latest, send the first head signal.
+	if connected {
 		s.complete(s.trustedHead)
 	}
-	return nil
+	// The light sync using this callback should stop depends on the connected result,
+	// but should wait for the close signal to close, so that can be restarted when necessary.
+	return connected, nil
 }
 
-// Stop closes the synchronizer.
+// Stop marks the synchronizer as stopped, and the next notification will trigger
+// the sync process again.
 func (s *Synchronizer) Stop() {
+	s.syncing.Store(false)
+}
+
+// Close closes the synchronizer.
+func (s *Synchronizer) Close() {
 	close(s.startCh)
 }
 

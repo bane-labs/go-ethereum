@@ -165,7 +165,7 @@ func (b *Beacon) RefreshPendingPayload() error {
 func (b *Beacon) Close() error {
 	b.miner.Close()
 	b.blockFetcher.Stop()
-	b.synchronizer.Stop()
+	b.synchronizer.Close()
 	close(b.blockCh)
 	b.wg.Wait()
 
