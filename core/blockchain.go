@@ -330,6 +330,7 @@ type BlockChain struct {
 	flushInterval atomic.Int64                     // Time interval (processing time) after which to flush a state
 	triedb        *triedb.Database                 // The database handler for maintaining trie nodes.
 	codedb        *state.CodeDB                    // The database handler for maintaining contract codes.
+	jumpDestCache vm.JumpDestCache                 // Shared JUMPDEST analysis cache for block processing
 	txIndexer     *txIndexer                       // Transaction indexer, might be nil if not enabled
 
 	hc               *HeaderChain
@@ -412,6 +413,7 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 		db:                 db,
 		triedb:             triedb,
 		codedb:             state.NewCodeDB(db),
+		jumpDestCache:      NewJumpDestCache(),
 		triegc:             prque.New[int64, common.Hash](nil),
 		chainmu:            syncx.NewClosableMutex(),
 		bodyCache:          lru.NewCache[common.Hash, *types.Body](bodyCacheLimit),
@@ -2205,7 +2207,7 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 			// Disable tracing for prefetcher executions.
 			vmCfg := bc.cfg.VmConfig
 			vmCfg.Tracer = nil
-			bc.prefetcher.Prefetch(block, throwaway, vmCfg, &interrupt)
+			bc.prefetcher.Prefetch(block, throwaway, bc.jumpDestCache, vmCfg, &interrupt)
 
 			blockPrefetchExecuteTimer.Update(time.Since(start))
 			if interrupt.Load() {
@@ -2253,7 +2255,7 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 	// Process block using the parent state as reference point
 	pstart := time.Now()
 	pctx, _, spanEnd := telemetry.StartSpan(ctx, "bc.processor.Process")
-	res, err := bc.processor.Process(pctx, block, statedb, bc.cfg.VmConfig)
+	res, err := bc.processor.Process(pctx, block, statedb, bc.jumpDestCache, bc.cfg.VmConfig)
 	spanEnd(&err)
 	if err != nil {
 		bc.reportBadBlock(block, res, err)
@@ -3067,7 +3069,7 @@ func (bc *BlockChain) ProcessState(ctx context.Context, block *types.Block, stat
 		}
 	}
 
-	res, err := bc.processor.Process(ctx, block, statedb, bc.cfg.VmConfig)
+	res, err := bc.processor.Process(ctx, block, statedb, bc.jumpDestCache, bc.cfg.VmConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to process block: %w", err)
 	}
