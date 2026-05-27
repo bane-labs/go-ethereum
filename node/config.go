@@ -95,10 +95,6 @@ type Config struct {
 	// InsecureUnlockAllowed allows user to unlock accounts in unsafe http environment.
 	InsecureUnlockAllowed bool `toml:",omitempty"`
 
-	// NoUSB disables hardware wallet monitoring and connectivity.
-	// Deprecated: USB monitoring is disabled by default and must be enabled explicitly.
-	NoUSB bool `toml:",omitempty"`
-
 	// USB enables hardware wallet monitoring and connectivity.
 	USB bool `toml:",omitempty"`
 
