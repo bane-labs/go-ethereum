@@ -724,6 +724,9 @@ func (b testBackend) HistoryPruningCutoff() uint64 {
 	bn, _ := b.chain.HistoryPruningCutoff()
 	return bn
 }
+func (b testBackend) HistoryRetention() HistoryRetention {
+	return HistoryRetention{StateScheme: b.chain.TrieDB().Scheme()}
+}
 
 func (b testBackend) IsExtensibleAllowed(blockNum uint64, addr common.Address) error {
 	return nil
