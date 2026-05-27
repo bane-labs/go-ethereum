@@ -946,6 +946,9 @@ func (h *handler) RequestTransactions(txHashes []common.Hash) {
 		}
 		// Broadcast request to all neighbors.
 		for _, peer := range peers {
+			if peer.Version() < beaconproto.BEACON2 {
+				continue
+			}
 			err := peer.RequestTransactions(txHashes[start:stop])
 			if err != nil {
 				log.Error("Failed to request transactions", "txHashes", txHashes, "peer", peer.ID(), "error", err)
