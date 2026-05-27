@@ -61,7 +61,6 @@ var (
 		utils.MinFreeDiskSpaceFlag,
 		utils.KeyStoreDirFlag,
 		utils.ExternalSignerFlag,
-		utils.NoUSBFlag, // deprecated
 		utils.USBFlag,
 		utils.SmartCardDaemonPathFlag,
 		utils.OverrideOsaka,
@@ -69,7 +68,6 @@ var (
 		utils.OverrideBPO2,
 		utils.OverrideUBT,
 		utils.OverrideGenesisFlag,
-		utils.EnablePersonal, // deprecated
 		utils.TxPoolLocalsFlag,
 		utils.TxPoolNoLocalsFlag,
 		utils.TxPoolJournalFlag,
@@ -92,7 +90,6 @@ var (
 		utils.ExitWhenSyncedFlag,
 		utils.GCModeFlag,
 		utils.SnapshotFlag,
-		utils.TxLookupLimitFlag, // deprecated
 		utils.TransactionHistoryFlag,
 		utils.ChainHistoryFlag,
 		utils.LogHistoryFlag,
@@ -104,12 +101,9 @@ var (
 		utils.BinTrieGroupDepthFlag,
 		utils.LightKDFFlag,
 		utils.EthRequiredBlocksFlag,
-		utils.LegacyWhitelistFlag, // deprecated
 		utils.CacheFlag,
 		utils.CacheDatabaseFlag,
 		utils.CacheTrieFlag,
-		utils.CacheTrieJournalFlag,   // deprecated
-		utils.CacheTrieRejournalFlag, // deprecated
 		utils.CacheGCFlag,
 		utils.CacheSnapshotFlag,
 		utils.CacheNoPrefetchFlag,
@@ -124,12 +118,10 @@ var (
 		utils.MiningEnabledFlag,
 		utils.MinerGasLimitFlag,
 		utils.MinerGasPriceFlag,
-		utils.MinerEtherbaseFlag, // deprecated
 		utils.MinerExtraDataFlag,
 		utils.MinerMaxBlobsFlag,
 		utils.MinerRecommitIntervalFlag,
 		utils.MinerPendingFeeRecipientFlag,
-		utils.MinerNewPayloadTimeoutFlag, // deprecated
 		utils.AntiMEVKeyStoreFlag,
 		utils.AntiMEVEnforceECDSABlockSignatureSchemeFlag,
 		utils.AntiMEVPasswordFlag,
@@ -144,7 +136,6 @@ var (
 		utils.NoDiscoverFlag,
 		utils.DiscoveryV4Flag,
 		utils.DiscoveryV5Flag,
-		utils.LegacyDiscoveryV5Flag, // deprecated
 		utils.NetrestrictFlag,
 		utils.NodeKeyFileFlag,
 		utils.NodeKeyHexFlag,
@@ -164,8 +155,6 @@ var (
 		utils.GpoMaxGasPriceFlag,
 		utils.GpoIgnoreGasPriceFlag,
 		configFileFlag,
-		utils.LogDebugFlag,
-		utils.LogBacktraceAtFlag,
 		utils.BeaconApiFlag,
 		utils.BeaconApiHeaderFlag,
 		utils.BeaconThresholdFlag,
@@ -223,7 +212,6 @@ var (
 
 	metricsFlags = []cli.Flag{
 		utils.MetricsEnabledFlag,
-		utils.MetricsEnabledExpensiveFlag,
 		utils.MetricsHTTPFlag,
 		utils.MetricsPortFlag,
 		utils.MetricsEnableInfluxDBFlag,
