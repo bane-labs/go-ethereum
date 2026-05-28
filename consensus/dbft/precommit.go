@@ -124,7 +124,7 @@ func decodeShares(data []byte) ([]*tpke.DecryptionShare, []*tpke.DecryptionShare
 		curr[i] = &tpke.DecryptionShare{}
 		_, err := curr[i].FromBytes(data[offset : offset+tpke.DecryptionShareSize])
 		if err != nil {
-			fmt.Errorf("decoding current round share %d: %w", i, err)
+			return nil, nil, fmt.Errorf("decoding current round share %d: %w", i, err)
 		}
 		offset += tpke.DecryptionShareSize
 	}
@@ -132,7 +132,7 @@ func decodeShares(data []byte) ([]*tpke.DecryptionShare, []*tpke.DecryptionShare
 		prev[i] = &tpke.DecryptionShare{}
 		_, err := prev[i].FromBytes(data[offset : offset+tpke.DecryptionShareSize])
 		if err != nil {
-			fmt.Errorf("decoding previous round share %d: %w", i, err)
+			return nil, nil, fmt.Errorf("decoding previous round share %d: %w", i, err)
 		}
 		offset += tpke.DecryptionShareSize
 	}

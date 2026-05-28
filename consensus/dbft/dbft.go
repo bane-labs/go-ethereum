@@ -2663,6 +2663,18 @@ func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 	if header.WithdrawalsHash != nil {
 		enc = append(enc, header.WithdrawalsHash)
 	}
+	if header.BlobGasUsed != nil {
+		enc = append(enc, header.BlobGasUsed)
+	}
+	if header.ExcessBlobGas != nil {
+		enc = append(enc, header.ExcessBlobGas)
+	}
+	if header.ParentBeaconRoot != nil {
+		enc = append(enc, header.ParentBeaconRoot)
+	}
+	if header.RequestsHash != nil {
+		enc = append(enc, header.RequestsHash)
+	}
 	if err := rlp.Encode(w, enc); err != nil {
 		panic("can't encode: " + err.Error())
 	}
@@ -2954,10 +2966,6 @@ func (c *DBFT) getNextConsensus(h *types.Header, s *state.StateDB) (common.Hash,
 		threshold = dbftutil.GetNextConsensusHash([]dbftutil.Encodable{pub})
 	}
 	return multisig, threshold
-}
-
-func (c *DBFT) shouldUpdateCommitteeAt(blockNum uint64) bool {
-	return blockNum%uint64(len(c.config.StandByValidators)) == 0
 }
 
 func unpackContractExecutionResult(res interface{}, result *core.ExecutionResult, contractAbi abi.ABI, method string) error {
