@@ -249,8 +249,9 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 		effectiveTip = tx.GasTipCap()
 	}
 	if effectiveTip.Cmp(minGasTipCap) < 0 {
+		// This is a stateful validation, but the policy is more like a static rule, and we expect the error to be returned directly.
 		return fmt.Errorf("%w: policy minGasTipCap (including Envelope fee for Envelopes) needed %v, baseFee needed %v, gasTipCap %v, gasFeeCap %v ",
-			ErrUnderpriced, minGasTipCap, baseFee, tx.GasTipCap(), tx.GasFeeCap())
+			ErrTxGasPriceTooLow, minGasTipCap, baseFee, tx.GasTipCap(), tx.GasFeeCap())
 	}
 	// Apply policy blacklist
 	var blocked = opts.State.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(from))
