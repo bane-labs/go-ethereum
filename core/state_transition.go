@@ -397,7 +397,7 @@ func (st *stateTransition) preCheck() error {
 				}
 				if effectiveTip.Cmp(minGasTipCap) < 0 {
 					return fmt.Errorf("%w: address %v, gasTipCap %v, gasFeeCap %v, policy minGasTipCap (including Envelope fee for Envelopes) %v, baseFee %v ",
-						ErrUnderpriced, msg.From.Hex(), msg.GasTipCap, msg.GasFeeCap, minGasTipCap, st.evm.Context.BaseFee)
+						ErrTxGasPriceTooLow, msg.From.Hex(), msg.GasTipCap, msg.GasFeeCap, minGasTipCap, st.evm.Context.BaseFee)
 				}
 			}
 		}

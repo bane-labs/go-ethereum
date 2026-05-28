@@ -153,7 +153,7 @@ var (
 	// ErrBlockedSender is returned if the transaction sender is blocked by policy.
 	ErrBlockedSender = errors.New("blocked sender")
 
-	// ErrUnderpriced is returned if a transaction's gas price is below the minimum
-	// configured for the transaction pool.
-	ErrUnderpriced = errors.New("transaction underpriced")
+	// ErrTxGasPriceTooLow is returned if a transaction's gas price is below the
+	// minimum configured for the transaction pool.
+	ErrTxGasPriceTooLow = errors.New("transaction gas price below minimum")
 )
