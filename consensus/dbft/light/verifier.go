@@ -15,6 +15,13 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
+// Only three different network sizes are supported in light verification.
+// We don't support dynamically computed results, because not all customized
+// size are healthy and safe to use.
+const SingleCNAddrSigLen = common.AddressLength + crypto.SignatureLength
+const FourCNAddrSigLen = 4*common.AddressLength + 3*crypto.SignatureLength
+const SevenCNAddrSigLen = 7*common.AddressLength + 5*crypto.SignatureLength
+
 // VerifyHeaders performs a light verification of the given headers, which
 // only checks the signatures and NextConsensus, if the signature is valid, then
 // we believe the header is acknowledged by trusted nodes and thus is valid.
@@ -35,7 +42,6 @@ func VerifyHeaders(headers []*types.Header) bool {
 		if current.Time < parent.Time {
 			return false
 		}
-		expectConsensus := parent.MixDigest
 		extra := dbftutil.Extra(current.Extra)
 		if len(extra) < 1 {
 			return false
@@ -44,22 +50,31 @@ func VerifyHeaders(headers []*types.Header) bool {
 		switch extra.Version() {
 		case dbftutil.ExtraV0:
 			// Check format
-			if len(extra) != dbftutil.HashableExtraV0Len+7*common.AddressLength+5*crypto.SignatureLength {
+			var n, f int
+			switch len(extra) - dbftutil.HashableExtraV0Len {
+			case SingleCNAddrSigLen:
+				n, f = 1, 1
+			case FourCNAddrSigLen:
+				n, f = 4, 3
+			case SevenCNAddrSigLen:
+				n, f = 7, 5
+			default:
 				return false
 			}
 			// Get CNs and sigs
-			addrBytes := extra[dbftutil.HashableExtraV0Len : dbftutil.HashableExtraV0Len+7*common.AddressLength]
-			sigBytes := extra[dbftutil.HashableExtraV0Len+7*common.AddressLength:]
-			addrs := make([]common.Address, 7)
+			addrBytes := extra[dbftutil.HashableExtraV0Len : dbftutil.HashableExtraV0Len+n*common.AddressLength]
+			sigBytes := extra[dbftutil.HashableExtraV0Len+n*common.AddressLength:]
+			addrs := make([]common.Address, n)
 			for i := range addrs {
 				copy(addrs[i][:], addrBytes[i*common.AddressLength:(i+1)*common.AddressLength])
 			}
-			sigs := make([][]byte, 5)
+			sigs := make([][]byte, f)
 			for i := range sigs {
 				sigs[i] = sigBytes[i*crypto.SignatureLength : (i+1)*crypto.SignatureLength]
 			}
 			// Verify CNs
 			exactConsensus := common.BytesToHash(crypto.Keccak256(addrBytes))
+			expectConsensus := parent.MixDigest
 			if exactConsensus != expectConsensus {
 				return false
 			}
@@ -77,22 +92,37 @@ func VerifyHeaders(headers []*types.Header) bool {
 			switch extra.SignatureScheme() {
 			case dbftutil.ExtraV1ECDSAScheme:
 				// Check format
-				if len(extra) != dbftutil.HashableExtraV1Len+7*common.AddressLength+5*crypto.SignatureLength {
+				var n, f int
+				switch len(extra) - dbftutil.HashableExtraV1Len {
+				case SingleCNAddrSigLen:
+					n, f = 1, 1
+				case FourCNAddrSigLen:
+					n, f = 4, 3
+				case SevenCNAddrSigLen:
+					n, f = 7, 5
+				default:
 					return false
 				}
 				// Get CNs and sigs
-				addrBytes := extra[dbftutil.HashableExtraV1Len : dbftutil.HashableExtraV1Len+7*common.AddressLength]
-				sigBytes := extra[dbftutil.HashableExtraV1Len+7*common.AddressLength:]
-				addrs := make([]common.Address, 7)
+				addrBytes := extra[dbftutil.HashableExtraV1Len : dbftutil.HashableExtraV1Len+n*common.AddressLength]
+				sigBytes := extra[dbftutil.HashableExtraV1Len+n*common.AddressLength:]
+				addrs := make([]common.Address, n)
 				for i := range addrs {
 					copy(addrs[i][:], addrBytes[i*common.AddressLength:(i+1)*common.AddressLength])
 				}
-				sigs := make([][]byte, 5)
+				sigs := make([][]byte, f)
 				for i := range sigs {
 					sigs[i] = sigBytes[i*crypto.SignatureLength : (i+1)*crypto.SignatureLength]
 				}
 				// Verify CNs
 				exactConsensus := common.BytesToHash(crypto.Keccak256(addrBytes))
+				var expectConsensus common.Hash
+				switch dbftutil.Extra(parent.Extra).Version() {
+				case dbftutil.ExtraV0:
+					expectConsensus = parent.MixDigest
+				case dbftutil.ExtraV1, dbftutil.ExtraV2:
+					expectConsensus = common.BytesToHash(parent.Extra[2 : 2+common.HashLength])
+				}
 				if exactConsensus != expectConsensus {
 					return false
 				}
@@ -123,6 +153,7 @@ func VerifyHeaders(headers []*types.Header) bool {
 				}
 				// Verify global public key
 				exactConsensus := common.BytesToHash(crypto.Keccak256(pubBytes))
+				expectConsensus := parent.MixDigest
 				if exactConsensus != expectConsensus {
 					return false
 				}
