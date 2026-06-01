@@ -1,6 +1,7 @@
 package fetcher
 
 import (
+	"context"
 	"math/big"
 	"math/rand"
 	"time"
@@ -36,7 +37,7 @@ var (
 type SidecarRequesterFn func(string, []common.Hash, chan *beacon.Response) (*beacon.Request, error)
 
 // SidecarDeepRequesterFn is a callback type for deep-fetching blob sidecars.
-type SidecarDeepRequesterFn func(blockHash common.Hash) (types.BlobSidecars, error)
+type SidecarDeepRequesterFn func(ctx context.Context, blockHash common.Hash) (types.BlobSidecars, error)
 
 // SidecarsAnnouncerFn is a callback type for announcing retrieved blob sidecars to the network.
 type SidecarsAnnouncerFn func(blockHash common.Hash)
@@ -167,6 +168,8 @@ func (f *SidecarFetcher) loop() {
 	defer fetchTimer.Stop()
 	timeoutTicker := time.NewTicker(fetchTimeout)
 	defer timeoutTicker.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Determine the initial fetch height, which is the earliest block that may
 	// still have sidecars being propagated for it.
@@ -241,7 +244,7 @@ func (f *SidecarFetcher) loop() {
 					}
 					// Deep-fetch sidecars if normal fetch failed multiple times
 					go func() {
-						if _, err := f.deepFetchSidecars(hash); err != nil {
+						if _, err := f.deepFetchSidecars(ctx, hash); err != nil {
 							log.Warn("Deep-fetching sidecars failed", "hash", hash, "err", err)
 							return
 						} else {
