@@ -525,7 +525,7 @@ func (b *beaconLightSyncer) processResponse(res *beaconLightResponse) (completed
 		// Try to extend the chain trusted to pending headers from the network
 		var linked bool
 		var err error
-		if linked, err = b.extend(nextResp.metas, nextResp.finalizedBlock, nextResp.latestBlock); err != nil {
+		if linked, err = b.extend(nextResp.metas, nextResp.finalizedBlock, nextResp.latestBlock, completed); err != nil {
 			// Wait for a new start signal to recover
 			return true, nil
 		}

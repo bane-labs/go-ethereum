@@ -66,7 +66,7 @@ func newTestSynchronizer(chain []*types.Block, complete completeFn) *Synchronize
 			}
 			trustedHeader = newBlocks[len(newBlocks)-2].Header()
 			completed := len(newBlocks) < ExpectedHeadersNum
-			if _, err := extend(metas, newBlocks[len(newBlocks)-2], newBlocks[len(newBlocks)-1]); err != nil {
+			if _, err := extend(metas, newBlocks[len(newBlocks)-2], newBlocks[len(newBlocks)-1], completed); err != nil {
 				shouldSync.Store(false)
 				complete()
 				continue
