@@ -218,7 +218,11 @@ func (s *Synchronizer) BeaconExtend(verifiedHeaderHashes []common.Hash, finalize
 	log.Info("Beacon trust successfully extended", "head", s.trustedHead.Hash(), "number", s.trustedHead.NumberU64())
 	// If the trust is extended to the latest, or a force signal is received, send the first head signal.
 	if connected || complete {
-		s.complete(s.trustedHead)
+		// Here we send the latest head, so that the EL can sync to the latest height instead of n-1.
+		// But when updating, we only send the finalized head, because there're new blocks
+		// and we need to prevent reorg signals. The current EL will restart sync if there's a reorg.
+		// TODO: Use the latest head in all of the signals, and let the EL handle reorgs when it's supported.
+		s.complete(s.latestHead)
 	}
 	// The light sync using this callback should stop depends on the connected result,
 	// but should wait for the close signal to close, so that can be restarted when necessary.
