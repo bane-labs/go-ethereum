@@ -1,6 +1,7 @@
 package fetcher
 
 import (
+	"context"
 	"math/big"
 	"math/rand"
 	"time"
@@ -36,7 +37,7 @@ var (
 type SidecarRequesterFn func(string, []common.Hash, chan *beacon.Response) (*beacon.Request, error)
 
 // SidecarDeepRequesterFn is a callback type for deep-fetching blob sidecars.
-type SidecarDeepRequesterFn func(blockHash common.Hash) (types.BlobSidecars, error)
+type SidecarDeepRequesterFn func(ctx context.Context, blockHash common.Hash) (types.BlobSidecars, error)
 
 // SidecarsAnnouncerFn is a callback type for announcing retrieved blob sidecars to the network.
 type SidecarsAnnouncerFn func(blockHash common.Hash)
@@ -47,10 +48,16 @@ type BlobPeersFn func() []string
 // MarkNoBlobPeerFn is a callback type to mark a peer as not having blobs.
 type MarkNoBlobPeerFn func(id string)
 
+// HighestHeaderNumberFn is a callback type to retrieve the highest header number seen,
+// used to determine when to fetch sidecars for new blocks.
+type HighestHeaderNumberFn func() (uint64, bool)
+
 // fetchingTask represents a scheduled sidecar fetching operation.
 type fetchingTask struct {
-	block *types.Block // The block to fetch sidecars for
-	time  time.Time    // The time of the task created
+	block        *types.Block // The block to fetch sidecars for
+	time         time.Time    // The time of the task created
+	fetchingTime time.Time    // The time when the fetch was attempted
+	retryCount   int          // The number of times the task has been retried
 }
 
 // blobAnnounce represents a notification of a new block hash potentially having blob sidecars available.
@@ -87,10 +94,11 @@ type SidecarFetcher struct {
 	fetching  map[common.Hash]*fetchingTask   // Currently fetching
 
 	// Callbacks
-	announceSidecars SidecarsAnnouncerFn // Announces sidecars to the network
-	blobPeers        BlobPeersFn         // Retrieves all known blob peers
-	markNoBlobPeer   MarkNoBlobPeerFn    // Marks a peer as not having blobs, to avoid scheduling future fetches to it
-	dropPeer         PeerDropFn          // Drops a peer for misbehaving
+	announceSidecars    SidecarsAnnouncerFn   // Announces sidecars to the network
+	blobPeers           BlobPeersFn           // Retrieves all known blob peers
+	markNoBlobPeer      MarkNoBlobPeerFn      // Marks a peer as not having blobs, to avoid scheduling future fetches to it
+	dropPeer            PeerDropFn            // Drops a peer for misbehaving
+	highestHeaderNumber HighestHeaderNumberFn // Highest header number seen, used to determine when to fetch sidecars for new blocks
 
 	fetchSidecars     SidecarRequesterFn     // Fetcher function to retrieve the blob sidecars of a block
 	deepFetchSidecars SidecarDeepRequesterFn // Deep-fetcher function to retrieve blob sidecars of a block
@@ -100,24 +108,26 @@ type SidecarFetcher struct {
 }
 
 // NewSidecarFetcher creates a sidecar fetcher to retrieve blob sidecars.
-func NewSidecarFetcher(chain BlockChain, fs FileSystem, blobPeers BlobPeersFn, markNoBlobPeer MarkNoBlobPeerFn, dropPeer PeerDropFn,
-	announceSidecars SidecarsAnnouncerFn, fetchSidecars SidecarRequesterFn, deepFetchSidecars SidecarDeepRequesterFn) *SidecarFetcher {
+func NewSidecarFetcher(chain BlockChain, fs FileSystem, blobPeers BlobPeersFn, markNoBlobPeer MarkNoBlobPeerFn,
+	dropPeer PeerDropFn, highestHeaderNumber HighestHeaderNumberFn, announceSidecars SidecarsAnnouncerFn,
+	fetchSidecars SidecarRequesterFn, deepFetchSidecars SidecarDeepRequesterFn) *SidecarFetcher {
 	return &SidecarFetcher{
-		notify:            make(chan *blobAnnounce),
-		done:              make(chan common.Hash),
-		quit:              make(chan struct{}),
-		announces:         make(map[string]int),
-		announced:         make(map[common.Hash][]*blobAnnounce),
-		scheduled:         make(map[common.Hash]*fetchingTask),
-		fetching:          make(map[common.Hash]*fetchingTask),
-		blobPeers:         blobPeers,
-		markNoBlobPeer:    markNoBlobPeer,
-		dropPeer:          dropPeer,
-		announceSidecars:  announceSidecars,
-		fetchSidecars:     fetchSidecars,
-		deepFetchSidecars: deepFetchSidecars,
-		fs:                fs,
-		chain:             chain,
+		notify:              make(chan *blobAnnounce),
+		done:                make(chan common.Hash),
+		quit:                make(chan struct{}),
+		announces:           make(map[string]int),
+		announced:           make(map[common.Hash][]*blobAnnounce),
+		scheduled:           make(map[common.Hash]*fetchingTask),
+		fetching:            make(map[common.Hash]*fetchingTask),
+		blobPeers:           blobPeers,
+		markNoBlobPeer:      markNoBlobPeer,
+		dropPeer:            dropPeer,
+		highestHeaderNumber: highestHeaderNumber,
+		announceSidecars:    announceSidecars,
+		fetchSidecars:       fetchSidecars,
+		deepFetchSidecars:   deepFetchSidecars,
+		fs:                  fs,
+		chain:               chain,
 	}
 }
 
@@ -158,15 +168,34 @@ func (f *SidecarFetcher) loop() {
 	defer fetchTimer.Stop()
 	timeoutTicker := time.NewTicker(fetchTimeout)
 	defer timeoutTicker.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
+	// Determine the initial fetch height, which is the earliest block that may
+	// still have sidecars being propagated for it.
 	fetchHeight := uint64(0)
-	height := f.chain.CurrentBlock().Number.Uint64()
+	reinitFetchHeight := false
 	minRetainBlockNumbers := uint64(params.MinEthEpochsForBlobsSidecarsRequest * params.BlocksPerEthEpoch)
+	height := f.chain.CurrentBlock().Number.Uint64()
 	if height > minRetainBlockNumbers {
 		fetchHeight = height - minRetainBlockNumbers
 	}
 
 	for {
+		// Reinitialize fetch height based on the highest header number seen, to avoid missing sidecars for new blocks.
+		if !reinitFetchHeight {
+			if height, found := f.highestHeaderNumber(); found {
+				reinitFetchHeight = found
+				if height > minRetainBlockNumbers {
+					recommendedFetchHeight := height - minRetainBlockNumbers
+					if fetchHeight < recommendedFetchHeight {
+						fetchHeight = recommendedFetchHeight
+						log.Info("Reinitial fetch height set based on highest header number", "height", fetchHeight)
+					}
+				}
+			}
+		}
+
 		// Schedule new sidecar fetches if below the limit
 		f.scheduleNextSidecars(&fetchHeight, fetchTimer)
 
@@ -201,8 +230,7 @@ func (f *SidecarFetcher) loop() {
 			// Periodically clean out any abandoned fetches
 			earliestHeight := fetchHeight
 			for hash, task := range f.fetching {
-				cost := time.Since(task.time)
-				if cost > maxRetryCount*fetchTimeout {
+				if task.retryCount > maxRetryCount {
 					f.forgetHash(hash)
 					if f.chain.GetBlockByHash(hash) == nil {
 						// If a block is found to be missing, then the fetchHeight
@@ -216,15 +244,15 @@ func (f *SidecarFetcher) loop() {
 					}
 					// Deep-fetch sidecars if normal fetch failed multiple times
 					go func() {
-						if _, err := f.deepFetchSidecars(hash); err != nil {
-							log.Error("Deep-fetching sidecars failed", "hash", hash, "err", err)
+						if _, err := f.deepFetchSidecars(ctx, hash); err != nil {
+							log.Warn("Deep-fetching sidecars failed", "hash", hash, "err", err)
 							return
 						} else {
 							f.done <- hash
 							f.announceSidecars(hash)
 						}
 					}()
-				} else if cost > fetchTimeout {
+				} else if time.Since(task.fetchingTime) > fetchTimeout {
 					// Reschedule the fetch
 					f.scheduled[hash] = task
 					delete(f.fetching, hash)
@@ -271,6 +299,7 @@ func (f *SidecarFetcher) loop() {
 						} else {
 							request[peer] = append(request[peer], hash)
 							reqTaskMap[peer] = append(reqTaskMap[peer], task)
+							task.fetchingTime = time.Now()
 							f.fetching[hash] = task
 						}
 					}
@@ -290,6 +319,11 @@ func (f *SidecarFetcher) loop() {
 						return
 					}
 					defer req.Close()
+
+					// The count is incremented only when the request is successful.
+					for _, task := range tasks {
+						task.retryCount++
+					}
 
 					timeout := time.NewTimer(2 * fetchTimeout) // 2x leeway before dropping the peer
 					defer timeout.Stop()
@@ -345,7 +379,7 @@ func (f *SidecarFetcher) importSidecars(peer string, task *fetchingTask, sidecar
 		// Quickly validate the sidecars and propagate the sidecars if it passes
 		if err := f.fs.CheckBlobsAvailable(block, sidecars); err != nil {
 			// Something went very wrong, drop the peer
-			log.Error("Propagated sidecars verification failed", "peer", peer, "number", block.Number(), "hash", block.Hash(), "err", err)
+			log.Debug("Propagated sidecars verification failed", "peer", peer, "number", block.Number(), "hash", block.Hash(), "err", err)
 			f.dropPeer(peer)
 			return
 		}

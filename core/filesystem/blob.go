@@ -325,8 +325,9 @@ func VerifiedROBlobFromDisk(fs afero.Fs, root [32]byte, path string) (types.Veri
 	if err != nil {
 		return types.VerifiedROBlob{}, err
 	}
-	s := &types.BlobSidecar{}
-	if err := rlp.DecodeBytes(encoded, s); err != nil {
+
+	s, err := decodeBlobSidecar(encoded)
+	if err != nil {
 		return types.VerifiedROBlob{}, err
 	}
 	ro, err := types.NewROBlobWithRoot(s, root)
@@ -334,4 +335,57 @@ func VerifiedROBlobFromDisk(fs afero.Fs, root [32]byte, path string) (types.Veri
 		return types.VerifiedROBlob{}, err
 	}
 	return types.NewVerifiedROBlob(ro), nil
+}
+
+func decodeBlobSidecar(input []byte) (*types.BlobSidecar, error) {
+	firstElem, _, err := rlp.SplitList(input)
+	if err != nil {
+		return nil, err
+	}
+	firstElemKind, _, secondElem, err := rlp.Split(firstElem)
+	if err != nil {
+		return nil, err
+	}
+	if firstElemKind != rlp.List {
+		return nil, errors.New("invalid blob sidecar encoding: first element is not a list")
+	}
+
+	// Now we know it's the storage encoding with the blob sidecar. Here we need to
+	// support multiple encodings: legacy sidecars (v0) with a blob proof, and versioned
+	// sidecars.
+	//
+	// The legacy encoding is:
+	//
+	//     [blobs, commitments, proofs, ...]
+	//
+	// The versioned encoding is:
+	//
+	//     [version, blobs, ...]
+	//
+	// We can tell the two apart by checking whether the first element is the version byte.
+	// For legacy sidecar the first element is a list of blobs.
+
+	secondElemKind, _, _, err := rlp.Split(secondElem)
+	if err != nil {
+		return nil, err
+	}
+	if secondElemKind == rlp.List {
+		// No version byte: blob sidecar v0.
+		v0 := &types.BlobSidecarV0{}
+		if err := rlp.DecodeBytes(input, v0); err != nil {
+			return nil, err
+		}
+		new := types.NewBlobSidecar(types.NewBlobTxSidecar(types.BlobSidecarVersion0, v0.Blobs, v0.Commitments, v0.Proofs),
+			v0.BlockNumber,
+			v0.BlockTime,
+			v0.Index,
+		)
+		return new, nil
+	}
+	// It has a version byte. Decode according to the versioned encoding.
+	s := &types.BlobSidecar{}
+	if err := rlp.DecodeBytes(input, s); err != nil {
+		return nil, err
+	}
+	return s, nil
 }

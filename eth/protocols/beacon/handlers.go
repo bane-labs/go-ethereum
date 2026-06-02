@@ -75,8 +75,24 @@ func handleGetBlobs(backend Backend, msg Decoder, peer *Peer) error {
 
 func handleBlobs(backend Backend, msg Decoder, peer *Peer) error {
 	ann := new(BlobsPacket)
-	if err := msg.Decode(ann); err != nil {
-		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	switch peer.version {
+	case BEACON1:
+		ann1 := new(BlobsPacket1)
+		if err := msg.Decode(ann1); err != nil {
+			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+		}
+		ann.RequestId = ann1.RequestId
+		bss := make(types.BlobSidecars, 0, len(ann1.Sidecars))
+		for _, sc := range ann1.Sidecars {
+			bss = append(bss, types.NewBlobTxSidecar(types.BlobSidecarVersion0, sc.Blobs, sc.Commitments, sc.Proofs))
+		}
+		ann.Sidecars = bss
+	case BEACON2:
+		if err := msg.Decode(ann); err != nil {
+			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+		}
+	default:
+		return fmt.Errorf("unknown beacon protocol version: %v", peer.version)
 	}
 
 	err := peer.dispatchResponse(&Response{
@@ -101,8 +117,28 @@ func handleGetBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
 
 func handleBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
 	res := new(BatchBlobsPacket)
-	if err := msg.Decode(res); err != nil {
-		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	switch peer.version {
+	case BEACON1:
+		res1 := new(BatchBlobsPacket1)
+		if err := msg.Decode(res1); err != nil {
+			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+		}
+		bbr := make(BatchBlobsResponse, 0, len(res1.BatchBlobsResponse1))
+		for _, scs1 := range res1.BatchBlobsResponse1 {
+			scs := make(types.BlobSidecars, 0, len(scs1))
+			for _, sc1 := range scs1 {
+				scs = append(scs, types.NewBlobTxSidecar(types.BlobSidecarVersion0, sc1.Blobs, sc1.Commitments, sc1.Proofs))
+			}
+			bbr = append(bbr, scs)
+		}
+		res.RequestId = res1.RequestId
+		res.BatchBlobsResponse = bbr
+	case BEACON2:
+		if err := msg.Decode(res); err != nil {
+			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+		}
+	default:
+		return fmt.Errorf("unknown beacon protocol version: %v", peer.version)
 	}
 
 	err := peer.dispatchResponse(&Response{
