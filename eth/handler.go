@@ -342,6 +342,17 @@ func (h *handler) runBeaconPeer(peer *beaconproto.Peer, handler beaconproto.Hand
 	}
 	defer h.unregisterBeacon(peer.ID())
 
+	// Send a notification to the beacon synchronizer, to enable a sync
+	// without waiting for the first head announcement
+	if peer.Version() >= beaconproto.BEACON2 {
+		head, td, number := peer.Head()
+		localHead := h.chain.CurrentHeader()
+		if td.Cmp(h.chain.GetTd(localHead.Hash(), localHead.Number.Uint64())) > 0 {
+			// Mock a block announcement if necessary.
+			h.beacon.NotifyBlockAnnon(peer.ID(), head, number, time.Now())
+		}
+	}
+
 	return handler(peer)
 }
 
