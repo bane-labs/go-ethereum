@@ -237,7 +237,11 @@ func (w *worker) requestWork(timestamp uint64) {
 		h := types.CalcRequestsHash(payload.Requests)
 		requestsHash = &h
 	}
-	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, &types.EmptyRootHash, requestsHash)
+	var beaconRoot *common.Hash
+	if fork := w.chain.Config().LatestFork(timestamp); fork >= forks.Cancun {
+		beaconRoot = &types.EmptyRootHash
+	}
+	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, beaconRoot, requestsHash)
 	if err != nil {
 		log.Error("Failed to rebuild full block", "err", err)
 		return
@@ -335,8 +339,10 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 	case forks.Paris:
 		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
 		attributes.Withdrawals = nil
+		attributes.BeaconRoot = nil
 	case forks.Shanghai:
 		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
+		attributes.BeaconRoot = nil
 	case forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
 		forkChoiceMethod = "engine_forkchoiceUpdatedV3"
 	default:
@@ -364,7 +370,7 @@ func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloa
 	case engine.PayloadV1, engine.PayloadV2:
 		getPayloadMethod = "engine_getPayloadV2"
 	case engine.PayloadV3:
-		getPayloadMethod = "engine_getPayloadV4"
+		getPayloadMethod = "engine_getPayloadV5"
 	default:
 		return engine.ExecutionPayloadEnvelope{}, fmt.Errorf("version %v is not supported for engine_getPayload", payloadID.Version())
 	}
@@ -389,9 +395,21 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 	default:
 		return engine.PayloadStatusV1{}, fmt.Errorf("fork %s is not supported for engine_getPayload", w.chain.Config().LatestFork(timestamp).String())
 	}
-	err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, requestsHash)
-	if err != nil {
-		return engine.PayloadStatusV1{}, err
+	if newPayloadMethod == "engine_newPayloadV2" {
+		err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload)
+		if err != nil {
+			return engine.PayloadStatusV1{}, err
+		}
+	} else if newPayloadMethod == "engine_newPayloadV3" {
+		err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot)
+		if err != nil {
+			return engine.PayloadStatusV1{}, err
+		}
+	} else {
+		err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, requestsHash)
+		if err != nil {
+			return engine.PayloadStatusV1{}, err
+		}
 	}
 	return status, nil
 }
