@@ -186,6 +186,7 @@ func (d *Downloader) beaconSync(mode SyncMode, head *types.Header, final *types.
 	if err := d.skeleton.Sync(head, final, force); err != nil {
 		return err
 	}
+	d.syncing.Store(true)
 	return nil
 }
 

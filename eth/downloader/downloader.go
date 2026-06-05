@@ -122,6 +122,8 @@ type Downloader struct {
 	committed     atomic.Bool
 	ancientLimit  uint64 // The maximum block number which can be regarded as ancient data.
 
+	syncing atomic.Bool // Whether the downloader is currently syncing.
+
 	// The cutoff block number and hash before which chain segments (bodies
 	// and receipts) are skipped during synchronization. 0 means the entire
 	// chain segment is aimed for synchronization.
@@ -350,7 +352,10 @@ func (d *Downloader) synchronise(mode SyncMode, beaconPing chan struct{}) error 
 	if !d.synchronising.CompareAndSwap(false, true) {
 		return errBusy
 	}
-	defer d.synchronising.Store(false)
+	defer func() {
+		d.syncing.Store(false)
+		d.synchronising.Store(false)
+	}()
 
 	// Post a user notification of the sync (only once per session)
 	if d.notified.CompareAndSwap(false, true) {
@@ -665,6 +670,11 @@ func (d *Downloader) Terminate() {
 
 	// Cancel any pending download requests
 	d.Cancel()
+}
+
+// Syncing returns whether the downloader is currently running a synchronisation.
+func (d *Downloader) Syncing() bool {
+	return d.syncing.Load()
 }
 
 // fetchBodies iteratively downloads the scheduled block bodies, taking any
