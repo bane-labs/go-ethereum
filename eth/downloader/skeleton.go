@@ -309,9 +309,6 @@ func (s *skeleton) startup() {
 				default:
 					// Sync either successfully terminated or failed with an unhandled
 					// error. Abort and wait until Geth requests a termination.
-					s.syncing.Store(false)
-					// The loop is dead here and doesn't return, so a manual status update
-					// is needed before reaching this line.
 					errc := <-s.terminate
 					errc <- err
 					return
@@ -380,8 +377,6 @@ func (s *skeleton) sync(head *types.Header) (*types.Header, error) {
 		rawdb.HasBody(s.db, s.progress.Subchains[0].Next, s.scratchHead) &&
 		rawdb.HasReceipts(s.db, s.progress.Subchains[0].Next, s.scratchHead)
 	if linked {
-		// Need to set syncing to false, before the sync loops in waiting.
-		s.syncing.Store(false)
 		s.filler.resume()
 	}
 	defer func() {
