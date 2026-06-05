@@ -208,7 +208,7 @@ type skeleton struct {
 	drop  peerDropFn                 // Drops a peer for misbehaving
 
 	progress *skeletonProgress // Sync progress tracker for resumption and metrics
-	syncing  atomic.Bool       // Whether the skeleton is currently running the initial sync
+	syncing  atomic.Bool       // Whether the skeleton is currently syncing or waiting for a head
 	started  time.Time         // Timestamp when the skeleton syncer was created
 	logged   time.Time         // Timestamp when progress was last logged to the user
 	pulled   uint64            // Number of headers downloaded in this run
@@ -287,7 +287,6 @@ func (s *skeleton) startup() {
 					// segment. Tear down the loop and restart it so, it can properly
 					// notify the backfiller. Don't account a new head.
 					head = nil
-					s.syncing.Store(false)
 
 				case err == errSyncMerged:
 					// Subchains were merged, we just need to reinit the internal
