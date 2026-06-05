@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
-	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -208,7 +207,6 @@ type skeleton struct {
 	drop  peerDropFn                 // Drops a peer for misbehaving
 
 	progress *skeletonProgress // Sync progress tracker for resumption and metrics
-	syncing  atomic.Bool       // Whether the skeleton is currently syncing or waiting for a head
 	started  time.Time         // Timestamp when the skeleton syncer was created
 	logged   time.Time         // Timestamp when progress was last logged to the user
 	pulled   uint64            // Number of headers downloaded in this run
@@ -252,7 +250,6 @@ func (s *skeleton) startup() {
 	// Close a notification channel so anyone sending us events will know if the
 	// sync loop was torn down for good.
 	defer close(s.terminated)
-	defer s.syncing.Store(false)
 
 	// Wait for startup or teardown. This wait might loop a few times if a beacon
 	// client requests sync head extensions, but not forced reorgs (i.e. they are
@@ -274,7 +271,6 @@ func (s *skeleton) startup() {
 			event.errc <- nil // forced head accepted for startup
 			head := event.header
 			s.started = time.Now()
-			s.syncing.Store(true)
 
 			for {
 				// If the sync cycle terminated or was terminated, propagate up when
@@ -1262,9 +1258,4 @@ func (s *skeleton) Bounds() (head *types.Header, tail *types.Header, final *type
 // subsequent calls might return headers from different chains.
 func (s *skeleton) Header(number uint64) *types.Header {
 	return rawdb.ReadSkeletonHeader(s.db, number)
-}
-
-// Syncing returns whether the skeleton sync is activated by a head event.
-func (s *skeleton) Syncing() bool {
-	return s.syncing.Load()
 }
