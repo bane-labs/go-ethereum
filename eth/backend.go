@@ -454,6 +454,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.handler.connectBeacon(eth.beacon)
 	if bft != nil {
 		syncing := func() bool {
+			log.Debug("Syncing status", "beacon", eth.beacon.Syncing(), "eth", eth.Syncing())
 			return eth.beacon.Syncing() || eth.Syncing()
 		}
 		// Connect BFT to beacon protocol
