@@ -14,6 +14,12 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
+// ShouldPreserveFn is the type of function to determine whether a block should be preserved in reorg.
+type ShouldPreserveFn func(header *types.Header) bool
+
+// TransactionFilterFn is the type of function to filter transactions before they are sent to subscribers.
+type TransactionFilterFn func(txs []*types.Transaction) []*types.Transaction
+
 // Backend wraps all methods required for mining. Only full node is capable
 // to offer all the functions here.
 type Backend interface {
@@ -34,20 +40,24 @@ type Miner struct {
 
 	worker      *worker
 	syncingFeed event.Feed              // Event feed for syncing status changes, a CL notifier as proxy
+	txFeed      event.Feed              // Event feed for new transactions delivered through CL
 	scope       event.SubscriptionScope // Subscription scope for miner events
+
+	txFilter TransactionFilterFn // Optional filter for transactions subscription
 
 	wg sync.WaitGroup
 }
 
 func New(eth Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address,
-	shouldPreserve func(header *types.Header) bool) *Miner {
+	shouldPreserve ShouldPreserveFn, txFilter TransactionFilterFn) *Miner {
 	miner := &Miner{
-		mux:     mux,
-		backend: eth,
-		exitCh:  make(chan struct{}),
-		startCh: make(chan struct{}),
-		stopCh:  make(chan struct{}),
-		worker:  newWorker(eth, rpc, coinbase, shouldPreserve),
+		mux:      mux,
+		backend:  eth,
+		exitCh:   make(chan struct{}),
+		startCh:  make(chan struct{}),
+		stopCh:   make(chan struct{}),
+		worker:   newWorker(eth, rpc, coinbase, shouldPreserve),
+		txFilter: txFilter,
 	}
 	miner.wg.Add(1)
 	go miner.update()
@@ -68,6 +78,26 @@ func (miner *Miner) RequestNewPayload() error {
 	}
 	miner.worker.startCh <- struct{}{}
 	return nil
+}
+
+// GetTransaction tries to find a transaction from the latest payload that the
+// miner has seen.
+func (miner *Miner) GetTransaction(hash common.Hash) *types.Transaction {
+	return miner.worker.getTransaction(hash)
+}
+
+// NotifyTransactions notifies the miner about transactions seen in the beacon protocol.
+func (miner *Miner) NotifyTransactions(txs []*types.Transaction) {
+	if miner.txFilter != nil {
+		txs = miner.txFilter(txs)
+	}
+	if len(txs) == 0 {
+		return
+	}
+	for _, tx := range txs {
+		miner.txFeed.Send(tx)
+	}
+	miner.worker.cacheTransactions(txs)
 }
 
 // update keeps track of the downloader events. Please be aware that this is a one shot type of update loop.
@@ -164,4 +194,9 @@ func (miner *Miner) Mining() bool {
 // SubscribeSyncingEvents subscribes to syncing status changes, should only be used in CL.
 func (miner *Miner) SubscribeSyncingEvents(ch chan<- bool) event.Subscription {
 	return miner.scope.Track(miner.syncingFeed.Subscribe(ch))
+}
+
+// SubscribeTransactionEvents subscribes to transaction events from the miner, should only be used in CL.
+func (miner *Miner) SubscribeTransactionEvents(ch chan<- *types.Transaction) event.Subscription {
+	return miner.scope.Track(miner.txFeed.Subscribe(ch))
 }

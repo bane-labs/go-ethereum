@@ -242,7 +242,7 @@ func createMiner(t *testing.T) (*Miner, *event.TypeMux, func(skipMiner bool)) {
 	shouldPreserve := func(_ *types.Header) bool {
 		return false
 	}
-	miner := New(backend, &rpc.Client{}, mux, etherbase, shouldPreserve)
+	miner := New(backend, &rpc.Client{}, mux, etherbase, shouldPreserve, nil)
 	cleanup := func(skipMiner bool) {
 		bc.Stop()
 		engine.Close()

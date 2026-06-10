@@ -2,6 +2,7 @@ package eth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"math/rand"
@@ -76,6 +77,12 @@ func (h *beaconHandler) Handle(peer *beacon.Peer, packet beacon.Packet) error {
 
 	case *beacon.GetBatchBlobsPacket:
 		return h.handleGetBatchBlobsPacket(peer, packet)
+
+	case *beacon.GetTransactionsPacket:
+		return h.handleGetTransactionsPacket(peer, packet)
+
+	case *beacon.TransactionsPacket:
+		return h.handleTransactions(peer, packet)
 
 	default:
 		return fmt.Errorf("unexpected beacon packet type: %T", packet)
@@ -373,4 +380,59 @@ func (h *beaconHandler) selectBlobTransferPeers(excludePeer *string) []*beaconPe
 		transfer = peers[:min(k, len(peers))]
 	}
 	return transfer
+}
+
+// handleGetTransactionsPacket is CL-level search for transactions by hash. It extends
+// the EL transaction retrieval by taking pending payloads into consideration. This is
+// useful for BFT consensus to find missing transactions during block processing.
+func (h *beaconHandler) handleGetTransactionsPacket(peer *beacon.Peer, packet *beacon.GetTransactionsPacket) error {
+	// Gather transactions until the fetch or network limits is reached
+	var (
+		bytes  int
+		hashes []common.Hash
+		txs    []rlp.RawValue
+	)
+	for _, hash := range packet.GetTransactionsRequest {
+		if bytes >= softResponseLimit {
+			break
+		}
+		// First try to find it from the EL txpool.
+		tx := h.txpool.Get(hash)
+		if tx == nil {
+			// Then try to find the transaction from the CL.
+			tx = h.beacon.GetTransaction(hash)
+		}
+		// If not found, skip it.
+		if tx == nil {
+			continue
+		}
+		// Encode the full transaction, even though the blob sidecar is large.
+		encoded, err := rlp.EncodeToBytes(tx)
+		if err != nil {
+			log.Error("Failed to encoded transaction in beacon handler", "hash", hash, "err", err)
+			return err
+		}
+		hashes = append(hashes, hash)
+		txs = append(txs, encoded)
+		bytes += len(encoded)
+	}
+	return peer.ReplyTransactionsRLP(packet.RequestId, hashes, txs)
+}
+
+func (h *beaconHandler) handleTransactions(peer *beacon.Peer, packet *beacon.TransactionsPacket) error {
+	// If we receive any blob transactions missing sidecars, or with
+	// sidecars that don't correspond to the versioned hashes reported
+	// in the header, disconnect from the sending peer.
+	for _, tx := range packet.TransactionsResponse {
+		if tx.Type() == types.BlobTxType {
+			if tx.BlobTxSidecar() == nil {
+				return errors.New("received sidecar-less blob transaction")
+			}
+			if err := tx.BlobTxSidecar().ValidateBlobCommitmentHashes(tx.BlobHashes()); err != nil {
+				return err
+			}
+		}
+	}
+	h.beacon.NotifyTransactions(packet.TransactionsResponse)
+	return nil
 }

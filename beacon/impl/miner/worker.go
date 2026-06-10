@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -26,6 +27,9 @@ const (
 
 	// chainHeadChanSize is the size of channel listening to ChainHeadEvent.
 	chainHeadChanSize = 10
+
+	// transactionCacheSize is the max size of pending transaction cache.
+	transactionCacheSize = 512
 )
 
 // newWorkReq represents a request for new sealing work submitting.
@@ -71,8 +75,12 @@ type worker struct {
 	syncing atomic.Bool // The indicator whether the node is still syncing.
 
 	// Mutex to prevent parallel fork request.
-	forkMu           sync.Mutex
-	pendingPayloadID *engine.PayloadID
+	forkMu                 sync.RWMutex
+	pendingPayloadID       *engine.PayloadID
+	pendingTransactions    types.Transactions
+	pendingVersionedHashes []common.Hash
+	isCellProofEnabled     bool
+	pendingBlobs           *engine.BlobsBundle
 }
 
 func newWorker(eth Backend, rpc *rpc.Client, feeRecipient common.Address, shouldPreserve func(header *types.Header) bool) *worker {
@@ -253,6 +261,11 @@ func (w *worker) requestWork(timestamp uint64) {
 		log.Error("Failed to commit payload", "err", err)
 		return
 	}
+	// Cache the new block's transactions for potential future use, e.g. for BFT missing transaction request.
+	w.pendingTransactions = block.Transactions()
+	w.pendingVersionedHashes = versionedHashes
+	w.isCellProofEnabled = w.chain.Config().IsOsaka(block.Number(), block.Time())
+	w.pendingBlobs = payload.BlobsBundle
 }
 
 // commit commits new work to consensus engine.
@@ -267,6 +280,120 @@ func (w *worker) commit(block *types.Block, versionedHashes []common.Hash, reque
 		log.Info("Worker has exited")
 	}
 	return nil
+}
+
+// getTransaction tries to find a transaction from the pending transaction cache.
+func (w *worker) getTransaction(hash common.Hash) *types.Transaction {
+	// The pending payload is also protected by the fork mutex, here we borrow it.
+	w.forkMu.RLock()
+	defer w.forkMu.RUnlock()
+
+	for _, tx := range w.pendingTransactions {
+		if tx.Hash() == hash {
+			if tx.Type() == types.BlobTxType {
+				// For blob transaction, we need to rebuild the blob sidecar.
+				blobHashes := tx.BlobHashes()
+				blobs := make([]kzg4844.Blob, len(blobHashes))
+				commitments := make([]kzg4844.Commitment, len(blobHashes))
+				var version byte
+				var proofs []kzg4844.Proof
+				// Build a map from versioned hash to index for O(1) lookups.
+				hashToIndex := make(map[common.Hash]int, len(w.pendingVersionedHashes))
+				for idx, vHash := range w.pendingVersionedHashes {
+					hashToIndex[vHash] = idx
+				}
+				// The sidecar has different format based on its version.
+				if w.isCellProofEnabled {
+					version = types.BlobSidecarVersion1
+					proofs = make([]kzg4844.Proof, len(blobHashes)*kzg4844.CellProofsPerBlob)
+					for i, blobHash := range blobHashes {
+						m, exists := hashToIndex[blobHash]
+						if exists {
+							copy(blobs[i][:], w.pendingBlobs.Blobs[m])
+							copy(commitments[i][:], w.pendingBlobs.Commitments[m])
+							for n := range kzg4844.CellProofsPerBlob {
+								copy(proofs[i*kzg4844.CellProofsPerBlob+n][:], w.pendingBlobs.Proofs[m*kzg4844.CellProofsPerBlob+n])
+							}
+						} else {
+							log.Error("Blob is missing in the cache", "txhash", hash, "blobhash", blobHash)
+							return nil
+						}
+					}
+				} else {
+					version = types.BlobSidecarVersion0
+					proofs = make([]kzg4844.Proof, len(blobHashes))
+					for i, blobHash := range blobHashes {
+						m, exists := hashToIndex[blobHash]
+						if exists {
+							copy(blobs[i][:], w.pendingBlobs.Blobs[m])
+							copy(commitments[i][:], w.pendingBlobs.Commitments[m])
+							copy(proofs[i][:], w.pendingBlobs.Proofs[m])
+						} else {
+							log.Error("Blob is missing in the cache", "txhash", hash, "blobhash", blobHash)
+							return nil
+						}
+					}
+				}
+				return tx.WithBlobTxSidecar(types.NewBlobTxSidecar(version, blobs, commitments, proofs))
+			} else {
+				return tx
+			}
+		}
+	}
+	return nil
+}
+
+// cacheTransactions adds transactions to the pending transaction cache, so mark as
+// seen during this round of consensus.
+func (w *worker) cacheTransactions(txs []*types.Transaction) {
+	w.forkMu.Lock()
+	defer w.forkMu.Unlock()
+	// Build a map from versioned hash to index for O(1) lookups.
+	hashToIndex := make(map[common.Hash]int, len(w.pendingTransactions))
+	for idx, tx := range w.pendingTransactions {
+		hashToIndex[tx.Hash()] = idx
+	}
+	// If the transaction is already in the cache, skip it.
+	for _, tx := range txs {
+		if _, exists := hashToIndex[tx.Hash()]; exists {
+			continue
+		}
+		// Ignore remote transaction if the cache is full.
+		if len(w.pendingTransactions) >= transactionCacheSize {
+			return
+		}
+		// Ignore blob transaction if the sidecar is invalid.
+		if tx.Type() == types.BlobTxType {
+			sidecar := tx.BlobTxSidecar()
+			if sidecar == nil {
+				continue
+			}
+			switch tx.BlobTxSidecar().Version {
+			case types.BlobSidecarVersion0:
+				if w.isCellProofEnabled {
+					continue
+				}
+			case types.BlobSidecarVersion1:
+				if !w.isCellProofEnabled {
+					continue
+				}
+			default:
+				continue
+			}
+			if err := core.ValidateBlobSidecar(sidecar, tx.BlobHashes()); err != nil {
+				continue
+			}
+			w.pendingTransactions = append(w.pendingTransactions, tx.WithoutBlobTxSidecar())
+			w.pendingVersionedHashes = append(w.pendingVersionedHashes, tx.BlobHashes()...)
+			for i := range sidecar.Blobs {
+				w.pendingBlobs.Blobs = append(w.pendingBlobs.Blobs, sidecar.Blobs[i][:])
+				w.pendingBlobs.Commitments = append(w.pendingBlobs.Commitments, sidecar.Commitments[i][:])
+			}
+			for _, proof := range sidecar.Proofs {
+				w.pendingBlobs.Proofs = append(w.pendingBlobs.Proofs, proof[:])
+			}
+		}
+	}
 }
 
 // feedback sends signed block back to EL for execution.

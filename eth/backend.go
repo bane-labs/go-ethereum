@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/antimev"
 	beaconImpl "github.com/ethereum/go-ethereum/beacon/impl"
+	beaconMiner "github.com/ethereum/go-ethereum/beacon/impl/miner"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -369,7 +370,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 	blobStorage.WarmCache()
-	eth.filesystem, err = core.NewFileSystem(eth.blockchain, eth.blobTxPool, blobStorage)
+	eth.filesystem, err = core.NewFileSystem(eth.blockchain,
+		func(hash common.Hash) *types.Transaction {
+			return eth.blobTxPool.Get(hash)
+		}, blobStorage)
 	if err != nil {
 		return nil, err
 	}
@@ -430,7 +434,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		bft.WithEthAPIBackend(eth.APIBackend)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
 		bft.WithTxPool(eth.TxPool())
-		bft.WithRequestTxs(eth.handler.BroadcastRequestTxs)
+		bft.WithRequestTxs(eth.handler.RequestTransactions)
 		err := bft.WithLogLevel(config.DBFTLogLevel)
 		if err != nil {
 			return nil, err
@@ -449,16 +453,27 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	stack.RegisterLifecycle(eth)
 
 	// Set up local beacon client
+	var txCacheFilter beaconMiner.TransactionFilterFn
+	if bft != nil {
+		txCacheFilter = bft.FilterMissingTransaction
+	}
 	eth.internalRPC = stack.Attach()
-	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.eventMux, eth.feeRecipient, eth.shouldPreserve)
+	eth.beacon = beaconImpl.New(eth, eth.internalRPC, eth.eventMux, eth.feeRecipient,
+		eth.shouldPreserve, txCacheFilter)
 	eth.handler.connectBeacon(eth.beacon)
+	eth.filesystem.SetGetTransactionFn(func(hash common.Hash) *types.Transaction {
+		if tx := eth.blobTxPool.Get(hash); tx != nil {
+			return tx
+		}
+		return eth.beacon.GetTransaction(hash)
+	})
 	if bft != nil {
 		syncing := func() bool {
 			log.Debug("Syncing status", "beacon", eth.beacon.Syncing(), "eth", eth.Syncing())
 			return eth.beacon.Syncing() || eth.Syncing()
 		}
 		// Connect BFT to beacon protocol
-		bft.WithBeacon(eth.beacon.BlockBroadcaster(), eth.beacon.RefreshPendingPayload, eth.beacon.SubscribeSyncingEvents, syncing)
+		bft.WithBeacon(eth.beacon, syncing)
 	}
 
 	// Successful startup; push a marker and check previous unclean shutdowns.

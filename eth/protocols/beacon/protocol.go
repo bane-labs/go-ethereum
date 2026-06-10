@@ -26,20 +26,22 @@ var ProtocolVersions = []uint{BEACON1, BEACON2}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{BEACON1: 8, BEACON2: 8}
+var protocolLengths = map[uint]uint64{BEACON1: 8, BEACON2: 10}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
 
 const (
-	StatusMsg         = 0x00 // Status message
-	NewBlockHashesMsg = 0x01 // New block hashes message
-	NewBlockMsg       = 0x02 // New block message
-	NewBlobsRootMsg   = 0x03 // New blobs root message
-	GetBlobsMsg       = 0x04 // Get blobs message
-	BlobsMsg          = 0x05 // Blobs message
-	GetBatchBlobsMsg  = 0x06 // Get batch blobs message
-	BatchBlobsMsg     = 0x07 // Batch blobs message
+	StatusMsg          = 0x00 // Status message
+	NewBlockHashesMsg  = 0x01 // New block hashes message
+	NewBlockMsg        = 0x02 // New block message
+	NewBlobsRootMsg    = 0x03 // New blobs root message
+	GetBlobsMsg        = 0x04 // Get blobs message
+	BlobsMsg           = 0x05 // Blobs message
+	GetBatchBlobsMsg   = 0x06 // Get batch blobs message
+	BatchBlobsMsg      = 0x07 // Batch blobs message
+	GetTransactionsMsg = 0x08 // Get transactions message
+	TransactionsMsg    = 0x09 // Transactions message
 )
 
 var (
@@ -178,6 +180,35 @@ type BatchBlobsRLPPacket struct {
 	BatchBlobsRLPResponse
 }
 
+// GetTransactionsRequest represents a transaction query.
+type GetTransactionsRequest []common.Hash
+
+// GetTransactionsPacket represents a transaction query with request ID wrapping.
+type GetTransactionsPacket struct {
+	RequestId uint64
+	GetTransactionsRequest
+}
+
+// TransactionsResponse is the network packet for transaction distribution.
+type TransactionsResponse []*types.Transaction
+
+// TransactionsPacket is the network packet for transaction distribution
+// with request ID wrapping.
+type TransactionsPacket struct {
+	RequestId uint64
+	TransactionsResponse
+}
+
+// TransactionsRLPResponse is the network packet for transaction distribution, used
+// in the cases we already have them in rlp-encoded form
+type TransactionsRLPResponse []rlp.RawValue
+
+// TransactionsRLPPacket is TransactionsRLPResponse with request ID wrapping.
+type TransactionsRLPPacket struct {
+	RequestId uint64
+	TransactionsRLPResponse
+}
+
 func (*StatusPacket1) Name() string { return "Status" }
 func (*StatusPacket1) Kind() byte   { return StatusMsg }
 
@@ -210,3 +241,9 @@ func (*BatchBlobsPacket1) Kind() byte   { return BatchBlobsMsg }
 
 func (*BatchBlobsPacket) Name() string { return "BatchBlobs" }
 func (*BatchBlobsPacket) Kind() byte   { return BatchBlobsMsg }
+
+func (*GetTransactionsRequest) Name() string { return "GetTransactions" }
+func (*GetTransactionsRequest) Kind() byte   { return GetTransactionsMsg }
+
+func (*TransactionsResponse) Name() string { return "Transactions" }
+func (*TransactionsResponse) Kind() byte   { return TransactionsMsg }

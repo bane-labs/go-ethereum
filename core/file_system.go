@@ -13,7 +13,8 @@ import (
 )
 
 var (
-	errBlobTxNotFound       = fmt.Errorf("blob tx not found in blob pool")
+	errBlobTxNotFound       = fmt.Errorf("blob tx not found")
+	errSidecarLessBlobTx    = fmt.Errorf("sidecar-less blob transaction")
 	errUnknownBlock         = fmt.Errorf("unknown block")
 	errBlobNumberMismatch   = fmt.Errorf("blob number mismatch")
 	errNoBlobsInBlock       = fmt.Errorf("no blobs in block")
@@ -21,27 +22,32 @@ var (
 	errTooManyBlobsInBlock  = fmt.Errorf("too many blobs in block")
 )
 
-type BlobPool interface {
-	// Get returns a transaction if it is contained in the pool, or nil otherwise.
-	Get(hash common.Hash) *types.Transaction
-}
+// GetTransactionFn returns a transaction if it is contained in the pool, or nil otherwise.
+type GetTransactionFn func(hash common.Hash) *types.Transaction
 
 // FileSystem manages blob sidecars associated with blocks.
 type FileSystem struct {
-	bc          *BlockChain
-	blobPool    BlobPool
-	blobStorage *filesystem.BlobStorage
+	bc             *BlockChain
+	getTransaction GetTransactionFn
+	blobStorage    *filesystem.BlobStorage
 
 	annoBlobFeed event.Feed
 }
 
-func NewFileSystem(bc *BlockChain, blobPool BlobPool, blobStorage *filesystem.BlobStorage) (*FileSystem, error) {
+func NewFileSystem(bc *BlockChain, getTransaction GetTransactionFn, blobStorage *filesystem.BlobStorage) (*FileSystem, error) {
 	fs := &FileSystem{
-		bc:          bc,
-		blobPool:    blobPool,
-		blobStorage: blobStorage,
+		bc:             bc,
+		getTransaction: getTransaction,
+		blobStorage:    blobStorage,
 	}
 	return fs, nil
+}
+
+// SetGetTransactionFn sets the function to retrieve transactions, which is used
+// to find blob transactions in the blob pool or beacon pending pool when committing
+// sealed block hashes.
+func (fs *FileSystem) SetGetTransactionFn(getTransaction GetTransactionFn) {
+	fs.getTransaction = getTransaction
 }
 
 // CommitSealBlockHash commits the sealed block hash associated with committed blobs.
@@ -54,10 +60,14 @@ func (fs *FileSystem) CommitSealBlockHash(block *types.Block) error {
 		if tx.Type() != types.BlobTxType {
 			continue
 		}
-		originTx := fs.blobPool.Get(tx.Hash())
+		originTx := fs.getTransaction(tx.Hash())
 		if originTx == nil {
-			log.Debug("blob tx not found in blob pool", "tx_hash", tx.Hash())
+			log.Debug("blob tx not found", "tx_hash", tx.Hash())
 			return errBlobTxNotFound
+		}
+		if originTx.BlobTxSidecar() == nil {
+			log.Error("sidecar-less blob transaction", "tx_hash", tx.Hash())
+			return errSidecarLessBlobTx
 		}
 		blobs = append(blobs, originTx.BlobTxSidecar())
 	}
