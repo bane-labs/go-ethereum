@@ -2,6 +2,50 @@
 
 This document outlines major changes between releases.
 
+## 0.6.0 "Rarefaction" (10 June 2026)
+
+This version introduces the support for Ethereum Osaka upgrade and Geth v1.16.9.
+Since this repository starts from and still is an Execution Layer (EL), this
+upgrade is a part of Fusaka, with EIP-4844 implemented and upgraded.
+
+This version is fully compatible with Neo X v0.5.3 and does not require node
+resynchronization, but there's a protocol migration of the P2P network. The
+support for old protocols will be removed in future versions, So please perform
+this upgrade as soon as possible.
+
+Follow the instructions below to upgrade your node from v0.5.3 to v0.6.0:
+
+1. Download new binary and new genesis configuration file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. For TestNet nodes only: don't remove DB; reinitialize DB using new binary and
+   new genesis configuration file with the following command:
+   ```
+   ./geth init --datadir ./node-datadir ./config/genesis.json
+   ```
+5. Start the node.
+
+Behaviour changes:
+ * new BEACON/2 protocol for better transaction, block and blob syncing (#595, #598, #615)
+ * `Osaka` fork is enabled at timestamp `1781500000` on TestNet (#626)
+
+Improvements:
+ * base Geth source code is updated to v1.16.9 (#582)
+ * upgrade the EL downloader to post-merge backfilling (#593, #601, #610, #612)
+ * implement light verification for CL beacon trust extension (#593, #622, #624)
+ * revert unused compatibility code (#596)
+ * improve the initial fetch height in sidecar fetcher (#598)
+ * refactor the check of synchronization status of the node (#606, #608, #614, #617)
+
+Bugs fixed:
+ * remove redundant artifact uploads from build workflow (#592)
+ * fix unexpected missing transaction CVs caused by replacement (#595)
+ * enforce hashDB for PrivNet state storage (#599)
+ * correctly enable blob synchronization as configured (#603)
+ * fix the RPC error return of under-policy-priced transactions (#619)
+ * fix missing dBFT error returns and seal hash computation (#620) 
+ * fix argument mismatch between CL miner and EL engine APIs (#625)
+
 ## 0.5.3 "Quenchation" (16 Mar 2026)
 
 This patch-release introduces several improvements and bug fixes for v0.5.2.
