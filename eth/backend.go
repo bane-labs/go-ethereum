@@ -407,6 +407,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		Sync:           config.SyncMode,
 		BloomCache:     uint64(cacheLimit),
 		RequiredBlocks: config.RequiredBlocks,
+		SnapV2:         config.SnapV2,
 		FileSystem:     eth.filesystem,
 		BlobSync:       stack.Config().BlobSync,
 	}); err != nil {
@@ -711,7 +712,7 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 	protos := beaconproto.MakeProtocols((*beaconHandler)(s.handler))
 	protos = append(protos, eth.MakeProtocols((*ethHandler)(s.handler), s.networkID, s.discmix)...)
 	if s.config.SnapshotCache > 0 {
-		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler))...)
+		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), s.config.SnapV2)...)
 	}
 	protos = append(protos, s.dbftSrv.MakeProtocols()...)
 	return protos
