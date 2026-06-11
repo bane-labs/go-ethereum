@@ -109,18 +109,16 @@ func (b *beaconLightSyncer) loop(start chan *types.Header) error {
 			if !ok {
 				return nil
 			}
-			if b.trustedHeader == nil || b.trustedHeader.Number.Uint64() < header.Number.Uint64() {
-				log.Info("Starting beacon light sync", "head", header.Number.Uint64())
-				// If the header is newer than the current trusted header, update the trusted header and start syncing
-				b.trustedHeader = header
-				b.startHead = header.Number.Uint64()
-				completed = false
-				cancel = make(chan struct{})
+			log.Info("Starting beacon light sync", "head", header.Number.Uint64())
+			// If the header is newer than the current trusted header, update the trusted header and start syncing
+			b.trustedHeader = header
+			b.startHead = header.Number.Uint64()
+			completed = false
+			cancel = make(chan struct{})
 
-				b.scratchSpace = make([]*beaconLightResponse, beaconSync.ScratchSpaceLen)
-				b.scratchOwners = make([]string, beaconSync.ScratchSpaceLen)
-				b.scratchHead = header.Number.Uint64()
-			}
+			b.scratchSpace = make([]*beaconLightResponse, beaconSync.ScratchSpaceLen)
+			b.scratchOwners = make([]string, beaconSync.ScratchSpaceLen)
+			b.scratchHead = header.Number.Uint64()
 		case req := <-b.requestFails:
 			b.revertRequest(req)
 
