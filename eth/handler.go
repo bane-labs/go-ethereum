@@ -142,6 +142,7 @@ type handlerConfig struct {
 	Sync           ethconfig.SyncMode     // Whether to snap or full sync
 	BloomCache     uint64                 // Megabytes to alloc for snap sync bloom
 	RequiredBlocks map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
+	SnapV2         bool                   // Whether to advertise and sync via the snap/2 protocol
 	FileSystem     FileSystem             // File system for blob sidecars
 	BlobSync       bool                   // Whether to sync blob sidecars
 }
@@ -202,7 +203,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		handlerStartCh: make(chan struct{}),
 	}
 	// Construct the downloader (long sync)
-	h.downloader = downloader.New(config.Database, config.Sync, h.chain, h.removePeer, h.enableSyncedFeatures)
+	h.downloader = downloader.New(config.Database, config.Sync, h.chain, h.removePeer, h.enableSyncedFeatures, config.SnapV2)
 
 	// If snap sync is requested but snapshots are disabled, fail loudly
 	if h.downloader.ConfigSyncMode() == ethconfig.SnapSync && (config.Chain.Snapshots() == nil && config.Chain.TrieDB().Scheme() == rawdb.HashScheme) {
@@ -377,7 +378,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		return err
 	}
 	if snap != nil {
-		if err := h.downloader.SnapSyncer.Register(snap); err != nil {
+		if err := h.downloader.RegisterSnapPeer(snap); err != nil {
 			peer.Log().Error("Failed to register peer in snap syncer", "err", err)
 			return err
 		}
@@ -520,7 +521,7 @@ func (h *handler) unregisterPeer(id string) {
 
 	// Remove the `snap` extension if it exists
 	if peer.snapExt != nil {
-		h.downloader.SnapSyncer.Unregister(id)
+		h.downloader.UnregisterSnapPeer(peer.snapExt.Peer)
 	}
 	h.downloader.UnregisterPeer(id)
 	h.txFetcher.Drop(id)
