@@ -469,8 +469,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	})
 	if bft != nil {
 		syncing := func() bool {
-			log.Debug("Syncing status", "beacon", eth.beacon.Syncing(), "eth", eth.Syncing())
-			return eth.beacon.Syncing() || eth.Syncing()
+			log.Debug("Syncing status", "initialized", eth.beacon.InitialSynced(), "beacon", eth.beacon.Syncing(), "eth", eth.Syncing())
+			// Ignore the beacon syncing status after the initial sync, to prevent blocking expected dBFT message handling.
+			return !eth.beacon.InitialSynced() || eth.Syncing()
 		}
 		// Connect BFT to beacon protocol
 		bft.WithBeacon(eth.beacon, syncing)

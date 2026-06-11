@@ -57,6 +57,7 @@ type Synchronizer struct {
 	pendingChains map[common.Hash]Choice // map of pending sync targets, key is the earliest header
 	lock          sync.RWMutex           // Mutex to protect the synchronizer state
 	syncing       atomic.Bool            // Whether the synchronizer is syncing
+	initialSynced atomic.Bool            // Whether the synchronizer has ever been synced
 	db            ethdb.KeyValueStore    // The database to store the latest trusted head for beacon sync
 
 	startCh chan *types.Header // Channel to signal the synchronizer to start
@@ -231,6 +232,7 @@ func (s *Synchronizer) BeaconExtend(verifiedHeaderHashes []common.Hash, finalize
 // the sync process again.
 func (s *Synchronizer) Stop() {
 	s.syncing.Store(false)
+	s.initialSynced.Store(true)
 }
 
 // Close closes the synchronizer.
@@ -241,6 +243,11 @@ func (s *Synchronizer) Close() {
 // Syncing returns whether the synchronizer is currently syncing.
 func (s *Synchronizer) Syncing() bool {
 	return s.syncing.Load()
+}
+
+// InitialSynced returns whether the synchronizer has ever been synced, which means a round of light sync has been completed.
+func (s *Synchronizer) InitialSynced() bool {
+	return s.initialSynced.Load()
 }
 
 // merge connects pending chain choices when a latest block changes.
