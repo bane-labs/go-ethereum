@@ -20,9 +20,8 @@ const (
 )
 
 var (
-	errInvalidLightHeader   = errors.New("invalid light header")
-	errTooManyPendingChains = errors.New("too many pending header chains")
-	errExtendStartMismatch  = errors.New("extend start mismatch")
+	errInvalidLightHeader  = errors.New("invalid light header")
+	errExtendStartMismatch = errors.New("extend start mismatch")
 )
 
 // LightVerifyFn is a callback type for light protocal verification.
@@ -173,9 +172,16 @@ func (s *Synchronizer) NotifyNewHead(block *types.Block) error {
 		}
 	}
 	// If not found, then try add.
-	// TODO: implement a better pruning mechanism.
 	if len(s.pendingChains) >= maxPendingChain {
-		return errTooManyPendingChains
+		var oldestIdx common.Hash
+		var oldestTime uint64
+		for h, choice := range s.pendingChains {
+			if oldestIdx == (common.Hash{}) || choice.latest.Time() < oldestTime {
+				oldestIdx = h
+				oldestTime = choice.latest.Time()
+			}
+		}
+		delete(s.pendingChains, oldestIdx)
 	}
 	// Suppose the new block is finalized, if a reorg happen, then there will be another new chain.
 	s.pendingChains[block.ParentHash()] = Choice{
