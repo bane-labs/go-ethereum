@@ -20,6 +20,7 @@
     "neoXAMEVBlock": 3749760,
     "cancunTime": 1763000000,
     "pragueTime": 1763000000,
+    "osakaTime": 1782700000,
     "blobSchedule": {
       "cancun": {
         "target": 3,
@@ -27,6 +28,11 @@
         "baseFeeUpdateFraction": 3338477
       },
       "prague": {
+        "target": 6,
+        "max": 9,
+        "baseFeeUpdateFraction": 5007716
+      },
+      "osaka": {
         "target": 6,
         "max": 9,
         "baseFeeUpdateFraction": 5007716
