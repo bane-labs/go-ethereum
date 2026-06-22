@@ -21,24 +21,7 @@ func ValidateBlobSidecar(sidecar *types.BlobTxSidecar, hashes []common.Hash) err
 	if err := sidecar.ValidateBlobCommitmentHashes(hashes); err != nil {
 		return err
 	}
-	// Fork-specific sidecar checks, including proof verification.
-	if sidecar.Version == types.BlobSidecarVersion1 {
-		return validateBlobSidecarOsaka(sidecar, hashes)
-	} else {
-		return validateBlobSidecarLegacy(sidecar, hashes)
-	}
-}
-
-func validateBlobSidecarLegacy(sidecar *types.BlobTxSidecar, hashes []common.Hash) error {
-	if len(sidecar.Proofs) != len(hashes) {
-		return fmt.Errorf("invalid number of %d blob proofs expected %d", len(sidecar.Proofs), len(hashes))
-	}
-	for i := range sidecar.Blobs {
-		if err := kzg4844.VerifyBlobProof(&sidecar.Blobs[i], sidecar.Commitments[i], sidecar.Proofs[i]); err != nil {
-			return fmt.Errorf("%w: invalid blob proof: %v", ErrKZGVerificationError, err)
-		}
-	}
-	return nil
+	return validateBlobSidecarOsaka(sidecar, hashes)
 }
 
 func validateBlobSidecarOsaka(sidecar *types.BlobTxSidecar, hashes []common.Hash) error {

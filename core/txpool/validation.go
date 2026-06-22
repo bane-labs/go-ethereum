@@ -155,7 +155,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
 	}
 	if tx.Type() == types.BlobTxType {
-		return validateBlobTx(tx, head, opts)
+		return validateBlobTx(tx)
 	}
 	if tx.Type() == types.SetCodeTxType {
 		if len(tx.SetCodeAuthorizations()) == 0 {
@@ -166,19 +166,14 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 }
 
 // validateBlobTx implements the blob-transaction specific validations.
-func validateBlobTx(tx *types.Transaction, head *types.Header, opts *ValidationOptions) error {
+func validateBlobTx(tx *types.Transaction) error {
 	sidecar := tx.BlobTxSidecar()
 	if sidecar == nil {
 		return errors.New("missing sidecar in blob transaction")
 	}
-	// Ensure the sidecar is constructed with the correct version, consistent
-	// with the current fork.
-	version := types.BlobSidecarVersion0
-	if opts.Config.IsOsaka(head.Number, head.Time) {
-		version = types.BlobSidecarVersion1
-	}
-	if sidecar.Version != version {
-		return fmt.Errorf("unexpected sidecar version, want: %d, got: %d", version, sidecar.Version)
+	// Ensure the sidecar is constructed with the correct version
+	if sidecar.Version != types.BlobSidecarVersion1 {
+		return fmt.Errorf("unexpected sidecar version, want: %d, got: %d", types.BlobSidecarVersion1, sidecar.Version)
 	}
 	// Ensure the blob fee cap satisfies the minimum blob gas price
 	if tx.BlobGasFeeCapIntCmp(blobTxMinBlobGasPrice) < 0 {
