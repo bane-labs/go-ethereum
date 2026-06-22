@@ -33,11 +33,11 @@ on:
 jobs:
   build_cli:
     name: Build geth and services
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{matrix.bin.os}}
     strategy:
       matrix:
-        os: [{ name: "[self-hosted, linux, x64]", bin-name: linux }]
-        arch: [amd64]
+        # Different OS/arch are not properly integrated with ./build/ci.go script (may be need to dig deeper), so use fully qualified base runner OS.
+        bin: [{os: ubuntu-latest, arch: linux-amd64}, {os: ubuntu-24.04-arm, arch: linux-arm64}]
 
     steps:
       - uses: actions/checkout@v4
@@ -49,47 +49,37 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
           cache: true
 
-      - name: Create GitHub App Token
-        uses: actions/create-github-app-token@v1.11.1
-        id: app-token
-        with:
-          app-id: ${{ vars.BANE_CROSS_REPO_ACCESS_APP_ID }}
-          private-key: ${{ secrets.BANE_CROSS_REPO_ACCESS_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-
-      - name: Setup netrc
-        uses: extractions/netrc@v2
-        with:
-          machine: github.com
-          username: ${{ steps.app-token.outputs.app-slug }}[bot]
-          password: ${{ steps.app-token.outputs.token }}
-
       - name: Build Alltools
-        run: make all
-        env:
-          GOPRIVATE: github.com/bane-labs
-          GOINSECURE: github.com/bane-labs
+        run: |
+          go env -w CGO_ENABLED=0
+          make all
+          ./build/bin/geth --version
 
       - name: Prepare Geth and Alltools target binaries
         run: |
           mkdir ./build/standalone
-          cp ./build/bin/geth ./build/standalone/geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}
-          mv ./build/bin/ ./build/alltools-${{ matrix.os.bin-name }}-${{ matrix.arch }}
+          cp ./build/bin/geth ./build/standalone/geth-${{ matrix.bin.arch }}
+          zip -r ./build/alltools-${{ matrix.bin.arch }}.zip ./build/bin 
 
       - name: Attach binaries to the release as assets
         if: ${{ github.event_name == 'release' }}
-        run: |
-          gh release upload ${{ github.event.release.tag_name }} ./build/standalone/geth-${{ matrix.os.bin-name }}-${{ matrix.arch }}
-          gh release upload ${{ github.event.release.tag_name }} ./build/alltools-${{ matrix.os.bin-name }}-${{ matrix.arch }}
+        run: gh release upload ${{ github.event.release.tag_name }} ./build/standalone/geth-${{ matrix.bin.arch }} ./build/alltools-${{ matrix.bin.arch }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attach genesis configuration files to the release as assets
+        if: ${{ github.event_name == 'release' && matrix.bin.arch == 'linux-amd64'}}
+        run: gh release upload ${{ github.event.release.tag_name }} ./config/genesis_mainnet.json ./config/genesis_testnet.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build_image:
     name: Build and push Docker image
-    runs-on: ubuntu-22.04
+    needs: build_cli
+    runs-on: ubuntu-latest
     if: false
 
     steps:
@@ -102,11 +92,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
           cache: true
 
       - name: Build geth
         run: |
+          go env -w CGO_ENABLED=0
           make geth
           ./build/bin/geth --version
 
