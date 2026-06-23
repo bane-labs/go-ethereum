@@ -1547,33 +1547,18 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	// existing local chain segments (reorg around the chain tip). The reorganized part
 	// will be included in the provided chain segment, and stale canonical markers will be
 	// silently rewritten. Therefore, no explicit reorg logic is needed.
-	writeLive := func(blockChain types.Blocks, receiptChain []rlp.RawValue) (int, error) {
-		var (
-			skipPresenceCheck = false
-			batch             = bc.db.NewBatch()
-		)
+	writeLive := func(blockChain types.Blocks, receiptChain []rlp.RawValue) error {
+		batch := bc.db.NewBatch()
 		ptd := bc.GetTd(blockChain[0].ParentHash(), blockChain[0].NumberU64()-1)
 		if ptd == nil {
-			return 0, consensus.ErrUnknownAncestor
+			return consensus.ErrUnknownAncestor
 		}
 		tdSum := new(big.Int).Set(ptd)
 		for i, block := range blockChain {
 			tdSum.Add(tdSum, block.Difficulty())
 			// Short circuit insertion if shutting down or processing failed
 			if bc.insertStopped() {
-				return 0, errInsertionInterrupted
-			}
-			if !skipPresenceCheck {
-				// Ignore if the entire data is already known
-				if bc.HasBlock(block.Hash(), block.NumberU64()) {
-					stats.ignored++
-					continue
-				} else {
-					// If block N is not present, neither are the later blocks.
-					// This should be true, but if we are mistaken, the shortcut
-					// here will only cause overwriting of some existing data
-					skipPresenceCheck = true
-				}
+				return errInsertionInterrupted
 			}
 			// Write all the data out into the database
 			rawdb.WriteTd(batch, block.Hash(), block.NumberU64(), tdSum)
@@ -1586,7 +1571,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			// except transaction indexes(will be created once sync is finished).
 			if batch.ValueSize() >= ethdb.IdealBatchSize {
 				if err := batch.Write(); err != nil {
-					return 0, err
+					return err
 				}
 				size += int64(batch.ValueSize())
 				batch.Reset()
@@ -1599,13 +1584,10 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		if batch.ValueSize() > 0 {
 			size += int64(batch.ValueSize())
 			if err := batch.Write(); err != nil {
-				return 0, err
+				return err
 			}
 		}
-		if err := updateHead(blockChain[len(blockChain)-1].Header()); err != nil {
-			return 0, err
-		}
-		return 0, nil
+		return updateHead(blockChain[len(blockChain)-1].Header())
 	}
 
 	// Split the supplied blocks into two groups, according to the
@@ -1622,11 +1604,11 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		}
 	}
 	if index != len(blockChain) {
-		if n, err := writeLive(blockChain[index:], receiptChain[index:]); err != nil {
+		if err := writeLive(blockChain[index:], receiptChain[index:]); err != nil {
 			if err == errInsertionInterrupted {
 				return 0, nil
 			}
-			return n, err
+			return 0, err
 		}
 	}
 	var (
