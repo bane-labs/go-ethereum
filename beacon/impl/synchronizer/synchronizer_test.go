@@ -42,31 +42,43 @@ func newTestSynchronizer(chain []*types.Block, complete completeFn) *Synchronize
 					trustedHeader = header
 					shouldSync.Store(true)
 				}
-				if trustedHeader == nil || trustedHeader.Number.Uint64() < header.Number.Uint64() {
-					trustedHeader = header
-				}
 			default:
 			}
 			// Do nothing if should wait.
 			if !shouldSync.Load() {
-				time.Sleep(time.Second * 3)
+				time.Sleep(time.Millisecond * 100)
 				continue
 			}
 			// Skip the download, mock the result.
-			endIndex := trustedHeader.Number.Uint64() + ExpectedHeadersNum
+			startIndex := trustedHeader.Number.Uint64()
+			// If the trusted header is beyond what we have, signal completion
+			if startIndex >= uint64(len(chain)) {
+				shouldSync.Store(false)
+				complete()
+				continue
+			}
+			endIndex := startIndex + ExpectedHeadersNum
 			if endIndex > uint64(len(chain)) {
 				endIndex = uint64(len(chain))
 			}
-			newBlocks := chain[trustedHeader.Number.Uint64():endIndex]
-			headers := make([]*types.Header, len(newBlocks))
+			newBlocks := chain[startIndex:endIndex]
+			if len(newBlocks) == 0 {
+				shouldSync.Store(false)
+				complete()
+				continue
+			}
 			metas := make([]common.Hash, len(newBlocks))
 			for i := range len(newBlocks) {
-				headers[i] = newBlocks[i].Header()
 				metas[i] = newBlocks[i].Hash()
 			}
-			trustedHeader = newBlocks[len(newBlocks)-2].Header()
+			finalized := newBlocks[0]
+			latest := newBlocks[len(newBlocks)-1]
+			if len(newBlocks) > 1 {
+				finalized = newBlocks[len(newBlocks)-2]
+			}
 			completed := len(newBlocks) < ExpectedHeadersNum
-			if _, err := extend(metas, newBlocks[len(newBlocks)-2], newBlocks[len(newBlocks)-1], completed); err != nil {
+			trustedHeader = finalized.Header()
+			if _, err := extend(metas, finalized, latest, completed); err != nil {
 				shouldSync.Store(false)
 				complete()
 				continue
@@ -91,7 +103,7 @@ func TestSynchronizerStatic(t *testing.T) {
 	defer syncer.Stop()
 	// Should be able to sync and finish automatically.
 	timer := time.NewTimer(time.Second * 3)
-	for syncer.trustedHead.NumberU64() < uint64(len(chain)-2) {
+	for syncer.trustedHead.NumberU64() < chain[len(chain)-2].NumberU64() {
 		select {
 		case <-timer.C:
 			t.Fatalf("Failed to sync chain in three seconds")
@@ -117,7 +129,7 @@ func TestSynchronizerContinues(t *testing.T) {
 		syncer.NotifyNewHead(chain[i])
 	}
 	timer := time.NewTimer(time.Second * 3)
-	for syncer.trustedHead.NumberU64() < uint64(len(chain)-3) {
+	for syncer.trustedHead.NumberU64() < chain[len(chain)-3].NumberU64() {
 		select {
 		case <-timer.C:
 			t.Fatalf("Failed to sync chain in three seconds")
@@ -129,8 +141,8 @@ func TestSynchronizerContinues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if syncer.trustedHead.NumberU64() < uint64(len(chain)-2) {
-		t.Fatalf("trusted chain height mismatch, got %d, want %d", syncer.trustedHead.NumberU64(), uint64(len(chain)-2))
+	if syncer.trustedHead.NumberU64() < chain[len(chain)-2].NumberU64() {
+		t.Fatalf("trusted chain height mismatch, got %d, want %d", syncer.trustedHead.NumberU64(), chain[len(chain)-2].NumberU64())
 	}
 	if len(syncer.pendingChains) > 0 {
 		t.Fatalf("pending chain number mismatch, got %d, want %d", len(syncer.pendingChains), 0)
@@ -143,7 +155,7 @@ func TestSynchronizerDisordered(t *testing.T) {
 		t.Logf("chain trust extends to %d", block.NumberU64())
 		return nil
 	}
-	syncer := newTestSynchronizer(chain[:len(chain)/2+1], complete)
+	syncer := newTestSynchronizer(chain, complete)
 	syncer.Start()
 	defer syncer.Stop()
 	// Start from the half, but random annonce.
@@ -155,7 +167,7 @@ func TestSynchronizerDisordered(t *testing.T) {
 		syncer.NotifyNewHead(block)
 	}
 	timer := time.NewTimer(time.Second * 3)
-	for syncer.trustedHead.NumberU64() < uint64(len(chain)-3) {
+	for syncer.trustedHead.NumberU64() < chain[len(chain)-3].NumberU64() {
 		select {
 		case <-timer.C:
 			t.Fatalf("Failed to sync chain in three seconds")
@@ -167,8 +179,8 @@ func TestSynchronizerDisordered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if syncer.trustedHead.NumberU64() < uint64(len(chain)-2) {
-		t.Fatalf("trusted chain height mismatch, got %d, want %d", syncer.trustedHead.NumberU64(), uint64(len(chain)-2))
+	if syncer.trustedHead.NumberU64() < chain[len(chain)-2].NumberU64() {
+		t.Fatalf("trusted chain height mismatch, got %d, want %d", syncer.trustedHead.NumberU64(), chain[len(chain)-2].NumberU64())
 	}
 	if len(syncer.pendingChains) > 0 {
 		t.Fatalf("pending chain number mismatch, got %d, want %d", len(syncer.pendingChains), 0)

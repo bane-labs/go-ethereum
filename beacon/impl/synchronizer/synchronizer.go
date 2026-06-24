@@ -20,9 +20,8 @@ const (
 )
 
 var (
-	errInvalidLightHeader   = errors.New("invalid light header")
-	errTooManyPendingChains = errors.New("too many pending header chains")
-	errExtendStartMismatch  = errors.New("extend start mismatch")
+	errInvalidLightHeader  = errors.New("invalid light header")
+	errExtendStartMismatch = errors.New("extend start mismatch")
 )
 
 // LightVerifyFn is a callback type for light protocal verification.
@@ -57,6 +56,7 @@ type Synchronizer struct {
 	pendingChains map[common.Hash]Choice // map of pending sync targets, key is the earliest header
 	lock          sync.RWMutex           // Mutex to protect the synchronizer state
 	syncing       atomic.Bool            // Whether the synchronizer is syncing
+	initialSynced atomic.Bool            // Whether the synchronizer has ever been synced
 	db            ethdb.KeyValueStore    // The database to store the latest trusted head for beacon sync
 
 	startCh chan *types.Header // Channel to signal the synchronizer to start
@@ -172,9 +172,16 @@ func (s *Synchronizer) NotifyNewHead(block *types.Block) error {
 		}
 	}
 	// If not found, then try add.
-	// TODO: implement a better pruning mechanism.
 	if len(s.pendingChains) >= maxPendingChain {
-		return errTooManyPendingChains
+		var oldestIdx common.Hash
+		var oldestTime uint64
+		for h, choice := range s.pendingChains {
+			if oldestIdx == (common.Hash{}) || choice.latest.Time() < oldestTime {
+				oldestIdx = h
+				oldestTime = choice.latest.Time()
+			}
+		}
+		delete(s.pendingChains, oldestIdx)
 	}
 	// Suppose the new block is finalized, if a reorg happen, then there will be another new chain.
 	s.pendingChains[block.ParentHash()] = Choice{
@@ -231,6 +238,7 @@ func (s *Synchronizer) BeaconExtend(verifiedHeaderHashes []common.Hash, finalize
 // the sync process again.
 func (s *Synchronizer) Stop() {
 	s.syncing.Store(false)
+	s.initialSynced.Store(true)
 }
 
 // Close closes the synchronizer.
@@ -241,6 +249,11 @@ func (s *Synchronizer) Close() {
 // Syncing returns whether the synchronizer is currently syncing.
 func (s *Synchronizer) Syncing() bool {
 	return s.syncing.Load()
+}
+
+// InitialSynced returns whether the synchronizer has ever been synced, which means a round of light sync has been completed.
+func (s *Synchronizer) InitialSynced() bool {
+	return s.initialSynced.Load()
 }
 
 // merge connects pending chain choices when a latest block changes.

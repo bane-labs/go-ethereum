@@ -142,6 +142,11 @@ func (b *Beacon) Syncing() bool {
 	return b.synchronizer.Syncing()
 }
 
+// InitialSynced returns whether the beacon client has ever been synced, which means a round of light sync has been completed.
+func (b *Beacon) InitialSynced() bool {
+	return b.synchronizer.InitialSynced()
+}
+
 func (b *Beacon) SubscribeSyncingEvents(ch chan<- bool) event.Subscription {
 	return b.miner.SubscribeSyncingEvents(ch)
 }
