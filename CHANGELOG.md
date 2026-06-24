@@ -2,6 +2,35 @@
 
 This document outlines major changes between releases.
 
+## 0.6.1 "Sedimentation" (24 June 2026)
+
+This patch-release introduces several improvements and fixes for v0.6.0, and
+schedules the `Osaka` upgrade for MainNet. It's highly recommended to upgrade
+from v0.6.0, especially if you are running a CN or relying on the metric service.
+
+Follow the instructions below to upgrade your node from v0.6.0 to v0.6.1:
+
+1. Download new binary and new genesis configuration file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. For MainNet nodes only: don't remove DB; reinitialize DB using new binary and
+   new genesis configuration file with the following command:
+   ```
+   ./geth init --datadir ./node-datadir ./config/genesis.json
+   ```
+5. Start the node.
+
+Behaviour changes:
+ * `Osaka` fork is enabled at timestamp `1782700000` on MainNet (#634)
+
+Improvements:
+ * Improve the beacon synchronizer status checking and apply choice pruning (#629)
+ * Migrate and improve the CI (#635)
+
+Bugs fixed:
+ * Fix possible status inconsistency in beacon synchronization (#629)
+ * Remove the irregular metric counter of dBFT static pool (#632)
+
 ## 0.6.0 "Rarefaction" (10 June 2026)
 
 This version introduces the support for Ethereum Osaka upgrade and Geth v1.16.9.
