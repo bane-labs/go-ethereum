@@ -688,7 +688,7 @@ func (c *ChainConfig) Description() string {
 		banner += fmt.Sprintf(" - NeoXAMEV:                    #%-8v\n", c.NeoXAMEVBlock)
 	}
 	if c.NeoXEthSigBlock != nil {
-		banner += fmt.Sprintf(" - NeoXEthSig:           	   #%-8v\n", c.NeoXEthSigBlock)
+		banner += fmt.Sprintf(" - NeoXEthSig:                  #%-8v\n", c.NeoXEthSigBlock)
 	}
 	if c.CancunTime != nil {
 		banner += fmt.Sprintf(" - Cancun:                      @%-10v blob: (%s)\n", *c.CancunTime, c.BlobScheduleConfig.Cancun)
