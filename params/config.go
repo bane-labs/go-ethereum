@@ -456,20 +456,22 @@ type ChainConfig struct {
 
 	// Fork scheduling was switched from blocks to timestamps here
 
-	ShanghaiTime    *uint64  `json:"shanghaiTime,omitempty"`    // Shanghai switch time (nil = no fork, 0 = already on shanghai)
+	ShanghaiTime  *uint64 `json:"shanghaiTime,omitempty"`  // Shanghai switch time (nil = no fork, 0 = already on shanghai)
+	CancunTime    *uint64 `json:"cancunTime,omitempty"`    // Cancun switch time (nil = no fork, 0 = already on cancun)
+	PragueTime    *uint64 `json:"pragueTime,omitempty"`    // Prague switch time (nil = no fork, 0 = already on prague)
+	OsakaTime     *uint64 `json:"osakaTime,omitempty"`     // Osaka switch time (nil = no fork, 0 = already on osaka)
+	BPO1Time      *uint64 `json:"bpo1Time,omitempty"`      // BPO1 switch time (nil = no fork, 0 = already on bpo1)
+	BPO2Time      *uint64 `json:"bpo2Time,omitempty"`      // BPO2 switch time (nil = no fork, 0 = already on bpo2)
+	BPO3Time      *uint64 `json:"bpo3Time,omitempty"`      // BPO3 switch time (nil = no fork, 0 = already on bpo3)
+	BPO4Time      *uint64 `json:"bpo4Time,omitempty"`      // BPO4 switch time (nil = no fork, 0 = already on bpo4)
+	BPO5Time      *uint64 `json:"bpo5Time,omitempty"`      // BPO5 switch time (nil = no fork, 0 = already on bpo5)
+	AmsterdamTime *uint64 `json:"amsterdamTime,omitempty"` // Amsterdam switch time (nil = no fork, 0 = already on amsterdam)
+	VerkleTime    *uint64 `json:"verkleTime,omitempty"`    // Verkle switch time (nil = no fork, 0 = already on verkle)
+
+	// Neo X specific forks, enabled after Shanghai but before Cancun, represented in blocks
 	NeoXDKGBlock    *big.Int `json:"neoXDKGBlock,omitempty"`    // Block-based switch to DKG related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
 	NeoXAMEVBlock   *big.Int `json:"neoXAMEVBlock,omitempty"`   // Block-based switch to anti-MEV related logic for dBFT (nil = no fork, 0 = already activated)
 	NeoXEthSigBlock *big.Int `json:"neoXEthSigBlock,omitempty"` // Block-based switch to fix block signature from NeoXAMEVBlock (nil = no fork, 0 = already activated)
-	CancunTime      *uint64  `json:"cancunTime,omitempty"`      // Cancun switch time (nil = no fork, 0 = already on cancun)
-	PragueTime      *uint64  `json:"pragueTime,omitempty"`      // Prague switch time (nil = no fork, 0 = already on prague)
-	OsakaTime       *uint64  `json:"osakaTime,omitempty"`       // Osaka switch time (nil = no fork, 0 = already on osaka)
-	BPO1Time        *uint64  `json:"bpo1Time,omitempty"`        // BPO1 switch time (nil = no fork, 0 = already on bpo1)
-	BPO2Time        *uint64  `json:"bpo2Time,omitempty"`        // BPO2 switch time (nil = no fork, 0 = already on bpo2)
-	BPO3Time        *uint64  `json:"bpo3Time,omitempty"`        // BPO3 switch time (nil = no fork, 0 = already on bpo3)
-	BPO4Time        *uint64  `json:"bpo4Time,omitempty"`        // BPO4 switch time (nil = no fork, 0 = already on bpo4)
-	BPO5Time        *uint64  `json:"bpo5Time,omitempty"`        // BPO5 switch time (nil = no fork, 0 = already on bpo5)
-	AmsterdamTime   *uint64  `json:"amsterdamTime,omitempty"`   // Amsterdam switch time (nil = no fork, 0 = already on amsterdam)
-	VerkleTime      *uint64  `json:"verkleTime,omitempty"`      // Verkle switch time (nil = no fork, 0 = already on verkle)
 
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
@@ -681,15 +683,6 @@ func (c *ChainConfig) Description() string {
 	if c.ShanghaiTime != nil {
 		banner += fmt.Sprintf(" - Shanghai:                    @%-10v\n", *c.ShanghaiTime)
 	}
-	if c.NeoXDKGBlock != nil {
-		banner += fmt.Sprintf(" - NeoXDKG:                     #%-8v\n", c.NeoXDKGBlock)
-	}
-	if c.NeoXAMEVBlock != nil {
-		banner += fmt.Sprintf(" - NeoXAMEV:                    #%-8v\n", c.NeoXAMEVBlock)
-	}
-	if c.NeoXEthSigBlock != nil {
-		banner += fmt.Sprintf(" - NeoXEthSig:           	   #%-8v\n", c.NeoXEthSigBlock)
-	}
 	if c.CancunTime != nil {
 		banner += fmt.Sprintf(" - Cancun:                      @%-10v blob: (%s)\n", *c.CancunTime, c.BlobScheduleConfig.Cancun)
 	}
@@ -721,6 +714,19 @@ func (c *ChainConfig) Description() string {
 		banner += fmt.Sprintf(" - Verkle:                      @%-10v blob: (%s)\n", *c.VerkleTime, c.BlobScheduleConfig.Verkle)
 	}
 	banner += fmt.Sprintf("\nAll fork specifications can be found at https://ethereum.github.io/execution-specs/src/ethereum/forks/\n")
+	banner += "\n"
+
+	// Create a list of forks only Neo X uses
+	banner += "Neo X specific hard forks (block based):\n"
+	if c.NeoXDKGBlock != nil {
+		banner += fmt.Sprintf(" - NeoXDKG:                     #%-8v\n", c.NeoXDKGBlock)
+	}
+	if c.NeoXAMEVBlock != nil {
+		banner += fmt.Sprintf(" - NeoXAMEV:                    #%-8v\n", c.NeoXAMEVBlock)
+	}
+	if c.NeoXEthSigBlock != nil {
+		banner += fmt.Sprintf(" - NeoXEthSig:                  #%-8v\n", c.NeoXEthSigBlock)
+	}
 	return banner
 }
 
