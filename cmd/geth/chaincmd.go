@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/console/prompt"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -290,17 +291,47 @@ func initGenesis(ctx *cli.Context) error {
 	}
 
 	chaindb := utils.MakeChainDatabase(ctx, stack, false)
-	defer chaindb.Close()
-
 	triedb := utils.MakeTrieDatabase(ctx, stack, chaindb, ctx.Bool(utils.CachePreimagesFlag.Name), false, genesis.IsVerkle())
-	defer triedb.Close()
+	var manuallyClosed bool
+	defer func() {
+		if !manuallyClosed {
+			chaindb.Close()
+			triedb.Close()
+		}
+	}()
 
-	_, hash, compatErr, err := core.SetupGenesisBlockWithOverride(chaindb, triedb, genesis, &overrides)
+	chainConfig, hash, compatErr, err := core.SetupGenesisBlockWithOverride(chaindb, triedb, genesis, &overrides)
 	if err != nil {
 		utils.Fatalf("Failed to write genesis block: %v", err)
 	}
 	if compatErr != nil {
-		utils.Fatalf("Failed to write chain config: %v", compatErr)
+		log.Warn("Chain rewind is required to upgrade configuration", "err", compatErr)
+		comfirm, err := prompt.Stdin.PromptConfirm("Rewind now?")
+		if err != nil {
+			utils.Fatalf("%v", err)
+		}
+		if comfirm {
+			// Direct database access is not enough, so we first release them
+			chaindb.Close()
+			triedb.Close()
+			manuallyClosed = true
+			// Rewind the chain to solve the compatibility error, and write the config
+			chain, db := utils.MakeChain(ctx, stack, false)
+			defer db.Close()
+			if compatErr.RewindToTime > 0 {
+				chain.SetHeadWithTimestamp(compatErr.RewindToTime)
+			} else {
+				chain.SetHead(compatErr.RewindToBlock)
+			}
+			rawdb.WriteChainConfig(db, hash, chainConfig)
+			// Delete the skeleton status as well, since it's based on the previous head
+			rawdb.DeleteSkeletonSyncStatus(db)
+			// Rewind the beacon status as well. There's at least 1 block rewinded, so use the new head
+			headNumber := chain.CurrentBlock().Number.Uint64()
+			rawdb.WriteBeaconSyncTrustedHead(db, chain.GetBlockByNumber(headNumber))
+		} else {
+			utils.Fatalf("Failed to write chain config: %v", compatErr)
+		}
 	}
 	log.Info("Successfully wrote genesis state", "database", "chaindata", "hash", hash)
 
