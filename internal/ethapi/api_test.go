@@ -718,6 +718,19 @@ func (b testBackend) HistoryPruningCutoff() uint64 {
 	return bn
 }
 
+func (b testBackend) IsExtensibleAllowed(blockNum uint64, addr common.Address) error {
+	return nil
+}
+func (b testBackend) GetValidatorsSortedByBlockNumber(blockNum uint64) ([]common.Address, error) {
+	return nil, nil
+}
+func (b testBackend) GetValidatorsSortedByState(state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	return nil, nil
+}
+func (b testBackend) GetDKGIndex(blockNum uint64, validatorIndex int) (int, error) {
+	return 0, nil
+}
+
 func TestEstimateGas(t *testing.T) {
 	t.Parallel()
 	// Initialize test accounts

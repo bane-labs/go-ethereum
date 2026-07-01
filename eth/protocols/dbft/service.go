@@ -21,6 +21,7 @@ const defaultSenderPoolSize = 20
 // BlockChainAPI is enough of BlockChainAPI to satisfy [Service].
 type BlockChainAPI interface {
 	BlockNumber() hexutil.Uint64
+	IsAddressAllowed(addr common.Address) error
 }
 
 // Service is the dbft network layer service.
@@ -36,13 +37,12 @@ type Service struct {
 }
 
 // New creates a new instance of [Service].
-func New(bc BlockChainAPI, onPayload func(*Message) error, isExtensibleAllowed func(uint64, common.Address) error) *Service {
-	poolLedger := newLedger(bc, isExtensibleAllowed)
+func New(bc BlockChainAPI, onPayload func(*Message) error) *Service {
 	return &Service{
 		bc:        bc,
 		onPayload: onPayload,
 		peers:     make(map[enode.ID]*Peer),
-		pool:      NewPool(poolLedger, defaultSenderPoolSize),
+		pool:      NewPool(bc, defaultSenderPoolSize),
 	}
 }
 

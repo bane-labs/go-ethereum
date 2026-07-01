@@ -709,6 +709,11 @@ func (api *BlockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rp
 	return result, nil
 }
 
+// IsAddressAllowed checks if the given address is allowed to send extensible payloads.
+func (s *BlockChainAPI) IsAddressAllowed(address common.Address) error {
+	return s.b.IsExtensibleAllowed(uint64(s.BlockNumber()), address)
+}
+
 func (api *BlockChainAPI) GetBlobSidecars(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash, fullBlob *bool) ([]map[string]interface{}, error) {
 	showBlob := true
 	if fullBlob != nil {
