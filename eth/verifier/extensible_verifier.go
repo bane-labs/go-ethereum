@@ -44,9 +44,8 @@ type ExtensibleVerifier struct {
 // NewExtensibleVerifier creates a new extensible verifier. It subscribes to downloader events and
 // starts a goroutine to track the downloader state. It also initializes the
 // extensible verifier with the provided backend.
-func NewExtensibleVerifier(backend ethapi.Backend, syncing func() bool) *ExtensibleVerifier {
+func NewExtensibleVerifier(backend ethapi.Backend) *ExtensibleVerifier {
 	verifier := &ExtensibleVerifier{
-		syncing:         syncing,
 		backend:         backend,
 		validatorsCache: lru.NewCache[uint64, []common.Address](validatorsCacheCap),
 		dkgIndexCache:   lru.NewCache[uint64, []int](validatorsCacheCap),
@@ -55,9 +54,18 @@ func NewExtensibleVerifier(backend ethapi.Backend, syncing func() bool) *Extensi
 	return verifier
 }
 
+// WithSyncing sets the syncing function for the extensible verifier.
+func (v *ExtensibleVerifier) WithSyncing(syncing func() bool) {
+	v.syncing = syncing
+}
+
 // IsExtensibleAllowed determines if address is allowed to send extensible payloads
 // (only consensus payloads for now) at the specified height.
 func (v *ExtensibleVerifier) IsExtensibleAllowed(blockNum uint64, addr common.Address) error {
+	// Can't verify extensible sender if the syncing check is nil.
+	if v.syncing == nil {
+		return dbftproto.ErrUninitialized
+	}
 	// Can't verify extensible sender if the node has an outdated state.
 	if v.syncing() {
 		return dbftproto.ErrSyncing

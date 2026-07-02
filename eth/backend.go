@@ -118,11 +118,10 @@ type Ethereum struct {
 	// DB interfaces
 	chainDb ethdb.Database // Block chain database
 
-	eventMux           *event.TypeMux
-	engine             consensus.Engine
-	accountManager     *accounts.Manager
-	antimevKeystore    *antimev.KeyStore
-	extensibleVerifier *verifier.ExtensibleVerifier
+	eventMux        *event.TypeMux
+	engine          consensus.Engine
+	accountManager  *accounts.Manager
+	antimevKeystore *antimev.KeyStore
 
 	filterMaps      *filtermaps.FilterMaps
 	closeFilterMaps chan chan struct{}
@@ -407,11 +406,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData, chainConfig.DBFT != nil))
 	eth.miner.SetPrioAddresses(config.TxPool.Locals)
 
-	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
+	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil, nil}
 	if eth.APIBackend.allowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, config.GPO, config.Miner.GasPrice)
+	eth.APIBackend.extVerifier = verifier.NewExtensibleVerifier(eth.APIBackend)
 
 	var (
 		bft       *dbft.DBFT
@@ -474,11 +474,11 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		// Ignore the beacon syncing status after the initial sync, to prevent blocking expected dBFT message handling.
 		return !eth.beacon.InitialSynced() || eth.Syncing()
 	}
-	eth.extensibleVerifier = verifier.NewExtensibleVerifier(eth.APIBackend, bftSyncing)
 	if bft != nil {
 		// Connect BFT to beacon protocol
 		bft.WithBeacon(eth.beacon, bftSyncing)
 	}
+	eth.APIBackend.extVerifier.WithSyncing(bftSyncing)
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
 	eth.shutdownTracker.MarkStartup()
@@ -689,12 +689,6 @@ func (s *Ethereum) Downloader() *downloader.Downloader { return s.handler.downlo
 func (s *Ethereum) Synced() bool                       { return s.handler.synced.Load() }
 func (s *Ethereum) SetSynced()                         { s.handler.enableSyncedFeatures() }
 func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruning }
-
-// IsExtensibleAllowed determines if address is allowed to send extensible payloads
-// (only consensus payloads for now) at the specified height.
-func (s *Ethereum) IsExtensibleAllowed(blockNum uint64, addr common.Address) error {
-	return s.extensibleVerifier.IsExtensibleAllowed(blockNum, addr)
-}
 
 // Protocols returns all the currently configured
 // network protocols to start.

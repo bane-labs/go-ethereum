@@ -87,8 +87,8 @@ func (p *Pool) verify(m *Message) (bool, error) {
 	}
 	err = p.chain.IsAddressAllowed(m.Sender)
 	if err != nil {
-		// There's no reliable way to check sender for syncing node.
-		if errors.Is(err, ErrSyncing) {
+		// There's no reliable way to check sender for syncing node, or verifier not ready.
+		if errors.Is(err, ErrUninitialized) || errors.Is(err, ErrSyncing) {
 			return false, nil
 		}
 		return false, fmt.Errorf("%w: %w", errDisallowedSender, err)
