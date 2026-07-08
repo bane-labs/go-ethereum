@@ -1,6 +1,6 @@
 import { network } from "hardhat";
 
-export const { ethers, networkHelpers, provider } = await network.connect();
+export const { ethers, networkHelpers, provider } = await network.getOrCreate();
 
 export const SYS_SETTINGS = {
     // NATIVE ADDRESSES
