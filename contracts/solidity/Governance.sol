@@ -88,6 +88,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
                     (consensusSize * 1000 * voteAmount);
             }
             if (shareRate < 1000) {
+                if (validators[i].code.length > 0) continue; // just skip, this makes the validator lose the reward, instead of revert the call
                 _safeTransferETH(
                     validators[i],
                     (msg.value * (1000 - shareRate)) / (consensusSize * 1000)
@@ -104,7 +105,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
         uint shareRate,
         bytes calldata pubkey
     ) external payable {
-        if (tx.origin != msg.sender) revert Errors.OnlyEOA();
+        if (tx.origin != msg.sender || msg.sender.code.length > 0) revert Errors.OnlyEOA();
         if (msg.value != registerFee) revert Errors.InsufficientValue();
         if (shareRate > 1000) revert Errors.InvalidShareRate();
         if (
