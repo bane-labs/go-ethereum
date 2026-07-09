@@ -43,6 +43,7 @@ import (
 	beaconproto "github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
+	"github.com/ethereum/go-ethereum/eth/txtracker"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -162,6 +163,7 @@ type handler struct {
 	fs             FileSystem
 	blobSync       bool
 	txFetcher      *fetcher.TxFetcher
+	txTracker      *txtracker.Tracker
 	sidecarFetcher *beaconfetch.SidecarFetcher
 	peers          *peerSet
 	txBroadcastKey [16]byte
@@ -228,7 +230,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 		return nil
 	}
-	h.txFetcher = fetcher.NewTxFetcher(h.chain, validateMeta, addTxs, fetchTx, h.removePeer)
+	h.txTracker = txtracker.New()
+	h.txFetcher = fetcher.NewTxFetcher(h.chain, validateMeta, addTxs, fetchTx, h.removePeer, h.txTracker.NotifyAccepted)
 	if h.blobSync {
 		h.sidecarFetcher = beaconfetch.NewSidecarFetcher(h.chain, h.fs, h.peers.blobPeers, h.peers.markNoBlobPeer, h.removePeer,
 			h.peers.highestNumberOfBeacons, h.announceBlobs, h.fetchSidecars, (*beaconHandler)(h).RetrieveSidecarsByRoot)
@@ -531,6 +534,7 @@ func (h *handler) unregisterPeer(id string) {
 	}
 	h.downloader.UnregisterPeer(id)
 	h.txFetcher.Drop(id)
+	h.txTracker.NotifyPeerDrop(id)
 
 	if err := h.peers.unregisterPeer(id); err != nil {
 		logger.Error("Ethereum peer removal failed", "err", err)
@@ -559,6 +563,9 @@ func (h *handler) Start(maxPeers int) {
 
 	// start sync handlers
 	h.txFetcher.Start()
+
+	// Start the transaction tracker (records tx deliveries, credits peer inclusions).
+	h.txTracker.Start(h.chain)
 
 	// start sidecar fetcher if blob sync is enabled
 	if h.blobSync {
