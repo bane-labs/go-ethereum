@@ -428,3 +428,16 @@ func (b *backendMock) HistoryPruningCutoff() uint64 { return 0 }
 func (b *backendMock) BlobSidecarByRoot(ctx context.Context, hash common.Hash, index uint64) (*types.BlobTxSidecar, error) {
 	return nil, nil
 }
+
+func (b *backendMock) IsExtensibleAllowed(blockNum uint64, addr common.Address) error {
+	return nil
+}
+func (b *backendMock) GetValidatorsSortedByBlockNumber(blockNum uint64) ([]common.Address, error) {
+	return nil, nil
+}
+func (b *backendMock) GetValidatorsSortedByState(state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	return nil, nil
+}
+func (b *backendMock) GetDKGIndex(blockNum uint64, validatorIndex int) (int, error) {
+	return 0, nil
+}

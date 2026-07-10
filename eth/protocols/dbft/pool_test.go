@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 )
@@ -138,7 +139,8 @@ func (c *testChain) IsAddressAllowed(u common.Address) error {
 	}
 	return errors.New("address not allowed")
 }
-func (c *testChain) BlockHeight() uint64 { return c.height }
+
+func (c *testChain) BlockNumber() hexutil.Uint64 { return hexutil.Uint64(c.height) }
 
 func (c *testChain) goodMessage(t *testing.T, height uint64) *Message {
 	return someMessage(t, height, c.goodAddrs[0], c.goodKey)

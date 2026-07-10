@@ -58,6 +58,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/eth/verifier"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
@@ -405,16 +406,16 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData, chainConfig.DBFT != nil))
 	eth.miner.SetPrioAddresses(config.TxPool.Locals)
 
-	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
+	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil, nil}
 	if eth.APIBackend.allowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, config.GPO, config.Miner.GasPrice)
+	eth.APIBackend.extVerifier = verifier.NewExtensibleVerifier(eth.APIBackend)
 
 	var (
-		bft                 *dbft.DBFT
-		onPayload           func(*dbftproto.Message) error
-		isExtensibleAllowed func(uint64, common.Address) error
+		bft       *dbft.DBFT
+		onPayload func(*dbftproto.Message) error
 	)
 	switch t := eth.engine.(type) {
 	case *dbft.DBFT:
@@ -427,9 +428,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	if bft != nil {
 		onPayload = bft.OnPayload
-		isExtensibleAllowed = bft.IsExtensibleAllowed
 	}
-	eth.dbftSrv = dbftproto.New(ethapi.NewBlockChainAPI(eth.APIBackend), onPayload, isExtensibleAllowed)
+	eth.dbftSrv = dbftproto.New(ethapi.NewBlockChainAPI(eth.APIBackend), onPayload)
 	if bft != nil {
 		bft.WithEthAPIBackend(eth.APIBackend)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
@@ -467,15 +467,18 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		}
 		return eth.beacon.GetTransaction(hash)
 	})
-	if bft != nil {
-		syncing := func() bool {
-			log.Debug("Syncing status", "initialized", eth.beacon.InitialSynced(), "beacon", eth.beacon.Syncing(), "eth", eth.Syncing())
-			// Ignore the beacon syncing status after the initial sync, to prevent blocking expected dBFT message handling.
-			return !eth.beacon.InitialSynced() || eth.Syncing()
-		}
-		// Connect BFT to beacon protocol
-		bft.WithBeacon(eth.beacon, syncing)
+
+	// This syncing check is only for dBFT
+	bftSyncing := func() bool {
+		log.Debug("Syncing status", "initialized", eth.beacon.InitialSynced(), "beacon", eth.beacon.Syncing(), "eth", eth.Syncing())
+		// Ignore the beacon syncing status after the initial sync, to prevent blocking expected dBFT message handling.
+		return !eth.beacon.InitialSynced() || eth.Syncing()
 	}
+	if bft != nil {
+		// Connect BFT to beacon protocol
+		bft.WithBeacon(eth.beacon, bftSyncing)
+	}
+	eth.APIBackend.extVerifier.WithSyncing(bftSyncing)
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
 	eth.shutdownTracker.MarkStartup()

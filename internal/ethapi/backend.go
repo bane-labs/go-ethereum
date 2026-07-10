@@ -107,6 +107,15 @@ type Backend interface {
 
 	CurrentView() *filtermaps.ChainView
 	NewMatcherBackend() filtermaps.MatcherBackend
+
+	// IsExtensibleAllowed determines if address is allowed to send extensible payloads
+	// (only consensus payloads for now) at the specified height.
+	IsExtensibleAllowed(blockNum uint64, addr common.Address) error
+
+	// Validators API
+	GetValidatorsSortedByBlockNumber(blockNum uint64) ([]common.Address, error)
+	GetValidatorsSortedByState(state *state.StateDB, header *types.Header) ([]common.Address, error)
+	GetDKGIndex(blockNum uint64, validatorIndex int) (int, error)
 }
 
 func GetAPIs(apiBackend Backend) []rpc.API {

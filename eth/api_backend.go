@@ -40,6 +40,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/eth/verifier"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/miner"
@@ -53,6 +54,7 @@ type EthAPIBackend struct {
 	allowUnprotectedTxs bool
 	eth                 *Ethereum
 	gpo                 *gasprice.Oracle
+	extVerifier         *verifier.ExtensibleVerifier
 }
 
 // ChainConfig returns the active chain configuration.
@@ -562,4 +564,20 @@ func (b *EthAPIBackend) BlobSidecarByRoot(ctx context.Context, hash common.Hash,
 		return nil, errors.New("blob sidecar index out of range")
 	}
 	return blockBlobs[index], nil
+}
+
+func (b *EthAPIBackend) IsExtensibleAllowed(blockNum uint64, addr common.Address) error {
+	return b.eth.APIBackend.extVerifier.IsExtensibleAllowed(blockNum, addr)
+}
+
+func (b *EthAPIBackend) GetValidatorsSortedByBlockNumber(blockNum uint64) ([]common.Address, error) {
+	return b.eth.APIBackend.extVerifier.GetValidatorsSortedByBlockNumber(blockNum)
+}
+
+func (b *EthAPIBackend) GetValidatorsSortedByState(state *state.StateDB, header *types.Header) ([]common.Address, error) {
+	return b.eth.APIBackend.extVerifier.GetValidatorsSortedByState(state, header)
+}
+
+func (b *EthAPIBackend) GetDKGIndex(blockNum uint64, validatorIndex int) (int, error) {
+	return b.eth.APIBackend.extVerifier.GetDKGIndex(blockNum, validatorIndex)
 }
