@@ -53,6 +53,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/eth/fetcher"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	beaconproto "github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
@@ -404,17 +405,19 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	// Permit the downloader to use the trie cache allowance during fast sync
 	cacheLimit := options.TrieCleanLimit + options.TrieDirtyLimit + options.SnapshotLimit
 	if eth.handler, err = newHandler(&handlerConfig{
-		NodeID:         eth.p2pServer.Self().ID(),
-		Database:       chainDb,
-		Chain:          eth.blockchain,
-		TxPool:         eth.txPool,
-		Network:        networkID,
-		Sync:           config.SyncMode,
-		BloomCache:     uint64(cacheLimit),
-		RequiredBlocks: config.RequiredBlocks,
-		SnapV2:         config.SnapV2,
-		FileSystem:     eth.filesystem,
-		BlobSync:       stack.Config().BlobSync,
+		NodeID:           eth.p2pServer.Self().ID(),
+		Database:         chainDb,
+		Chain:            eth.blockchain,
+		TxPool:           eth.txPool,
+		BlobPool:         eth.blobTxPool,
+		Network:          networkID,
+		Sync:             config.SyncMode,
+		BloomCache:       uint64(cacheLimit),
+		RequiredBlocks:   config.RequiredBlocks,
+		SnapV2:           config.SnapV2,
+		FetchProbability: config.BlobPool.FetchProbability,
+		FileSystem:       eth.filesystem,
+		BlobSync:         stack.Config().BlobSync,
 	}); err != nil {
 		return nil, err
 	}
@@ -703,6 +706,7 @@ func (s *Ethereum) BlockChain() *core.BlockChain       { return s.blockchain }
 func (s *Ethereum) FileSystem() *core.FileSystem       { return s.filesystem }
 func (s *Ethereum) TxPool() *txpool.TxPool             { return s.txPool }
 func (s *Ethereum) BlobTxPool() *blobpool.BlobPool     { return s.blobTxPool }
+func (s *Ethereum) BlobFetcher() *fetcher.BlobFetcher  { return s.handler.blobFetcher }
 func (s *Ethereum) BlobCache() *blobpool.Cache         { return s.blobCache }
 func (s *Ethereum) Engine() consensus.Engine           { return s.engine }
 func (s *Ethereum) ChainDb() ethdb.Database            { return s.chainDb }

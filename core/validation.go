@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	// ErrKZGVerificationError is returned when a KZG proof was not verified correctly.
-	ErrKZGVerificationError = errors.New("KZG verification error")
+	// errKZGVerificationError is returned when a KZG proof was not verified correctly.
+	errKZGVerificationError = errors.New("KZG verification error")
 )
 
 func ValidateBlobSidecar(sidecar *types.BlobTxSidecar, hashes []common.Hash) error {
@@ -29,7 +29,7 @@ func validateBlobSidecarOsaka(sidecar *types.BlobTxSidecar, hashes []common.Hash
 		return fmt.Errorf("invalid number of %d blob proofs expected %d", len(sidecar.Proofs), len(hashes)*kzg4844.CellProofsPerBlob)
 	}
 	if err := kzg4844.VerifyCellProofs(sidecar.Blobs, sidecar.Commitments, sidecar.Proofs); err != nil {
-		return fmt.Errorf("%w: %v", ErrKZGVerificationError, err)
+		return fmt.Errorf("%w: %v", errKZGVerificationError, err)
 	}
 	return nil
 }
