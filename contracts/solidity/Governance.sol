@@ -25,6 +25,9 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     uint public constant SCALE_FACTOR = 10 ** 18;
     uint public constant EXIT_FEE_RATE = 50;
 
+    // deprecated slot due to the upgrade of ReentrancyGuard
+    uint public SLOT_0;
+    // the number of validators in consensus
     uint public consensusSize;
     // the min balance for voting
     uint public minVoteAmount;
@@ -63,10 +66,9 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
     mapping(address => uint) public candidateGasPerVote;
     // voter=>number
     mapping(address => uint) public voterGasPerVote;
-    // voter=>height, deprecated
-    mapping(address => uint) public voteHeight;
-    // candidate=>height=>number, deprecated
-    mapping(address => mapping(uint => uint)) public epochStartGasPerVote;
+    // deprecated slots
+    uint public SLOT_20;
+    uint public SLOT_21;
     // blacklisted candidate amount
     uint public blacklistedCandidates;
 
@@ -195,7 +197,6 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
             delete votedTo[msg.sender];
             delete votedAmount[msg.sender];
             delete voterGasPerVote[msg.sender];
-            delete voteHeight[msg.sender];
         } else {
             votedAmount[msg.sender] -= amount;
         }
