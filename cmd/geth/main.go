@@ -113,6 +113,7 @@ var (
 		utils.CacheLogSizeFlag,
 		utils.FDLimitFlag,
 		utils.MemoryLimitFlag,
+		utils.GOGCFlag,
 		utils.CryptoKZGFlag,
 		utils.ListenPortFlag,
 		utils.DiscoveryPortFlag,
