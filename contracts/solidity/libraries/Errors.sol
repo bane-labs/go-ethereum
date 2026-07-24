@@ -25,6 +25,7 @@ library Errors {
     error InvalidEnvelopeFee();
     error InvalidMaxEnvelopesPerBlock();
     error InvalidMaxEnvelopeGasLimit();
+    error InvalidSponsorRate();
 
     // Governance Errors
     error SideCallNotAllowed();
@@ -53,4 +54,9 @@ library Errors {
     error IndexOutOfRange();
     error MessageExists();
     error PubHashAlreadyUsed();
+
+    // Paymaster Errors
+    error SenderBlacklisted();
+    error GasTipTooHigh();
+    error MaxFeeTooHigh();
 }

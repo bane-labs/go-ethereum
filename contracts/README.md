@@ -18,7 +18,7 @@ These contracts are not deployed by transactions but allocated in the [genesis f
 | `0x1212000000000000000000000000000000000007` | CommitteeMultiSig Proxy |
 | `0x1212000000000000000000000000000000000008` | KeyManagement Proxy     |
 | `0x1212000000000000000000000000000000000009` | MessageBridge Proxy     |
-| `0x121200000000000000000000000000000000000a` | Stub2 Proxy             |
+| `0x121200000000000000000000000000000000000a` | GovPaymaster Proxy      |
 | `0x121200000000000000000000000000000000000b` | Stub3 Proxy             |
 | `0x121200000000000000000000000000000000000c` | Stub4 Proxy             |
 | `0x121200000000000000000000000000000000000d` | Stub5 Proxy             |
@@ -152,6 +152,7 @@ The current Neo X Policy maintains following parameters. All these policies are 
 | Envelope Fee                | `envelopeFee`          | Force envelope transaction senders to pay an extra tip to Neo X Governance                            |
 | Maximum Envelopes Per Block | `maxEnvelopesPerBlock` | Limit the number of envelope transactions in each block                                               |
 | Maximum Envelope Gas Limit  | `maxEnvelopeGasLimit`  | Limit the gas consumption of each envelope transaction                                                |
+| Sponsor Distribution Rate   | `sponsorRate`          | Distribute part of the governance reward for gasless transaction sponsorship                          |
 
 Since all the policy setters adopt the `needVote` modifier, any policy change requires more than 1/2 of the current Neo X consensus nodes votes to be collected.
 
@@ -207,6 +208,13 @@ Different from the DKG resharing, a brand new sharing cannot be recovered before
 
 The above processes will be automatically performed by Neo X node when antimev feature is enabled. For more details about the crypto, please refer [crypto/tpke](https://github.com/bane-labs/go-ethereum/tree/bane-main/crypto/tpke) and [core/antimev](https://github.com/bane-labs/go-ethereum/tree/bane-main/core/antimev).
 
+## GovPaymaster
+
+[GovPaymaster](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/GovPaymaster.sol) is a system contract assigned as the Neo X official paymaster contract. This contract receives part of the Neo X Governance reward and can
+be requested to sponsor gasless services in the network, with Neo X Policy check restricted on the `PackedUserOperation`.
+
+This contract only works with [EIP-4337 and EntryPoint v0.9](https://github.com/eth-infinitism/account-abstraction/releases/tag/v0.9.0), which should be deployed to `0x433709009B8330FDa32311DF1C2AFA402eD8D009` in the network.
+
 ## Stubs
 
 [Stub](https://github.com/bane-labs/go-ethereum/blob/bane-main/contracts/solidity/Stub.sol) is reserved system contract implementation that has pre-assigned addresses in the genesis allocations. Once designated role for the stub contract is created, its code will be updated correspondingly to serve the needs of the Neo X chain.
@@ -215,7 +223,7 @@ The above processes will be automatically performed by Neo X node when antimev f
 |-------|----------------------------------------------|-----------------------|
 | Stub0 | `0x1212000000000000000000000000000000000008` | Used by KeyManagement |
 | Stub1 | `0x1212000000000000000000000000000000000009` | Used by MessageBridge |
-| Stub2 | `0x121200000000000000000000000000000000000a` | *Not used*            |
+| Stub2 | `0x121200000000000000000000000000000000000a` | Used by GovPaymaster  |
 | Stub3 | `0x121200000000000000000000000000000000000b` | *Not used*            |
 | Stub4 | `0x121200000000000000000000000000000000000c` | *Not used*            |
 | Stub5 | `0x121200000000000000000000000000000000000d` | *Not used*            |
