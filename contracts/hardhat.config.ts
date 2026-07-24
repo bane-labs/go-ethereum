@@ -10,7 +10,7 @@ export default defineConfig({
   solidity: {
     profiles: {
       default: {
-        version: "0.8.25",
+        version: "0.8.36",
         settings: {
           evmVersion: "cancun",
           viaIR: true,

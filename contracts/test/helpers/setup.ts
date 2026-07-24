@@ -9,7 +9,11 @@ export const SYS_SETTINGS = {
     REWARD_PROXY: "0x1212000000000000000000000000000000000003",
     BRIDGE_PROXY: "0x1212000000000000000000000000000000000004",
     KEYMANAGEMENT_PROXY: "0x1212000000000000000000000000000000000008",
+    PAYMASTER_PROXY: "0x121200000000000000000000000000000000000a",
     SYS_CALL: "0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE",
+
+    // DEPENDENCY CONTRACTS
+    ENTRY_POINT: "0x433709009B8330FDa32311DF1C2AFA402eD8D009",
 
     // CONFIG
     CONSENSUS_SIZE: 7,
@@ -28,9 +32,10 @@ export const SYS_SETTINGS = {
         "0xd711da2d8c71a801fc351163337656f1321343a0"
     ],
 
-    MIN_GAS_TIP_CAP: ethers.parseUnits("1", "gwei"),
-    BASE_FEE: ethers.parseUnits("1", "gwei"),
+    MIN_GAS_TIP_CAP: ethers.parseUnits("20", "gwei"),
+    BASE_FEE: ethers.parseUnits("20", "gwei"),
     CANDIDATE_LIMIT: 2000,
+    SPONSOR_RATE: 500,
 };
 
 export const allocGenesis = async () => {
@@ -42,6 +47,7 @@ export const allocGenesis = async () => {
     const reward_deploy = await ethers.deployContract("GovReward");
     const policy_deploy = await ethers.deployContract("Policy");
     const keymanagement_deploy = await ethers.deployContract("KeyManagementV0");
+    const paymaster_deploy = await ethers.deployContract("GovPaymaster");
 
     // Copy Bytecode to native address
     const governance_code = await ethers.provider.send("eth_getCode", [governance_deploy.target]);
@@ -55,6 +61,9 @@ export const allocGenesis = async () => {
 
     const keymanagement_code = await ethers.provider.send("eth_getCode", [keymanagement_deploy.target]);
     await ethers.provider.send("hardhat_setCode", [SYS_SETTINGS.KEYMANAGEMENT_PROXY, keymanagement_code]);
+
+    const paymaster_code = await ethers.provider.send("eth_getCode", [paymaster_deploy.target]);
+    await ethers.provider.send("hardhat_setCode", [SYS_SETTINGS.PAYMASTER_PROXY, paymaster_code]);
 
     const governance_instance = await ethers.getContractAt("Governance", SYS_SETTINGS.GOV_PROXY, signers[0]);
     const reward_instance = await ethers.getContractAt("GovReward", SYS_SETTINGS.REWARD_PROXY, signers[0]);
