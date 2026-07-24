@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
@@ -65,7 +66,7 @@ func (p *StateProcessor) chainConfig() *params.ChainConfig {
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
-func (p *StateProcessor) Process(ctx context.Context, block *types.Block, statedb *state.StateDB, jumpDestCache vm.JumpDestCache, cfg vm.Config) (*ProcessResult, error) {
+func (p *StateProcessor) Process(ctx context.Context, block *types.Block, statedb *state.StateDB, jumpDestCache vm.JumpDestCache, cfg vm.Config, execIndex *atomic.Int64) (*ProcessResult, error) {
 	var (
 		config        = p.chainConfig()
 		receipts      = make(types.Receipts, 0, len(block.Transactions()))
@@ -105,6 +106,10 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
+		// Publish the progress, letting the prefetcher skip caught up work.
+		if execIndex != nil {
+			execIndex.Store(int64(i))
+		}
 		// Check against envelope number policy
 		if p.chain.Config().IsNeoXAMEV(blockNumber) && antimev.IsEnvelope(tx) {
 			if envelopeCount >= envelopeNumberLimit {
