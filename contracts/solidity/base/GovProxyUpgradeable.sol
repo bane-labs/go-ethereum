@@ -2,9 +2,11 @@
 pragma solidity ^0.8.25;
 
 import {Errors} from "../libraries/Errors.sol";
-import {ERC1967Utils, UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
-abstract contract GovProxyUpgradeable is UUPSUpgradeable {
+abstract contract GovProxyUpgradeable is UUPSUpgradeable, Initializable {
     address public constant GOV_ADMIN =
         0x1212000000000000000000000000000000000000;
 

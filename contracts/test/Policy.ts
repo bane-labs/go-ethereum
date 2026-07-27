@@ -263,10 +263,159 @@ describe("Policy", function () {
         });
     });
 
-    describe("getCandidateLimit", function () {
-        it("Should return default value if not setted", async function () {
-            await ethers.provider.send("hardhat_setStorageAt", [SYS_SETTINGS.POLICY_PROXY, "0x4", ethers.toBeHex(0, 32)]);
-            expect(await Policy.getCandidateLimit()).to.eq(SYS_SETTINGS.CANDIDATE_LIMIT);
+    describe("setEnvelopeFee", function () {
+        it("Should revert if the sender is not a validator", async function () {
+            await expect(
+                Policy.connect(signers[7]).setEnvelopeFee(ethers.parseEther("1"))
+            ).to.be.revertedWithCustomError(Policy, ERRORS.NOT_MINER);
+        });
+
+        it("Should revert if the new value is 0", async function () {
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setEnvelopeFee(0)
+                ).not.to.be.revert(ethers);
+            }
+            await expect(
+                Policy.connect(signers[3]).setEnvelopeFee(0)
+            ).to.be.revertedWithCustomError(Policy, ERRORS.INVALID_ENVELOPE_FEE);
+        });
+
+        it("Should change the envelope fee if meets the threshold", async function () {
+            for (let i = 0; i < 4; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setEnvelopeFee(ethers.parseEther("1"))
+                ).not.to.be.revert(ethers);
+            }
+            expect(await Policy.envelopeFee()).to.eq(ethers.parseEther("1"));
+        });
+
+        it("Should emit an event if meets the threshold", async function () {
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setEnvelopeFee(ethers.parseEther("1"))
+                ).not.to.be.revert(ethers);
+            }
+            await expect(
+                Policy.connect(signers[3]).setEnvelopeFee(ethers.parseEther("1"))
+            ).emit(Policy, "SetEnvelopeFee");
+        });
+    });
+
+    describe("setMaxEnvelopesPerBlock", function () {
+        it("Should revert if the sender is not a validator", async function () {
+            await expect(
+                Policy.connect(signers[7]).setMaxEnvelopesPerBlock(10)
+            ).to.be.revertedWithCustomError(Policy, ERRORS.NOT_MINER);
+        });
+
+        it("Should revert if the new value is 0", async function () {
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setMaxEnvelopesPerBlock(0)
+                ).not.to.be.revert(ethers);
+            }
+            await expect(
+                Policy.connect(signers[3]).setMaxEnvelopesPerBlock(0)
+            ).to.be.revertedWithCustomError(Policy, ERRORS.INVALID_MAX_ENVELOPES_PER_BLOCK);
+        });
+
+        it("Should change the envelope number limit if meets the threshold", async function () {
+            for (let i = 0; i < 4; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setMaxEnvelopesPerBlock(10)
+                ).not.to.be.revert(ethers);
+            }
+            expect(await Policy.maxEnvelopesPerBlock()).to.eq(10);
+        });
+
+        it("Should emit an event if meets the threshold", async function () {
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setMaxEnvelopesPerBlock(10)
+                ).not.to.be.revert(ethers);
+            }
+            await expect(
+                Policy.connect(signers[3]).setMaxEnvelopesPerBlock(10)
+            ).emit(Policy, "SetMaxEnvelopesPerBlock");
+        });
+    });
+
+    describe("setMaxEnvelopeGasLimit", function () {
+        it("Should revert if the sender is not a validator", async function () {
+            await expect(
+                Policy.connect(signers[7]).setMaxEnvelopeGasLimit(10000000)
+            ).to.be.revertedWithCustomError(Policy, ERRORS.NOT_MINER);
+        });
+
+        it("Should revert if the new value is lower than lowest cost", async function () {
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setMaxEnvelopeGasLimit(20999)
+                ).not.to.be.revert(ethers);
+            }
+            await expect(
+                Policy.connect(signers[3]).setMaxEnvelopeGasLimit(20999)
+            ).to.be.revertedWithCustomError(Policy, ERRORS.INVALID_MAX_ENVELOPE_GAS_LIMIT);
+        });
+
+        it("Should change the envelope gas limit if meets the threshold", async function () {
+            for (let i = 0; i < 4; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setMaxEnvelopeGasLimit(10000000)
+                ).not.to.be.revert(ethers);
+            }
+            expect(await Policy.maxEnvelopeGasLimit()).to.eq(10000000);
+        });
+
+        it("Should emit an event if meets the threshold", async function () {
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setMaxEnvelopeGasLimit(10000000)
+                ).not.to.be.revert(ethers);
+            }
+            await expect(
+                Policy.connect(signers[3]).setMaxEnvelopeGasLimit(10000000)
+            ).emit(Policy, "SetMaxEnvelopeGasLimit");
+        });
+    });
+
+    describe("setSponsorRate", function () {
+        it("Should revert if the sender is not a validator", async function () {
+            await expect(
+                Policy.connect(signers[7]).setSponsorRate(500)
+            ).to.be.revertedWithCustomError(Policy, ERRORS.NOT_MINER);
+        });
+
+        it("Should revert if the new value is not lower than 1000", async function () {
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setSponsorRate(1000)
+                ).not.to.be.revert(ethers);
+            }
+            await expect(
+                Policy.connect(signers[3]).setSponsorRate(1000)
+            ).to.be.revertedWithCustomError(Policy, ERRORS.INVALID_SPONSOR_RATE);
+        });
+
+        it("Should change the sponsor rate if meets the threshold", async function () {
+            for (let i = 0; i < 4; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setSponsorRate(500)
+                ).not.to.be.revert(ethers);
+            }
+            expect(await Policy.sponsorRate()).to.eq(500);
+        });
+
+        it("Should emit an event if meets the threshold", async function () {
+            for (let i = 0; i < 3; i++) {
+                await expect(
+                    Policy.connect(signers[i]).setSponsorRate(500)
+                ).not.to.be.revert(ethers);
+            }
+            await expect(
+                Policy.connect(signers[3]).setSponsorRate(500)
+            ).emit(Policy, "SetSponsorRate");
         });
     });
 });

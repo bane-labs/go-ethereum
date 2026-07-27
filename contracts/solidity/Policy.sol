@@ -19,6 +19,7 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
     uint256 public envelopeFee;
     uint256 public maxEnvelopesPerBlock;
     uint256 public maxEnvelopeGasLimit;
+    uint256 public sponsorRate;
 
     function addBlackList(
         address _addr
@@ -102,7 +103,8 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
             keccak256(abi.encode(_candidateLimit))
         )
     {
-        if (_candidateLimit < IGovernance(GOV).consensusSize()) revert Errors.InvalidCandidateLimit();
+        if (_candidateLimit < IGovernance(GOV).consensusSize())
+            revert Errors.InvalidCandidateLimit();
         candidateLimit = _candidateLimit;
         emit SetCandidateLimit(_candidateLimit);
     }
@@ -162,5 +164,22 @@ contract Policy is IPolicy, GovernanceVote, GovProxyUpgradeable {
         if (_gaslimit < 21000) revert Errors.InvalidMaxEnvelopeGasLimit();
         maxEnvelopeGasLimit = _gaslimit;
         emit SetMaxEnvelopeGasLimit(_gaslimit);
+    }
+
+    function setSponsorRate(
+        uint256 _rate
+    )
+        external
+        needVote(
+            bytes32(
+                // keccak256("setSponsorRate")
+                0xa018ec88d33e172f39cb0c1965c55e4e8dd7cc3ae40570385aaae9cc6806ebd7
+            ),
+            keccak256(abi.encode(_rate))
+        )
+    {
+        if (_rate < 0 || _rate >= 1000) revert Errors.InvalidSponsorRate();
+        sponsorRate = _rate;
+        emit SetSponsorRate(_rate);
     }
 }

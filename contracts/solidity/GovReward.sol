@@ -5,11 +5,17 @@ import {Errors} from "./libraries/Errors.sol";
 import {Bytes} from "./libraries/Bytes.sol";
 import {IGovReward} from "./interfaces/IGovReward.sol";
 import {IGovernance} from "./interfaces/IGovernance.sol";
+import {IPolicy} from "./interfaces/IPolicy.sol";
 import {GovProxyUpgradeable} from "./base/GovProxyUpgradeable.sol";
 
 contract GovReward is IGovReward, GovProxyUpgradeable {
     // governance contact
     address public constant GOV = 0x1212000000000000000000000000000000000001;
+    // policy contract
+    address public constant POLICY = 0x1212000000000000000000000000000000000002;
+    // paymaster contract
+    address public constant PAYMASTER =
+        0x121200000000000000000000000000000000000a;
 
     receive() external payable {}
 
@@ -41,6 +47,10 @@ contract GovReward is IGovReward, GovProxyUpgradeable {
 
     function withdraw() external onlyGov {
         if (address(this).balance > 0) {
+            uint256 sponsorship = IPolicy(POLICY).sponsorRate() * address(this).balance / 1000;
+            if (sponsorship > 0) {
+                _safeTransferETH(PAYMASTER, sponsorship);
+            }
             _safeTransferETH(GOV, address(this).balance);
         }
     }

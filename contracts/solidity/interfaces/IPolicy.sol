@@ -9,7 +9,8 @@ interface IPolicy {
     event SetCandidateLimit(uint256 candidateLimit);
     event SetEnvelopeFee(uint256 envelopeFee);
     event SetMaxEnvelopesPerBlock(uint256 maxEnvelopesPerBlock);
-    event SetMaxEnvelopeGasLimit(uint256 setMaxEnvelopeGasLimit);
+    event SetMaxEnvelopeGasLimit(uint256 maxEnvelopeGasLimit);
+    event SetSponsorRate(uint256 sponsorRate);
 
     // add an address to blacklist policy
     function addBlackList(address _addr) external;
@@ -49,4 +50,10 @@ interface IPolicy {
 
     // get the value of envelope transaction gas limit policy
     function maxEnvelopeGasLimit() external view returns (uint256);
+
+    // set the reward distribution rate to paymaster sponsor
+    function setSponsorRate(uint256 _rate) external;
+
+    // get the value of paymaster distribution rate policy
+    function sponsorRate() external view returns (uint256);
 }
