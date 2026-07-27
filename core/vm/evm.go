@@ -23,6 +23,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -286,6 +287,9 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 
 	if isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
+	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
+		// The target address is blacklisted by policy, so revert directly.
+		ret, err = nil, ErrExecutionReverted
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		code := evm.resolveCode(addr)
@@ -350,6 +354,9 @@ func (evm *EVM) CallCode(caller common.Address, addr common.Address, input []byt
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
+	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
+		// The target address is blacklisted by policy, so revert directly.
+		ret, err = nil, ErrExecutionReverted
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
@@ -393,6 +400,9 @@ func (evm *EVM) DelegateCall(originCaller common.Address, caller common.Address,
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
+	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
+		// The target address is blacklisted by policy, so revert directly.
+		ret, err = nil, ErrExecutionReverted
 	} else {
 		// Initialise a new contract and make initialise the delegate values
 		//
@@ -445,6 +455,9 @@ func (evm *EVM) StaticCall(caller common.Address, addr common.Address, input []b
 
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
+	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
+		// The target address is blacklisted by policy, so revert directly.
+		ret, err = nil, ErrExecutionReverted
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
