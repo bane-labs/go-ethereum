@@ -145,7 +145,7 @@ The current Neo X Policy maintains following parameters. All these policies are 
 
 | Name                        | Parameter              | Usage                                                                                                 |
 |-----------------------------|------------------------|-------------------------------------------------------------------------------------------------------|
-| Address Blacklist           | `isBlackListed`        | Prevent blacklisted addresses to send transactions or be elected as block validators in Neo X network |
+| Address Blacklist           | `isBlackListed`        | Prevent blacklisted EOAs/contracts to send transactions or being executed in Neo X network            |
 | Minimum Transaction Tip Cap | `minGasTipCap`         | Force transaction senders to pay a minimum tip to Neo X Governance                                    |
 | Base Fee                    | `baseFee`              | Burn a fixed part of transaction fees instead of following EIP-1559's dynamic evaluation              |
 | Candidate Limit             | `candidateLimit`       | Limit the number of candidates in Governance registration and election                                |
