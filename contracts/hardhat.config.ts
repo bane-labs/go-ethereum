@@ -47,6 +47,11 @@ export default defineConfig({
           url: "https://neoxscan.ngd.network",
           apiUrl: "https://xexplorer.neo.org:8877/api",
         },
+        blockscout: {
+          name: "Mainnet Explorer",
+          url: "https://xexplorer.neo.org",
+          apiUrl: "https://xexplorer.neo.org/api",
+        }
       },
     },
     12227332: {
@@ -57,6 +62,11 @@ export default defineConfig({
           url: "https://neoxt4scan.ngd.network",
           apiUrl: "https://xt4scan.ngd.network:8877/api",
         },
+        blockscout: {
+          name: "Testnet Explorer",
+          url: "https://xt4scan.ngd.network",
+          apiUrl: "https://xt4scan.ngd.network/api",
+        }
       },
     }
   },
