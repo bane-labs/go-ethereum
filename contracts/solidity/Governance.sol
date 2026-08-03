@@ -90,6 +90,7 @@ contract Governance is IGovernance, ReentrancyGuard, GovProxyUpgradeable {
                     (consensusSize * 1000 * voteAmount);
             }
             if (shareRate < 1000) {
+                if (IPolicy(POLICY).isBlackListed(validators[i])) continue; // avoid failure in EVM execution
                 if (validators[i].code.length > 0) continue; // just skip, this makes the validator lose the reward, instead of revert the call
                 _safeTransferETH(
                     validators[i],
