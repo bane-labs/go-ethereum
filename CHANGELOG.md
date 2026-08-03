@@ -2,6 +2,32 @@
 
 This document outlines major changes between releases.
 
+## 0.6.2 "Transduction" (28 July 2026)
+
+This patch-release introduces several improvements for v0.6.1, and brings
+the new GovPaymaster system contract for better ERC-4337 UX. It's highly
+recommended to upgrade from v0.6.1, especially on Mainnet.
+
+Follow the instructions below to upgrade your node from v0.6.1 to v0.6.2:
+
+1. Download new binary file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. Start the node.
+
+New features:
+ * Add GovPaymaster system contract and related policy (#646)
+
+Behaviour changes:
+ * Prevent the reward sending to validator with EIP-7702 delegation (#644)
+ * Extend the Policy blacklist to EVM execution (#648)
+
+Improvements:
+ * Improve the hardfork listing in node log (#640)
+ * Detach the dBFT extensible payload verifier from dBFT engine (#469)
+ * Support optional rewind in genesis initialization (#641)
+ * Add necessary network configurations to Hardhat (#644, #650)
+
 ## 0.6.1 "Sedimentation" (24 June 2026)
 
 This patch-release introduces several improvements and fixes for v0.6.0, and
