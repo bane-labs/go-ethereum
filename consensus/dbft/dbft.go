@@ -53,6 +53,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
+	"github.com/ethereum/go-ethereum/internal/telemetry"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -607,7 +608,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: pre.finalTransactions, Withdrawals: ethBlock.Withdrawals()}
-	res, err := c.FinalizeAndAssemble(c.chain, h, pre.finalState, &body, pre.finalReceipts)
+	res, err := c.FinalizeAndAssemble(context.Background(), c.chain, h, pre.finalState, &body, pre.finalReceipts)
 	if err != nil {
 		log.Crit("Failed to finalize and assemble final Block",
 			"err", err)
@@ -726,7 +727,7 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: dbftBlock.transactions, Withdrawals: ethBlock.Withdrawals()}
-	res, err := c.FinalizeAndAssemble(c.chain, header, state, &body, result.Receipts)
+	res, err := c.FinalizeAndAssemble(context.Background(), c.chain, header, state, &body, result.Receipts)
 	if err != nil {
 		log.Crit("Failed to finalize and assemble proposed block",
 			"err", err)
@@ -1165,7 +1166,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			receipts []*types.Receipt
 			allLogs  []*types.Log
 			evm      = vm.NewEVM(core.NewEVMBlockContext(pre.header, c.chain, &pre.header.Coinbase), state, c.chain.Config(), vm.Config{})
-			gasPool  = new(core.GasPool).AddGas(pre.header.GasLimit)
+			gasPool  = core.NewGasPool(pre.header.GasLimit)
 			gasUsed  = uint64(0)
 		)
 		if pre.header.ParentBeaconRoot != nil {
@@ -1200,13 +1201,13 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 				if errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false); errs[0] == nil {
 					var (
 						snap = state.Snapshot()
-						gp   = gasPool.Gas()
+						gp   = gasPool.Snapshot()
 					)
 					state.SetTxContext(pre.transactions[i].Hash(), i)
-					receipt, err := core.ApplyTransaction(evm, gasPool, state, pre.header, pre.transactions[i], &gasUsed)
+					receipt, err := core.ApplyTransaction(evm, gasPool, state, pre.header, pre.transactions[i])
 					if err != nil {
 						state.RevertToSnapshot(snap)
-						gasPool.SetGas(gp)
+						gasPool.Set(gp)
 						// Drop following transactions from this account.
 						skipAccounts[sender] = true
 					} else {
@@ -1267,13 +1268,13 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			}
 			var (
 				snap = state.Snapshot()
-				gp   = gasPool.Gas()
+				gp   = gasPool.Snapshot()
 			)
 			state.SetTxContext(decryptedTx.Hash(), i)
-			receipt, err := core.ApplyTransaction(evm, gasPool, state, pre.header, decryptedTx, &gasUsed)
+			receipt, err := core.ApplyTransaction(evm, gasPool, state, pre.header, decryptedTx)
 			if err != nil {
 				state.RevertToSnapshot(snap)
-				gasPool.SetGas(gp)
+				gasPool.Set(gp)
 				fallbackToPreBlockTx(i, true, sender, decryptedTx, errDecryptedRejectedByEVM)
 				continue
 			} else {
@@ -2073,7 +2074,14 @@ func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header,
 
 // FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
 // nor block rewards given, and returns the final block.
-func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
+func (c *DBFT) FinalizeAndAssemble(ctx context.Context, chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (result *types.Block, err error) {
+	ctx, _, spanEnd := telemetry.StartSpan(ctx, "consensus.dbft.FinalizeAndAssemble",
+		telemetry.Int64Attribute("block.number", int64(header.Number.Uint64())),
+		telemetry.Int64Attribute("txs.count", int64(len(body.Transactions))),
+		telemetry.Int64Attribute("withdrawals.count", int64(len(body.Withdrawals))),
+	)
+	defer spanEnd(&err)
+
 	shanghai := chain.Config().IsShanghai(header.Number, header.Time)
 	if !shanghai {
 		if len(body.Withdrawals) > 0 {
@@ -2093,14 +2101,20 @@ func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *ty
 		}
 	}
 
-	// Finalize block
+	// Finalize and assemble the block.
+	_, _, finalizeSpanEnd := telemetry.StartSpan(ctx, "consensus.dbft.Finalize")
 	c.Finalize(chain, header, state, body)
+	finalizeSpanEnd(nil)
 
 	// Assign the final state root to header.
+	_, _, rootSpanEnd := telemetry.StartSpan(ctx, "consensus.dbft.IntermediateRoot")
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+	rootSpanEnd(nil)
 
-	// Assemble and return the final block for sealing.
+	// Assemble the final block.
+	_, _, blockSpanEnd := telemetry.StartSpan(ctx, "consensus.dbft.NewBlock")
 	b := types.NewBlock(header, body, receipts, trie.NewStackTrie(nil))
+	blockSpanEnd(nil)
 	return b, nil
 }
 

@@ -358,8 +358,8 @@ func (pool *CachePool) ContentFrom(addr common.Address) ([]*types.Transaction, [
 // account and sorted by nonce.
 //
 // For the cache pool, this method will return nothing for now.
-func (pool *CachePool) Pending(filter txpool.PendingFilter) map[common.Address][]*txpool.LazyTransaction {
-	return make(map[common.Address][]*txpool.LazyTransaction)
+func (pool *CachePool) Pending(filter txpool.PendingFilter) (map[common.Address][]*txpool.LazyTransaction, int) {
+	return make(map[common.Address][]*txpool.LazyTransaction), 0
 }
 
 // ValidateTxBasics checks whether a transaction is valid according to the consensus
