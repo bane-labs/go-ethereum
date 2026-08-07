@@ -23,6 +23,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"path"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -110,7 +111,7 @@ func main() {
 			}
 			nonces[index]++
 		}
-		errs := backend.TxPool().Add([]*types.Transaction{tx}, true)
+		errs := backend.TxPool().Add([]*types.Transaction{tx}, true, true)
 		for _, err := range errs {
 			if err != nil {
 				panic(err)
@@ -172,8 +173,9 @@ func makeNode(genesis *core.Genesis) (*node.Node, *eth.Ethereum, *catalyst.Simul
 	datadir, _ := os.MkdirTemp("", "")
 
 	config := &node.Config{
-		Name:    "geth",
-		DataDir: datadir,
+		Name:            "geth",
+		DataDir:         datadir,
+		BlobStoragePath: path.Join(datadir, "blobs"),
 	}
 	// Start the node and configure a full Ethereum node on it
 	stack, err := node.New(config)

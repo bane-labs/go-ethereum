@@ -109,7 +109,7 @@ func TestBuildBlockV1(t *testing.T) {
 	})
 
 	t.Run("buildBlockWithTransactionsFromTxPool", func(t *testing.T) {
-		ethservice.TxPool().Add([]*types.Transaction{tx}, true)
+		ethservice.TxPool().Add([]*types.Transaction{tx}, true, true)
 		envelope, err := api.BuildBlockV1(parent.Hash(), attrs, nil, nil)
 		if err != nil {
 			t.Fatalf("BuildBlockV1 with transaction failed: %v", err)
