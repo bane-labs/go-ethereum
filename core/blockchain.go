@@ -2994,7 +2994,7 @@ func (bc *BlockChain) getParentState(block *types.Block) (*state.StateDB, *types
 // ProcessState processes the state changes according to the Ethereum rules by running
 // the transaction messages using the statedb (if given) and applying any rewards to both
 // the processor (coinbase) and any included uncles. It doesn't persist any data.
-func (bc *BlockChain) ProcessState(block *types.Block, statedb *state.StateDB) (*state.StateDB, *ProcessResult, error) {
+func (bc *BlockChain) ProcessState(ctx context.Context, block *types.Block, statedb *state.StateDB) (*state.StateDB, *ProcessResult, error) {
 	var err error
 	if statedb == nil {
 		statedb, _, err = bc.getParentState(block)
@@ -3003,7 +3003,7 @@ func (bc *BlockChain) ProcessState(block *types.Block, statedb *state.StateDB) (
 		}
 	}
 
-	res, err := bc.processor.Process(block, statedb, bc.cfg.VmConfig)
+	res, err := bc.processor.Process(ctx, block, statedb, bc.cfg.VmConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to process block: %w", err)
 	}
@@ -3035,7 +3035,7 @@ func (bc *BlockChain) VerifyBlock(block *types.Block, checkState bool) (*state.S
 		return nil, nil, 0, nil
 	}
 
-	statedb, res, err := bc.ProcessState(block, statedb)
+	statedb, res, err := bc.ProcessState(context.Background(), block, statedb)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("failed to process block state: %w", err)
 	}

@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"sort"
 	"time"
@@ -324,19 +325,43 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 				b.drop(peer.id)
 				return
 			}
+			// decode
+			decodeBody := func(body eth.BlockBody) (txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
+				var err error
+				txs, err = body.Transactions.Items()
+				if err != nil {
+					log.Debug(fmt.Errorf("%w: bad transactions: %v", errInvalidBody, err).Error())
+					return
+				}
+				uncles, err = body.Uncles.Items()
+				if err != nil {
+					log.Debug(fmt.Errorf("%w: bad uncles: %v", errInvalidBody, err).Error())
+					return
+				}
+				if body.Withdrawals != nil {
+					withdrawals, err = body.Withdrawals.Items()
+					if err != nil {
+						log.Debug(fmt.Errorf("%w: bad withdrawals: %v", errInvalidBody, err).Error())
+						return
+					}
+				}
+				return
+			}
+			txs0, uncles0, withdrawals0 := decodeBody(bodies[0])
+			txs1, uncles1, withdrawals1 := decodeBody(bodies[1])
 			// Verify the bodies match the headers, if not, retry
 			// Rebuild the block trusted to be finalized
 			body := types.Body{
-				Transactions: bodies[0].Transactions,
-				Uncles:       bodies[0].Uncles,
-				Withdrawals:  bodies[0].Withdrawals,
+				Transactions: txs0,
+				Uncles:       uncles0,
+				Withdrawals:  withdrawals0,
 			}
 			finalizedBlock := types.NewBlockWithHeader(trusted).WithBody(body)
 			// Rebuild the block temporarily latest
 			body = types.Body{
-				Transactions: bodies[1].Transactions,
-				Uncles:       bodies[1].Uncles,
-				Withdrawals:  bodies[1].Withdrawals,
+				Transactions: txs1,
+				Uncles:       uncles1,
+				Withdrawals:  withdrawals1,
 			}
 			latestBlock := types.NewBlockWithHeader(latest).WithBody(body)
 			if finalizedBlock.Hash() != trusted.Hash() || latestBlock.Hash() != latest.Hash() {
@@ -360,7 +385,7 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 	}
 }
 
-func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) ([]*eth.BlockBody, [][]common.Hash, error) {
+func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) ([]eth.BlockBody, [][]common.Hash, error) {
 	// Create the response sink and send the network request
 	start := time.Now()
 	resCh := make(chan *eth.Response)

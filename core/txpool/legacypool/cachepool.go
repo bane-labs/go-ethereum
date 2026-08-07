@@ -143,14 +143,21 @@ func NewCache(config CacheConfig, chain BlockChain) *CachePool {
 // Filter returns whether the given transaction can be consumed by the cache
 // pool, specifically, whether it is a Legacy, AccessList or Dynamic transaction.
 func (pool *CachePool) Filter(tx *types.Transaction) bool {
-	switch tx.Type() {
-	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType:
+	if pool.FilterType(tx.Type()) {
 		// This system contract KeyManagementProxyHash will send transactions
 		// within the program, so it is excluded from consideration here.
 		if !antimev.IsEnvelope(tx) && tx.To().Cmp(systemcontracts.KeyManagementProxyHash) != 0 {
 			return true
 		}
-		return false
+	}
+	return false
+}
+
+// FilterType returns whether the legacy pool supports the given transaction type.
+func (pool *CachePool) FilterType(kind byte) bool {
+	switch kind {
+	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.SetCodeTxType:
+		return true
 	default:
 		return false
 	}

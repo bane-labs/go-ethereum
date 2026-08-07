@@ -19,6 +19,7 @@ package dbft
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -689,7 +690,7 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 	dbftBlock.transactions = c.sealingTransactions
 	ethBlock := dbftBlock.ToEthBlock()
 
-	state, result, err := c.chain.ProcessState(ethBlock, nil)
+	state, result, err := c.chain.ProcessState(context.Background(), ethBlock, nil)
 	if err != nil {
 		log.Crit("failed to process state from proposal",
 			"err", err,
