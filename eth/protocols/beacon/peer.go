@@ -4,11 +4,13 @@ import (
 	"math/big"
 	"math/rand/v2"
 	"sync"
+	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/tracker"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -42,6 +44,7 @@ type Peer struct {
 	*p2p.Peer                   // The embedded P2P package peer
 	rw        p2p.MsgReadWriter // Input/output streams for blob
 	version   uint              // Protocol version negotiated
+	tracker   *tracker.Tracker
 
 	head       common.Hash // Latest advertised head block hash
 	headNumber uint64      // Latest advertised head block number
@@ -66,12 +69,14 @@ type Peer struct {
 // NewPeer create a wrapper for a network connection and negotiated protocol
 // version.
 func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
+	cap := p2p.Cap{Name: ProtocolName, Version: version}
 	id := p.ID().String()
 	peer := &Peer{
 		id:               id,
 		Peer:             p,
 		rw:               rw,
 		version:          version,
+		tracker:          tracker.New(cap, id, 5*time.Minute),
 		knownBlocks:      newKnownCache(maxKnownBlocks),
 		queuedBlocks:     make(chan *blockPropagation, maxQueuedBlocks),
 		queuedBlockAnns:  make(chan *types.Block, maxQueuedBlockAnns),
@@ -204,10 +209,11 @@ func (p *Peer) RequestBlobs(hash common.Hash, sink chan *Response, ttl uint8) (*
 	id := rand.Uint64()
 
 	req := &Request{
-		id:   id,
-		sink: sink,
-		code: GetBlobsMsg,
-		want: BlobsMsg,
+		id:       id,
+		sink:     sink,
+		code:     GetBlobsMsg,
+		want:     BlobsMsg,
+		numItems: 1,
 		data: &GetBlobsPacket{
 			RequestId: id,
 			BlockHash: hash,
@@ -234,10 +240,11 @@ func (p *Peer) RequestBatchBlobs(hashes []common.Hash, sink chan *Response) (*Re
 	id := rand.Uint64()
 
 	req := &Request{
-		id:   id,
-		sink: sink,
-		code: GetBatchBlobsMsg,
-		want: BatchBlobsMsg,
+		id:       id,
+		sink:     sink,
+		code:     GetBatchBlobsMsg,
+		want:     BatchBlobsMsg,
+		numItems: len(hashes),
 		data: &GetBatchBlobsPacket{
 			RequestId:            id,
 			GetBatchBlobsRequest: hashes,
@@ -295,7 +302,12 @@ func (p *Peer) RequestTransactions(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of transactions", "count", len(hashes))
 	id := rand.Uint64()
 
-	requestTracker.Track(p.id, p.version, GetTransactionsMsg, TransactionsMsg, id)
+	p.tracker.Track(tracker.Request{
+		ID:       id,
+		ReqCode:  GetTransactionsMsg,
+		RespCode: TransactionsMsg,
+		Size:     len(hashes),
+	})
 	return p2p.Send(p.rw, GetTransactionsMsg, &GetTransactionsPacket{
 		RequestId:              id,
 		GetTransactionsRequest: hashes,

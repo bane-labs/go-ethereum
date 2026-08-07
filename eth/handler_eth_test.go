@@ -446,10 +446,10 @@ func testTransactionReannounce(t *testing.T, protocol uint) {
 
 	// Create a source handler to announce transactions from and a sink handler
 	// to receive them.
-	source := newTestHandler()
+	source := newTestHandler(ethconfig.FullSync)
 	defer source.close()
 
-	sink := newTestHandler()
+	sink := newTestHandler(ethconfig.FullSync)
 	defer sink.close()
 	sink.handler.synced.Store(true) // mark synced to accept transactions
 

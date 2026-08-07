@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
 )
@@ -211,11 +212,19 @@ func (f *fetcherTester) makeBodyFetcher(blocks map[common.Hash]*types.Block, dri
 			}
 		}
 		// Return on a new thread
-		bodies := make([]*eth.BlockBody, len(transactions))
+		bodies := make([]eth.BlockBody, len(transactions))
 		for i, txs := range transactions {
-			bodies[i] = &eth.BlockBody{
-				Transactions: txs,
-				Uncles:       uncles[i],
+			txsRlpList, err := rlp.EncodeToRawList(txs)
+			if err != nil {
+				return nil, err
+			}
+			unclesRlpList, err := rlp.EncodeToRawList(uncles[i])
+			if err != nil {
+				return nil, err
+			}
+			bodies[i] = eth.BlockBody{
+				Transactions: txsRlpList,
+				Uncles:       unclesRlpList,
 			}
 		}
 		req := &eth.Request{

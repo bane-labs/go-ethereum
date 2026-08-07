@@ -2,6 +2,7 @@ package fetcher
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -57,6 +58,7 @@ var (
 )
 
 var errTerminated = errors.New("terminated")
+var errInvalidBody = errors.New("retrieved block body is invalid")
 
 // blockRetrievalFn is a callback type for retrieving a block from the local chain.
 type blockRetrievalFn func(common.Hash) *types.Block
@@ -530,9 +532,25 @@ func (f *BlockFetcher) loop() {
 					select {
 					case res := <-resCh:
 						res.Done <- nil
-						// Ignoring withdrawals here, will set it to empty later if EmptyWithdrawalsHash in header.
-						txs, uncles, _ := res.Res.(*eth.BlockBodiesResponse).Unpack()
-						f.FilterBodies(peer, txs, uncles, time.Now())
+						var txLists [][]*types.Transaction
+						var uncleLists [][]*types.Header
+						bodies := *res.Res.(*eth.BlockBodiesResponse)
+						// decode
+						for index := 0; index < len(bodies); index++ {
+							txs, err := bodies[index].Transactions.Items()
+							if err != nil {
+								log.Debug(fmt.Errorf("%w: bad transactions: %v", errInvalidBody, err).Error())
+								return
+							}
+							txLists = append(txLists, txs)
+							uncles, err := bodies[index].Uncles.Items()
+							if err != nil {
+								log.Debug(fmt.Errorf("%w: bad uncles: %v", errInvalidBody, err).Error())
+								return
+							}
+							uncleLists = append(uncleLists, uncles)
+						}
+						f.FilterBodies(peer, txLists, uncleLists, time.Now())
 
 					case <-timeout.C:
 						// The peer didn't respond in time. The request
