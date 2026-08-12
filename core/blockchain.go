@@ -215,9 +215,6 @@ type BlockChainConfig struct {
 	// If the value is -1, indexing is disabled.
 	TxLookupLimit int64
 
-	// StateSizeTracking indicates whether the state size tracking is enabled.
-	StateSizeTracking bool
-
 	// SlowBlockThreshold is the block execution time threshold beyond which
 	// detailed statistics will be logged. Negative value means disabled (default),
 	// zero logs all blocks, positive value filters blocks by execution time.
@@ -372,7 +369,6 @@ type BlockChain struct {
 	prefetcher Prefetcher
 	processor  Processor // Block transaction processor interface
 	logger     *tracing.Hooks
-	stateSizer *state.SizeTracker // State size tracking
 
 	lastForkReadyAlert time.Time     // Last time there was a fork readiness print out
 	slowBlockThreshold time.Duration // Block execution time threshold beyond which detailed statistics will be logged
@@ -569,17 +565,6 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 	// Start tx indexer if it's enabled.
 	if bc.cfg.TxLookupLimit >= 0 {
 		bc.txIndexer = newTxIndexer(uint64(bc.cfg.TxLookupLimit), bc)
-	}
-
-	// Start state size tracker
-	if bc.cfg.StateSizeTracking {
-		stateSizer, err := state.NewSizeTracker(bc.db, bc.triedb)
-		if err == nil {
-			bc.stateSizer = stateSizer
-			log.Info("Enabled state size metrics")
-		} else {
-			log.Info("Failed to setup size tracker", "err", err)
-		}
 	}
 	return bc, nil
 }
@@ -1356,10 +1341,6 @@ func (bc *BlockChain) stopWithoutSaving() {
 	// Signal shutdown to all goroutines.
 	bc.InterruptInsert(true)
 
-	// Stop state size tracker
-	if bc.stateSizer != nil {
-		bc.stateSizer.Stop()
-	}
 	// Now wait for all chain modifications to end and persistent goroutines to exit.
 	//
 	// Note: Close waits for the mutex to become available, i.e. any running chain
@@ -1703,28 +1684,22 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	log.Debug("Committed block data", "size", common.StorageSize(batch.ValueSize()), "elapsed", common.PrettyDuration(time.Since(start)))
 
 	var (
-		err           error
-		root          common.Hash
-		isEIP158      = bc.chainConfig.IsEIP158(block.Number())
-		isCancun      = bc.chainConfig.IsCancun(block.Number(), block.Time())
-		hasStateHook  = bc.logger != nil && bc.logger.OnStateUpdate != nil
-		hasStateSizer = bc.stateSizer != nil
+		err          error
+		root         common.Hash
+		isEIP158     = bc.chainConfig.IsEIP158(block.Number())
+		isCancun     = bc.chainConfig.IsCancun(block.Number(), block.Time())
+		hasStateHook = bc.logger != nil && bc.logger.OnStateUpdate != nil
 	)
-	if hasStateHook || hasStateSizer {
+	if hasStateHook {
 		r, update, err := statedb.CommitWithUpdate(block.NumberU64(), isEIP158, isCancun)
 		if err != nil {
 			return err
 		}
-		if hasStateHook {
-			trUpdate, err := update.ToTracingUpdate()
-			if err != nil {
-				return err
-			}
-			bc.logger.OnStateUpdate(trUpdate)
+		trUpdate, err := update.ToTracingUpdate()
+		if err != nil {
+			return err
 		}
-		if hasStateSizer {
-			bc.stateSizer.Notify(update)
-		}
+		bc.logger.OnStateUpdate(trUpdate)
 		root = r
 	} else {
 		root, err = statedb.Commit(block.NumberU64(), isEIP158, isCancun)
@@ -3175,9 +3150,4 @@ func (bc *BlockChain) VerifyBlock(block *types.Block, checkState bool) (*state.S
 		return nil, nil, fmt.Errorf("failed to verify state: %w", err)
 	}
 	return statedb, res, nil
-}
-
-// StateSizer returns the state size tracker, or nil if it's not initialized
-func (bc *BlockChain) StateSizer() *state.SizeTracker {
-	return bc.stateSizer
 }
