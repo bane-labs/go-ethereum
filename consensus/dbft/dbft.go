@@ -1174,7 +1174,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			blockAccessList = bal.NewConstructionBlockAccessList()
 		)
 		// Run the pre-execution system calls
-		blockAccessList.Merge(core.PreExecution(context.Background(), pre.header.ParentBeaconRoot, pre.header.ParentHash, c.chain.Config(), evm, pre.header.Number, pre.header.Time))
+		blockAccessList.Merge(core.PreExecution(context.Background(), pre.header.ParentBeaconRoot, parent, c.chain.Config(), evm, pre.header.Number, pre.header.Time))
 
 		var (
 			j                    int

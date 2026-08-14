@@ -3088,7 +3088,7 @@ func (bc *BlockChain) ProcessState(ctx context.Context, block *types.Block, stat
 		}
 	}
 
-	res, err := bc.processor.Process(ctx, block, statedb, bc.jumpDestCache, bc.cfg.VmConfig)
+	res, err := bc.processor.Process(ctx, block, statedb, bc.jumpDestCache, bc.cfg.VmConfig, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to process block: %w", err)
 	}

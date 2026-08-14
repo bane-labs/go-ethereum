@@ -985,7 +985,7 @@ func TestWriteAncientBlocksNilBAL(t *testing.T) {
 	if block.AccessList() != nil {
 		t.Fatalf("test precondition: block must have nil access list")
 	}
-	if _, err := WriteAncientBlocks(db, []*types.Block{block}, types.EncodeBlockReceiptLists([]types.Receipts{nil})); err != nil {
+	if _, err := WriteAncientBlocks(db, []*types.Block{block}, types.EncodeBlockReceiptLists([]types.Receipts{nil}), big.NewInt(100)); err != nil {
 		t.Fatalf("WriteAncientBlocks failed: %v", err)
 	}
 	hash, number := block.Hash(), block.NumberU64()

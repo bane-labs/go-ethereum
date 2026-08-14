@@ -557,7 +557,7 @@ func (pool *CachePool) Get(hash common.Hash) *types.Transaction {
 // GetRLP returns a RLP-encoded transaction if it is contained in the pool.
 //
 // For the cache pool, this method will return nothing for now.
-func (pool *CachePool) GetRLP(hash common.Hash) []byte {
+func (pool *CachePool) GetRLP(hash common.Hash, version uint) []byte {
 	return nil
 }
 

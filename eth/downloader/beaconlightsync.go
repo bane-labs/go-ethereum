@@ -307,7 +307,7 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 			// the light chain is extended. Here we take n-1, since n may get reorg
 			trusted := headers[len(headers)-2]
 			latest := headers[len(headers)-1]
-			bodies, _, err := b.fetchBodiesByHash(peer, req.cancel, []common.Hash{trusted.Hash(), latest.Hash()})
+			_, bodies, err := b.fetchBodiesByHash(peer, req.cancel, []common.Hash{trusted.Hash(), latest.Hash()})
 			if err != nil {
 				// If downloader is canceled, then abort and wait for a new start
 				if err == errCanceled {
@@ -385,14 +385,14 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 	}
 }
 
-func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) ([]eth.BlockBody, [][]common.Hash, error) {
+func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) (eth.BlockBodyHashes, []eth.BlockBody, error) {
 	// Create the response sink and send the network request
 	start := time.Now()
 	resCh := make(chan *eth.Response)
 
 	req, err := p.peer.RequestBodies(hashes, resCh)
 	if err != nil {
-		return nil, nil, err
+		return eth.BlockBodyHashes{}, nil, err
 	}
 	defer req.Close()
 
@@ -404,26 +404,28 @@ func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan str
 
 	select {
 	case <-cancel:
-		return nil, nil, errCanceled
+		return eth.BlockBodyHashes{}, nil, errCanceled
 
 	case <-timeoutTimer.C:
 		// Body retrieval timed out, update the metrics
 		p.log.Debug("Body request timed out", "elapsed", ttl)
 		bodyTimeoutMeter.Mark(1)
 
-		return nil, nil, errTimeout
+		return eth.BlockBodyHashes{}, nil, errTimeout
 
 	case res := <-resCh:
+		resp := res.Res.(*eth.BlockBodiesResponse)
+		meta := res.Meta.(eth.BlockBodyHashes)
 		// Bodies successfully retrieved, update the metrics
 		bodyReqTimer.Update(time.Since(start))
-		bodyInMeter.Mark(int64(len(*res.Res.(*eth.BlockBodiesResponse))))
+		bodyInMeter.Mark(int64(len(*resp)))
 
 		// Don't reject the packet even if it turns out to be bad, downloader will
 		// disconnect the peer on its own terms. Simply delivery the bodies to
 		// be processed by the caller
 		res.Done <- nil
 
-		return *res.Res.(*eth.BlockBodiesResponse), res.Meta.([][]common.Hash), nil
+		return meta, *resp, nil
 	}
 }
 

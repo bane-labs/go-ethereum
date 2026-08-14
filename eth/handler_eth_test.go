@@ -452,8 +452,8 @@ func testTransactionReannounce(t *testing.T, protocol uint) {
 	defer sourcePipe.Close()
 	defer sinkPipe.Close()
 
-	sourcePeer := eth.NewPeer(protocol, p2p.NewPeer(enode.ID{0}, "", nil), sourcePipe, source.txpool, nil)
-	sinkPeer := eth.NewPeer(protocol, p2p.NewPeer(enode.ID{0}, "", nil), sinkPipe, sink.txpool, nil)
+	sourcePeer := eth.NewPeer(protocol, p2p.NewPeer(enode.ID{0}, "", nil), sourcePipe, source.txpool, source.txpool, nil)
+	sinkPeer := eth.NewPeer(protocol, p2p.NewPeer(enode.ID{0}, "", nil), sinkPipe, sink.txpool, sink.txpool, nil)
 	defer sourcePeer.Close()
 	defer sinkPeer.Close()
 
