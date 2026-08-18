@@ -273,7 +273,7 @@ func (env *benchmarkBlobEnv) addBlobTxs(b *testing.B) {
 		blobOffset += txBlobCount
 		blobsRemaining -= txBlobCount
 	}
-	errs := env.eth.TxPool().Add(txs, true, true)
+	errs := env.eth.TxPool().Add(txs, true)
 	for i, err := range errs {
 		if err != nil {
 			b.Fatalf("Failed to add blob tx %d to pool: %v", i, err)

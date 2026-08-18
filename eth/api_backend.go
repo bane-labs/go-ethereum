@@ -375,7 +375,7 @@ func (b *EthAPIBackend) SubscribeEnvelopeEvent(ch chan<- []*antimev.EnvelopeInfo
 }
 
 func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
-	err := b.eth.txPool.Add([]*types.Transaction{signedTx}, true, false)[0]
+	err := b.eth.txPool.Add([]*types.Transaction{signedTx}, false)[0]
 
 	// If the local transaction tracker is not configured, returns whatever
 	// returned from the txpool.

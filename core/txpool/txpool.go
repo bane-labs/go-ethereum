@@ -318,7 +318,7 @@ func (p *TxPool) GetMetadata(hash common.Hash) *TxMetadata {
 //
 // Note, if sync is set the method will block until all internal maintenance
 // related to the add is finished. Only use this during tests for determinism.
-func (p *TxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
+func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 	// Split the input transactions between the subpools. It shouldn't really
 	// happen that we receive merged batches, but better graceful than strange
 	// errors.
@@ -334,7 +334,7 @@ func (p *TxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
 
 		// Try to find a subpool that accepts the transaction
 		for j, subpool := range p.subpools {
-			if subpool.FilterAdd(tx, local) {
+			if subpool.Filter(tx) {
 				txsets[j] = append(txsets[j], tx)
 				splits[i] = j
 				break

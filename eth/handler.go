@@ -93,7 +93,7 @@ type txPool interface {
 	GetMetadata(hash common.Hash) *txpool.TxMetadata
 
 	// Add should add the given transactions to the pool.
-	Add(txs []*types.Transaction, local bool, sync bool) []error
+	Add(txs []*types.Transaction, sync bool) []error
 
 	// Pending should return pending transactions.
 	// The slice should be modifiable by the caller.
@@ -245,7 +245,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	})
 
 	addTxs := func(txs []*types.Transaction) []error {
-		return h.txpool.Add(txs, false, false)
+		return h.txpool.Add(txs, false)
 	}
 	validateMeta := func(tx common.Hash, kind byte) error {
 		if h.txpool.Has(tx) || blobBuffer.HasTx(tx) {

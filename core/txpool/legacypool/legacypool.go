@@ -321,7 +321,14 @@ func NewStatic(config Config, chain BlockChain) *LegacyPool {
 // Filter returns whether the given transaction can be consumed by the legacy
 // pool, specifically, whether it is a Legacy, AccessList or Dynamic transaction.
 func (pool *LegacyPool) Filter(tx *types.Transaction) bool {
-	return pool.FilterType(tx.Type())
+	res := pool.FilterType(tx.Type())
+	if res && pool.config.AMEVCache {
+		// Check if the transaction is an envelope transaction
+		if !antimev.IsEnvelope(tx) && tx.To().Cmp(systemcontracts.KeyManagementProxyHash) != 0 {
+			res = false
+		}
+	}
+	return res
 }
 
 // FilterType returns whether the legacy pool supports the given transaction type.
@@ -332,23 +339,6 @@ func (pool *LegacyPool) FilterType(kind byte) bool {
 	default:
 		return false
 	}
-}
-
-// FilterAdd returns whether the given transaction can be consumed by the legacy
-// pool, specifically, whether it is a Legacy, AccessList or Dynamic transaction.
-//
-// If you know whether this transaction is local or not, it is recommended to
-// use this method for filtering. Currently, it is being used in the txpool.Add
-// method.
-func (pool *LegacyPool) FilterAdd(tx *types.Transaction, local bool) bool {
-	res := pool.Filter(tx)
-	if res && pool.config.AMEVCache && local {
-		// Check if the transaction is an envelope transaction
-		if !antimev.IsEnvelope(tx) && tx.To().Cmp(systemcontracts.KeyManagementProxyHash) != 0 {
-			res = false
-		}
-	}
-	return res
 }
 
 // Init sets the gas price needed to keep a transaction in the pool and the chain
