@@ -181,7 +181,7 @@ func TestOnDemandSpam(t *testing.T) {
 			if err != nil {
 				panic(fmt.Sprintf("error signing transaction: %v", err))
 			}
-			if err := eth.TxPool().Add([]*types.Transaction{tx}, true, false)[0]; err != nil {
+			if err := eth.TxPool().Add([]*types.Transaction{tx}, false)[0]; err != nil {
 				panic(fmt.Sprintf("error adding txs to pool: %v", err))
 			}
 		}

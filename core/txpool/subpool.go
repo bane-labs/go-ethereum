@@ -105,14 +105,6 @@ type SubPool interface {
 	// FilterType returns whether the subpool supports the given transaction type.
 	FilterType(kind byte) bool
 
-	// FilterAdd is a selector used to decide whether a transaction would be added
-	// to this particular subpool.
-	//
-	// If you know whether this transaction is local or not, it is recommended to
-	// use this method for filtering. Currently, it is being used in the txpool.Add
-	// method.
-	FilterAdd(tx *types.Transaction, local bool) bool
-
 	// Init sets the base parameters of the subpool, allowing it to load any saved
 	// transactions from disk and also permitting internal maintenance routines to
 	// start up.

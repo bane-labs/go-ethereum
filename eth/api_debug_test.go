@@ -383,7 +383,7 @@ func TestDebugAPI_ClearTxpool(t *testing.T) {
 	}
 
 	// Add transaction to pool
-	errs := pool.Add([]*types.Transaction{signedTx}, true, true)
+	errs := pool.Add([]*types.Transaction{signedTx}, true)
 	if errs[0] != nil {
 		t.Logf("Note: Transaction addition returned: %v (this may be expected)", errs[0])
 	}

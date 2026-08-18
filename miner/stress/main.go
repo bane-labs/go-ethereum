@@ -111,7 +111,7 @@ func main() {
 			}
 			nonces[index]++
 		}
-		errs := backend.TxPool().Add([]*types.Transaction{tx}, true, true)
+		errs := backend.TxPool().Add([]*types.Transaction{tx}, true)
 		for _, err := range errs {
 			if err != nil {
 				panic(err)

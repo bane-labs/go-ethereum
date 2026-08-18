@@ -936,7 +936,7 @@ func testGetPooledTransaction(t *testing.T, blobTx bool) {
 			t.Fatal(err)
 		}
 	}
-	errs := backend.txpool.Add([]*types.Transaction{tx}, false, true)
+	errs := backend.txpool.Add([]*types.Transaction{tx}, true)
 	for _, err := range errs {
 		if err != nil {
 			t.Fatal(err)

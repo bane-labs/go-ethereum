@@ -608,15 +608,6 @@ func (p *BlobPool) FilterType(kind byte) bool {
 	return kind == types.BlobTxType
 }
 
-// FilterAdd returns whether the given transaction can be consumed by the blob pool.
-//
-// If you know whether this transaction is local or not, it is recommended to
-// use this method for filtering. Currently, it is being used in the txpool.Add
-// method.
-func (p *BlobPool) FilterAdd(tx *types.Transaction, local bool) bool {
-	return p.Filter(tx)
-}
-
 // Init sets the gas price needed to keep a transaction in the pool and the chain
 // head to allow balance / nonce checks. The transaction journal will be loaded
 // from disk and filtered based on the provided starting settings.

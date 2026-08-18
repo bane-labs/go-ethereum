@@ -224,7 +224,7 @@ func (tracker *TxTracker) loop() {
 			}
 			resubmits := tracker.recheck(rejournal)
 			if len(resubmits) > 0 {
-				tracker.pool.Add(resubmits, true, false)
+				tracker.pool.Add(resubmits, false)
 			}
 			timer.Reset(recheckInterval)
 		}
