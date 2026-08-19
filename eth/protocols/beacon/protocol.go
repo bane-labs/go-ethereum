@@ -122,12 +122,6 @@ type GetBlobsPacket struct {
 	Ttl       uint8
 }
 
-// BlobsPacket1 is the response packet for blobs by block hash, with BEACON1.
-type BlobsPacket1 struct {
-	RequestId uint64
-	Sidecars  types.BlobSidecarV0s
-}
-
 // BlobsPacket is the response packet for blobs by block hash.
 type BlobsPacket struct {
 	RequestId uint64
@@ -149,15 +143,6 @@ type GetBatchBlobsRequest []common.Hash
 type GetBatchBlobsPacket struct {
 	RequestId uint64
 	GetBatchBlobsRequest
-}
-
-// BatchBlobsResponse1 is the response packet for blobs by block hash, with BEACON1.
-type BatchBlobsResponse1 [][]*types.BlobTxSidecarV0
-
-// BatchBlobsPacket1 is the response packet for batch blobs by block hashes, with BEACON1.
-type BatchBlobsPacket1 struct {
-	RequestId uint64
-	BatchBlobsResponse1
 }
 
 // BatchBlobsResponse is the response packet for blobs by block hash.
@@ -227,17 +212,11 @@ func (*NewBlobsRootPacket) Kind() byte   { return NewBlobsRootMsg }
 func (*GetBlobsPacket) Name() string { return "GetBlobs" }
 func (*GetBlobsPacket) Kind() byte   { return GetBlobsMsg }
 
-func (*BlobsPacket1) Name() string { return "Blobs" }
-func (*BlobsPacket1) Kind() byte   { return BlobsMsg }
-
 func (*BlobsPacket) Name() string { return "Blobs" }
 func (*BlobsPacket) Kind() byte   { return BlobsMsg }
 
 func (*GetBatchBlobsPacket) Name() string { return "GetBatchBlobs" }
 func (*GetBatchBlobsPacket) Kind() byte   { return GetBatchBlobsMsg }
-
-func (*BatchBlobsPacket1) Name() string { return "BatchBlobs" }
-func (*BatchBlobsPacket1) Kind() byte   { return BatchBlobsMsg }
 
 func (*BatchBlobsPacket) Name() string { return "BatchBlobs" }
 func (*BatchBlobsPacket) Kind() byte   { return BatchBlobsMsg }

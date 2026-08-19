@@ -17,6 +17,7 @@
 package miner
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"math/big"
@@ -28,22 +29,26 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/internal/telemetry"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // BuildPayloadArgs contains the provided parameters for building payload.
 // Check engine-api specification for more details.
 // https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#payloadattributesv3
 type BuildPayloadArgs struct {
-	Parent       common.Hash           // The parent block to build payload on top
-	Timestamp    uint64                // The provided timestamp of generated payload
-	FeeRecipient common.Address        // The provided recipient address for collecting transaction fee
-	Random       common.Hash           // The provided randomness value
-	Withdrawals  types.Withdrawals     // The provided withdrawals
-	BeaconRoot   *common.Hash          // The provided beaconRoot (Cancun)
-	Version      engine.PayloadVersion // Versioning byte for payload id calculation.
+	Parent         common.Hash           // The parent block to build payload on top
+	Timestamp      uint64                // The provided timestamp of generated payload
+	FeeRecipient   common.Address        // The provided recipient address for collecting transaction fee
+	Random         common.Hash           // The provided randomness value
+	Withdrawals    types.Withdrawals     // The provided withdrawals
+	BeaconRoot     *common.Hash          // The provided beaconRoot (Cancun)
+	SlotNum        *uint64               // The provided slotNumber (Amsterdam)
+	TargetGasLimit *uint64               // The provided target gas limit (Amsterdam)
+	Version        engine.PayloadVersion // Versioning byte for payload id calculation.
 }
 
 // Id computes an 8-byte identifier by hashing the components of the payload arguments.
@@ -56,6 +61,12 @@ func (args *BuildPayloadArgs) Id() engine.PayloadID {
 	rlp.Encode(hasher, args.Withdrawals)
 	if args.BeaconRoot != nil {
 		hasher.Write(args.BeaconRoot[:])
+	}
+	if args.SlotNum != nil {
+		binary.Write(hasher, binary.BigEndian, *args.SlotNum)
+	}
+	if args.TargetGasLimit != nil {
+		binary.Write(hasher, binary.BigEndian, *args.TargetGasLimit)
 	}
 	var out engine.PayloadID
 	copy(out[:], hasher.Sum(nil)[:8])
@@ -97,14 +108,15 @@ func newPayload(empty *types.Block, emptyRequests [][]byte, witness *stateless.W
 	return payload
 }
 
-// update updates the full-block with latest built version.
-func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) {
+// update updates the full-block with latest built version. It returns true if
+// the update was accepted (i.e. the new block has higher fees than the previous).
+func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) (result bool) {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
 	select {
 	case <-payload.stop:
-		return // reject stale update
+		return false // reject stale update
 	default:
 	}
 	// Ensure the newly provided full block has a higher transaction fee.
@@ -129,8 +141,10 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) {
 			"root", r.block.Root(),
 			"elapsed", common.PrettyDuration(elapsed),
 		)
+		result = true
 	}
 	payload.cond.Broadcast() // fire signal for notifying full block
+	return
 }
 
 // Resolve returns the latest built payload and also terminates the background
@@ -205,47 +219,114 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 	return envelope
 }
 
+func (miner *Miner) runBuildIteration(ctx context.Context, start time.Time, iteration int, payload *Payload, params *generateParams, witness bool) {
+	ctx, span, spanEnd := telemetry.StartSpan(ctx, "miner.buildIteration",
+		telemetry.IntAttribute("iteration", iteration),
+	)
+	var err error
+	defer spanEnd(&err)
+
+	r := miner.generateWork(ctx, params, witness)
+	err = r.err
+	if err == nil {
+		accepted := payload.update(r, time.Since(start))
+		span.SetAttributes(telemetry.BoolAttribute("update.accepted", accepted))
+	} else {
+		log.Info("Error while generating work", "id", payload.id, "err", err)
+	}
+}
+
 // buildPayload builds the payload according to the provided parameters.
-func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload, error) {
+func (miner *Miner) buildPayload(ctx context.Context, args *BuildPayloadArgs, witness bool) (result *Payload, err error) {
+	payloadID := args.Id()
+	ctx, _, spanEnd := telemetry.StartSpan(ctx, "miner.buildPayload",
+		telemetry.StringAttribute("payload.id", payloadID.String()),
+		telemetry.StringAttribute("parent.hash", args.Parent.String()),
+		telemetry.Int64Attribute("timestamp", int64(args.Timestamp)),
+	)
+	defer spanEnd(&err)
+
 	// Build the initial version with no transaction included. It should be fast
 	// enough to run. The empty payload can at least make sure there is something
 	// to deliver for not missing slot.
 	emptyParams := &generateParams{
-		timestamp:   args.Timestamp,
-		forceTime:   false,
-		parentHash:  args.Parent,
-		coinbase:    args.FeeRecipient,
-		random:      args.Random,
-		withdrawals: args.Withdrawals,
-		beaconRoot:  args.BeaconRoot,
-		noTxs:       true,
+		timestamp:      args.Timestamp,
+		forceTime:      true,
+		parentHash:     args.Parent,
+		coinbase:       args.FeeRecipient,
+		random:         args.Random,
+		withdrawals:    args.Withdrawals,
+		beaconRoot:     args.BeaconRoot,
+		slotNum:        args.SlotNum,
+		targetGasLimit: args.TargetGasLimit,
+		noTxs:          true,
 	}
-	empty := miner.generateWork(emptyParams, witness)
+	empty := miner.generateWork(ctx, emptyParams, witness)
 	if empty.err != nil {
 		return nil, empty.err
 	}
 	// Construct a payload object for return.
-	payload := newPayload(empty.block, empty.requests, empty.witness, args.Id())
+	payload := newPayload(empty.block, empty.requests, empty.witness, payloadID)
 
 	// Fullfil the payload with transactions.
+	var iteration int
+	bCtx, bSpan, bSpanEnd := telemetry.StartSpan(ctx, "miner.background",
+		telemetry.Int64Attribute("block.number", int64(empty.block.NumberU64())),
+	)
+	defer func() {
+		bSpan.SetAttributes(telemetry.IntAttribute("iterations.total", iteration))
+		bSpanEnd(nil)
+	}()
+
 	fullParams := &generateParams{
-		timestamp:   args.Timestamp,
-		forceTime:   false,
-		parentHash:  args.Parent,
-		coinbase:    args.FeeRecipient,
-		random:      args.Random,
-		withdrawals: args.Withdrawals,
-		beaconRoot:  args.BeaconRoot,
-		noTxs:       false,
+		timestamp:      args.Timestamp,
+		forceTime:      true,
+		parentHash:     args.Parent,
+		coinbase:       args.FeeRecipient,
+		random:         args.Random,
+		withdrawals:    args.Withdrawals,
+		beaconRoot:     args.BeaconRoot,
+		slotNum:        args.SlotNum,
+		targetGasLimit: args.TargetGasLimit,
+		noTxs:          false,
 	}
-
 	start := time.Now()
-	r := miner.generateWork(fullParams, witness)
-	if r.err == nil {
-		payload.update(r, time.Since(start))
-	} else {
-		log.Info("Error while generating work", "id", payload.id, "err", r.err)
-	}
-
+	iteration++
+	miner.runBuildIteration(bCtx, start, iteration, payload, fullParams, witness)
 	return payload, nil
+}
+
+func (payload *Payload) updateSpanForDelivery(bSpan trace.Span) {
+	payload.lock.Lock()
+	emptyDelivered := payload.full == nil
+	payload.lock.Unlock()
+	bSpan.SetAttributes(
+		telemetry.StringAttribute("exit.reason", "delivery"),
+		telemetry.BoolAttribute("empty.delivered", emptyDelivered),
+	)
+}
+
+// BuildTestingPayload is for testing_buildBlockV*. It creates a block with the exact content given
+// by the parameters instead of using the locally available transactions.
+func (miner *Miner) BuildTestingPayload(args *BuildPayloadArgs, transactions []*types.Transaction, empty bool, extraData []byte) (*types.Block, *engine.ExecutionPayloadEnvelope, error) {
+	fullParams := &generateParams{
+		timestamp:         args.Timestamp,
+		forceTime:         true,
+		parentHash:        args.Parent,
+		coinbase:          args.FeeRecipient,
+		random:            args.Random,
+		withdrawals:       args.Withdrawals,
+		beaconRoot:        args.BeaconRoot,
+		slotNum:           args.SlotNum,
+		targetGasLimit:    args.TargetGasLimit,
+		noTxs:             empty,
+		forceOverrides:    true,
+		overrideExtraData: extraData,
+		overrideTxs:       transactions,
+	}
+	res := miner.generateWork(context.Background(), fullParams, false)
+	if res.err != nil {
+		return nil, nil, res.err
+	}
+	return res.block, engine.BlockToExecutableData(res.block, res.fees, res.sidecars, res.requests), nil
 }

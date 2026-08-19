@@ -326,19 +326,59 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 			}
 			// Verify the bodies match the headers, if not, retry
 			// Rebuild the block trusted to be finalized
-			body := types.Body{
-				Transactions: bodies[0].Transactions,
-				Uncles:       bodies[0].Uncles,
-				Withdrawals:  bodies[0].Withdrawals,
+			ftxs, err := bodies[0].Transactions.Items()
+			if err != nil {
+				log.Debug("Failed to decode new blocks", "err", err)
+				b.scheduleRevertRequest(req)
+				b.drop(peer.id)
+				return
 			}
-			finalizedBlock := types.NewBlockWithHeader(trusted).WithBody(body)
+			funcles, err := bodies[0].Uncles.Items()
+			if err != nil {
+				log.Debug("Failed to decode new blocks", "err", err)
+				b.scheduleRevertRequest(req)
+				b.drop(peer.id)
+				return
+			}
+			fwithdrawals, err := bodies[0].Withdrawals.Items()
+			if err != nil {
+				log.Debug("Failed to decode new blocks", "err", err)
+				b.scheduleRevertRequest(req)
+				b.drop(peer.id)
+				return
+			}
+			finalizedBlock := types.NewBlockWithHeader(trusted).WithBody(types.Body{
+				Transactions: ftxs,
+				Uncles:       funcles,
+				Withdrawals:  fwithdrawals,
+			})
 			// Rebuild the block temporarily latest
-			body = types.Body{
-				Transactions: bodies[1].Transactions,
-				Uncles:       bodies[1].Uncles,
-				Withdrawals:  bodies[1].Withdrawals,
+			ltxs, err := bodies[1].Transactions.Items()
+			if err != nil {
+				log.Debug("Failed to decode new blocks", "err", err)
+				b.scheduleRevertRequest(req)
+				b.drop(peer.id)
+				return
 			}
-			latestBlock := types.NewBlockWithHeader(latest).WithBody(body)
+			luncles, err := bodies[1].Uncles.Items()
+			if err != nil {
+				log.Debug("Failed to decode new blocks", "err", err)
+				b.scheduleRevertRequest(req)
+				b.drop(peer.id)
+				return
+			}
+			lwithdrawals, err := bodies[1].Withdrawals.Items()
+			if err != nil {
+				log.Debug("Failed to decode new blocks", "err", err)
+				b.scheduleRevertRequest(req)
+				b.drop(peer.id)
+				return
+			}
+			latestBlock := types.NewBlockWithHeader(latest).WithBody(types.Body{
+				Transactions: ltxs,
+				Uncles:       luncles,
+				Withdrawals:  lwithdrawals,
+			})
 			if finalizedBlock.Hash() != trusted.Hash() || latestBlock.Hash() != latest.Hash() {
 				log.Debug("Received invalid new bodies", "trusted", trusted.Hash(), "latest", latest.Hash())
 				b.scheduleRevertRequest(req)
@@ -360,7 +400,7 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 	}
 }
 
-func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) ([]*eth.BlockBody, [][]common.Hash, error) {
+func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) ([]eth.BlockBody, [][]common.Hash, error) {
 	// Create the response sink and send the network request
 	start := time.Now()
 	resCh := make(chan *eth.Response)

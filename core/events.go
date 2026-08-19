@@ -17,6 +17,8 @@
 package core
 
 import (
+	"time"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -43,4 +45,11 @@ type ChainHeadEvent struct {
 // AnnoBlockEvent is posted when new sidecars of a block are persisted.
 type AnnoBlobEvent struct {
 	BlockHash common.Hash
+}
+
+// NewPayloadEvent is posted when engine_newPayloadVX processes a block.
+type NewPayloadEvent struct {
+	Hash           common.Hash
+	Number         uint64
+	ProcessingTime time.Duration
 }

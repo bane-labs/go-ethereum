@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/dbft/light"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -32,11 +33,11 @@ type Beacon struct {
 
 // New creates a mock beacon client with basic mining functionality. It supports customized
 // fork choice rules and transaction filtering for messages from P2P beacon protocol.
-func New(eth miner.Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address,
+func New(eth miner.Backend, rpc *rpc.Client, dl *downloader.Downloader, coinbase common.Address,
 	shouldPreserve miner.ShouldPreserveFn, txFilter miner.TransactionFilterFn) *Beacon {
 	b := &Beacon{
 		chain:   eth.BlockChain(),
-		miner:   miner.New(eth, rpc, mux, coinbase, shouldPreserve, txFilter),
+		miner:   miner.New(eth, rpc, dl, coinbase, shouldPreserve, txFilter),
 		blockCh: make(chan *types.Block),
 	}
 

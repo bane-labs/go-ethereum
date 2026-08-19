@@ -370,17 +370,7 @@ func decodeBlobSidecar(input []byte) (*types.BlobSidecar, error) {
 		return nil, err
 	}
 	if secondElemKind == rlp.List {
-		// No version byte: blob sidecar v0.
-		v0 := &types.BlobSidecarV0{}
-		if err := rlp.DecodeBytes(input, v0); err != nil {
-			return nil, err
-		}
-		new := types.NewBlobSidecar(types.NewBlobTxSidecar(types.BlobSidecarVersion0, v0.Blobs, v0.Commitments, v0.Proofs),
-			v0.BlockNumber,
-			v0.BlockTime,
-			v0.Index,
-		)
-		return new, nil
+		return nil, errors.New("invalid blob sidecar encoding: second element is not a list")
 	}
 	// It has a version byte. Decode according to the versioned encoding.
 	s := &types.BlobSidecar{}

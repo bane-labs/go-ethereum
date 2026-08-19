@@ -29,14 +29,20 @@ type Backend interface {
 	Synced() bool
 }
 
+// Downloader wraps all methods required for miner event listening.
+type Downloader interface {
+	SubscribeSyncEvents(ch chan<- downloader.SyncEvent) event.Subscription
+}
+
 // Miner is the main object which takes care of submitting new work to consensus
 // engine and gathering the sealing result.
 type Miner struct {
-	mux     *event.TypeMux
-	backend Backend
-	exitCh  chan struct{}
-	startCh chan struct{}
-	stopCh  chan struct{}
+	syncCh     chan downloader.SyncEvent
+	backend    Backend
+	downloader Downloader
+	exitCh     chan struct{}
+	startCh    chan struct{}
+	stopCh     chan struct{}
 
 	worker      *worker
 	syncingFeed event.Feed              // Event feed for syncing status changes, a CL notifier as proxy
@@ -48,16 +54,17 @@ type Miner struct {
 	wg sync.WaitGroup
 }
 
-func New(eth Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address,
+func New(eth Backend, rpc *rpc.Client, dl Downloader, coinbase common.Address,
 	shouldPreserve ShouldPreserveFn, txFilter TransactionFilterFn) *Miner {
 	miner := &Miner{
-		mux:      mux,
-		backend:  eth,
-		exitCh:   make(chan struct{}),
-		startCh:  make(chan struct{}),
-		stopCh:   make(chan struct{}),
-		worker:   newWorker(eth, rpc, coinbase, shouldPreserve),
-		txFilter: txFilter,
+		syncCh:     make(chan downloader.SyncEvent, 16),
+		backend:    eth,
+		downloader: dl,
+		exitCh:     make(chan struct{}),
+		startCh:    make(chan struct{}),
+		stopCh:     make(chan struct{}),
+		worker:     newWorker(eth, rpc, coinbase, shouldPreserve),
+		txFilter:   txFilter,
 	}
 	miner.wg.Add(1)
 	go miner.update()
@@ -107,26 +114,18 @@ func (miner *Miner) NotifyTransactions(txs []*types.Transaction) {
 func (miner *Miner) update() {
 	defer miner.wg.Done()
 
-	events := miner.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
+	events := miner.downloader.SubscribeSyncEvents(miner.syncCh)
 	defer func() {
-		if !events.Closed() {
-			events.Unsubscribe()
-		}
+		events.Unsubscribe()
 	}()
 
 	shouldStart := false
 	canStart := true
-	dlEventCh := events.Chan()
 	for {
 		select {
-		case ev := <-dlEventCh:
-			if ev == nil {
-				// Unsubscription done, stop listening
-				dlEventCh = nil
-				continue
-			}
-			switch ev.Data.(type) {
-			case downloader.StartEvent:
+		case ev := <-miner.syncCh:
+			switch ev.Type {
+			case downloader.SyncStarted:
 				wasMining := miner.Mining()
 				miner.worker.stopMining()
 				canStart = false
@@ -138,7 +137,7 @@ func (miner *Miner) update() {
 				miner.worker.syncing.Store(true)
 				miner.syncingFeed.Send(true)
 
-			case downloader.FailedEvent:
+			case downloader.SyncFailed:
 				canStart = true
 				if shouldStart {
 					miner.worker.startMining()
@@ -146,7 +145,7 @@ func (miner *Miner) update() {
 				miner.worker.syncing.Store(false)
 				miner.syncingFeed.Send(false)
 
-			case downloader.DoneEvent:
+			case downloader.SyncCompleted:
 				canStart = true
 				if shouldStart {
 					miner.worker.startMining()

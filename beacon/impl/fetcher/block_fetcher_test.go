@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
 )
@@ -203,19 +204,23 @@ func (f *fetcherTester) makeBodyFetcher(blocks map[common.Hash]*types.Block, dri
 		// Gather the block bodies to return
 		transactions := make([][]*types.Transaction, 0, len(hashes))
 		uncles := make([][]*types.Header, 0, len(hashes))
+		withdrawals := make([][]*types.Withdrawal, 0, len(hashes))
 
 		for _, hash := range hashes {
 			if block, ok := closure[hash]; ok {
 				transactions = append(transactions, block.Transactions())
 				uncles = append(uncles, block.Uncles())
+				withdrawals = append(withdrawals, block.Withdrawals())
 			}
 		}
 		// Return on a new thread
-		bodies := make([]*eth.BlockBody, len(transactions))
+		bodies := make([]eth.BlockBody, len(transactions))
 		for i, txs := range transactions {
-			bodies[i] = &eth.BlockBody{
-				Transactions: txs,
-				Uncles:       uncles[i],
+			withdrawal := encodeRL(withdrawals[i])
+			bodies[i] = eth.BlockBody{
+				Transactions: encodeRL(txs),
+				Uncles:       encodeRL(uncles[i]),
+				Withdrawals:  &withdrawal,
 			}
 		}
 		req := &eth.Request{
@@ -917,4 +922,12 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 		verifyImportEvent(t, imported, true)
 	}
 	verifyImportDone(t, imported)
+}
+
+func encodeRL[T any](slice []T) rlp.RawList[T] {
+	rl, err := rlp.EncodeToRawList(slice)
+	if err != nil {
+		panic(err)
+	}
+	return rl
 }

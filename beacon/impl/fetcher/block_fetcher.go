@@ -112,6 +112,7 @@ type bodyFilterTask struct {
 	peer         string                 // The source peer of block bodies
 	transactions [][]*types.Transaction // Collection of transactions per block bodies
 	uncles       [][]*types.Header      // Collection of uncles per block bodies
+	withdrawals  [][]*types.Withdrawal  // Collection of withdrawals per block bodies
 	time         time.Time              // Arrival time of the blocks' contents
 }
 
@@ -294,7 +295,7 @@ func (f *BlockFetcher) FilterHeaders(peer string, headers []*types.Header, time 
 
 // FilterBodies extracts all the block bodies that were explicitly requested by
 // the fetcher, returning those that should be handled differently.
-func (f *BlockFetcher) FilterBodies(peer string, transactions [][]*types.Transaction, uncles [][]*types.Header, time time.Time) ([][]*types.Transaction, [][]*types.Header) {
+func (f *BlockFetcher) FilterBodies(peer string, transactions [][]*types.Transaction, uncles [][]*types.Header, withdrawals [][]*types.Withdrawal, time time.Time) ([][]*types.Transaction, [][]*types.Header) {
 	log.Trace("Filtering bodies", "peer", peer, "txs", len(transactions), "uncles", len(uncles))
 
 	// Send the filter channel to the fetcher
@@ -307,7 +308,7 @@ func (f *BlockFetcher) FilterBodies(peer string, transactions [][]*types.Transac
 	}
 	// Request the filtering of the body list
 	select {
-	case filter <- &bodyFilterTask{peer: peer, transactions: transactions, uncles: uncles, time: time}:
+	case filter <- &bodyFilterTask{peer: peer, transactions: transactions, uncles: uncles, withdrawals: withdrawals, time: time}:
 	case <-f.quit:
 		return nil, nil
 	}
@@ -525,9 +526,13 @@ func (f *BlockFetcher) loop() {
 					select {
 					case res := <-resCh:
 						res.Done <- nil
-						// Ignoring withdrawals here, will set it to empty later if EmptyWithdrawalsHash in header.
-						txs, uncles, _ := res.Res.(*eth.BlockBodiesResponse).Unpack()
-						f.FilterBodies(peer, txs, uncles, time.Now())
+						txs, uncles, withdrawals, err := res.Res.(*eth.BlockBodiesResponse).Unpack()
+						if err != nil {
+							log.Error("Failed to unpack block bodies", "err", err)
+							f.dropPeer(peer)
+							return
+						}
+						f.FilterBodies(peer, txs, uncles, withdrawals, time.Now())
 
 					case <-timeout.C:
 						// The peer didn't respond in time. The request
@@ -578,9 +583,6 @@ func (f *BlockFetcher) loop() {
 							log.Trace("Block empty, skipping body retrieval", "peer", announce.origin, "number", header.Number, "hash", header.Hash())
 
 							block := types.NewBlockWithHeader(header)
-							if block.Header().EmptyWithdrawalsHash() {
-								block = block.WithWithdrawals(make([]*types.Withdrawal, 0))
-							}
 							block.ReceivedAt = task.time
 
 							complete = append(complete, block)
@@ -667,10 +669,7 @@ func (f *BlockFetcher) loop() {
 							body := types.Body{
 								Transactions: task.transactions[i],
 								Uncles:       task.uncles[i],
-							}
-							if announce.header.EmptyWithdrawalsHash() {
-								// Only empty withdrawals are supported in case of pre-merge dBFT with Shanghai enabled.
-								body.Withdrawals = []*types.Withdrawal{}
+								Withdrawals:  task.withdrawals[i],
 							}
 							block := types.NewBlockWithHeader(announce.header).WithBody(body)
 							block.ReceivedAt = task.time

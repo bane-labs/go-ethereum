@@ -89,7 +89,7 @@ func genValueTx(nbytes int) func(int, *BlockGen) {
 	data := make([]byte, nbytes)
 	return func(i int, gen *BlockGen) {
 		toaddr := common.Address{}
-		gas, _ := IntrinsicGas(data, nil, nil, false, false, false, false)
+		cost, _ := IntrinsicGas(data, nil, nil, common.Address{}, &toaddr, nil, params.Rules{})
 		signer := gen.Signer()
 		gasPrice := big.NewInt(0)
 		if gen.header.BaseFee != nil {
@@ -99,7 +99,7 @@ func genValueTx(nbytes int) func(int, *BlockGen) {
 			Nonce:    gen.TxNonce(benchRootAddr),
 			To:       &toaddr,
 			Value:    big.NewInt(1),
-			Gas:      gas,
+			Gas:      cost,
 			Data:     data,
 			GasPrice: gasPrice,
 		})
@@ -284,7 +284,6 @@ func makeChainForBench(db ethdb.Database, genesis *Genesis, full bool, count uin
 
 		rawdb.WriteHeader(db, header)
 		rawdb.WriteCanonicalHash(db, hash, n)
-		rawdb.WriteTd(db, hash, n, big.NewInt(int64(n+1)))
 
 		if n == 0 {
 			rawdb.WriteChainConfig(db, hash, genesis.Config)

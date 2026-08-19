@@ -4,11 +4,13 @@ import (
 	"math/big"
 	"math/rand/v2"
 	"sync"
+	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/tracker"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -55,6 +57,7 @@ type Peer struct {
 	knownBlobs       *knownCache      // Set of blob hashes known to be known by this peer
 	blobRootAnnounce chan common.Hash // Channel used to queue blobs block hash announcement requests
 
+	tracker     *tracker.Tracker
 	reqDispatch chan *request  // Dispatch channel to send requests and track then until fulfillment
 	reqCancel   chan *cancel   // Dispatch channel to cancel pending requests and untrack them
 	resDispatch chan *response // Dispatch channel to fulfil pending requests and untrack them
@@ -66,6 +69,7 @@ type Peer struct {
 // NewPeer create a wrapper for a network connection and negotiated protocol
 // version.
 func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
+	cap := p2p.Cap{Name: ProtocolName, Version: version}
 	id := p.ID().String()
 	peer := &Peer{
 		id:               id,
@@ -77,6 +81,7 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
 		queuedBlockAnns:  make(chan *types.Block, maxQueuedBlockAnns),
 		knownBlobs:       newKnownCache(maxKnownBlobs),
 		blobRootAnnounce: make(chan common.Hash, blobBufferSize),
+		tracker:          tracker.New(cap, id, 5*time.Minute),
 		reqDispatch:      make(chan *request),
 		reqCancel:        make(chan *cancel),
 		resDispatch:      make(chan *response),
@@ -295,7 +300,15 @@ func (p *Peer) RequestTransactions(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of transactions", "count", len(hashes))
 	id := rand.Uint64()
 
-	requestTracker.Track(p.id, p.version, GetTransactionsMsg, TransactionsMsg, id)
+	err := p.tracker.Track(tracker.Request{
+		ID:       id,
+		ReqCode:  GetTransactionsMsg,
+		RespCode: TransactionsMsg,
+		Size:     len(hashes),
+	})
+	if err != nil {
+		return err
+	}
 	return p2p.Send(p.rw, GetTransactionsMsg, &GetTransactionsPacket{
 		RequestId:              id,
 		GetTransactionsRequest: hashes,

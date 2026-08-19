@@ -80,14 +80,16 @@ type PendingFilter struct {
 
 	// When BlobTxs true, return only blob transactions (block blob-space filling)
 	// when false, return only non-blob txs (peer-join announces, block space filling)
-	BlobTxs     bool
-	BlobVersion byte // Blob tx version to include. 0 means pre-Osaka, 1 means Osaka and later
+	BlobTxs      bool
+	PartialCells bool
+	BlobVersion  byte // Blob tx version to include. 0 means pre-Osaka, 1 means Osaka and later
 }
 
 // TxMetadata denotes the metadata of a transaction.
 type TxMetadata struct {
-	Type uint8  // The type of the transaction
-	Size uint64 // The length of the 'rlp encoding' of a transaction
+	Type            uint8  // The type of the transaction
+	Size            uint64 // The length of the 'rlp encoding' of a transaction (including blobs)
+	SizeWithoutBlob uint64 // The length without blob data (for ETH/72 announcements)
 }
 
 // SubPool represents a specialized transaction pool that lives on its own (e.g.
@@ -100,13 +102,8 @@ type SubPool interface {
 	// to this particular subpool.
 	Filter(tx *types.Transaction) bool
 
-	// FilterAdd is a selector used to decide whether a transaction would be added
-	// to this particular subpool.
-	//
-	// If you know whether this transaction is local or not, it is recommended to
-	// use this method for filtering. Currently, it is being used in the txpool.Add
-	// method.
-	FilterAdd(tx *types.Transaction, local bool) bool
+	// FilterType returns whether the subpool supports the given transaction type.
+	FilterType(kind byte) bool
 
 	// Init sets the base parameters of the subpool, allowing it to load any saved
 	// transactions from disk and also permitting internal maintenance routines to
@@ -137,7 +134,7 @@ type SubPool interface {
 	Get(hash common.Hash) *types.Transaction
 
 	// GetRLP returns a RLP-encoded transaction if it is contained in the pool.
-	GetRLP(hash common.Hash) []byte
+	GetRLP(hash common.Hash, version uint) []byte
 
 	// GetMetadata returns the transaction type and transaction size with the
 	// given transaction hash.
@@ -159,7 +156,7 @@ type SubPool interface {
 	//
 	// The transactions can also be pre-filtered by the dynamic fee components to
 	// reduce allocations and load on downstream subsystems.
-	Pending(filter PendingFilter) map[common.Address][]*LazyTransaction
+	Pending(filter PendingFilter) (map[common.Address][]*LazyTransaction, int)
 
 	// SubscribeTransactions subscribes to new transaction events. The subscriber
 	// can decide whether to receive notifications only for newly seen transactions

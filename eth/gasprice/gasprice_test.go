@@ -104,7 +104,7 @@ func (b *testBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.
 func (b *testBackend) Pending() (*types.Block, types.Receipts, *state.StateDB) {
 	if b.pending {
 		block := b.chain.GetBlockByNumber(testHead + 1)
-		state, _ := b.chain.StateAt(block.Root())
+		state, _ := b.chain.StateAt(block.Header())
 		return block, b.chain.GetReceiptsByHash(block.Hash()), state
 	}
 	return nil, nil, nil
@@ -212,6 +212,7 @@ func newTestBackend(t *testing.T, londonBlock *big.Int, cancunBlock *big.Int, pe
 		}
 		td += b.Difficulty().Uint64()
 	})
+
 	// Construct testing chain
 	gspec.Config.TerminalTotalDifficulty = new(big.Int).SetUint64(td)
 	chain, err := core.NewBlockChain(db, gspec, engine, &core.BlockChainConfig{NoPrefetch: true})

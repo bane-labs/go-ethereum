@@ -140,33 +140,26 @@ func NewCache(config CacheConfig, chain BlockChain) *CachePool {
 	return pool
 }
 
-// Filter returns whether the given transaction can be consumed by the cache
+// Filter returns whether the given transaction can be consumed by the legacy
 // pool, specifically, whether it is a Legacy, AccessList or Dynamic transaction.
 func (pool *CachePool) Filter(tx *types.Transaction) bool {
-	switch tx.Type() {
-	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType:
-		// This system contract KeyManagementProxyHash will send transactions
-		// within the program, so it is excluded from consideration here.
-		if !antimev.IsEnvelope(tx) && tx.To().Cmp(systemcontracts.KeyManagementProxyHash) != 0 {
-			return true
-		}
-		return false
+	res := pool.FilterType(tx.Type())
+	// This system contract KeyManagementProxyHash will send transactions
+	// within the program, so it is excluded from consideration here.
+	if res && !antimev.IsEnvelope(tx) && tx.To().Cmp(systemcontracts.KeyManagementProxyHash) != 0 {
+		return true
+	}
+	return false
+}
+
+// FilterType returns whether the legacy pool supports the given transaction type.
+func (pool *CachePool) FilterType(kind byte) bool {
+	switch kind {
+	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.SetCodeTxType:
+		return true
 	default:
 		return false
 	}
-}
-
-// FilterAdd returns whether the given transaction can be consumed by the cache
-// pool, specifically, whether it is a Legacy, AccessList or Dynamic transaction.
-//
-// If you know whether this transaction is local or not, it is recommended to
-// use this method for filtering. Currently, it is being used in the txpool.Add
-// method.
-func (pool *CachePool) FilterAdd(tx *types.Transaction, local bool) bool {
-	if local {
-		return pool.Filter(tx)
-	}
-	return false
 }
 
 // Init sets the gas price needed to keep a transaction in the pool and the chain
@@ -179,9 +172,9 @@ func (pool *CachePool) Init(gasTip uint64, head *types.Header, _ txpool.Reserver
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	statedb, err := pool.chain.StateAt(head.Root)
+	statedb, err := pool.chain.StateAt(head)
 	if err != nil {
-		statedb, err = pool.chain.StateAt(types.EmptyRootHash)
+		statedb, err = pool.chain.StateAt(pool.chain.Genesis().Header())
 	}
 	if err != nil {
 		return err
@@ -351,8 +344,8 @@ func (pool *CachePool) ContentFrom(addr common.Address) ([]*types.Transaction, [
 // account and sorted by nonce.
 //
 // For the cache pool, this method will return nothing for now.
-func (pool *CachePool) Pending(filter txpool.PendingFilter) map[common.Address][]*txpool.LazyTransaction {
-	return make(map[common.Address][]*txpool.LazyTransaction)
+func (pool *CachePool) Pending(filter txpool.PendingFilter) (map[common.Address][]*txpool.LazyTransaction, int) {
+	return make(map[common.Address][]*txpool.LazyTransaction), 0
 }
 
 // ValidateTxBasics checks whether a transaction is valid according to the consensus
@@ -447,7 +440,7 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 	list := pool.cached[from]
 
 	// Nonce already cached, we always use new tx
-	inserted, old := list.Replace(tx)
+	inserted, old := list.Add(tx, 0)
 	if !inserted {
 		return false, txpool.ErrReplaceUnderpriced
 	}
@@ -550,7 +543,7 @@ func (pool *CachePool) Get(hash common.Hash) *types.Transaction {
 // GetRLP returns a RLP-encoded transaction if it is contained in the pool.
 //
 // For the cache pool, this method will return nothing for now.
-func (pool *CachePool) GetRLP(hash common.Hash) []byte {
+func (pool *CachePool) GetRLP(hash common.Hash, _ uint) []byte {
 	return nil
 }
 
@@ -700,7 +693,7 @@ func (pool *CachePool) reset(oldHead, newHead *types.Header) {
 	if newHead == nil {
 		newHead = pool.chain.CurrentBlock() // Special case during testing
 	}
-	statedb, err := pool.chain.StateAt(newHead.Root)
+	statedb, err := pool.chain.StateAt(newHead)
 	if err != nil {
 		log.Error("Failed to reset txpool state", "err", err)
 		return

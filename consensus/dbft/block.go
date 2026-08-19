@@ -8,6 +8,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	ecrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/nspcc-dev/dbft"
 )
@@ -25,6 +26,7 @@ type Block struct {
 	header              *types.Header
 	withdrawals         []*types.Withdrawal
 	transactions        []*types.Transaction
+	accessList          *bal.BlockAccessList
 	localSignatureBytes []byte
 
 	// Local data got after [dbft.Block] construction. Always non-nil in a properly

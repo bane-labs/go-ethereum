@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/keccak"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -45,7 +46,6 @@ import (
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
-	"golang.org/x/crypto/sha3"
 )
 
 // StateTest checks transaction processing without block context.
@@ -95,6 +95,7 @@ type stEnv struct {
 	Timestamp     uint64         `json:"currentTimestamp"     gencodec:"required"`
 	BaseFee       *big.Int       `json:"currentBaseFee"       gencodec:"optional"`
 	ExcessBlobGas *uint64        `json:"currentExcessBlobGas" gencodec:"optional"`
+	SlotNumber    *uint64        `json:"slotNumber"           gencodec:"optional"`
 }
 
 type stEnvMarshaling struct {
@@ -106,6 +107,7 @@ type stEnvMarshaling struct {
 	Timestamp     math.HexOrDecimal64
 	BaseFee       *math.HexOrDecimal256
 	ExcessBlobGas *math.HexOrDecimal64
+	SlotNumber    *math.HexOrDecimal64
 }
 
 //go:generate go run github.com/fjl/gencodec -type stTransaction -field-override stTransactionMarshaling -out gen_sttransaction.go
@@ -114,7 +116,7 @@ type stTransaction struct {
 	GasPrice             *big.Int            `json:"gasPrice"`
 	MaxFeePerGas         *big.Int            `json:"maxFeePerGas"`
 	MaxPriorityFeePerGas *big.Int            `json:"maxPriorityFeePerGas"`
-	Nonce                uint64              `json:"nonce"`
+	Nonce                *big.Int            `json:"nonce"`
 	To                   string              `json:"to"`
 	Data                 []string            `json:"data"`
 	AccessLists          []*types.AccessList `json:"accessLists,omitempty"`
@@ -131,7 +133,7 @@ type stTransactionMarshaling struct {
 	GasPrice             *math.HexOrDecimal256
 	MaxFeePerGas         *math.HexOrDecimal256
 	MaxPriorityFeePerGas *math.HexOrDecimal256
-	Nonce                math.HexOrDecimal64
+	Nonce                *math.HexOrDecimal256
 	GasLimit             []math.HexOrDecimal64
 	PrivateKey           hexutil.Bytes
 	BlobGasFeeCap        *math.HexOrDecimal256
@@ -173,7 +175,7 @@ func GetChainConfig(forkString string) (baseConfig *params.ChainConfig, eips []i
 	}
 	for _, eip := range eipsStrings {
 		if eipNum, err := strconv.Atoi(eip); err != nil {
-			return nil, nil, fmt.Errorf("syntax error, invalid eip number %v", eipNum)
+			return nil, nil, fmt.Errorf("syntax error, invalid eip number %v", eip)
 		} else {
 			if !vm.ValidEip(eipNum) {
 				return nil, nil, fmt.Errorf("syntax error, invalid eip number %v", eipNum)
@@ -234,6 +236,20 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bo
 	if err != nil {
 		// Here, an error exists but it was expected.
 		// We do not check the post state or logs.
+		// However, if the test defines a post state root, we should check it.
+		// In case of an error, the state is reverted to the snapshot, so we need to
+		// recalculate the root.
+		post := t.json.Post[subtest.Fork][subtest.Index]
+		if post.Root != (common.UnprefixedHash{}) {
+			config, _, err := GetChainConfig(subtest.Fork)
+			if err != nil {
+				return fmt.Errorf("failed to get chain config: %w", err)
+			}
+			root = st.StateDB.IntermediateRoot(config.IsEIP158(new(big.Int).SetUint64(t.json.Env.Number)))
+			if root != common.Hash(post.Root) {
+				return fmt.Errorf("post-state root does not match the pre-state root, indicates an error in the test: got %x, want %x", root, post.Root)
+			}
+		}
 		return nil
 	}
 	post := t.json.Post[subtest.Fork][subtest.Index]
@@ -328,9 +344,7 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 	}
 	// Execute the message.
 	snapshot := st.StateDB.Snapshot()
-	gaspool := new(core.GasPool)
-	gaspool.AddGas(block.GasLimit())
-	vmRet, err := core.ApplyMessage(evm, msg, gaspool)
+	vmRet, err := core.ApplyMessage(evm, msg, core.NewGasPool(block.GasLimit()))
 	if err != nil {
 		st.StateDB.RevertToSnapshot(snapshot)
 		if tracer := evm.Config.Tracer; tracer != nil && tracer.OnTxEnd != nil {
@@ -366,6 +380,7 @@ func (t *StateTest) genesis(config *params.ChainConfig) *core.Genesis {
 		GasLimit:   t.json.Env.GasLimit,
 		Number:     t.json.Env.Number,
 		Timestamp:  t.json.Env.Timestamp,
+		SlotNumber: t.json.Env.SlotNumber,
 		Alloc:      t.json.Pre,
 	}
 	if t.json.Env.Random != nil {
@@ -377,6 +392,16 @@ func (t *StateTest) genesis(config *params.ChainConfig) *core.Genesis {
 }
 
 func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Message, error) {
+	// The nonce is parsed as an arbitrary-precision integer so that fixtures
+	// probing the EIP-2681 limit can be loaded; such a transaction can never
+	// be RLP-decoded and must be rejected here.
+	var nonce uint64
+	if tx.Nonce != nil {
+		if !tx.Nonce.IsUint64() {
+			return nil, fmt.Errorf("nonce %v exceeds 2^64-1 (EIP-2681)", tx.Nonce)
+		}
+		nonce = tx.Nonce.Uint64()
+	}
 	var from common.Address
 	// If 'sender' field is present, use that
 	if tx.Sender != nil {
@@ -466,23 +491,23 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 	msg := &core.Message{
 		From:                  from,
 		To:                    to,
-		Nonce:                 tx.Nonce,
-		Value:                 value,
+		Nonce:                 nonce,
+		Value:                 uint256.MustFromBig(value),
 		GasLimit:              gasLimit,
-		GasPrice:              gasPrice,
-		GasFeeCap:             tx.MaxFeePerGas,
-		GasTipCap:             tx.MaxPriorityFeePerGas,
+		GasPrice:              uint256.MustFromBig(gasPrice),
+		GasFeeCap:             uint256.MustFromBig(tx.MaxFeePerGas),
+		GasTipCap:             uint256.MustFromBig(tx.MaxPriorityFeePerGas),
 		Data:                  data,
 		AccessList:            accessList,
 		BlobHashes:            tx.BlobVersionedHashes,
-		BlobGasFeeCap:         tx.BlobGasFeeCap,
+		BlobGasFeeCap:         uint256.MustFromBig(tx.BlobGasFeeCap),
 		SetCodeAuthorizations: authList,
 	}
 	return msg, nil
 }
 
 func rlpHash(x interface{}) (h common.Hash) {
-	hw := sha3.NewLegacyKeccak256()
+	hw := keccak.NewLegacyKeccak256()
 	rlp.Encode(hw, x)
 	hw.Sum(h[:0])
 	return h
@@ -532,7 +557,7 @@ func MakePreState(db ethdb.Database, accounts types.GenesisAlloc, snapshotter bo
 		}
 		snaps, _ = snapshot.New(snapconfig, db, triedb, root)
 	}
-	sdb = state.NewDatabase(triedb, snaps)
+	sdb = state.NewMPTDatabase(triedb, nil).WithSnapshot(snaps)
 	statedb, _ = state.New(root, sdb)
 	return StateTestState{statedb, triedb, snaps}
 }
