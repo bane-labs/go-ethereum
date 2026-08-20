@@ -3110,7 +3110,9 @@ func (bc *BlockChain) VerifyBlock(block *types.Block) (*state.StateDB, types.Rec
 	if err != nil {
 		return nil, nil, 0, nil, fmt.Errorf("failed to process block state: %w", err)
 	}
-	block = block.WithAccessList(res.Bal.ToEncodingObj())
+	if block.BlockAccessListHash() != nil {
+		block = block.WithAccessList(res.Bal.ToEncodingObj())
+	}
 	// validate the block body and state
 	if err := bc.validator.ValidateBody(block); err != nil {
 		return nil, nil, 0, nil, fmt.Errorf("failed to validate body: %w", err)
