@@ -411,6 +411,9 @@ func TestChainFreezerBALAlignment(t *testing.T) {
 			if err := op.AppendRaw(ChainFreezerReceiptTable, i, payload); err != nil {
 				return err
 			}
+			if err := op.AppendRaw(ChainFreezerDifficultyTable, i, payload); err != nil {
+				return err
+			}
 		}
 		return nil
 	}); err != nil {
@@ -477,6 +480,9 @@ func TestChainFreezerBALAlignment(t *testing.T) {
 			return err
 		}
 		if err := op.AppendRaw(ChainFreezerReceiptTable, i, payload); err != nil {
+			return err
+		}
+		if err := op.AppendRaw(ChainFreezerDifficultyTable, i, payload); err != nil {
 			return err
 		}
 		if err := op.AppendRaw(ChainFreezerBALTable, i, balPayload); err != nil {
