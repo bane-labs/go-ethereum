@@ -18,6 +18,7 @@ package engine
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"slices"
@@ -27,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 )
@@ -289,9 +289,9 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 	if err != nil {
 		return nil, err
 	}
-	if len(data.ExtraData) > int(params.MaximumExtraDataSize) {
-		return nil, fmt.Errorf("invalid extradata length: %v", len(data.ExtraData))
-	}
+	// if len(data.ExtraData) > int(params.MaximumExtraDataSize) {
+	// 	return nil, fmt.Errorf("invalid extradata length: %v", len(data.ExtraData))
+	// }
 	if len(data.LogsBloom) != 256 {
 		return nil, fmt.Errorf("invalid logsBloom length: %v", len(data.LogsBloom))
 	}
@@ -354,6 +354,7 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 		SlotNumber:          data.SlotNumber,
 		BlockAccessListHash: blockAccessListHash,
 	}
+	binary.BigEndian.PutUint64(header.Nonce[:], data.Nonce)
 	body := types.Body{Transactions: txs, Uncles: nil, Withdrawals: data.Withdrawals}
 	if data.BlockAccessList != nil {
 		var accessList bal.BlockAccessList

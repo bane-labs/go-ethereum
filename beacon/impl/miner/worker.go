@@ -411,7 +411,7 @@ func (w *worker) feedback(block *types.Block, reorgCheck bool) error {
 	payload := engine.BlockToExecutableData(block, nil, nil, nil)
 
 	// Send payload through RPC. TODO: collect and include versioned hashes if possible
-	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, block.RequestsHash(), block.Time())
+	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), block.BeaconRoot(), block.RequestsHash(), block.Time())
 	if err != nil {
 		return err
 	}
