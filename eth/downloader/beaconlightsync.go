@@ -400,14 +400,14 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 	}
 }
 
-func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) ([]eth.BlockBody, [][]common.Hash, error) {
+func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) ([]eth.BlockBody, eth.BlockBodyHashes, error) {
 	// Create the response sink and send the network request
 	start := time.Now()
 	resCh := make(chan *eth.Response)
 
 	req, err := p.peer.RequestBodies(hashes, resCh)
 	if err != nil {
-		return nil, nil, err
+		return nil, eth.BlockBodyHashes{}, err
 	}
 	defer req.Close()
 
@@ -419,14 +419,14 @@ func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan str
 
 	select {
 	case <-cancel:
-		return nil, nil, errCanceled
+		return nil, eth.BlockBodyHashes{}, errCanceled
 
 	case <-timeoutTimer.C:
 		// Body retrieval timed out, update the metrics
 		p.log.Debug("Body request timed out", "elapsed", ttl)
 		bodyTimeoutMeter.Mark(1)
 
-		return nil, nil, errTimeout
+		return nil, eth.BlockBodyHashes{}, errTimeout
 
 	case res := <-resCh:
 		// Bodies successfully retrieved, update the metrics
@@ -438,7 +438,7 @@ func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan str
 		// be processed by the caller
 		res.Done <- nil
 
-		return *res.Res.(*eth.BlockBodiesResponse), res.Meta.([][]common.Hash), nil
+		return *res.Res.(*eth.BlockBodiesResponse), res.Meta.(eth.BlockBodyHashes), nil
 	}
 }
 
