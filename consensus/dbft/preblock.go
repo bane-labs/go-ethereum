@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/nspcc-dev/dbft"
@@ -47,6 +48,7 @@ type PreBlock struct {
 	finalState    *state.StateDB
 	finalGASUsed  uint64
 	finalReceipts []*types.Receipt
+	finalBal      *bal.ConstructionBlockAccessList
 }
 
 // Data implements [dbft.PreBlock] interface.

@@ -247,6 +247,7 @@ type DBFT struct {
 	sealingState    *state.StateDB
 	sealingBlock    *types.Block
 	sealingReceipts types.Receipts
+	sealingBal      *bal.ConstructionBlockAccessList
 
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
 	chain  ChainHeaderReader
@@ -526,18 +527,26 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
 	}
 	dbftBlock.header.Extra = append(dbftBlock.header.Extra, witness...) // Extra version isn't changed, validators addresses and signatures are added.
 	state := dbftBlock.state.Copy()
-	res := types.NewBlockWithHeader(dbftBlock.header).WithBody(types.Body{Transactions: dbftBlock.transactions, Uncles: nil, Withdrawals: dbftBlock.withdrawals})
+	block := types.NewBlockWithHeader(dbftBlock.header).WithBody(types.Body{Transactions: dbftBlock.transactions, Uncles: nil, Withdrawals: dbftBlock.withdrawals})
+
+	// Attach the computed block access list so it gets persisted alongside the
+	// block. The validator has already verified the hash matches the header.
+	// BAL is only meaningful from Amsterdam onward; skip pre-Amsterdam blocks
+	// to avoid persisting and serving empty BALs over the network.
+	if dbftBlock.accessList != nil && block.AccessList() == nil && c.chain.Config().IsAmsterdam(block.Number(), block.Time()) {
+		block = block.WithAccessList(dbftBlock.accessList)
+	}
 
 	// Firstly, notify chain about new block.
-	if err := c.blockQueue.PutBlock(res); err != nil {
+	if err := c.blockQueue.PutBlock(block); err != nil {
 		// The block might already be added via the regular network
 		// interaction.
-		if h := c.chain.GetHeaderByNumber(res.Number().Uint64()); h == nil {
+		if h := c.chain.GetHeaderByNumber(block.Number().Uint64()); h == nil {
 			log.Warn("error on enqueue block", "error", err.Error())
 		}
 	}
 
-	c.postBlock(res.Header(), state)
+	c.postBlock(block.Header(), state)
 	return nil
 }
 
@@ -561,6 +570,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 		if ctx.IsPrimary() {
 			res.state = c.sealingState
 			res.receipts = c.sealingReceipts
+			res.accessList = c.sealingBal.ToEncodingObj()
 		}
 		return res
 	}
@@ -573,6 +583,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 			header:              c.sealingBlock.Header(),
 			withdrawals:         c.sealingBlock.Withdrawals(),
 			transactions:        c.sealingBlock.Transactions(),
+			accessList:          c.sealingBal.ToEncodingObj(),
 			localSignatureBytes: nil,
 			state:               c.sealingState,
 			receipts:            c.sealingReceipts,
@@ -608,12 +619,11 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: pre.finalTransactions, Withdrawals: ethBlock.Withdrawals()}
 
-	blockAccessList := bal.NewConstructionBlockAccessList()
 	// Apply the consensus-specific post-transaction changes
-	c.Finalize(c.chain, h, pre.finalState, &body, uint32(len(body.Transactions)+1), blockAccessList)
+	c.Finalize(c.chain, h, pre.finalState, &body, uint32(len(body.Transactions)+1), pre.finalBal)
 
 	// Assemble the block for delivery.
-	res := core.AssembleBlock(c.chain, h, pre.finalState, &body, pre.finalReceipts, blockAccessList)
+	res := core.AssembleBlock(c.chain, h, pre.finalState, &body, pre.finalReceipts, pre.finalBal)
 
 	return &Block{
 		header:              res.Header(),
@@ -622,6 +632,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 		localSignatureBytes: nil,
 		state:               pre.finalState,
 		receipts:            pre.finalReceipts,
+		accessList:          pre.finalBal.ToEncodingObj(),
 	}
 }
 
@@ -728,17 +739,17 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: dbftBlock.transactions, Withdrawals: ethBlock.Withdrawals()}
-	blockAccessList := bal.NewConstructionBlockAccessList()
 	// Apply the consensus-specific post-transaction changes
-	c.Finalize(c.chain, header, state, &body, uint32(len(body.Transactions)+1), blockAccessList)
+	c.Finalize(c.chain, header, state, &body, uint32(len(body.Transactions)+1), result.Bal)
 
 	// Assemble the block for delivery.
-	res := core.AssembleBlock(c.chain, header, state, &body, result.Receipts, blockAccessList)
+	res := core.AssembleBlock(c.chain, header, state, &body, result.Receipts, result.Bal)
 
 	c.sealingProposal = res.Header()
 	c.sealingState = state
 	c.sealingBlock = res
 	c.sealingReceipts = result.Receipts
+	c.sealingBal = result.Bal
 
 	req.SealingProposal = c.sealingProposal
 	if len(c.lastBlockSealHash) == common.HashLength {
@@ -1306,6 +1317,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 		pre.finalState = state
 		pre.finalReceipts = receipts
 		pre.finalGASUsed = gasUsed
+		pre.finalBal = blockAccessList
 		c.envelopeFeed.Send(envelopes)
 		c.staticPool.ResetStatic()
 	}
