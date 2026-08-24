@@ -12,7 +12,6 @@ import (
 
 // Constants to match up protocol versions and messages
 const (
-	BEACON1 = 1
 	BEACON2 = 2
 )
 
@@ -22,11 +21,11 @@ const ProtocolName = "beacon"
 
 // ProtocolVersions are the supported versions of the `beacon` protocol (first
 // is primary).
-var ProtocolVersions = []uint{BEACON1, BEACON2}
+var ProtocolVersions = []uint{BEACON2}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{BEACON1: 8, BEACON2: 10}
+var protocolLengths = map[uint]uint64{BEACON2: 10}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024

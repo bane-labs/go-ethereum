@@ -68,8 +68,8 @@ func testBroadcastBlock(t *testing.T, peers, bcasts int) {
 		defer sourcePipe.Close()
 		defer sinkPipe.Close()
 
-		sourcePeer := beacon.NewPeer(beacon.BEACON1, p2p.NewPeerPipe(enode.ID{byte(i)}, "", nil, sourcePipe), sourcePipe)
-		sinkPeer := beacon.NewPeer(beacon.BEACON1, p2p.NewPeerPipe(enode.ID{0}, "", nil, sinkPipe), sinkPipe)
+		sourcePeer := beacon.NewPeer(beacon.BEACON2, p2p.NewPeerPipe(enode.ID{byte(i)}, "", nil, sourcePipe), sourcePipe)
+		sinkPeer := beacon.NewPeer(beacon.BEACON2, p2p.NewPeerPipe(enode.ID{0}, "", nil, sinkPipe), sinkPipe)
 		defer sourcePeer.Close()
 		defer sinkPeer.Close()
 
@@ -121,7 +121,7 @@ func testBroadcastBlock(t *testing.T, peers, bcasts int) {
 
 // Tests that a propagated malformed block (uncles or transactions don't match
 // with the hashes in the header) gets discarded and not broadcast forward.
-func TestBroadcastMalformedBlock1(t *testing.T) { testBroadcastMalformedBlock(t, beacon.BEACON1) }
+func TestBroadcastMalformedBlock2(t *testing.T) { testBroadcastMalformedBlock(t, beacon.BEACON2) }
 
 func testBroadcastMalformedBlock(t *testing.T, protocol uint) {
 	t.Parallel()

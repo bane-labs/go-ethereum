@@ -5,6 +5,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/p2p/tracker"
 	"github.com/ethereum/go-ethereum/trie"
 )
 
@@ -145,6 +146,13 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 		if tx == nil {
 			return fmt.Errorf("%w: transaction %d is nil", errDecode, i)
 		}
+	}
+	if err := peer.tracker.Fulfil(tracker.Response{
+		ID:      res.RequestId,
+		MsgCode: TransactionsMsg,
+		Size:    len(res.TransactionsResponse),
+	}); err != nil {
+		return fmt.Errorf("Transactions: %w", err)
 	}
 	log.Debug("Receive Transactions response", "from", peer.id, "requestId", res.RequestId, "transactions", len(res.TransactionsResponse))
 	return backend.Handle(peer, res)

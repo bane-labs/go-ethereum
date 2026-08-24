@@ -55,7 +55,7 @@ func (b *testBackend) Handle(peer *Peer, packet Packet) error {
 }
 
 // Tests that blobs can be retrieved from a remote peer based on user queries.
-func TestGetBlobs1(t *testing.T) { testGetBlobs(t, BEACON1) }
+func TestGetBlobs2(t *testing.T) { testGetBlobs(t, BEACON2) }
 
 func testGetBlobs(t *testing.T, protocol uint) {
 	t.Parallel()
@@ -126,7 +126,7 @@ func TestHandleBlobsByRoot(t *testing.T) {
 
 	backend := &testBackend{}
 
-	peer, _ := newTestPeer("peer", BEACON1, backend)
+	peer, _ := newTestPeer("peer", BEACON2, backend)
 	defer peer.close()
 
 	// Create test blocks
