@@ -452,12 +452,15 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		SafeBlockHash:      head.ParentHash,
 		FinalizedBlockHash: head.ParentHash,
 	}
+	emptyUint64 := uint64(0)
 	attributes := engine.PayloadAttributes{
 		Timestamp:             timestamp,
 		Random:                common.Hash{},
 		SuggestedFeeRecipient: w.feeRecipient,
 		Withdrawals:           make([]*types.Withdrawal, 0),
 		BeaconRoot:            &types.EmptyRootHash,
+		SlotNumber:            &emptyUint64,
+		TargetGasLimit:        &emptyUint64,
 	}
 
 	var forkChoiceMethod string
@@ -467,11 +470,21 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
 		attributes.Withdrawals = nil
 		attributes.BeaconRoot = nil
+		attributes.SlotNumber = nil
+		attributes.TargetGasLimit = nil
 	case forks.Shanghai:
 		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
 		attributes.BeaconRoot = nil
+		attributes.SlotNumber = nil
+		attributes.TargetGasLimit = nil
 	case forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
 		forkChoiceMethod = "engine_forkchoiceUpdatedV3"
+		attributes.SlotNumber = nil
+		attributes.TargetGasLimit = nil
+	case forks.Amsterdam:
+		forkChoiceMethod = "engine_forkchoiceUpdatedV4"
+	case forks.Bogota:
+		forkChoiceMethod = "engine_forkchoiceUpdatedV5"
 	default:
 		return engine.ForkChoiceResponse{}, fmt.Errorf("fork %s is not supported for engine_forkchoiceUpdated", w.chain.Config().LatestFork(timestamp).String())
 	}
@@ -498,6 +511,8 @@ func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloa
 		getPayloadMethod = "engine_getPayloadV2"
 	case engine.PayloadV3:
 		getPayloadMethod = "engine_getPayloadV5"
+	case engine.PayloadV4:
+		getPayloadMethod = "engine_getPayloadV6"
 	default:
 		return engine.ExecutionPayloadEnvelope{}, fmt.Errorf("version %v is not supported for engine_getPayload", payloadID.Version())
 	}
@@ -519,6 +534,10 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 		newPayloadMethod = "engine_newPayloadV3"
 	case forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
 		newPayloadMethod = "engine_newPayloadV4"
+	case forks.Amsterdam:
+		newPayloadMethod = "engine_newPayloadV5"
+	case forks.Bogota:
+		newPayloadMethod = "engine_newPayloadV6"
 	default:
 		return engine.PayloadStatusV1{}, fmt.Errorf("fork %s is not supported for engine_getPayload", w.chain.Config().LatestFork(timestamp).String())
 	}

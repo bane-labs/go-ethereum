@@ -183,6 +183,11 @@ func (h *Header) EmptyWithdrawalsHash() bool {
 	return h.WithdrawalsHash != nil && *h.WithdrawalsHash == EmptyWithdrawalsHash
 }
 
+// EmptyBlockAccessListHash returns true if the BlockAccessListHash is EmptyBlockAccessListHash.
+func (h *Header) EmptyBlockAccessListHash() bool {
+	return h.BlockAccessListHash != nil && *h.BlockAccessListHash == EmptyBlockAccessListHash
+}
+
 // Primary returns index of the node that authored Header's proposal.
 func (h *Header) Primary() uint8 {
 	return uint8(binary.BigEndian.Uint64(h.Nonce[:]))
