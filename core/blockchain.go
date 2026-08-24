@@ -3099,36 +3099,36 @@ func (bc *BlockChain) ProcessState(ctx context.Context, block *types.Block, stat
 // not perform in-block transactions processing or resulting state/receipts/gas used
 // validation since it's aimed to work with encrypted Enveloped transactions in this
 // mode.
-func (bc *BlockChain) VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, types.Receipts, uint64, error) {
+func (bc *BlockChain) VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, *ProcessResult, error) {
 	err := bc.validator.ValidateBody(block)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("failed to validate body: %w", err)
+		return nil, nil, fmt.Errorf("failed to validate body: %w", err)
 	}
 
 	statedb, parentHeader, err := bc.getParentState(block)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
 
 	// verify baseFee
 	baseFee := eip1559.CalcBaseFeeDBFT(bc.chainConfig, parentHeader, statedb)
 	if block.BaseFee().Cmp(baseFee) != 0 {
-		return nil, nil, 0, fmt.Errorf("failed to verify policy baseFee, expected: %v, current: %v", baseFee, block.BaseFee())
+		return nil, nil, fmt.Errorf("failed to verify policy baseFee, expected: %v, current: %v", baseFee, block.BaseFee())
 	}
 
 	if !checkState {
-		return nil, nil, 0, nil
+		return nil, nil, nil
 	}
 
 	statedb, res, err := bc.ProcessState(context.Background(), block, statedb)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("failed to process block state: %w", err)
+		return nil, nil, fmt.Errorf("failed to process block state: %w", err)
 	}
 
 	if err := bc.validator.ValidateState(block, statedb, res, false); err != nil {
-		return nil, nil, 0, fmt.Errorf("failed to verify state: %w", err)
+		return nil, nil, fmt.Errorf("failed to verify state: %w", err)
 	}
-	return statedb, res.Receipts, res.GasUsed, nil
+	return statedb, res, nil
 }
 
 // StateSizer returns the state size tracker, or nil if it's not initialized

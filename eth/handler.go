@@ -115,7 +115,7 @@ type Beacon interface {
 	StartSynchronizer(lightSync beaconSync.LightSyncFn)
 	StartBlockFetcher(
 		broadcastBlock beaconfetch.BlockBroadcasterFn, dropPeer beaconfetch.PeerDropFn,
-		fetchHeader beaconfetch.HeaderRequesterFn, fetchBodies beaconfetch.BodyRequesterFn,
+		blockDataFetcher beaconfetch.Fetcher,
 	)
 	NotifyBlockAnnon(peer string, hash common.Hash, number uint64, time time.Time)
 	EnqueueBlock(peer string, block *types.Block)
@@ -292,7 +292,11 @@ func newHandler(config *handlerConfig) (*handler, error) {
 func (h *handler) connectBeacon(beacon Beacon) {
 	h.beacon = beacon
 	h.beacon.StartSynchronizer(h.downloader.BeaconLightSync)
-	h.beacon.StartBlockFetcher(h.BroadcastBlock, h.removePeer, h.fetchHeader, h.fetchBodies)
+	h.beacon.StartBlockFetcher(h.BroadcastBlock, h.removePeer, beaconfetch.Fetcher{
+		FetchHeader: h.fetchHeader,
+		FetchBodies: h.fetchBodies,
+		FetchBALs:   h.fetchBALs,
+	})
 }
 
 // protoTracker tracks the number of active protocol handlers.
@@ -716,6 +720,15 @@ func (h *handler) fetchBodies(id string, hashes []common.Hash, sink chan *eth.Re
 		return nil, errPeerNotRegistered
 	}
 	return peer.RequestBodies(hashes, sink)
+}
+
+// fetchBALs is the bridge to use a hash array to get the block access lists from `eth` protocol.
+func (h *handler) fetchBALs(id string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+	peer := h.peers.peer(id)
+	if peer == nil {
+		return nil, errPeerNotRegistered
+	}
+	return peer.RequestBALs(hashes, sink)
 }
 
 // fetchSidecars is the bridge to use a hash array to get the blob sidecars from `beacon` protocol.

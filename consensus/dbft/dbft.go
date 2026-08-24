@@ -975,7 +975,7 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 		}
 	}
 
-	state, receipts, gasUsed, err := c.chain.VerifyBlock(ethBlock, true)
+	state, result, err := c.chain.VerifyBlock(ethBlock, true)
 	if err != nil {
 		log.Warn("proposed PreBlock verification failed",
 			"err", err.Error())
@@ -985,8 +985,9 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	// Cache processing result for further usage in case if there's no envelopes
 	// in the block or fallback signing scheme is used.
 	dbftBlock.finalState = state
-	dbftBlock.finalReceipts = receipts
-	dbftBlock.finalGASUsed = gasUsed
+	dbftBlock.finalReceipts = result.Receipts
+	dbftBlock.finalGASUsed = result.GasUsed
+	dbftBlock.finalBal = result.Bal
 
 	return true
 }
@@ -1010,7 +1011,7 @@ func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash]) bool {
 		}
 
 		ethBlock := types.NewBlockWithHeader(dbftBlock.header).WithBody(types.Body{Transactions: dbftBlock.transactions, Uncles: nil, Withdrawals: dbftBlock.withdrawals})
-		state, receipts, _, err := c.chain.VerifyBlock(ethBlock, true)
+		state, result, err := c.chain.VerifyBlock(ethBlock, true)
 		if err != nil {
 			log.Warn("proposed block verification failed",
 				"err", err.Error())
@@ -1033,7 +1034,7 @@ func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash]) bool {
 		}
 
 		dbftBlock.state = state
-		dbftBlock.receipts = receipts
+		dbftBlock.receipts = result.Receipts
 
 		return true
 	}
@@ -1828,6 +1829,24 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	}
 	if !prague && header.RequestsHash != nil {
 		return fmt.Errorf("invalid requestsHash, have %x, expected nil", header.RequestsHash)
+	}
+	// Verify the existence / non-existence of Amsterdam-specific header fields
+	amsterdam := chain.Config().IsAmsterdam(header.Number, header.Time)
+	if amsterdam {
+		if header.BlockAccessListHash == nil {
+			log.Info("header is missing block access list hash", "number", header.Number.Uint64())
+			return errors.New("header is missing block access list hash")
+		}
+		if header.SlotNumber == nil {
+			return errors.New("header is missing slotNumber")
+		}
+	} else {
+		if header.BlockAccessListHash != nil {
+			return fmt.Errorf("invalid block access list hash: have %x, expected nil", *header.BlockAccessListHash)
+		}
+		if header.SlotNumber != nil {
+			return fmt.Errorf("invalid slotNumber: have %d, expected nil", *header.SlotNumber)
+		}
 	}
 	// All basic checks passed, verify cascading fields
 	return c.verifyCascadingFields(chain, header, parents, isSealed)

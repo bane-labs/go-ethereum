@@ -21,7 +21,7 @@ type ChainHeaderReader interface {
 	GetBlock(hash common.Hash, number uint64) *types.Block
 	GetBlockByNumber(uint64) *types.Block
 	StateAt(header *types.Header) (*state.StateDB, error)
-	VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, types.Receipts, uint64, error)
+	VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, *core.ProcessResult, error)
 	ProcessState(ctx context.Context, block *types.Block, statedb *state.StateDB) (*state.StateDB, *core.ProcessResult, error)
 
 	// Only for EVM context construction
