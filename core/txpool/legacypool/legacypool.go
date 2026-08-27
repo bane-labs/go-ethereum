@@ -19,6 +19,7 @@ package legacypool
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"math"
 	"math/big"
@@ -95,7 +96,7 @@ var (
 	pendingDiscardMeter   = metrics.NewRegisteredMeter("txpool/pending/discard", nil)
 	pendingReplaceMeter   = metrics.NewRegisteredMeter("txpool/pending/replace", nil)
 	pendingRateLimitMeter = metrics.NewRegisteredMeter("txpool/pending/ratelimit", nil) // Dropped due to rate limiting
-	pendingNofundsMeter   = metrics.NewRegisteredMeter("txpool/pending/nofunds", nil)   // Dropped due to out-of-funds
+	pendingNofundsMeter   = metrics.NewRegisteredMeter("txpool/pending/nofunds", nil)   // Dropped due to out-of-funds\
 
 	// Metrics for the queued pool
 	queuedDiscardMeter   = metrics.NewRegisteredMeter("txpool/queued/discard", nil)
@@ -164,7 +165,7 @@ type Config struct {
 	AccountQueue uint64 // Maximum number of non-executable transaction slots permitted per account
 	GlobalQueue  uint64 // Maximum number of non-executable transaction slots for all accounts
 
-	Lifetime time.Duration // Maximum amount of time non-executable transaction are queued
+	Lifetime time.Duration // Maximum amount of time an account can remain stale in the non-executable pool
 
 	ReannounceTimeThreshold time.Duration // Threshold for announcing pending transactions again
 	ReannounceRemotes       bool          // Whether reannounce remote transactions or not
@@ -307,18 +308,13 @@ func New(config Config, chain BlockChain) *LegacyPool {
 // with InitStatic.
 func NewStatic(config Config, chain BlockChain) *LegacyPool {
 	// Create the transaction pool with its initial settings
-	signer := types.LatestSigner(chain.Config())
 	pool := &LegacyPool{
 		config:      config,
 		chain:       chain,
 		chainconfig: chain.Config(),
-		signer:      signer,
-		pending:     make(map[common.Address]*list),
-		queue:       newQueue(config, signer),
-		all:         newLookup(),
+		signer:      types.LatestSigner(chain.Config()),
 	}
-	pool.priced = newPricedList(pool.all)
-
+	pool.setEmptyLists()
 	return pool
 }
 
@@ -375,12 +371,19 @@ func (pool *LegacyPool) InitStatic(gasTip uint64, head *types.Header, statedb *s
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	statedb, err := pool.chain.StateAt(head)
-	if err != nil {
-		statedb, err = pool.chain.StateAt(pool.chain.Genesis().Header())
-	}
-	if err != nil {
-		return err
+	// If the state is provided, then use it directly.
+	var err error
+	if statedb == nil {
+		statedb, err = pool.chain.StateAt(head)
+		if err != nil {
+			if !allowMissingState {
+				return fmt.Errorf("failed to get state at %d (%s): %w", head.Number.Uint64(), head.Root, err)
+			}
+			statedb, err = pool.chain.StateAt(pool.chain.Genesis().Header())
+			if err != nil {
+				return fmt.Errorf("failed to get state at %d by empty root: %w", head.Number.Uint64(), err)
+			}
+		}
 	}
 	pool.currentHead.Store(head)
 	pool.currentState = statedb
@@ -1050,6 +1053,10 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 	dirtyAddrs := pool.addTxsLocked(txs, errs)
 	pool.mu.Unlock()
 
+	// Return if no channel is initialized, ref NewStatic and InitStatic
+	if pool.reqPromoteCh == nil {
+		return errs
+	}
 	// Reorg the pool internals if needed and return
 	done := pool.requestPromoteExecutables(dirtyAddrs)
 	if sync {
