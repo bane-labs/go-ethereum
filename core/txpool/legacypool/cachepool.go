@@ -440,7 +440,7 @@ func (pool *CachePool) add(tx *types.Transaction) (replaced bool, err error) {
 	list := pool.cached[from]
 
 	// Nonce already cached, we always use new tx
-	inserted, old := list.Add(tx, 0)
+	inserted, old := list.Replace(tx)
 	if !inserted {
 		return false, txpool.ErrReplaceUnderpriced
 	}
