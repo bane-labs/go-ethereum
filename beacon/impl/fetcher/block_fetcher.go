@@ -643,9 +643,10 @@ func (f *BlockFetcher) loop() {
 				for i := 0; i < len(task.transactions) && i < len(task.uncles); i++ {
 					// Match up a body to any possible completion request
 					var (
-						matched   = false
-						uncleHash common.Hash // calculated lazily and reused
-						txnHash   common.Hash // calculated lazily and reused
+						matched         = false
+						uncleHash       common.Hash // calculated lazily and reused
+						txnHash         common.Hash // calculated lazily and reused
+						withdrawalsHash common.Hash // calculated lazily and reused
 					)
 					for hash, announce := range f.completing {
 						if f.queued[hash] != nil || announce.origin != task.peer {
@@ -662,6 +663,22 @@ func (f *BlockFetcher) loop() {
 						}
 						if txnHash != announce.header.TxHash {
 							continue
+						}
+						// Withdrawals should be absent before Shanghai is enabled.
+						if task.withdrawals[i] == nil {
+							if announce.header.WithdrawalsHash != nil {
+								continue
+							}
+						} else {
+							if announce.header.WithdrawalsHash == nil {
+								continue
+							}
+							if withdrawalsHash == (common.Hash{}) {
+								withdrawalsHash = types.DeriveSha(types.Withdrawals(task.withdrawals[i]), trie.NewStackTrie(nil))
+							}
+							if withdrawalsHash != *announce.header.WithdrawalsHash {
+								continue
+							}
 						}
 						// Mark the body matched, reassemble if still unknown
 						matched = true
