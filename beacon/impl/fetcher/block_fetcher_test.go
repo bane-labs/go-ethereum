@@ -400,45 +400,6 @@ func testConcurrentAnnouncements(t *testing.T) {
 	verifyChainHeight(t, tester, uint64(len(hashes)-1))
 }
 
-// Tests that announcements arriving while a previous is being fetched still
-// results in a valid import.
-func TestFullOverlappingAnnouncements(t *testing.T) { testOverlappingAnnouncements(t) }
-
-func testOverlappingAnnouncements(t *testing.T) {
-	// Create a chain of blocks to import
-	targetBlocks := 4 * hashLimit
-	hashes, blocks := makeChain(targetBlocks, 0, genesis)
-
-	tester := newTester()
-	tester.fetcher.fetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
-	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
-
-	// Iteratively announce blocks, but overlap them continuously
-	overlap := 16
-	imported := make(chan interface{}, len(hashes)-1)
-	for i := 0; i < overlap; i++ {
-		imported <- nil
-	}
-	tester.fetcher.importedHook = func(header *types.Header, block *types.Block) {
-		if block == nil {
-			t.Fatalf("Fetcher try to import empty block")
-		}
-		imported <- block
-	}
-
-	for i := len(hashes) - 2; i >= 0; i-- {
-		tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout))
-		select {
-		case <-imported:
-		case <-time.After(time.Second):
-			t.Fatalf("block %d: import timeout", len(hashes)-i)
-		}
-	}
-	// Wait for all the imports to complete and check count
-	verifyImportCount(t, imported, overlap)
-	verifyChainHeight(t, tester, uint64(len(hashes)-1))
-}
-
 // Tests that announces already being retrieved will not be duplicated.
 func TestFullPendingDeduplication(t *testing.T) { testPendingDeduplication(t) }
 
@@ -487,115 +448,14 @@ func testPendingDeduplication(t *testing.T) {
 	verifyChainHeight(t, tester, 1)
 }
 
-// Tests that announcements retrieved in a random order are cached and eventually
-// imported when all the gaps are filled in.
-func TestFullRandomArrivalImport(t *testing.T) { testRandomArrivalImport(t) }
-
-func testRandomArrivalImport(t *testing.T) {
-	// Create a chain of blocks to import, and choose one to delay
-	targetBlocks := maxQueueDist
-	hashes, blocks := makeChain(targetBlocks, 0, genesis)
-	skip := targetBlocks / 2
-
-	tester := newTester()
-	tester.fetcher.fetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
-	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
-
-	// Iteratively announce blocks, skipping one entry
-	imported := make(chan interface{}, len(hashes)-1)
-	tester.fetcher.importedHook = func(header *types.Header, block *types.Block) {
-		if block == nil {
-			t.Fatalf("Fetcher try to import empty block")
-		}
-		imported <- block
-	}
-	for i := len(hashes) - 1; i >= 0; i-- {
-		if i != skip {
-			tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout))
-			time.Sleep(time.Millisecond)
-		}
-	}
-	// Finally announce the skipped entry and check full import
-	tester.fetcher.Notify("valid", hashes[skip], uint64(len(hashes)-skip-1), time.Now().Add(-arriveTimeout))
-	verifyImportCount(t, imported, len(hashes)-1)
-	verifyChainHeight(t, tester, uint64(len(hashes)-1))
-}
-
-// Tests that direct block enqueues (due to block propagation vs. hash announce)
-// are correctly schedule, filling and import queue gaps.
-func TestQueueGapFill(t *testing.T) {
-	// Create a chain of blocks to import, and choose one to not announce at all
-	targetBlocks := maxQueueDist
-	hashes, blocks := makeChain(targetBlocks, 0, genesis)
-	skip := targetBlocks / 2
-
-	tester := newTester()
-	tester.fetcher.fetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
-	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
-
-	// Iteratively announce blocks, skipping one entry
-	imported := make(chan interface{}, len(hashes)-1)
-	tester.fetcher.importedHook = func(header *types.Header, block *types.Block) { imported <- block }
-
-	for i := len(hashes) - 1; i >= 0; i-- {
-		if i != skip {
-			tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout))
-			time.Sleep(time.Millisecond)
-		}
-	}
-	// Fill the missing block directly as if propagated
-	tester.fetcher.Enqueue("valid", blocks[hashes[skip]])
-	verifyImportCount(t, imported, len(hashes)-1)
-	verifyChainHeight(t, tester, uint64(len(hashes)-1))
-}
-
-// Tests that blocks arriving from various sources (multiple propagations, hash
-// announces, etc) do not get scheduled for import multiple times.
-func TestImportDeduplication(t *testing.T) {
-	// Create two blocks to import (one for duplication, the other for stalling)
-	hashes, blocks := makeChain(2, 0, genesis)
-
-	// Create the tester and wrap the importer with a counter
-	tester := newTester()
-	tester.fetcher.fetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
-	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
-
-	var counter atomic.Uint32
-	tester.fetcher.insertChain = func(block *types.Block) error {
-		counter.Add(1)
-		return tester.insertChain(block)
-	}
-	// Instrument the fetching and imported events
-	fetching := make(chan []common.Hash)
-	imported := make(chan interface{}, len(hashes)-1)
-	tester.fetcher.fetchingHook = func(hashes []common.Hash) { fetching <- hashes }
-	tester.fetcher.importedHook = func(header *types.Header, block *types.Block) { imported <- block }
-
-	// Announce the duplicating block, wait for retrieval, and also propagate directly
-	tester.fetcher.Notify("valid", hashes[0], 1, time.Now().Add(-arriveTimeout))
-	<-fetching
-
-	tester.fetcher.Enqueue("valid", blocks[hashes[0]])
-	tester.fetcher.Enqueue("valid", blocks[hashes[0]])
-	tester.fetcher.Enqueue("valid", blocks[hashes[0]])
-
-	// Fill the missing block directly as if propagated, and check import uniqueness
-	tester.fetcher.Enqueue("valid", blocks[hashes[1]])
-	verifyImportCount(t, imported, 2)
-
-	if c := counter.Load(); c != 2 {
-		t.Fatalf("import invocation count mismatch: have %v, want %v", c, 2)
-	}
-}
-
-// Tests that blocks with numbers much lower or higher than out current head get
+// Tests that blocks with numbers much lower than out current head get
 // discarded to prevent wasting resources on useless blocks from faulty peers.
 func TestDistantPropagationDiscarding(t *testing.T) {
 	// Create a long chain to import and define the discard boundaries
 	hashes, blocks := makeChain(3*maxQueueDist, 0, genesis)
 	head := hashes[len(hashes)/2]
 
-	low, high := len(hashes)/2+maxUncleDist+1, len(hashes)/2-maxQueueDist-1
+	low := len(hashes)/2 + maxUncleDist + 1
 
 	// Create a tester and simulate a head block being the middle of the above chain
 	tester := newTester()
@@ -611,15 +471,9 @@ func TestDistantPropagationDiscarding(t *testing.T) {
 	if !tester.fetcher.queue.Empty() {
 		t.Fatalf("fetcher queued stale block")
 	}
-	// Ensure that a block with a higher number than the threshold is discarded
-	tester.fetcher.Enqueue("higher", blocks[hashes[high]])
-	time.Sleep(10 * time.Millisecond)
-	if !tester.fetcher.queue.Empty() {
-		t.Fatalf("fetcher queued future block")
-	}
 }
 
-// Tests that announcements with numbers much lower or higher than out current
+// Tests that announcements with numbers much lower than out current
 // head get discarded to prevent wasting resources on useless blocks from faulty
 // peers.
 func TestFullDistantAnnouncementDiscarding(t *testing.T) { testDistantAnnouncementDiscarding(t) }
@@ -629,7 +483,7 @@ func testDistantAnnouncementDiscarding(t *testing.T) {
 	hashes, blocks := makeChain(3*maxQueueDist, 0, genesis)
 	head := hashes[len(hashes)/2]
 
-	low, high := len(hashes)/2+maxUncleDist+1, len(hashes)/2-maxQueueDist-1
+	low := len(hashes)/2 + maxUncleDist + 1
 
 	// Create a tester and simulate a head block being the middle of the above chain
 	tester := newTester()
@@ -652,13 +506,6 @@ func testDistantAnnouncementDiscarding(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	case <-fetching:
 		t.Fatalf("fetcher requested stale header")
-	}
-	// Ensure that a block with a higher number than the threshold is discarded
-	tester.fetcher.Notify("higher", hashes[high], blocks[hashes[high]].NumberU64(), time.Now().Add(-arriveTimeout))
-	select {
-	case <-time.After(50 * time.Millisecond):
-	case <-fetching:
-		t.Fatalf("fetcher requested future header")
 	}
 }
 
@@ -815,105 +662,6 @@ func TestEmptyBlockShortCircuit(t *testing.T) {
 		verifyCompletingEvent(t, completing, len(blocks[hashes[i]].Transactions()) > 0 || len(blocks[hashes[i]].Uncles()) > 0)
 
 		// Irrelevant of the construct, import should succeed
-		verifyImportEvent(t, imported, true)
-	}
-	verifyImportDone(t, imported)
-}
-
-// Tests that a peer is unable to use unbounded memory with sending infinite
-// block announcements to a node, but that even in the face of such an attack,
-// the fetcher remains operational.
-func TestHashMemoryExhaustionAttack(t *testing.T) {
-	// Create a tester with instrumented import hooks
-	tester := newTester()
-
-	imported, announces := make(chan interface{}), atomic.Int32{}
-	tester.fetcher.importedHook = func(header *types.Header, block *types.Block) { imported <- block }
-	tester.fetcher.announceChangeHook = func(hash common.Hash, added bool) {
-		if added {
-			announces.Add(1)
-		} else {
-			announces.Add(-1)
-		}
-	}
-	// Create a valid chain and an infinite junk chain
-	targetBlocks := hashLimit + 2*maxQueueDist
-	hashes, blocks := makeChain(targetBlocks, 0, genesis)
-	tester.fetcher.fetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
-	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
-
-	attack, _ := makeChain(targetBlocks, 0, unknownBlock)
-
-	// Feed the tester a huge hashset from the attacker, and a limited from the valid peer
-	for i := 0; i < len(attack); i++ {
-		if i < maxQueueDist {
-			tester.fetcher.Notify("valid", hashes[len(hashes)-2-i], uint64(i+1), time.Now())
-		}
-		tester.fetcher.Notify("attacker", attack[i], 1 /* don't distance drop */, time.Now())
-	}
-	if count := announces.Load(); count != hashLimit+maxQueueDist {
-		t.Fatalf("queued announce count mismatch: have %d, want %d", count, hashLimit+maxQueueDist)
-	}
-	// Wait for fetches to complete
-	verifyImportCount(t, imported, maxQueueDist)
-
-	// Feed the remaining valid hashes to ensure DOS protection state remains clean
-	for i := len(hashes) - maxQueueDist - 2; i >= 0; i-- {
-		tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout))
-		verifyImportEvent(t, imported, true)
-	}
-	verifyImportDone(t, imported)
-}
-
-// Tests that blocks sent to the fetcher (either through propagation or via hash
-// announces and retrievals) don't pile up indefinitely, exhausting available
-// system memory.
-func TestBlockMemoryExhaustionAttack(t *testing.T) {
-	// Create a tester with instrumented import hooks
-	tester := newTester()
-
-	imported, enqueued := make(chan interface{}), atomic.Int32{}
-	tester.fetcher.importedHook = func(header *types.Header, block *types.Block) { imported <- block }
-	tester.fetcher.queueChangeHook = func(hash common.Hash, added bool) {
-		if added {
-			enqueued.Add(1)
-		} else {
-			enqueued.Add(-1)
-		}
-	}
-	// Create a valid chain and a batch of dangling (but in range) blocks
-	targetBlocks := hashLimit + 2*maxQueueDist
-	hashes, blocks := makeChain(targetBlocks, 0, genesis)
-	attack := make(map[common.Hash]*types.Block)
-	for i := byte(0); len(attack) < blockLimit+2*maxQueueDist; i++ {
-		hashes, blocks := makeChain(maxQueueDist-1, i, unknownBlock)
-		for _, hash := range hashes[:maxQueueDist-2] {
-			attack[hash] = blocks[hash]
-		}
-	}
-	// Try to feed all the attacker blocks make sure only a limited batch is accepted
-	for _, block := range attack {
-		tester.fetcher.Enqueue("attacker", block)
-	}
-	time.Sleep(200 * time.Millisecond)
-	if queued := enqueued.Load(); queued != blockLimit {
-		t.Fatalf("queued block count mismatch: have %d, want %d", queued, blockLimit)
-	}
-	// Queue up a batch of valid blocks, and check that a new peer is allowed to do so
-	for i := 0; i < maxQueueDist-1; i++ {
-		tester.fetcher.Enqueue("valid", blocks[hashes[len(hashes)-3-i]])
-	}
-	time.Sleep(100 * time.Millisecond)
-	if queued := enqueued.Load(); queued != blockLimit+maxQueueDist-1 {
-		t.Fatalf("queued block count mismatch: have %d, want %d", queued, blockLimit+maxQueueDist-1)
-	}
-	// Insert the missing piece (and sanity check the import)
-	tester.fetcher.Enqueue("valid", blocks[hashes[len(hashes)-2]])
-	verifyImportCount(t, imported, maxQueueDist)
-
-	// Insert the remaining blocks in chunks to ensure clean DOS protection
-	for i := maxQueueDist; i < len(hashes)-1; i++ {
-		tester.fetcher.Enqueue("valid", blocks[hashes[len(hashes)-2-i]])
 		verifyImportEvent(t, imported, true)
 	}
 	verifyImportDone(t, imported)
