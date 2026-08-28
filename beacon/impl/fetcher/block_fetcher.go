@@ -571,9 +571,18 @@ func (f *BlockFetcher) loop() {
 								log.Debug(fmt.Errorf("%w: bad uncles: %v", errInvalidBody, err).Error())
 								return
 							}
+							var withdrawals []*types.Withdrawal
+							if bodies[index].Withdrawals != nil {
+								withdrawals, err = bodies[index].Withdrawals.Items()
+								if err != nil {
+									log.Debug(fmt.Errorf("%w: bad withdrawals: %v", errInvalidBody, err).Error())
+									return
+								}
+							}
 							bodyList = append(bodyList, types.Body{
 								Transactions: txs,
 								Uncles:       uncles,
+								Withdrawals:  withdrawals,
 							})
 						}
 
@@ -707,10 +716,11 @@ func (f *BlockFetcher) loop() {
 				for i := 0; i < len(task.bodies) && i < len(task.bals); i++ {
 					// Match up a body to any possible completion request
 					var (
-						matched   = false
-						uncleHash common.Hash // calculated lazily and reused
-						txnHash   common.Hash // calculated lazily and reused
-						balHash   common.Hash // calculated lazily and reused
+						matched         = false
+						uncleHash       common.Hash // calculated lazily and reused
+						txnHash         common.Hash // calculated lazily and reused
+						withdrawalsHash common.Hash // calculated lazily and reused
+						balHash         common.Hash // calculated lazily and reused
 					)
 					for hash, announce := range f.completing {
 						if f.queued[hash] != nil || announce.origin != task.peer {
@@ -727,6 +737,21 @@ func (f *BlockFetcher) loop() {
 						}
 						if txnHash != announce.header.TxHash {
 							continue
+						}
+						if task.bodies[i].Withdrawals == nil {
+							if announce.header.WithdrawalsHash != nil {
+								continue
+							}
+						} else {
+							if announce.header.WithdrawalsHash == nil {
+								continue
+							}
+							if withdrawalsHash == (common.Hash{}) {
+								withdrawalsHash = types.DeriveSha(types.Withdrawals(task.bodies[i].Withdrawals), trie.NewStackTrie(nil))
+							}
+							if withdrawalsHash != *announce.header.WithdrawalsHash {
+								continue
+							}
 						}
 						if task.bals[i] == nil {
 							if announce.header.BlockAccessListHash != nil {
@@ -747,12 +772,7 @@ func (f *BlockFetcher) loop() {
 						// Mark the body matched, reassemble if still unknown
 						matched = true
 						if f.getBlock(hash) == nil {
-							body := task.bodies[i]
-							if announce.header.EmptyWithdrawalsHash() {
-								// Only empty withdrawals are supported in case of pre-merge dBFT with Shanghai enabled.
-								body.Withdrawals = []*types.Withdrawal{}
-							}
-							block := types.NewBlockWithHeader(announce.header).WithBody(body)
+							block := types.NewBlockWithHeader(announce.header).WithBody(task.bodies[i])
 							if announce.header.BlockAccessListHash != nil {
 								block = block.WithAccessList(task.bals[i])
 							}
