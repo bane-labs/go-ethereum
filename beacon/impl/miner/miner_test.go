@@ -49,10 +49,6 @@ type mockDownloader struct {
 	scope event.SubscriptionScope
 }
 
-func NewMockDownloader() *mockDownloader {
-	return &mockDownloader{}
-}
-
 func (d *mockDownloader) SubscribeSyncEvents(ch chan<- downloader.SyncEvent) event.Subscription {
 	return d.scope.Track(d.feed.Subscribe(ch))
 }

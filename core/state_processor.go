@@ -102,7 +102,11 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		evm.SetJumpDestCache(jumpDestCache)
 	}
 	// Run the pre-execution system calls
-	blockAccessList.Merge(PreExecution(ctx, block.BeaconRoot(), parent, config, evm, block.Number(), block.Time()))
+	bal, err := PreExecution(ctx, block.BeaconRoot(), parent, config, evm, block.Number(), block.Time())
+	if err != nil {
+		return nil, err
+	}
+	blockAccessList.Merge(bal)
 
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
@@ -159,7 +163,7 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 }
 
 // PreExecution processes pre-execution state changes and system calls.
-func PreExecution(ctx context.Context, beaconRoot *common.Hash, parent *types.Header, config *params.ChainConfig, evm *vm.EVM, number *big.Int, time uint64) *bal.ConstructionBlockAccessList {
+func PreExecution(ctx context.Context, beaconRoot *common.Hash, parent *types.Header, config *params.ChainConfig, evm *vm.EVM, number *big.Int, time uint64) (*bal.ConstructionBlockAccessList, error) {
 	_, _, spanEnd := telemetry.StartSpan(ctx, "core.preExecution")
 	defer spanEnd(nil)
 
@@ -181,11 +185,12 @@ func PreExecution(ctx context.Context, beaconRoot *common.Hash, parent *types.He
 	if config.IsPrague(number, time) || config.IsUBT(number, time) {
 		ProcessParentBlockHash(parent.Hash(), evm, blockAccessList)
 	}
-
 	if config.DBFT != nil {
-		ProcessOnPersist(evm, blockAccessList)
+		if err := ProcessOnPersist(evm, blockAccessList); err != nil {
+			return nil, fmt.Errorf("could not apply OnPersist: %w", err)
+		}
 	}
-	return blockAccessList
+	return blockAccessList, nil
 }
 
 // PostExecution processes post-execution system calls when Prague is enabled.
@@ -500,21 +505,17 @@ func AssembleBlock(chain consensus.ChainHeaderReader, header *types.Header, stat
 }
 
 // ProcessOnPersist applies a system call to the governance contract.
-func ProcessOnPersist(evm *vm.EVM, blockAccessList *bal.ConstructionBlockAccessList) {
-	if tracer := evm.Config.Tracer; tracer != nil {
-		if tracer.OnSystemCallStart != nil {
-			tracer.OnSystemCallStart()
-		}
-		if tracer.OnSystemCallEnd != nil {
-			defer tracer.OnSystemCallEnd()
-		}
+func ProcessOnPersist(evm *vm.EVM, blockAccessList *bal.ConstructionBlockAccessList) error {
+	if err := processKeyManagementOnPersist(evm, blockAccessList); err != nil {
+		return err
 	}
-
-	processKeyManagementOnPersist(evm, blockAccessList)
-	processGovernanceOnPersist(evm, blockAccessList)
+	if err := processGovernanceOnPersist(evm, blockAccessList); err != nil {
+		return err
+	}
+	return nil
 }
 
-func processGovernanceOnPersist(evm *vm.EVM, blockAccessList *bal.ConstructionBlockAccessList) {
+func processGovernanceOnPersist(evm *vm.EVM, blockAccessList *bal.ConstructionBlockAccessList) error {
 	var (
 		data []byte
 		err  error
@@ -522,32 +523,35 @@ func processGovernanceOnPersist(evm *vm.EVM, blockAccessList *bal.ConstructionBl
 	if evm.ChainConfig().IsNeoXDKG(evm.Context.BlockNumber) {
 		data, err = systemcontracts.GovernanceABI.Pack("onPersistV2")
 		if err != nil {
-			err = fmt.Errorf("failed to pack Governance onPersistV2 call: %w", err)
-			panic(err)
+			return fmt.Errorf("failed to pack Governance onPersistV2 call: %w", err)
 		}
 	} else {
 		data, err = systemcontracts.GovernanceABI.Pack("onPersist")
 		if err != nil {
-			err = fmt.Errorf("failed to pack Governance onPersist call: %w", err)
-			panic(err)
+			return fmt.Errorf("failed to pack Governance onPersist call: %w", err)
 		}
 	}
-	applyLocalSystemCall(systemcontracts.GovernanceProxyHash, data, evm, blockAccessList)
+	return applyLocalSystemCall(systemcontracts.GovernanceProxyHash, data, evm, blockAccessList)
 }
 
-func processKeyManagementOnPersist(evm *vm.EVM, blockAccessList *bal.ConstructionBlockAccessList) {
+func processKeyManagementOnPersist(evm *vm.EVM, blockAccessList *bal.ConstructionBlockAccessList) error {
 	if !evm.ChainConfig().IsNeoXDKG(evm.Context.BlockNumber) {
-		return
+		return nil
 	}
 	data, err := systemcontracts.KeyManagementABIBasic.Pack("onPersistV2")
 	if err != nil {
-		err = fmt.Errorf("failed to pack KeyManagement onPersistV2 call: %w", err)
-		panic(err)
+		return fmt.Errorf("failed to pack KeyManagement onPersistV2 call: %w", err)
 	}
-	applyLocalSystemCall(systemcontracts.KeyManagementProxyHash, data, evm, blockAccessList)
+	return applyLocalSystemCall(systemcontracts.KeyManagementProxyHash, data, evm, blockAccessList)
 }
 
-func applyLocalSystemCall(to common.Address, data []byte, evm *vm.EVM, blockAccessList *bal.ConstructionBlockAccessList) {
+func applyLocalSystemCall(to common.Address, data []byte, evm *vm.EVM, blockAccessList *bal.ConstructionBlockAccessList) error {
+	if tracer := evm.Config.Tracer; tracer != nil {
+		onSystemCallStart(tracer, evm.GetVMContext())
+		if tracer.OnSystemCallEnd != nil {
+			defer tracer.OnSystemCallEnd()
+		}
+	}
 	gasLimit, gasBudget := systemCallGasBudget(evm)
 	msg := &Message{
 		From:      params.SystemAddress,
@@ -564,8 +568,11 @@ func applyLocalSystemCall(to common.Address, data []byte, evm *vm.EVM, blockAcce
 	evm.StateDB.AddAddressToAccessList(to)
 	_, _, err := evm.Call(msg.From, *msg.To, msg.Data, gasBudget, common.U2560)
 	if err != nil {
-		err = fmt.Errorf("onPersist call failed: %w", err)
-		panic(err)
+		return err
+	}
+	if evm.StateDB.AccessEvents() != nil {
+		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
 	}
 	blockAccessList.Merge(evm.StateDB.Finalise(true))
+	return nil
 }

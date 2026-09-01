@@ -2301,9 +2301,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		}
 	}()
 
-	if ctx.IsSet(CacheNoPrefetchFlag.Name) {
-		cfg.NoPrefetch = ctx.Bool(CacheNoPrefetchFlag.Name)
-	}
 	// VM tracing config.
 	if ctx.IsSet(VMTraceFlag.Name) {
 		if name := ctx.String(VMTraceFlag.Name); name != "" {

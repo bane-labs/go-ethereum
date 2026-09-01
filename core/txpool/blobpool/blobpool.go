@@ -693,7 +693,7 @@ func (p *BlobPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reser
 	}
 	var (
 		basefee = uint256.MustFromBig(eip1559.CalcBaseFeeDBFT(p.chain.Config(), head, p.state))
-		blobfee = uint256.MustFromBig(big.NewInt(params.BlobTxMinBlobGasprice))
+		blobfee = uint256.NewInt(params.BlobTxMinBlobGasprice)
 	)
 	if head.ExcessBlobGas != nil {
 		blobfee = uint256.MustFromBig(eip4844.CalcBlobFee(p.chain.Config(), head))
