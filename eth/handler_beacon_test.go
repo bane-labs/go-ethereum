@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -52,7 +53,7 @@ func testBroadcastBlock(t *testing.T, peers, bcasts int) {
 
 	// Create a source handler to broadcast blocks from and a number of sinks
 	// to receive them.
-	source := newTestHandlerWithBlocks(1)
+	source := newTestHandlerWithBlocks(1, ethconfig.FullSync)
 	defer source.close()
 
 	sinks := make([]*testBeaconHandler, peers)
@@ -127,7 +128,7 @@ func testBroadcastMalformedBlock(t *testing.T, protocol uint) {
 
 	// Create a source handler to broadcast blocks from and a number of sinks
 	// to receive them.
-	source := newTestHandlerWithBlocks(1)
+	source := newTestHandlerWithBlocks(1, ethconfig.FullSync)
 	defer source.close()
 
 	// Create a source handler to send messages through and a sink peer to receive them

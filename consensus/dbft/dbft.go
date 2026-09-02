@@ -19,6 +19,7 @@ package dbft
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -45,6 +46,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/tpke"
@@ -55,7 +57,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
 	"github.com/nspcc-dev/dbft"
 	"github.com/nspcc-dev/dbft/timer"
@@ -246,6 +247,7 @@ type DBFT struct {
 	sealingState    *state.StateDB
 	sealingBlock    *types.Block
 	sealingReceipts types.Receipts
+	sealingBal      *bal.ConstructionBlockAccessList
 
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
 	chain  ChainHeaderReader
@@ -525,18 +527,26 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
 	}
 	dbftBlock.header.Extra = append(dbftBlock.header.Extra, witness...) // Extra version isn't changed, validators addresses and signatures are added.
 	state := dbftBlock.state.Copy()
-	res := types.NewBlockWithHeader(dbftBlock.header).WithBody(types.Body{Transactions: dbftBlock.transactions, Uncles: nil, Withdrawals: dbftBlock.withdrawals})
+	block := types.NewBlockWithHeader(dbftBlock.header).WithBody(types.Body{Transactions: dbftBlock.transactions, Uncles: nil, Withdrawals: dbftBlock.withdrawals})
+
+	// Attach the computed block access list so it gets persisted alongside the
+	// block. The validator has already verified the hash matches the header.
+	// BAL is only meaningful from Amsterdam onward; skip pre-Amsterdam blocks
+	// to avoid persisting and serving empty BALs over the network.
+	if dbftBlock.accessList != nil && block.AccessList() == nil && c.chain.Config().IsAmsterdam(block.Number(), block.Time()) {
+		block = block.WithAccessList(dbftBlock.accessList)
+	}
 
 	// Firstly, notify chain about new block.
-	if err := c.blockQueue.PutBlock(res); err != nil {
+	if err := c.blockQueue.PutBlock(block); err != nil {
 		// The block might already be added via the regular network
 		// interaction.
-		if h := c.chain.GetHeaderByNumber(res.Number().Uint64()); h == nil {
+		if h := c.chain.GetHeaderByNumber(block.Number().Uint64()); h == nil {
 			log.Warn("error on enqueue block", "error", err.Error())
 		}
 	}
 
-	c.postBlock(res.Header(), state)
+	c.postBlock(block.Header(), state)
 	return nil
 }
 
@@ -560,6 +570,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 		if ctx.IsPrimary() {
 			res.state = c.sealingState
 			res.receipts = c.sealingReceipts
+			res.accessList = c.sealingBal.ToEncodingObj()
 		}
 		return res
 	}
@@ -572,6 +583,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 			header:              c.sealingBlock.Header(),
 			withdrawals:         c.sealingBlock.Withdrawals(),
 			transactions:        c.sealingBlock.Transactions(),
+			accessList:          c.sealingBal.ToEncodingObj(),
 			localSignatureBytes: nil,
 			state:               c.sealingState,
 			receipts:            c.sealingReceipts,
@@ -606,11 +618,12 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: pre.finalTransactions, Withdrawals: ethBlock.Withdrawals()}
-	res, err := c.FinalizeAndAssemble(c.chain, h, pre.finalState, &body, pre.finalReceipts)
-	if err != nil {
-		log.Crit("Failed to finalize and assemble final Block",
-			"err", err)
-	}
+
+	// Apply the consensus-specific post-transaction changes
+	c.Finalize(c.chain, h, pre.finalState, &body, uint32(len(body.Transactions)+1), pre.finalBal)
+
+	// Assemble the block for delivery.
+	res := core.AssembleBlock(c.chain, h, pre.finalState, &body, pre.finalReceipts, pre.finalBal)
 
 	return &Block{
 		header:              res.Header(),
@@ -619,6 +632,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 		localSignatureBytes: nil,
 		state:               pre.finalState,
 		receipts:            pre.finalReceipts,
+		accessList:          pre.finalBal.ToEncodingObj(),
 	}
 }
 
@@ -689,7 +703,7 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 	dbftBlock.transactions = c.sealingTransactions
 	ethBlock := dbftBlock.ToEthBlock()
 
-	state, result, err := c.chain.ProcessState(ethBlock, nil)
+	state, result, err := c.chain.ProcessState(context.Background(), ethBlock, nil)
 	if err != nil {
 		log.Crit("failed to process state from proposal",
 			"err", err,
@@ -725,16 +739,17 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: dbftBlock.transactions, Withdrawals: ethBlock.Withdrawals()}
-	res, err := c.FinalizeAndAssemble(c.chain, header, state, &body, result.Receipts)
-	if err != nil {
-		log.Crit("Failed to finalize and assemble proposed block",
-			"err", err)
-	}
+	// Apply the consensus-specific post-transaction changes
+	c.Finalize(c.chain, header, state, &body, uint32(len(body.Transactions)+1), result.Bal)
+
+	// Assemble the block for delivery.
+	res := core.AssembleBlock(c.chain, header, state, &body, result.Receipts, result.Bal)
 
 	c.sealingProposal = res.Header()
 	c.sealingState = state
 	c.sealingBlock = res
 	c.sealingReceipts = result.Receipts
+	c.sealingBal = result.Bal
 
 	req.SealingProposal = c.sealingProposal
 	if len(c.lastBlockSealHash) == common.HashLength {
@@ -960,7 +975,7 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 		}
 	}
 
-	state, receipts, gasUsed, err := c.chain.VerifyBlock(ethBlock, true)
+	state, result, err := c.chain.VerifyBlock(ethBlock, true)
 	if err != nil {
 		log.Warn("proposed PreBlock verification failed",
 			"err", err.Error())
@@ -970,8 +985,9 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 	// Cache processing result for further usage in case if there's no envelopes
 	// in the block or fallback signing scheme is used.
 	dbftBlock.finalState = state
-	dbftBlock.finalReceipts = receipts
-	dbftBlock.finalGASUsed = gasUsed
+	dbftBlock.finalReceipts = result.Receipts
+	dbftBlock.finalGASUsed = result.GasUsed
+	dbftBlock.finalBal = result.Bal
 
 	return true
 }
@@ -995,7 +1011,7 @@ func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash]) bool {
 		}
 
 		ethBlock := types.NewBlockWithHeader(dbftBlock.header).WithBody(types.Body{Transactions: dbftBlock.transactions, Uncles: nil, Withdrawals: dbftBlock.withdrawals})
-		state, receipts, _, err := c.chain.VerifyBlock(ethBlock, true)
+		state, result, err := c.chain.VerifyBlock(ethBlock, true)
 		if err != nil {
 			log.Warn("proposed block verification failed",
 				"err", err.Error())
@@ -1018,7 +1034,7 @@ func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash]) bool {
 		}
 
 		dbftBlock.state = state
-		dbftBlock.receipts = receipts
+		dbftBlock.receipts = result.Receipts
 
 		return true
 	}
@@ -1155,7 +1171,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 
 		// Now validate decrypted transactions and construct final list of transactions for the block.
 		parent := c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
-		state, err := c.chain.StateAt(parent.Root)
+		state, err := c.chain.StateAt(parent)
 		if err != nil {
 			return fmt.Errorf("failed to get parent state: %w", err)
 		}
@@ -1164,16 +1180,17 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			receipts []*types.Receipt
 			allLogs  []*types.Log
 			evm      = vm.NewEVM(core.NewEVMBlockContext(pre.header, c.chain, &pre.header.Coinbase), state, c.chain.Config(), vm.Config{})
-			gasPool  = new(core.GasPool).AddGas(pre.header.GasLimit)
+			gasPool  = core.NewGasPool(pre.header.GasLimit)
 			gasUsed  = uint64(0)
+
+			blockAccessList = bal.NewConstructionBlockAccessList()
 		)
-		if pre.header.ParentBeaconRoot != nil {
-			core.ProcessBeaconBlockRoot(*pre.header.ParentBeaconRoot, evm)
+		// Run the pre-execution system calls
+		bal, err := core.PreExecution(context.Background(), pre.header.ParentBeaconRoot, parent, c.chain.Config(), evm, pre.header.Number, pre.header.Time)
+		if err != nil {
+			return err
 		}
-		if c.chain.Config().IsPrague(pre.header.Number, pre.header.Time) {
-			core.ProcessParentBlockHash(pre.header.ParentHash, evm)
-		}
-		core.ProcessOnPersist(evm)
+		blockAccessList.Merge(bal)
 
 		var (
 			j                    int
@@ -1199,19 +1216,20 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 				if errs := c.staticPool.Add([]*types.Transaction{pre.transactions[i]}, false); errs[0] == nil {
 					var (
 						snap = state.Snapshot()
-						gp   = gasPool.Gas()
+						gp   = gasPool.Snapshot()
 					)
-					state.SetTxContext(pre.transactions[i].Hash(), i)
-					receipt, err := core.ApplyTransaction(evm, gasPool, state, pre.header, pre.transactions[i], &gasUsed)
+					state.SetTxContext(pre.transactions[i].Hash(), i, uint32(i+1))
+					receipt, bal, err := core.ApplyTransaction(evm, gasPool, state, pre.header, pre.transactions[i])
 					if err != nil {
 						state.RevertToSnapshot(snap)
-						gasPool.SetGas(gp)
+						gasPool.Set(gp)
 						// Drop following transactions from this account.
 						skipAccounts[sender] = true
 					} else {
 						txx = append(txx, pre.transactions[i])
 						receipts = append(receipts, receipt)
 						allLogs = append(allLogs, receipt.Logs...)
+						blockAccessList.Merge(bal)
 					}
 				} else {
 					// Drop following transactions from this account.
@@ -1266,13 +1284,13 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			}
 			var (
 				snap = state.Snapshot()
-				gp   = gasPool.Gas()
+				gp   = gasPool.Snapshot()
 			)
-			state.SetTxContext(decryptedTx.Hash(), i)
-			receipt, err := core.ApplyTransaction(evm, gasPool, state, pre.header, decryptedTx, &gasUsed)
+			state.SetTxContext(decryptedTx.Hash(), i, uint32(i+1))
+			receipt, bal, err := core.ApplyTransaction(evm, gasPool, state, pre.header, decryptedTx)
 			if err != nil {
 				state.RevertToSnapshot(snap)
-				gasPool.SetGas(gp)
+				gasPool.Set(gp)
 				fallbackToPreBlockTx(i, true, sender, decryptedTx, errDecryptedRejectedByEVM)
 				continue
 			} else {
@@ -1284,37 +1302,27 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 				txx = append(txx, decryptedTx)
 				receipts = append(receipts, receipt)
 				allLogs = append(allLogs, receipt.Logs...)
+				blockAccessList.Merge(bal)
 				j++
 			}
 		}
-		// Read requests if Prague is enabled.
-		var requests [][]byte
-		if c.chain.Config().IsPrague(pre.header.Number, pre.header.Time) {
-			requests = [][]byte{}
-			// EIP-6110
-			if err := core.ParseDepositLogs(&requests, allLogs, c.chain.Config()); err != nil {
-				return err
-			}
-			// EIP-7002
-			if err := core.ProcessWithdrawalQueue(&requests, evm); err != nil {
-				return err
-			}
-			// EIP-7251
-			if err := core.ProcessConsolidationQueue(&requests, evm); err != nil {
-				return err
-			}
+		requests, bal, err := core.PostExecution(context.Background(), c.chain.Config(), pre.header.Number, pre.header.Time, allLogs, evm, uint32(len(txx)+1))
+		if err != nil {
+			return err
 		}
+		blockAccessList.Merge(bal)
 		if requests != nil {
 			reqHash := types.CalcRequestsHash(requests)
 			pre.header.RequestsHash = &reqHash
 		}
 		// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-		c.Finalize(c.chain, pre.header, state, &types.Body{Transactions: txx, Withdrawals: pre.withdrawals})
+		c.Finalize(c.chain, pre.header, state, &types.Body{Transactions: txx, Withdrawals: pre.withdrawals}, uint32(len(txx)+1), blockAccessList)
 
 		pre.finalTransactions = txx
 		pre.finalState = state
 		pre.finalReceipts = receipts
 		pre.finalGASUsed = gasUsed
+		pre.finalBal = blockAccessList
 		c.envelopeFeed.Send(envelopes)
 		c.staticPool.ResetStatic()
 	}
@@ -1826,6 +1834,24 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if !prague && header.RequestsHash != nil {
 		return fmt.Errorf("invalid requestsHash, have %x, expected nil", header.RequestsHash)
 	}
+	// Verify the existence / non-existence of Amsterdam-specific header fields
+	amsterdam := chain.Config().IsAmsterdam(header.Number, header.Time)
+	if amsterdam {
+		if header.BlockAccessListHash == nil {
+			log.Info("header is missing block access list hash", "number", header.Number.Uint64())
+			return errors.New("header is missing block access list hash")
+		}
+		if header.SlotNumber == nil {
+			return errors.New("header is missing slotNumber")
+		}
+	} else {
+		if header.BlockAccessListHash != nil {
+			return fmt.Errorf("invalid block access list hash: have %x, expected nil", *header.BlockAccessListHash)
+		}
+		if header.SlotNumber != nil {
+			return fmt.Errorf("invalid slotNumber: have %d, expected nil", *header.SlotNumber)
+		}
+	}
 	// All basic checks passed, verify cascading fields
 	return c.verifyCascadingFields(chain, header, parents, isSealed)
 }
@@ -2059,48 +2085,28 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 }
 
 // Finalize implements consensus.Engine. For now, it only manages block withdrawals.
-func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
+func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body, blockAccessIndex uint32, bal *bal.ConstructionBlockAccessList) {
 	// Withdrawals processing.
 	for _, w := range body.Withdrawals {
 		// Convert amount from gwei to wei.
 		amount := new(uint256.Int).SetUint64(w.Amount)
 		amount = amount.Mul(amount, uint256.NewInt(params.GWei))
-		state.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
+		prev := state.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
+
+		// Populate the block-level accessList if Amsterdam is enabled
+		if chain.Config().IsAmsterdam(header.Number, header.Time) {
+			if w.Amount == 0 {
+				// Zero amount withdrawal, account is accessed potential
+				// without state changes.
+				bal.AccountRead(w.Address)
+			} else {
+				// Non-zero amount withdrawal, account is accessed with
+				// a balance change.
+				bal.BalanceChange(blockAccessIndex, w.Address, new(uint256.Int).Add(&prev, amount))
+			}
+		}
 	}
 	// No block rewards in PoA, so the state remains as is
-}
-
-// FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
-// nor block rewards given, and returns the final block.
-func (c *DBFT) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
-	shanghai := chain.Config().IsShanghai(header.Number, header.Time)
-	if !shanghai {
-		if len(body.Withdrawals) > 0 {
-			return nil, errors.New("withdrawals set before Shanghai activation")
-		}
-	}
-	cancun := chain.Config().IsCancun(header.Number, header.Time)
-	if !cancun {
-		if header.ParentBeaconRoot != nil {
-			return nil, errors.New("parentBeaconRoot set before Cancun activation")
-		}
-	}
-	prague := chain.Config().IsPrague(header.Number, header.Time)
-	if !prague {
-		if header.RequestsHash != nil {
-			return nil, errors.New("RequestsHash set before Prague activation")
-		}
-	}
-
-	// Finalize block
-	c.Finalize(chain, header, state, body)
-
-	// Assign the final state root to header.
-	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
-
-	// Assemble and return the final block for sealing.
-	b := types.NewBlock(header, body, receipts, trie.NewStackTrie(nil))
-	return b, nil
 }
 
 // Authorize injects a private key into the consensus engine to mint new blocks

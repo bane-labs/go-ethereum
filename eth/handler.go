@@ -36,13 +36,16 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
+	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/fetcher"
 	beaconproto "github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
+	"github.com/ethereum/go-ethereum/eth/txtracker"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -83,23 +86,26 @@ type txPool interface {
 
 	// GetRLP retrieves the RLP-encoded transaction from local txpool
 	// with given tx hash.
-	GetRLP(hash common.Hash) []byte
+	GetRLP(hash common.Hash, version uint) []byte
 
 	// GetMetadata returns the transaction type and transaction size with the
 	// given transaction hash.
 	GetMetadata(hash common.Hash) *txpool.TxMetadata
 
 	// Add should add the given transactions to the pool.
-	Add(txs []*types.Transaction, local bool, sync bool) []error
+	Add(txs []*types.Transaction, sync bool) []error
 
 	// Pending should return pending transactions.
 	// The slice should be modifiable by the caller.
-	Pending(filter txpool.PendingFilter) map[common.Address][]*txpool.LazyTransaction
+	Pending(filter txpool.PendingFilter) (map[common.Address][]*txpool.LazyTransaction, int)
 
 	// SubscribeTransactions subscribes to new transaction events. The subscriber
 	// can decide whether to receive notifications only for newly seen transactions
 	// or also for reorged out ones.
 	SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription
+
+	// FilterType returns whether the given tx type is supported by the txPool.
+	FilterType(kind byte) bool
 
 	// SubscribeReannoTransactions subscribes to reannounce transaction events.
 	SubscribeReannoTransactions(chan<- core.ReannoTxsEvent) event.Subscription
@@ -109,7 +115,7 @@ type Beacon interface {
 	StartSynchronizer(lightSync beaconSync.LightSyncFn)
 	StartBlockFetcher(
 		broadcastBlock beaconfetch.BlockBroadcasterFn, dropPeer beaconfetch.PeerDropFn,
-		fetchHeader beaconfetch.HeaderRequesterFn, fetchBodies beaconfetch.BodyRequesterFn,
+		blockDataFetcher beaconfetch.Fetcher,
 	)
 	NotifyBlockAnnon(peer string, hash common.Hash, number uint64, time time.Time)
 	EnqueueBlock(peer string, block *types.Block)
@@ -128,31 +134,43 @@ type FileSystem interface {
 	CheckBlobsAvailable(block *types.Block, blobs types.BlobSidecars) error
 }
 
+// blobPool defines the methods needed from a blob pool implementation to
+// support cell-based blob data availability.
+type blobPool interface {
+	Has(hash common.Hash) bool
+	GetBlobHashes(hash common.Hash) []common.Hash
+	GetBlobCells(vhashes []common.Hash, mask types.CustodyBitmap) ([][]*kzg4844.Cell, [][]*kzg4844.Proof, error)
+	GetCustody(hash common.Hash) *types.CustodyBitmap
+	AddPooledTx(pooledTx *blobpool.BlobTxForPool) error
+	ValidateTxBasics(pooledTx *types.Transaction) error
+}
+
 // handlerConfig is the collection of initialization parameters to create a full
 // node network handler.
 type handlerConfig struct {
-	NodeID         enode.ID               // P2P node ID used for tx propagation topology
-	Database       ethdb.Database         // Database for direct sync insertions
-	Chain          *core.BlockChain       // Blockchain to serve data from
-	TxPool         txPool                 // Transaction pool to propagate from
-	Network        uint64                 // Network identifier to advertise
-	Sync           ethconfig.SyncMode     // Whether to snap or full sync
-	BloomCache     uint64                 // Megabytes to alloc for snap sync bloom
-	EventMux       *event.TypeMux         // Legacy event mux, deprecate for `feed`
-	RequiredBlocks map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
-	FileSystem     FileSystem             // File system for blob sidecars
-	BlobSync       bool                   // Whether to sync blob sidecars
+	NodeID           enode.ID               // P2P node ID used for tx propagation topology
+	Database         ethdb.Database         // Database for direct sync insertions
+	Chain            *core.BlockChain       // Blockchain to serve data from
+	TxPool           txPool                 // Transaction pool to propagate from
+	BlobPool         blobPool               // Blob pool for cell-based blob data availability
+	Network          uint64                 // Network identifier to advertise
+	Sync             ethconfig.SyncMode     // Whether to snap or full sync
+	BloomCache       uint64                 // Megabytes to alloc for snap sync bloom
+	RequiredBlocks   map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
+	SnapV2           bool                   // Whether to advertise and sync via the snap/2 protocol
+	FetchProbability uint64                 // Full blob fetch probability for sparse blobpool (blobFetcher)
+	FileSystem       FileSystem             // File system for blob sidecars
+	BlobSync         bool                   // Whether to sync blob sidecars
 }
 
 type handler struct {
 	nodeID    enode.ID
 	networkID uint64
-
-	snapSync atomic.Bool // Flag whether snap sync is enabled (gets disabled if we already have blocks)
-	synced   atomic.Bool // Flag whether we're considered synchronised (enables transaction processing)
+	synced    atomic.Bool // Flag whether we're considered synchronised (enables transaction processing)
 
 	database ethdb.Database
 	txpool   txPool
+	blobpool blobPool
 	chain    *core.BlockChain
 	maxPeers int
 
@@ -161,11 +179,12 @@ type handler struct {
 	fs             FileSystem
 	blobSync       bool
 	txFetcher      *fetcher.TxFetcher
+	blobFetcher    *fetcher.BlobFetcher
+	txTracker      *txtracker.Tracker
 	sidecarFetcher *beaconfetch.SidecarFetcher
 	peers          *peerSet
 	txBroadcastKey [16]byte
 
-	eventMux     *event.TypeMux
 	txsCh        chan core.NewTxsEvent
 	txsSub       event.Subscription
 	blockRange   *blockRangeState
@@ -187,16 +206,12 @@ type handler struct {
 
 // newHandler returns a handler for all Ethereum chain management protocol.
 func newHandler(config *handlerConfig) (*handler, error) {
-	// Create the protocol manager with the base fields
-	if config.EventMux == nil {
-		config.EventMux = new(event.TypeMux) // Nicety initialization for tests
-	}
 	h := &handler{
 		nodeID:         config.NodeID,
 		networkID:      config.Network,
-		eventMux:       config.EventMux,
 		database:       config.Database,
 		txpool:         config.TxPool,
+		blobpool:       config.BlobPool,
 		chain:          config.Chain,
 		peers:          newPeerSet(),
 		txBroadcastKey: newBroadcastChoiceKey(),
@@ -207,40 +222,13 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		handlerDoneCh:  make(chan struct{}),
 		handlerStartCh: make(chan struct{}),
 	}
-	if config.Sync == ethconfig.FullSync {
-		// The database seems empty as the current block is the genesis. Yet the snap
-		// block is ahead, so snap sync was enabled for this node at a certain point.
-		// The scenarios where this can happen is
-		// * if the user manually (or via a bad block) rolled back a snap sync node
-		//   below the sync point.
-		// * the last snap sync is not finished while user specifies a full sync this
-		//   time. But we don't have any recent state for full sync.
-		// In these cases however it's safe to reenable snap sync.
-		fullBlock, snapBlock := h.chain.CurrentBlock(), h.chain.CurrentSnapBlock()
-		if fullBlock.Number.Uint64() == 0 && snapBlock.Number.Uint64() > 0 {
-			h.snapSync.Store(true)
-			log.Warn("Switch sync mode from full sync to snap sync", "reason", "snap sync incomplete")
-		} else if !h.chain.HasState(fullBlock.Root) {
-			h.snapSync.Store(true)
-			log.Warn("Switch sync mode from full sync to snap sync", "reason", "head state missing")
-		}
-	} else {
-		head := h.chain.CurrentBlock()
-		if head.Number.Uint64() > 0 && h.chain.HasState(head.Root) {
-			log.Info("Switch sync mode from snap sync to full sync", "reason", "snap sync complete")
-		} else {
-			// If snap sync was requested and our database is empty, grant it
-			h.snapSync.Store(true)
-			log.Info("Enabled snap sync", "head", head.Number, "hash", head.Hash())
-		}
-	}
+	// Construct the downloader (long sync)
+	h.downloader = downloader.New(config.Database, config.Sync, h.chain, h.removePeer, h.enableSyncedFeatures, config.SnapV2)
+
 	// If snap sync is requested but snapshots are disabled, fail loudly
-	if h.snapSync.Load() && (config.Chain.Snapshots() == nil && config.Chain.TrieDB().Scheme() == rawdb.HashScheme) {
+	if h.downloader.ConfigSyncMode() == ethconfig.SnapSync && (config.Chain.Snapshots() == nil && config.Chain.TrieDB().Scheme() == rawdb.HashScheme) {
 		return nil, errors.New("snap sync not supported with snapshots disabled")
 	}
-	// Construct the downloader (long sync)
-	h.downloader = downloader.New(config.Database, h.eventMux, h.chain, h.removePeer, h.enableSyncedFeatures)
-
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := h.peers.peer(peer)
 		if p == nil {
@@ -248,10 +236,51 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 		return p.RequestTxs(hashes)
 	}
+
+	// Construct the blob buffer for assembling blob txs from separate tx and cell deliveries.
+	blobBuffer := blobpool.NewBlobBuffer(blobpool.BlobBufferFunctions{
+		ValidateTx: h.blobpool.ValidateTxBasics,
+		AddToPool:  h.blobpool.AddPooledTx,
+		DropPeer:   h.removePeer,
+	})
+
 	addTxs := func(txs []*types.Transaction) []error {
-		return h.txpool.Add(txs, false, false)
+		return h.txpool.Add(txs, false)
 	}
-	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
+	validateMeta := func(tx common.Hash, kind byte) error {
+		if h.txpool.Has(tx) || blobBuffer.HasTx(tx) {
+			return txpool.ErrAlreadyKnown
+		}
+		if !h.txpool.FilterType(kind) {
+			return types.ErrTxTypeNotSupported
+		}
+		return nil
+	}
+	h.txTracker = txtracker.New()
+	h.txFetcher = fetcher.NewTxFetcher(h.chain, validateMeta, addTxs, fetchTx, h.removePeer, h.txTracker.NotifyAccepted, blobBuffer)
+
+	// Construct the blob fetcher for cell-based blob data availability
+	blobCallbacks := fetcher.BlobFetcherFunctions{
+		FetchPayloads: func(peer string, hashes []common.Hash, cells types.CustodyBitmap) error {
+			p := h.peers.peer(peer)
+			if p == nil {
+				return errors.New("unknown peer")
+			}
+			return p.RequestPayload(hashes, cells)
+		},
+		HasPayload: func(hash common.Hash) bool {
+			return h.blobpool.Has(hash) || blobBuffer.HasCells(hash)
+		},
+		AddCells: func(hash common.Hash, deliveries map[string]*fetcher.PeerCellDelivery, custody types.CustodyBitmap) {
+			converted := make(map[string]*blobpool.PeerDelivery, len(deliveries))
+			for peer, d := range deliveries {
+				converted[peer] = &blobpool.PeerDelivery{Cells: d.Cells, Indices: d.Indices}
+			}
+			blobBuffer.AddCells(hash, converted, custody)
+		},
+		DropPeer: h.removePeer,
+	}
+	h.blobFetcher = fetcher.NewBlobFetcher(blobCallbacks, types.CustodyBitmapAll, nil, config.FetchProbability)
 	if h.blobSync {
 		h.sidecarFetcher = beaconfetch.NewSidecarFetcher(h.chain, h.fs, h.peers.blobPeers, h.peers.markNoBlobPeer, h.removePeer,
 			h.peers.highestNumberOfBeacons, h.announceBlobs, h.fetchSidecars, (*beaconHandler)(h).RetrieveSidecarsByRoot)
@@ -263,7 +292,11 @@ func newHandler(config *handlerConfig) (*handler, error) {
 func (h *handler) connectBeacon(beacon Beacon) {
 	h.beacon = beacon
 	h.beacon.StartSynchronizer(h.downloader.BeaconLightSync)
-	h.beacon.StartBlockFetcher(h.BroadcastBlock, h.removePeer, h.fetchHeader, h.fetchBodies)
+	h.beacon.StartBlockFetcher(h.BroadcastBlock, h.removePeer, beaconfetch.Fetcher{
+		FetchHeader: h.fetchHeader,
+		FetchBodies: h.fetchBodies,
+		FetchBALs:   h.fetchBALs,
+	})
 }
 
 // protoTracker tracks the number of active protocol handlers.
@@ -366,12 +399,18 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		return err
 	}
 	reject := false // reserved peer slots
-	if h.snapSync.Load() {
-		if snap == nil {
-			// If we are running snap-sync, we want to reserve roughly half the peer
-			// slots for peers supporting the snap protocol.
-			// The logic here is; we only allow up to 5 more non-snap peers than snap-peers.
-			if all, snp := h.peers.len(), h.peers.snapLen(); all-snp > snp+5 {
+	if h.downloader.ConfigSyncMode() == ethconfig.SnapSync {
+		// A peer is useful to the active state syncer only if it offers the snap
+		// extension at (or above) the syncer's version. Non-snap peers AND peers
+		// stuck on an older snap version (e.g. snap/1 while we sync via snap/2)
+		// are both "non-usable": the node still serves them, but they must not be
+		// allowed to fill the slots reserved for peers that can serve the sync.
+		minVersion := h.downloader.SnapSyncVersion()
+		usable := snap != nil && snap.Version() >= minVersion
+		if !usable {
+			// Reserve roughly half the slots for usable peers: only allow up to 5
+			// more non-usable peers (non-snap or below-version snap) than usable ones.
+			if all, snp := h.peers.len(), h.peers.snapLen(minVersion); all-snp > snp+5 {
 				reject = true
 			}
 		}
@@ -401,7 +440,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		return err
 	}
 	if snap != nil {
-		if err := h.downloader.SnapSyncer.Register(snap); err != nil {
+		if err := h.downloader.RegisterSnapPeer(snap); err != nil {
 			peer.Log().Error("Failed to register peer in snap syncer", "err", err)
 			return err
 		}
@@ -544,10 +583,12 @@ func (h *handler) unregisterPeer(id string) {
 
 	// Remove the `snap` extension if it exists
 	if peer.snapExt != nil {
-		h.downloader.SnapSyncer.Unregister(id)
+		h.downloader.UnregisterSnapPeer(peer.snapExt.Peer)
 	}
 	h.downloader.UnregisterPeer(id)
 	h.txFetcher.Drop(id)
+	h.blobFetcher.Drop(id)
+	h.txTracker.NotifyPeerDrop(id)
 
 	if err := h.peers.unregisterPeer(id); err != nil {
 		logger.Error("Ethereum peer removal failed", "err", err)
@@ -565,7 +606,7 @@ func (h *handler) Start(maxPeers int) {
 
 	// broadcast block range
 	h.wg.Add(1)
-	h.blockRange = newBlockRangeState(h.chain, h.eventMux)
+	h.blockRange = newBlockRangeState(h.chain, h.downloader)
 	go h.blockRangeLoop(h.blockRange)
 
 	// announce pending transactions again (only pending ones, not new ones)
@@ -576,6 +617,10 @@ func (h *handler) Start(maxPeers int) {
 
 	// start sync handlers
 	h.txFetcher.Start()
+	h.blobFetcher.Start()
+
+	// Start the transaction tracker (records tx deliveries, credits peer inclusions).
+	h.txTracker.Start(h.chain)
 
 	// start sidecar fetcher if blob sync is enabled
 	if h.blobSync {
@@ -600,6 +645,7 @@ func (h *handler) Stop() {
 	h.annoBlobsSub.Unsubscribe() // quits blobsAnnounceLoop
 
 	h.txFetcher.Stop()
+	h.blobFetcher.Stop()
 	if h.blobSync {
 		h.sidecarFetcher.Stop()
 	}
@@ -676,6 +722,15 @@ func (h *handler) fetchBodies(id string, hashes []common.Hash, sink chan *eth.Re
 	return peer.RequestBodies(hashes, sink)
 }
 
+// fetchBALs is the bridge to use a hash array to get the block access lists from `eth` protocol.
+func (h *handler) fetchBALs(id string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+	peer := h.peers.peer(id)
+	if peer == nil {
+		return nil, errPeerNotRegistered
+	}
+	return peer.RequestBALs(hashes, sink)
+}
+
 // fetchSidecars is the bridge to use a hash array to get the blob sidecars from `beacon` protocol.
 func (h *handler) fetchSidecars(id string, hashes []common.Hash, sink chan *beaconproto.Response) (*beaconproto.Request, error) {
 	peer := h.peers.beacon(id)
@@ -741,7 +796,7 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 		annCount += len(hashes)
 		peer.AsyncSendPooledTransactionHashes(hashes)
 	}
-	log.Debug("Distributed transactions", "plaintxs", len(txs)-blobTxs-largeTxs, "blobtxs", blobTxs, "largetxs", largeTxs,
+	log.Trace("Distributed transactions", "plaintxs", len(txs)-blobTxs-largeTxs, "blobtxs", blobTxs, "largetxs", largeTxs,
 		"bcastpeers", len(txset), "bcastcount", directCount, "annpeers", len(annos), "anncount", annCount)
 }
 
@@ -792,15 +847,7 @@ func (h *handler) txReannounceLoop() {
 // enableSyncedFeatures enables the post-sync functionalities when the initial
 // sync is finished.
 func (h *handler) enableSyncedFeatures() {
-	// Mark the local node as synced.
 	h.synced.Store(true)
-
-	// If we were running snap sync and it finished, disable doing another
-	// round on next sync cycle
-	if h.snapSync.Load() {
-		log.Info("Snap sync complete, auto disabling")
-		h.snapSync.Store(false)
-	}
 }
 
 // blockRangeState holds the state of the block range update broadcasting mechanism.
@@ -809,16 +856,19 @@ type blockRangeState struct {
 	next    atomic.Pointer[eth.BlockRangeUpdatePacket]
 	headCh  chan core.ChainHeadEvent
 	headSub event.Subscription
-	syncSub *event.TypeMuxSubscription
+	syncCh  chan downloader.SyncEvent
+	syncSub event.Subscription
 }
 
-func newBlockRangeState(chain *core.BlockChain, typeMux *event.TypeMux) *blockRangeState {
+func newBlockRangeState(chain *core.BlockChain, dl *downloader.Downloader) *blockRangeState {
 	headCh := make(chan core.ChainHeadEvent, chainHeadChanSize)
 	headSub := chain.SubscribeChainHeadEvent(headCh)
-	syncSub := typeMux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
+	syncCh := make(chan downloader.SyncEvent, 16)
+	syncSub := dl.SubscribeSyncEvents(syncCh)
 	st := &blockRangeState{
 		headCh:  headCh,
 		headSub: headSub,
+		syncCh:  syncCh,
 		syncSub: syncSub,
 	}
 	st.update(chain, chain.CurrentBlock())
@@ -834,11 +884,8 @@ func (h *handler) blockRangeLoop(st *blockRangeState) {
 
 	for {
 		select {
-		case ev := <-st.syncSub.Chan():
-			if ev == nil {
-				continue
-			}
-			if _, ok := ev.Data.(downloader.StartEvent); ok && h.snapSync.Load() {
+		case ev := <-st.syncCh:
+			if ev.Type == downloader.SyncStarted && ev.Mode == ethconfig.SnapSync {
 				h.blockRangeWhileSnapSyncing(st)
 			}
 		case <-st.headCh:
@@ -866,12 +913,8 @@ func (h *handler) blockRangeWhileSnapSyncing(st *blockRangeState) {
 				h.broadcastBlockRange(st)
 			}
 		// back to processing head block updates when sync is done
-		case ev := <-st.syncSub.Chan():
-			if ev == nil {
-				continue
-			}
-			switch ev.Data.(type) {
-			case downloader.FailedEvent, downloader.DoneEvent:
+		case ev := <-st.syncCh:
+			if ev.Type == downloader.SyncFailed || ev.Type == downloader.SyncCompleted {
 				return
 			}
 		// ignore head updates, but exit when the subscription ends

@@ -45,6 +45,10 @@ func VerifyEIP1559Header(config *params.ChainConfig, parent, header *types.Heade
 	if header.BaseFee == nil {
 		return errors.New("header is missing baseFee")
 	}
+	// Verify the parent header is not malformed
+	if config.IsLondon(parent.Number) && parent.BaseFee == nil {
+		return errors.New("parent header is missing baseFee")
+	}
 	// In NeoX BaseFee verification is performed by consensus nodes and hence
 	// not included into the state-independent ordinary block verification rules.
 	if config.DBFT != nil {

@@ -24,6 +24,7 @@ var (
 	txAnnounceInMeter          = metrics.NewRegisteredMeter("eth/fetcher/transaction/announces/in", nil)
 	txAnnounceKnownMeter       = metrics.NewRegisteredMeter("eth/fetcher/transaction/announces/known", nil)
 	txAnnounceUnderpricedMeter = metrics.NewRegisteredMeter("eth/fetcher/transaction/announces/underpriced", nil)
+	txAnnounceOnchainMeter     = metrics.NewRegisteredMeter("eth/fetcher/transaction/announces/onchain", nil)
 	txAnnounceDOSMeter         = metrics.NewRegisteredMeter("eth/fetcher/transaction/announces/dos", nil)
 
 	txBroadcastInMeter          = metrics.NewRegisteredMeter("eth/fetcher/transaction/broadcasts/in", nil)
@@ -56,4 +57,26 @@ var (
 	// to become "unfrozen", either by eventually replying to the request
 	// or by being dropped, measuring from the moment the request was sent.
 	txFetcherSlowWait = metrics.NewRegisteredHistogram("eth/fetcher/transaction/slow/wait", nil, metrics.NewExpDecaySample(1028, 0.015))
+
+	blobAnnounceInMeter  = metrics.NewRegisteredMeter("eth/fetcher/blob/announces/in", nil)
+	blobAnnounceDOSMeter = metrics.NewRegisteredMeter("eth/fetcher/blob/announces/dos", nil)
+	// This metric tracks partial→full conversions due to availability timeout
+	blobAnnounceTimeoutMeter = metrics.NewRegisteredMeter("eth/fetcher/blob/announces/timeout", nil)
+
+	blobRequestOutMeter     = metrics.NewRegisteredMeter("eth/fetcher/blob/request/out", nil)
+	blobRequestFailMeter    = metrics.NewRegisteredMeter("eth/fetcher/blob/request/fail", nil)
+	blobRequestDoneMeter    = metrics.NewRegisteredMeter("eth/fetcher/blob/request/done", nil)
+	blobRequestTimeoutMeter = metrics.NewRegisteredMeter("eth/fetcher/blob/request/timeout", nil)
+
+	blobReplyInMeter = metrics.NewRegisteredMeter("eth/fetcher/blob/replies/in", nil)
+
+	blobFetcherWaitingPeers   = metrics.NewRegisteredGauge("eth/fetcher/blob/waiting/peers", nil)
+	blobFetcherWaitingHashes  = metrics.NewRegisteredGauge("eth/fetcher/blob/waiting/hashes", nil)
+	blobFetcherQueueingPeers  = metrics.NewRegisteredGauge("eth/fetcher/blob/queueing/peers", nil)
+	blobFetcherQueueingHashes = metrics.NewRegisteredGauge("eth/fetcher/blob/queueing/hashes", nil)
+	blobFetcherFetchingPeers  = metrics.NewRegisteredGauge("eth/fetcher/blob/fetching/peers", nil)
+	blobFetcherFetchingHashes = metrics.NewRegisteredGauge("eth/fetcher/blob/fetching/hashes", nil)
+
+	blobFetcherWaitTime  = metrics.NewRegisteredHistogram("eth/fetcher/blob/wait/time", nil, metrics.NewExpDecaySample(1028, 0.015))
+	blobFetcherFetchTime = metrics.NewRegisteredHistogram("eth/fetcher/blob/fetch/time", nil, metrics.NewExpDecaySample(1028, 0.015))
 )

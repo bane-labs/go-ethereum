@@ -1,7 +1,9 @@
 package fetcher
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -10,9 +12,11 @@ import (
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 )
 
@@ -57,6 +61,7 @@ var (
 )
 
 var errTerminated = errors.New("terminated")
+var errInvalidBody = errors.New("retrieved block body is invalid")
 
 // blockRetrievalFn is a callback type for retrieving a block from the local chain.
 type blockRetrievalFn func(common.Hash) *types.Block
@@ -64,8 +69,15 @@ type blockRetrievalFn func(common.Hash) *types.Block
 // HeaderRequesterFn is a callback type for sending a header retrieval request.
 type HeaderRequesterFn func(string, common.Hash, chan *eth.Response) (*eth.Request, error)
 
-// BodyRequesterFn is a callback type for sending a body retrieval request.
-type BodyRequesterFn func(string, []common.Hash, chan *eth.Response) (*eth.Request, error)
+// RequesterFn is a callback type for sending a retrieval request.
+type RequesterFn func(string, []common.Hash, chan *eth.Response) (*eth.Request, error)
+
+// Fetcher is a collection of fetcher functions for retrieving block data from peers.
+type Fetcher struct {
+	FetchHeader HeaderRequesterFn // Fetcher function to retrieve the header of an announced block
+	FetchBodies RequesterFn       // Fetcher function to retrieve the body of an announced block
+	FetchBALs   RequesterFn       // Fetcher function to retrieve the block access list of an announced block
+}
 
 // headerVerifierFn is a callback type to verify a block's header for fast propagation.
 type headerVerifierFn func(header *types.Header) error
@@ -109,10 +121,10 @@ type headerFilterTask struct {
 // bodyFilterTask represents a batch of block bodies (transactions and uncles)
 // needing fetcher filtering.
 type bodyFilterTask struct {
-	peer         string                 // The source peer of block bodies
-	transactions [][]*types.Transaction // Collection of transactions per block bodies
-	uncles       [][]*types.Header      // Collection of uncles per block bodies
-	time         time.Time              // Arrival time of the blocks' contents
+	peer   string                 // The source peer of block bodies
+	bodies []types.Body           // Collection of block body per block
+	bals   []*bal.BlockAccessList // Collection of BALs per block
+	time   time.Time              // Arrival time of the blocks' contents
 }
 
 // blockOrHeaderInject represents a schedules import operation.
@@ -137,6 +149,14 @@ func (inject *blockOrHeaderInject) hash() common.Hash {
 		return inject.header.Hash()
 	}
 	return inject.block.Hash()
+}
+
+// ChainReader is a simple collection of block retrieval functions.
+type ChainReader struct {
+	GetBlock             blockRetrievalFn
+	VerifyHeader         headerVerifierFn
+	ChainHeight          chainHeightFn
+	ChainFinalizedHeight chainFinalizedHeightFn
 }
 
 // BlockFetcher is responsible for accumulating block announcements from various peers
@@ -176,8 +196,7 @@ type BlockFetcher struct {
 	informDownload       downloadInformFn       // Informs a block to the downloader
 	dropPeer             PeerDropFn             // Drops a peer for misbehaving
 
-	fetchHeader HeaderRequesterFn // Fetcher function to retrieve the header of an announced block
-	fetchBodies BodyRequesterFn   // Fetcher function to retrieve the body of an announced block
+	fetcher Fetcher // Fetcher functions to retrieve block data from peers
 
 	// Testing hooks
 	announceChangeHook func(common.Hash, bool)           // Method to call upon adding or deleting a hash from the blockAnnounce list
@@ -188,9 +207,9 @@ type BlockFetcher struct {
 }
 
 // NewBlockFetcher creates a block fetcher to retrieve blocks based on hash announcements.
-func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBlock BlockBroadcasterFn,
-	chainHeight chainHeightFn, chainFinalizedHeight chainFinalizedHeightFn, insertChain chainInsertFn,
-	informDownload downloadInformFn, dropPeer PeerDropFn, fetchHeader HeaderRequesterFn, fetchBodies BodyRequesterFn,
+func NewBlockFetcher(chainReader ChainReader, broadcastBlock BlockBroadcasterFn,
+	insertChain chainInsertFn, informDownload downloadInformFn, dropPeer PeerDropFn,
+	fetcher Fetcher,
 ) *BlockFetcher {
 	return &BlockFetcher{
 		notify:               make(chan *blockAnnounce),
@@ -208,16 +227,15 @@ func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, b
 		queue:                prque.New[int64, *blockOrHeaderInject](nil),
 		queues:               make(map[string]int),
 		queued:               make(map[common.Hash]*blockOrHeaderInject),
-		getBlock:             getBlock,
-		verifyHeader:         verifyHeader,
+		getBlock:             chainReader.GetBlock,
+		verifyHeader:         chainReader.VerifyHeader,
 		broadcastBlock:       broadcastBlock,
-		chainHeight:          chainHeight,
-		chainFinalizedHeight: chainFinalizedHeight,
+		chainHeight:          chainReader.ChainHeight,
+		chainFinalizedHeight: chainReader.ChainFinalizedHeight,
 		insertChain:          insertChain,
 		informDownload:       informDownload,
 		dropPeer:             dropPeer,
-		fetchHeader:          fetchHeader,
-		fetchBodies:          fetchBodies,
+		fetcher:              fetcher,
 	}
 }
 
@@ -294,8 +312,8 @@ func (f *BlockFetcher) FilterHeaders(peer string, headers []*types.Header, time 
 
 // FilterBodies extracts all the block bodies that were explicitly requested by
 // the fetcher, returning those that should be handled differently.
-func (f *BlockFetcher) FilterBodies(peer string, transactions [][]*types.Transaction, uncles [][]*types.Header, time time.Time) ([][]*types.Transaction, [][]*types.Header) {
-	log.Trace("Filtering bodies", "peer", peer, "txs", len(transactions), "uncles", len(uncles))
+func (f *BlockFetcher) FilterBodies(peer string, bodies []types.Body, bals []*bal.BlockAccessList, time time.Time) ([]types.Body, []*bal.BlockAccessList) {
+	log.Trace("Filtering bodies", "peer", peer, "bodies", len(bodies), "bals", len(bals))
 
 	// Send the filter channel to the fetcher
 	filter := make(chan *bodyFilterTask)
@@ -307,14 +325,14 @@ func (f *BlockFetcher) FilterBodies(peer string, transactions [][]*types.Transac
 	}
 	// Request the filtering of the body list
 	select {
-	case filter <- &bodyFilterTask{peer: peer, transactions: transactions, uncles: uncles, time: time}:
+	case filter <- &bodyFilterTask{peer: peer, bodies: bodies, bals: bals, time: time}:
 	case <-f.quit:
 		return nil, nil
 	}
 	// Retrieve the bodies remaining after filtering
 	select {
 	case task := <-filter:
-		return task.transactions, task.uncles
+		return task.bodies, task.bals
 	case <-f.quit:
 		return nil, nil
 	}
@@ -462,7 +480,7 @@ func (f *BlockFetcher) loop() {
 						go func(hash common.Hash) {
 							resCh := make(chan *eth.Response)
 
-							req, err := f.fetchHeader(peer, hash, resCh)
+							req, err := f.fetcher.FetchHeader(peer, hash, resCh)
 							if err != nil {
 								return // Legacy code, yolo
 							}
@@ -515,10 +533,19 @@ func (f *BlockFetcher) loop() {
 				}
 				bodyFetchMeter.Mark(int64(len(hashes)))
 
+				// toFetchBals is set if any of the blocks have a non-empty access list hash
+				toFetchBals := false
+				for _, hash := range hashes {
+					header := f.completing[hash].header
+					if header.BlockAccessListHash != nil && !header.EmptyBlockAccessListHash() {
+						toFetchBals = true
+					}
+				}
+
 				go func(peer string, hashes []common.Hash) {
 					resCh := make(chan *eth.Response)
 
-					req, err := f.fetchBodies(peer, hashes, resCh)
+					req, err := f.fetcher.FetchBodies(peer, hashes, resCh)
 					if err != nil {
 						return // Legacy code, yolo
 					}
@@ -530,9 +557,49 @@ func (f *BlockFetcher) loop() {
 					select {
 					case res := <-resCh:
 						res.Done <- nil
-						// Ignoring withdrawals here, will set it to empty later if EmptyWithdrawalsHash in header.
-						txs, uncles, _ := res.Res.(*eth.BlockBodiesResponse).Unpack()
-						f.FilterBodies(peer, txs, uncles, time.Now())
+						bodies := *res.Res.(*eth.BlockBodiesResponse)
+						bodyList := make([]types.Body, 0, len(bodies))
+						// decode
+						for index := 0; index < len(bodies); index++ {
+							txs, err := bodies[index].Transactions.Items()
+							if err != nil {
+								log.Debug(fmt.Errorf("%w: bad transactions: %v", errInvalidBody, err).Error())
+								return
+							}
+							uncles, err := bodies[index].Uncles.Items()
+							if err != nil {
+								log.Debug(fmt.Errorf("%w: bad uncles: %v", errInvalidBody, err).Error())
+								return
+							}
+							var withdrawals []*types.Withdrawal
+							if bodies[index].Withdrawals != nil {
+								withdrawals, err = bodies[index].Withdrawals.Items()
+								if err != nil {
+									log.Debug(fmt.Errorf("%w: bad withdrawals: %v", errInvalidBody, err).Error())
+									return
+								}
+							}
+							bodyList = append(bodyList, types.Body{
+								Transactions: txs,
+								Uncles:       uncles,
+								Withdrawals:  withdrawals,
+							})
+						}
+
+						// fetch Bals
+						var balList []*bal.BlockAccessList
+						if toFetchBals {
+							balList, err = f.fetchBals(peer, hashes)
+							if err != nil {
+								log.Debug(fmt.Errorf("%w: failed to fetch BALs: %v", errInvalidBody, err).Error())
+								return
+							}
+						} else {
+							// If we don't have any BALs, we make an empty list of BALs
+							balList = make([]*bal.BlockAccessList, len(bodyList))
+						}
+
+						f.FilterBodies(peer, bodyList, balList, time.Now())
 
 					case <-timeout.C:
 						// The peer didn't respond in time. The request
@@ -585,6 +652,9 @@ func (f *BlockFetcher) loop() {
 							block := types.NewBlockWithHeader(header)
 							if block.Header().EmptyWithdrawalsHash() {
 								block = block.WithWithdrawals(make([]*types.Withdrawal, 0))
+							}
+							if block.Header().EmptyBlockAccessListHash() {
+								block = block.WithAccessListUnsafe(new(bal.BlockAccessList))
 							}
 							block.ReceivedAt = task.time
 
@@ -639,45 +709,73 @@ func (f *BlockFetcher) loop() {
 			case <-f.quit:
 				return
 			}
-			bodyFilterInMeter.Mark(int64(len(task.transactions)))
+			bodyFilterInMeter.Mark(int64(len(task.bodies)))
 			blocks := []*types.Block{}
 			// abort early if there's nothing explicitly requested
 			if len(f.completing) > 0 {
-				for i := 0; i < len(task.transactions) && i < len(task.uncles); i++ {
+				for i := 0; i < len(task.bodies) && i < len(task.bals); i++ {
 					// Match up a body to any possible completion request
 					var (
-						matched   = false
-						uncleHash common.Hash // calculated lazily and reused
-						txnHash   common.Hash // calculated lazily and reused
+						matched         = false
+						uncleHash       common.Hash // calculated lazily and reused
+						txnHash         common.Hash // calculated lazily and reused
+						withdrawalsHash common.Hash // calculated lazily and reused
+						balHash         common.Hash // calculated lazily and reused
 					)
 					for hash, announce := range f.completing {
 						if f.queued[hash] != nil || announce.origin != task.peer {
 							continue
 						}
 						if uncleHash == (common.Hash{}) {
-							uncleHash = types.CalcUncleHash(task.uncles[i])
+							uncleHash = types.CalcUncleHash(task.bodies[i].Uncles)
 						}
 						if uncleHash != announce.header.UncleHash {
 							continue
 						}
 						if txnHash == (common.Hash{}) {
-							txnHash = types.DeriveSha(types.Transactions(task.transactions[i]), trie.NewStackTrie(nil))
+							txnHash = types.DeriveSha(types.Transactions(task.bodies[i].Transactions), trie.NewStackTrie(nil))
 						}
 						if txnHash != announce.header.TxHash {
 							continue
 						}
+						if task.bodies[i].Withdrawals == nil {
+							if announce.header.WithdrawalsHash != nil {
+								continue
+							}
+						} else {
+							if announce.header.WithdrawalsHash == nil {
+								continue
+							}
+							if withdrawalsHash == (common.Hash{}) {
+								withdrawalsHash = types.DeriveSha(types.Withdrawals(task.bodies[i].Withdrawals), trie.NewStackTrie(nil))
+							}
+							if withdrawalsHash != *announce.header.WithdrawalsHash {
+								continue
+							}
+						}
+						if task.bals[i] == nil {
+							if announce.header.BlockAccessListHash != nil {
+								continue
+							}
+						} else {
+							if announce.header.BlockAccessListHash == nil {
+								continue
+							}
+							if balHash == (common.Hash{}) {
+								balHash = task.bals[i].Hash()
+							}
+							if balHash != *announce.header.BlockAccessListHash {
+								continue
+							}
+						}
+
 						// Mark the body matched, reassemble if still unknown
 						matched = true
 						if f.getBlock(hash) == nil {
-							body := types.Body{
-								Transactions: task.transactions[i],
-								Uncles:       task.uncles[i],
+							block := types.NewBlockWithHeader(announce.header).WithBody(task.bodies[i])
+							if announce.header.BlockAccessListHash != nil {
+								block = block.WithAccessList(task.bals[i])
 							}
-							if announce.header.EmptyWithdrawalsHash() {
-								// Only empty withdrawals are supported in case of pre-merge dBFT with Shanghai enabled.
-								body.Withdrawals = []*types.Withdrawal{}
-							}
-							block := types.NewBlockWithHeader(announce.header).WithBody(body)
 							block.ReceivedAt = task.time
 							blocks = append(blocks, block)
 						} else {
@@ -685,14 +783,14 @@ func (f *BlockFetcher) loop() {
 						}
 					}
 					if matched {
-						task.transactions = append(task.transactions[:i], task.transactions[i+1:]...)
-						task.uncles = append(task.uncles[:i], task.uncles[i+1:]...)
+						task.bodies = append(task.bodies[:i], task.bodies[i+1:]...)
+						task.bals = append(task.bals[:i], task.bals[i+1:]...)
 						i--
 						continue
 					}
 				}
 			}
-			bodyFilterOutMeter.Mark(int64(len(task.transactions)))
+			bodyFilterOutMeter.Mark(int64(len(task.bodies)))
 			select {
 			case filter <- task:
 			case <-f.quit:
@@ -904,4 +1002,40 @@ func (f *BlockFetcher) forgetBlock(hash common.Hash) {
 		}
 		delete(f.queued, hash)
 	}
+}
+
+func (f *BlockFetcher) fetchBals(peer string, hashes []common.Hash) ([]*bal.BlockAccessList, error) {
+	resCh := make(chan *eth.Response)
+
+	req, err := f.fetcher.FetchBALs(peer, hashes, resCh)
+	if err != nil {
+		return nil, err
+	}
+	defer req.Close()
+
+	timeout := time.NewTimer(2 * fetchTimeout) // 2x leeway before dropping the peer
+	defer timeout.Stop()
+
+	select {
+	case res := <-resCh:
+		res.Done <- nil
+		var balList []*bal.BlockAccessList
+		bals := *res.Res.(*eth.BlockAccessListResponse)
+		// decode
+		for index := 0; index < len(bals); index++ {
+			var accessList *bal.BlockAccessList
+			if !bytes.Equal(bals[index], rlp.EmptyString) {
+				accessList = new(bal.BlockAccessList)
+				if err := rlp.DecodeBytes(bals[index], accessList); err != nil {
+					return nil, fmt.Errorf("failed to decode BAL: %w", err)
+				}
+			}
+			balList = append(balList, accessList)
+		}
+		return balList, nil
+	case <-timeout.C:
+		// The peer didn't respond in time.
+		// It's possible that the peer has not upgraded yet, so no action is taken here.
+	}
+	return nil, fmt.Errorf("failed to fetch BALs from peer: %s", peer)
 }

@@ -1,6 +1,8 @@
 package dbft
 
 import (
+	"context"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
@@ -13,13 +15,14 @@ import (
 type ChainHeaderReader interface {
 	consensus.ChainHeaderReader
 	CurrentBlock() *types.Header
+	Genesis() *types.Block
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	HasBlock(hash common.Hash, number uint64) bool
 	GetBlock(hash common.Hash, number uint64) *types.Block
 	GetBlockByNumber(uint64) *types.Block
-	StateAt(root common.Hash) (*state.StateDB, error)
-	VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, types.Receipts, uint64, error)
-	ProcessState(block *types.Block, statedb *state.StateDB) (*state.StateDB, *core.ProcessResult, error)
+	StateAt(header *types.Header) (*state.StateDB, error)
+	VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, *core.ProcessResult, error)
+	ProcessState(ctx context.Context, block *types.Block, statedb *state.StateDB) (*state.StateDB, *core.ProcessResult, error)
 
 	// Only for EVM context construction
 	Engine() consensus.Engine

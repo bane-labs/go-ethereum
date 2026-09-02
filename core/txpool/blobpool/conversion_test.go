@@ -1,4 +1,4 @@
-// Copyright 2025 The go-ethereum Authors
+// Copyright 2026 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -17,37 +17,13 @@
 package blobpool
 
 import (
-	"crypto/ecdsa"
-	"crypto/sha256"
+	"sync"
 	"testing"
+	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/holiman/uint256"
 )
-
-// createV1BlobTx creates a blob transaction with version 1 sidecar for testing.
-func createV1BlobTx(nonce uint64, key *ecdsa.PrivateKey) *types.Transaction {
-	blob := &kzg4844.Blob{byte(nonce)}
-	commitment, _ := kzg4844.BlobToCommitment(blob)
-	cellProofs, _ := kzg4844.ComputeCellProofs(blob)
-
-	blobtx := &types.BlobTx{
-		ChainID:    uint256.MustFromBig(params.MainnetChainConfig.ChainID),
-		Nonce:      nonce,
-		GasTipCap:  uint256.NewInt(1),
-		GasFeeCap:  uint256.NewInt(1000),
-		Gas:        21000,
-		BlobFeeCap: uint256.NewInt(100),
-		BlobHashes: []common.Hash{kzg4844.CalcBlobHashV1(sha256.New(), &commitment)},
-		Value:      uint256.NewInt(100),
-		Sidecar:    types.NewBlobTxSidecar(types.BlobSidecarVersion1, []kzg4844.Blob{*blob}, []kzg4844.Commitment{commitment}, cellProofs),
-	}
-	return types.MustSignNewTx(key, types.LatestSigner(params.MainnetChainConfig), blobtx)
-}
 
 func TestConversionQueueBasic(t *testing.T) {
 	queue := newConversionQueue()
@@ -55,41 +31,30 @@ func TestConversionQueueBasic(t *testing.T) {
 
 	key, _ := crypto.GenerateKey()
 	tx := makeTx(0, 1, 1, 1, key)
-	if err := queue.convert(tx); err != nil {
-		t.Fatalf("Expected successful conversion, got error: %v", err)
-	}
-	if tx.BlobTxSidecar().Version != types.BlobSidecarVersion1 {
-		t.Errorf("Expected sidecar version to be %d, got %d", types.BlobSidecarVersion1, tx.BlobTxSidecar().Version)
-	}
-}
 
-func TestConversionQueueV1BlobTx(t *testing.T) {
-	queue := newConversionQueue()
-	defer queue.close()
-
-	key, _ := crypto.GenerateKey()
-	tx := createV1BlobTx(0, key)
-	version := tx.BlobTxSidecar().Version
-
-	err := queue.convert(tx)
+	ptx, err := queue.convert(tx)
 	if err != nil {
 		t.Fatalf("Expected successful conversion, got error: %v", err)
 	}
-	if tx.BlobTxSidecar().Version != version {
-		t.Errorf("Expected sidecar version to remain %d, got %d", version, tx.BlobTxSidecar().Version)
+	if ptx == nil {
+		t.Fatal("Expected a converted transaction, got nil")
+	}
+	if ptx.Tx.Hash() != tx.Hash() {
+		t.Errorf("Converted tx hash mismatch: have %s, want %s", ptx.Tx.Hash(), tx.Hash())
+	}
+	if len(ptx.CellSidecar.Cells) == 0 {
+		t.Error("Expected cells to be computed during conversion")
 	}
 }
 
 func TestConversionQueueClosed(t *testing.T) {
 	queue := newConversionQueue()
-
-	// Close the queue first
 	queue.close()
+
 	key, _ := crypto.GenerateKey()
 	tx := makeTx(0, 1, 1, 1, key)
 
-	err := queue.convert(tx)
-	if err == nil {
+	if _, err := queue.convert(tx); err == nil {
 		t.Fatal("Expected error when converting on closed queue, got nil")
 	}
 }
@@ -98,4 +63,117 @@ func TestConversionQueueDoubleClose(t *testing.T) {
 	queue := newConversionQueue()
 	queue.close()
 	queue.close() // Should not panic
+}
+
+func TestConversionQueueSerialBackgroundTasks(t *testing.T) {
+	queue := newConversionQueue()
+
+	firstStarted := make(chan struct{})
+	firstRelease := make(chan struct{})
+	if err := queue.launchConversion(func() {
+		close(firstStarted)
+		<-firstRelease
+	}); err != nil {
+		t.Fatalf("Failed to launch first conversion: %v", err)
+	}
+	<-firstStarted
+
+	secondStarted := make(chan struct{})
+	if err := queue.launchConversion(func() { close(secondStarted) }); err != nil {
+		t.Fatalf("Failed to launch second conversion: %v", err)
+	}
+	select {
+	case <-secondStarted:
+		close(firstRelease)
+		queue.close()
+		t.Fatal("Second conversion started before first conversion finished")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(firstRelease)
+	select {
+	case <-secondStarted:
+	case <-time.After(time.Second):
+		queue.close()
+		t.Fatal("Second conversion did not start after first conversion finished")
+	}
+	queue.close()
+}
+
+func TestConversionQueueCloseWaitsForBackgroundTask(t *testing.T) {
+	queue := newConversionQueue()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	if err := queue.launchConversion(func() {
+		close(started)
+		<-release
+	}); err != nil {
+		t.Fatalf("Failed to launch conversion: %v", err)
+	}
+	<-started
+
+	closed := make(chan struct{})
+	go func() {
+		queue.close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("Queue closed before the running conversion finished")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Queue did not close after the running conversion finished")
+	}
+}
+
+func TestConversionQueueAutoRestartBatch(t *testing.T) {
+	queue := newConversionQueue()
+	defer queue.close()
+
+	key, _ := crypto.GenerateKey()
+
+	// Create a heavy transaction to ensure the first batch runs long enough
+	// for subsequent tasks to be queued while it is active.
+	heavy := makeMultiBlobTx(0, 1, 1, 1, int(params.BlobTxMaxBlobs), 0, key)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	heavyDone := make(chan error, 1)
+	go func() {
+		defer wg.Done()
+		_, err := queue.convert(heavy)
+		heavyDone <- err
+	}()
+
+	// Give the conversion worker a head start so that the following tasks are
+	// enqueued while the first batch is running.
+	time.Sleep(200 * time.Millisecond)
+
+	tx1 := makeTx(1, 1, 1, 1, key)
+	tx2 := makeTx(2, 1, 1, 1, key)
+
+	wg.Add(2)
+	done1 := make(chan error, 1)
+	done2 := make(chan error, 1)
+	go func() { defer wg.Done(); _, err := queue.convert(tx1); done1 <- err }()
+	go func() { defer wg.Done(); _, err := queue.convert(tx2); done2 <- err }()
+
+	for _, c := range []struct {
+		name string
+		done chan error
+	}{{"tx1", done1}, {"tx2", done2}, {"heavy", heavyDone}} {
+		select {
+		case err := <-c.done:
+			if err != nil {
+				t.Fatalf("%s conversion error: %v", c.name, err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatalf("timeout waiting for %s conversion", c.name)
+		}
+	}
+	wg.Wait()
 }
