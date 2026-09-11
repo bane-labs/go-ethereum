@@ -8,7 +8,7 @@ import (
 
 var _ = dbft.Transaction[common.Hash](&Transaction{})
 
-// Transaction  is a wrapper around Eth transaction that implements block.Transaction
+// Transaction is a wrapper around Eth transaction that implements block.Transaction
 // interface and is sufficient for dBFT operations.
 type Transaction struct {
 	Tx *types.Transaction
