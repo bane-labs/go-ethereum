@@ -1114,6 +1114,10 @@ func overrideConfig(original *params.ChainConfig, override *params.ChainConfig) 
 		copy.NeoXAMEVBlock = block
 		canon = false
 	}
+	if block := override.NeoXPrepareRequestExtensionBlock; block != nil {
+		copy.NeoXPrepareRequestExtensionBlock = block
+		canon = false
+	}
 	if timestamp := override.CancunTime; timestamp != nil {
 		copy.CancunTime = timestamp
 		canon = false
