@@ -283,10 +283,11 @@ type DBFT struct {
 // config represents Engine configuration.
 type config struct {
 	*params.DBFTConfig
-	dkgEnablingHeight      int64
-	antiMEVEnablingHeight  int64
-	enforceECDSASignatures bool
-	logLevel               *zap.AtomicLevel
+	dkgEnablingHeight                     int64
+	antiMEVEnablingHeight                 int64
+	prepareRequestExtensionEnablingHeight int64
+	enforceECDSASignatures                bool
+	logLevel                              *zap.AtomicLevel
 }
 
 // zkFiles represents ZK-DKG configuration about R1CS and PK files.
@@ -304,9 +305,10 @@ type zkFiles struct {
 // signers set to the ones provided by the user.
 func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	cfg := &config{
-		DBFTConfig:            chainCfg.DBFT,
-		dkgEnablingHeight:     -1,
-		antiMEVEnablingHeight: -1,
+		DBFTConfig:                            chainCfg.DBFT,
+		dkgEnablingHeight:                     -1,
+		antiMEVEnablingHeight:                 -1,
+		prepareRequestExtensionEnablingHeight: -1,
 	}
 	if cfg.SecondsPerBlock == 0 {
 		return nil, errors.New("zero-period dBFT chain is not supported")
@@ -327,6 +329,9 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	}
 	if chainCfg.NeoXAMEVBlock != nil {
 		cfg.antiMEVEnablingHeight = chainCfg.NeoXAMEVBlock.Int64()
+	}
+	if chainCfg.NeoXPrepareRequestExtensionBlock != nil {
+		cfg.prepareRequestExtensionEnablingHeight = chainCfg.NeoXPrepareRequestExtensionBlock.Int64()
 	}
 
 	c := &DBFT{
@@ -358,7 +363,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	dbftCfg := []func(*dbft.Config[common.Hash]){
 		dbft.WithTimer[common.Hash](timer.New()),
 		dbft.WithLogger[common.Hash](logger),
-		dbft.WithSecondsPerBlock[common.Hash](time.Duration(bftCfg.SecondsPerBlock) * time.Second),
+		dbft.WithTimePerBlock[common.Hash](func() time.Duration { return time.Duration(bftCfg.SecondsPerBlock) * time.Second }),
 		dbft.WithGetKeyPair[common.Hash](c.getKeyPairCb),
 		dbft.WithCurrentHeight[common.Hash](c.currentHeightCb),
 		dbft.WithCurrentBlockHash[common.Hash](c.currentBlockHashCb),
@@ -371,7 +376,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithRequestTx[common.Hash](c.requestTxCb),
 		dbft.WithStopTxFlow[common.Hash](c.stopTxFlowCb),
 		dbft.WithNewConsensusPayload[common.Hash](c.newConsensusPayloadCb),
-		dbft.WithNewPrepareRequest[common.Hash](c.newPrepareRequestCb),
+		dbft.WithNewPrepareRequest[common.Hash](c.newPrepareRequestV0),
 		dbft.WithNewCommit[common.Hash](c.newCommitCb),
 		dbft.WithNewPrepareResponse[common.Hash](c.newPrepareResponseCb),
 		dbft.WithNewChangeView[common.Hash](c.newChangeViewCb),
@@ -383,6 +388,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithVerifyBlock[common.Hash](c.verifyBlockCb),
 		dbft.WithBroadcast[common.Hash](c.broadcastCb),
 		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash](c.config.antiMEVEnablingHeight),
+		dbft.WithPrepareRequestExtensionEnablingHeight[common.Hash](c.config.prepareRequestExtensionEnablingHeight),
 	}
 	if c.config.antiMEVEnablingHeight >= 0 {
 		dbftCfg = append(dbftCfg,
@@ -391,6 +397,13 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 			dbft.WithNewPreBlockFromContext[common.Hash](c.newPreBlockFromContextCb),
 			dbft.WithVerifyPreBlock[common.Hash](c.verifyPreBlockCb),
 			dbft.WithProcessPreBlock(c.processPreBlockCb))
+	}
+	if c.config.prepareRequestExtensionEnablingHeight >= 0 {
+		dbftCfg = append(dbftCfg,
+			dbft.WithNewPrepareRequestExtended[common.Hash](c.newPrepareRequestV1),
+			dbft.WithPrepareRequestExtensionEnablingHeight[common.Hash](c.config.prepareRequestExtensionEnablingHeight),
+		)
+
 	}
 	c.dbft, err = dbft.New[common.Hash](dbftCfg...)
 	if err != nil {
@@ -690,9 +703,24 @@ func (c *DBFT) stopTxFlowCb() {
 	c.txCbList.Store(hashes)
 }
 
-// newPrepareRequestCb is a dbft library setting callback.
-func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Hash) dbft.PrepareRequest[common.Hash] {
+// newPrepareRequestV0 is a dbft library setting callback.
+func (c *DBFT) newPrepareRequestV0(ts uint64, nonce uint64, txHashes []common.Hash) dbft.PrepareRequest[common.Hash] {
+	return c.newPrepareRequestCb(ts, nonce, txHashes, nil)
+}
+
+// newPrepareRequestV1 is a dbft library setting callback.
+func (c *DBFT) newPrepareRequestV1(ts uint64, nonce uint64, txs []dbft.Transaction[common.Hash]) dbft.PrepareRequest[common.Hash] {
+	var txCp = make([]*Transaction, len(txs))
+	for i, tx := range txs {
+		txCp[i] = tx.(*Transaction)
+	}
+	return c.newPrepareRequestCb(ts, nonce, nil, txCp)
+}
+
+// newPrepareRequestCb is common implementation of newPrepareRequestV0 and newPrepareRequestV1
+func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Hash, txs []*Transaction) dbft.PrepareRequest[common.Hash] {
 	var req = new(prepareRequest)
+	req.extended = txs != nil
 	if c.sealingProposal == nil {
 		panic("bug: sealing proposal is not initialized")
 	}
@@ -756,7 +784,11 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 		req.ParentSealHashV0.SetBytes(c.lastBlockSealHash)
 	}
 	req.ParentExtra = c.lastBlockExtra
-	req.TxHashes = txHashes
+	if req.extended {
+		req.Txs = txs
+	} else {
+		req.TxHashes = txHashes
+	}
 
 	return req
 }
@@ -794,8 +826,10 @@ func (c *DBFT) newRecoveryRequestCb(ts uint64) dbft.RecoveryRequest {
 
 // newRecoveryMessageCb is a dbft library setting callback.
 func (c *DBFT) newRecoveryMessageCb() dbft.RecoveryMessage[common.Hash] {
+	h := big.NewInt(int64(c.dbft.Context.BlockIndex))
 	r := &recoveryMessage{
-		version: c.getBlockExtraVersion(big.NewInt(int64(c.dbft.Context.BlockIndex))),
+		version:                              c.getBlockExtraVersion(h),
+		isNeoXPrepareRequestExtensionEnabled: c.chain.Config().IsNeoXPrepareRequestExtension,
 	}
 	return r
 }
@@ -2399,7 +2433,6 @@ events:
 			)
 		}
 	}
-	c.dbft.Timer.Stop()
 	c.chainHeadSub.Unsubscribe()
 	c.txSub.Unsubscribe()
 	c.syncingSub.Unsubscribe()
@@ -2430,7 +2463,7 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 		return nil
 	}
 
-	p := payloadFromMessage(cp, c.getBlockExtraVersion)
+	p := payloadFromMessage(cp, c.getBlockExtraVersion, c.chain.Config().IsNeoXPrepareRequestExtension)
 	// decode payload data into message
 	if err := p.decodeData(); err != nil {
 		log.Info("can't decode payload data", "hash", cp.Hash(), "error", err)
@@ -2475,11 +2508,12 @@ func (c *DBFT) FilterMissingTransaction(txs []*types.Transaction) []*types.Trans
 	return known
 }
 
-func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion) *Payload {
+func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion, isNeoXPrepareRequestExtensionEnabled func(height *big.Int) bool) *Payload {
 	return &Payload{
 		Message: *ep,
 		message: message{
-			getBlockExtraVersion: getBlockExtraVersion,
+			getBlockExtraVersion:                 getBlockExtraVersion,
+			isNeoXPrepareRequestExtensionEnabled: isNeoXPrepareRequestExtensionEnabled,
 		},
 	}
 }
