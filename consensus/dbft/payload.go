@@ -17,12 +17,13 @@ type (
 	messageType byte
 
 	message struct {
-		Type                 messageType
-		BlockIndex           uint64
-		ValidatorIndex       byte
-		ViewNumber           byte
-		msgPayload           interface{}
-		getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion
+		Type                                 messageType
+		BlockIndex                           uint64
+		ValidatorIndex                       byte
+		ViewNumber                           byte
+		msgPayload                           interface{}
+		getBlockExtraVersion                 func(*big.Int) dbftutil.ExtraVersion
+		isNeoXPrepareRequestExtensionEnabled func(height *big.Int) bool
 	}
 
 	// messageAux is an auxiliary structure for message RLP encoding.
@@ -187,6 +188,7 @@ func (m *message) DecodeRLP(s *rlp.Stream) error {
 		return err
 	}
 	m.Type, m.BlockIndex, m.ValidatorIndex, m.ViewNumber = em.Type, em.BlockIndex, em.ValidatorIndex, em.ViewNumber
+	h := big.NewInt(int64(m.BlockIndex))
 	switch m.Type {
 	case changeViewType:
 		m.msgPayload = &changeView{
@@ -194,7 +196,10 @@ func (m *message) DecodeRLP(s *rlp.Stream) error {
 			newViewNumber: m.ViewNumber + 1,
 		}
 	case prepareRequestType:
-		m.msgPayload = new(prepareRequest)
+		req := &prepareRequest{
+			extended: m.isNeoXPrepareRequestExtensionEnabled(h),
+		}
+		m.msgPayload = req
 	case prepareResponseType:
 		m.msgPayload = new(prepareResponse)
 	case preCommitType:
@@ -207,7 +212,8 @@ func (m *message) DecodeRLP(s *rlp.Stream) error {
 		m.msgPayload = new(recoveryRequest)
 	case recoveryMessageType:
 		m.msgPayload = &recoveryMessage{
-			version: m.getBlockExtraVersion(big.NewInt(int64(m.BlockIndex))),
+			version:                              m.getBlockExtraVersion(h),
+			isNeoXPrepareRequestExtensionEnabled: m.isNeoXPrepareRequestExtensionEnabled,
 		}
 	default:
 		err := fmt.Errorf("invalid type: 0x%02x", byte(m.Type))
