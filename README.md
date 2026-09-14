@@ -13,7 +13,7 @@ published at https://github.com/bane-labs/go-ethereum/releases.
 
 For prerequisites and detailed build instructions please read the [Installation Instructions](https://xdocs.ngd.network/development/running-a-neo-x-node).
 
-Building `geth` requires both a Go (version 1.23 or later) and a C compiler. You can install
+Building `geth` requires both a Go (version 1.25 or later) and a C compiler. You can install
 them using your favourite package manager. Once the dependencies are installed, run
 
 ```shell
