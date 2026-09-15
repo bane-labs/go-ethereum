@@ -32,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/database"
 )
 
@@ -60,6 +61,7 @@ func ServiceGetAccountRangeQuery(chain *core.BlockChain, req *GetAccountRangePac
 	// Retrieve the requested state and bail out if non existent
 	tr, err := trie.New(trie.StateTrieID(req.Root), chain.TrieDB())
 	if err != nil {
+		log.Debug("Failed to open account range trie", "root", req.Root, "origin", req.Origin, "err", err)
 		return nil, nil
 	}
 	// Temporary solution: using the snapshot interface for both cases.
@@ -69,10 +71,15 @@ func ServiceGetAccountRangeQuery(chain *core.BlockChain, req *GetAccountRangePac
 		// The snapshot is assumed to be available in hash mode if
 		// the SNAP protocol is enabled.
 		it, err = chain.Snapshots().AccountIterator(req.Root, req.Origin)
+		// If the snapshot is not available, fall back to the trie iterator.
+		if err != nil {
+			it, err = newTrieAccountIterator(req.Root, req.Origin, chain.TrieDB())
+		}
 	} else {
 		it, err = chain.TrieDB().AccountIterator(req.Root, req.Origin)
 	}
 	if err != nil {
+		log.Debug("Failed to create account range iterator", "root", req.Root, "origin", req.Origin, "err", err)
 		return nil, nil
 	}
 	// Iterate over the requested range and pile accounts up
@@ -117,6 +124,39 @@ func ServiceGetAccountRangeQuery(chain *core.BlockChain, req *GetAccountRangePac
 	}
 	return accounts, proof.List()
 }
+
+type trieAccountIterator struct {
+	it   *trie.Iterator
+	hash common.Hash
+}
+
+func newTrieAccountIterator(root, origin common.Hash, db *triedb.Database) (snapshot.AccountIterator, error) {
+	stateTrie, err := trie.NewStateTrie(trie.StateTrieID(root), db)
+	if err != nil {
+		return nil, err
+	}
+	nodeIt, err := stateTrie.NodeIterator(origin[:])
+	if err != nil {
+		return nil, err
+	}
+	return &trieAccountIterator{it: trie.NewIterator(nodeIt)}, nil
+}
+
+func (it *trieAccountIterator) Next() bool {
+	if !it.it.Next() {
+		return false
+	}
+	it.hash = common.BytesToHash(it.it.Key)
+	return true
+}
+
+func (it *trieAccountIterator) Error() error { return it.it.Err }
+
+func (it *trieAccountIterator) Hash() common.Hash { return it.hash }
+
+func (it *trieAccountIterator) Account() []byte { return it.it.Value }
+
+func (it *trieAccountIterator) Release() {}
 
 func handleAccountRange(backend Backend, msg Decoder, peer *Peer) error {
 	res := new(accountRangeInput)
@@ -212,10 +252,15 @@ func ServiceGetStorageRangesQuery(chain *core.BlockChain, req *GetStorageRangesP
 			// The snapshot is assumed to be available in hash mode if
 			// the SNAP protocol is enabled.
 			it, err = chain.Snapshots().StorageIterator(req.Root, account, origin)
+			// If the snapshot is not available, fall back to the trie iterator.
+			if err != nil {
+				it, err = newTrieStorageIterator(req.Root, account, origin, chain.TrieDB())
+			}
 		} else {
 			it, err = chain.TrieDB().StorageIterator(req.Root, account, origin)
 		}
 		if err != nil {
+			log.Debug("Failed to create storage range iterator", "root", req.Root, "account", account, "origin", origin, "err", err)
 			return nil, nil
 		}
 		// Iterate over the requested range and pile slots up
@@ -289,6 +334,64 @@ func ServiceGetStorageRangesQuery(chain *core.BlockChain, req *GetStorageRangesP
 	}
 	return slots, proofs
 }
+
+type trieStorageIterator struct {
+	it     *trie.Iterator
+	origin common.Hash
+	hash   common.Hash
+	slot   []byte
+	err    error
+}
+
+func newTrieStorageIterator(root, account, origin common.Hash, db *triedb.Database) (snapshot.StorageIterator, error) {
+	accountTrie, err := trie.NewStateTrie(trie.StateTrieID(root), db)
+	if err != nil {
+		return nil, err
+	}
+	stateAccount, err := accountTrie.GetAccountByHash(account)
+	if err != nil {
+		return nil, err
+	}
+	if stateAccount == nil {
+		return nil, fmt.Errorf("account %x not found", account)
+	}
+	// Storage trie keys are already hashed. Use the plain trie iterator here;
+	// StateTrie is only needed above to resolve the account's storage root.
+	storageTrie, err := trie.New(trie.StorageTrieID(root, account, stateAccount.Root), db)
+	if err != nil {
+		return nil, err
+	}
+	// Trie.NodeIterator starts strictly after its seek key. Start at the
+	// beginning and filter locally so the snap range remains inclusive of origin.
+	nodeIt, err := storageTrie.NodeIterator(nil)
+	if err != nil {
+		return nil, err
+	}
+	return &trieStorageIterator{it: trie.NewIterator(nodeIt), origin: origin}, nil
+}
+
+func (it *trieStorageIterator) Next() bool {
+	for it.it.Next() {
+		it.hash = common.BytesToHash(it.it.Key)
+		if bytes.Compare(it.hash[:], it.origin[:]) < 0 {
+			continue
+		}
+		// Storage trie leaves already contain the RLP-encoded value. Snap
+		// responses and range proofs use that encoded trie value directly.
+		it.slot = common.CopyBytes(it.it.Value)
+		return true
+	}
+	it.err = it.it.Err
+	return false
+}
+
+func (it *trieStorageIterator) Error() error { return it.err }
+
+func (it *trieStorageIterator) Hash() common.Hash { return it.hash }
+
+func (it *trieStorageIterator) Slot() []byte { return it.slot }
+
+func (it *trieStorageIterator) Release() {}
 
 func handleStorageRanges(backend Backend, msg Decoder, peer *Peer) error {
 	res := new(storageRangesInput)
