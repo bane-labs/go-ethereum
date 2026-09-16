@@ -295,8 +295,8 @@ func initGenesis(ctx *cli.Context) error {
 	var manuallyClosed bool
 	defer func() {
 		if !manuallyClosed {
-			chaindb.Close()
 			triedb.Close()
+			chaindb.Close()
 		}
 	}()
 
@@ -312,8 +312,8 @@ func initGenesis(ctx *cli.Context) error {
 		}
 		if comfirm {
 			// Direct database access is not enough, so we first release them
-			chaindb.Close()
 			triedb.Close()
+			chaindb.Close()
 			manuallyClosed = true
 			// Rewind the chain to solve the compatibility error, and write the config
 			chain, db := utils.MakeChain(ctx, stack, false)
