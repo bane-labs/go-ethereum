@@ -469,9 +469,10 @@ type ChainConfig struct {
 	VerkleTime    *uint64 `json:"verkleTime,omitempty"`    // Verkle switch time (nil = no fork, 0 = already on verkle)
 
 	// Neo X specific forks, enabled after Shanghai but before Cancun, represented in blocks
-	NeoXDKGBlock    *big.Int `json:"neoXDKGBlock,omitempty"`    // Block-based switch to DKG related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
-	NeoXAMEVBlock   *big.Int `json:"neoXAMEVBlock,omitempty"`   // Block-based switch to anti-MEV related logic for dBFT (nil = no fork, 0 = already activated)
-	NeoXEthSigBlock *big.Int `json:"neoXEthSigBlock,omitempty"` // Block-based switch to fix block signature from NeoXAMEVBlock (nil = no fork, 0 = already activated)
+	NeoXDKGBlock                     *big.Int `json:"neoXDKGBlock,omitempty"`                     // Block-based switch to DKG related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
+	NeoXAMEVBlock                    *big.Int `json:"neoXAMEVBlock,omitempty"`                    // Block-based switch to anti-MEV related logic for dBFT (nil = no fork, 0 = already activated)
+	NeoXEthSigBlock                  *big.Int `json:"neoXEthSigBlock,omitempty"`                  // Block-based switch to fix block signature from NeoXAMEVBlock (nil = no fork, 0 = already activated)
+	NeoXPrepareRequestExtensionBlock *big.Int `json:"neoXPrepareRequestExtensionBlock,omitempty"` // Block-based switch to enable an extended PrepareRequest format
 
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
@@ -727,6 +728,9 @@ func (c *ChainConfig) Description() string {
 	if c.NeoXEthSigBlock != nil {
 		banner += fmt.Sprintf(" - NeoXEthSig:                  #%-8v\n", c.NeoXEthSigBlock)
 	}
+	if c.NeoXPrepareRequestExtensionBlock != nil {
+		banner += fmt.Sprintf(" - NeoXPrepareRequestExtension:                  #%-8v\n", c.NeoXPrepareRequestExtensionBlock)
+	}
 	return banner
 }
 
@@ -869,6 +873,12 @@ func (c *ChainConfig) IsNeoXEthSig(num *big.Int) bool {
 	return c.IsLondon(num) && isBlockForked(c.NeoXEthSigBlock, num)
 }
 
+// IsNeoXPrepareRequestExtension returns whether num is either equal to the
+// NeoXPrepareRequestExtension fork block or greater.
+func (c *ChainConfig) IsNeoXPrepareRequestExtension(num *big.Int) bool {
+	return c.IsLondon(num) && isBlockForked(c.NeoXPrepareRequestExtensionBlock, num)
+}
+
 // IsCancun returns whether time is either equal to the Cancun fork time or greater.
 func (c *ChainConfig) IsCancun(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.CancunTime, time)
@@ -993,6 +1003,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "neoXDKGBlock", block: c.NeoXDKGBlock, optional: true},
 		{name: "neoXAMEVBlock", block: c.NeoXAMEVBlock, optional: true},
 		{name: "neoXEthSigBlock", block: c.NeoXEthSigBlock, optional: true},
+		{name: "neoXPrepareRequestExtensionBlock", block: c.NeoXPrepareRequestExtensionBlock, optional: true},
 		{name: "cancunTime", timestamp: c.CancunTime, optional: true},
 		{name: "pragueTime", timestamp: c.PragueTime, optional: true},
 		{name: "osakaTime", timestamp: c.OsakaTime, optional: true},
@@ -1154,6 +1165,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	}
 	if isForkBlockIncompatible(c.NeoXEthSigBlock, newcfg.NeoXEthSigBlock, headNumber) {
 		return newBlockCompatError("NeoXEthSig fork block", c.NeoXEthSigBlock, newcfg.NeoXEthSigBlock)
+	}
+	if isForkBlockIncompatible(c.NeoXPrepareRequestExtensionBlock, newcfg.NeoXPrepareRequestExtensionBlock, headNumber) {
+		return newBlockCompatError("NeoXPrepareRequestExtension fork block", c.NeoXPrepareRequestExtensionBlock, newcfg.NeoXPrepareRequestExtensionBlock)
 	}
 	if isForkTimestampIncompatible(c.CancunTime, newcfg.CancunTime, headTimestamp) {
 		return newTimestampCompatError("Cancun fork timestamp", c.CancunTime, newcfg.CancunTime)
