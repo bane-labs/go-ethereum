@@ -302,6 +302,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(ctx context.Context, update engine.Fo
 		delaySync := false
 		if api.eth.BlockChain().TrieDB().Scheme() == rawdb.PathScheme && header.Number.Uint64() < 128 {
 			delaySync = true
+			log.Info("Beacon synchronization will be deferred until the path-based state chain contains at least 128 blocks", "number", header.Number.Uint64())
 		}
 		if !delaySync {
 			if err := api.eth.Downloader().BeaconSync(header, finalized); err != nil {

@@ -2220,13 +2220,15 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 	var lastProposal *types.Block
 	// Wait here...
 	for {
-		c.lastProposalLock.RLock()
-		if c.lastProposal != nil && c.lastProposal.NumberU64() >= desiredHeight {
-			lastProposal = c.lastProposal
-		}
-		c.lastProposalLock.RUnlock()
-		if lastProposal != nil {
-			break
+		if !c.syncing() {
+			c.lastProposalLock.RLock()
+			if c.lastProposal != nil && c.lastProposal.NumberU64() >= desiredHeight {
+				lastProposal = c.lastProposal
+			}
+			c.lastProposalLock.RUnlock()
+			if lastProposal != nil {
+				break
+			}
 		}
 		select {
 		case <-c.quit:
