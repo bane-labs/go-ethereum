@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -37,11 +38,12 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/ethdb/pebble"
+	"github.com/ethereum/go-ethereum/internal/tablewriter"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
-	"github.com/olekukonko/tablewriter"
 	"github.com/urfave/cli/v2"
 )
 
@@ -52,7 +54,24 @@ var (
 	}
 	removeChainDataFlag = &cli.BoolFlag{
 		Name:  "remove.chain",
-		Usage: "If set, selects the state data for removal",
+		Usage: "If set, selects the chain data for removal",
+	}
+	inspectTrieTopFlag = &cli.IntFlag{
+		Name:  "top",
+		Usage: "Print the top N results per ranking category",
+		Value: 10,
+	}
+	inspectTrieDumpPathFlag = &cli.StringFlag{
+		Name:  "dump-path",
+		Usage: "Path for the trie statistics dump file",
+	}
+	inspectTrieSummarizeFlag = &cli.StringFlag{
+		Name:  "summarize",
+		Usage: "Summarize an existing trie dump file (skip trie traversal)",
+	}
+	inspectTrieContractFlag = &cli.StringFlag{
+		Name:  "contract",
+		Usage: "Inspect only the storage of the given contract address (skips full account trie walk)",
 	}
 
 	removedbCommand = &cli.Command{
@@ -75,6 +94,7 @@ Remove blockchain and state databases`,
 			dbCompactCmd,
 			dbGetCmd,
 			dbDeleteCmd,
+			dbInspectTrieCmd,
 			dbPutCmd,
 			dbGetSlotsCmd,
 			dbDumpFreezerIndex,
@@ -83,6 +103,7 @@ Remove blockchain and state databases`,
 			dbMetadataCmd,
 			dbCheckStateContentCmd,
 			dbInspectHistoryCmd,
+			dbPebbleUpgradeCmd,
 		},
 	}
 	dbInspectCmd = &cli.Command{
@@ -92,6 +113,22 @@ Remove blockchain and state databases`,
 		Flags:       slices.Concat(utils.NetworkFlags, utils.DatabaseFlags),
 		Usage:       "Inspect the storage size for each type of data in the database",
 		Description: `This commands iterates the entire database. If the optional 'prefix' and 'start' arguments are provided, then the iteration is limited to the given subset of data.`,
+	}
+	dbInspectTrieCmd = &cli.Command{
+		Action:    inspectTrie,
+		Name:      "inspect-trie",
+		ArgsUsage: "<blocknum>",
+		Flags: slices.Concat([]cli.Flag{
+			utils.ExcludeStorageFlag,
+			inspectTrieTopFlag,
+			utils.OutputFileFlag,
+			inspectTrieDumpPathFlag,
+			inspectTrieSummarizeFlag,
+			inspectTrieContractFlag,
+		}, utils.NetworkFlags, utils.DatabaseFlags),
+		Usage: "Print detailed trie information about the structure of account trie and storage tries.",
+		Description: `This commands iterates the entrie trie-backed state. If the 'blocknum' is not specified, 
+the latest block number will be used by default.`,
 	}
 	dbCheckStateContentCmd = &cli.Command{
 		Action:    checkStateContent,
@@ -206,6 +243,17 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 			},
 		}, utils.NetworkFlags, utils.DatabaseFlags),
 		Description: "This command queries the history of the account or storage slot within the specified block range",
+	}
+	dbPebbleUpgradeCmd = &cli.Command{
+		Action: dbPebbleUpgrade,
+		Name:   "pebble-upgrade",
+		Usage:  "Upgrade a legacy pebble v1 database to pebble v2 format",
+		Flags:  slices.Concat(utils.NetworkFlags, utils.DatabaseFlags),
+		Description: `This command upgrades a legacy Pebble v1 database so 
+that it becomes compatible with Pebble v2. The upgrade process converts the
+database format to the oldest format supported by Pebble v2. It's not the
+one-way operation, instead, the database can still be opened by older versions
+of geth that use the pebble v1 library.`,
 	}
 )
 
@@ -386,6 +434,88 @@ func checkStateContent(ctx *cli.Context) error {
 	return nil
 }
 
+func inspectTrie(ctx *cli.Context) error {
+	topN := ctx.Int(inspectTrieTopFlag.Name)
+	if topN <= 0 {
+		return fmt.Errorf("invalid --%s value %d (must be > 0)", inspectTrieTopFlag.Name, topN)
+	}
+	config := &trie.InspectConfig{
+		NoStorage: ctx.Bool(utils.ExcludeStorageFlag.Name),
+		TopN:      topN,
+		Path:      ctx.String(utils.OutputFileFlag.Name),
+	}
+
+	if summarizePath := ctx.String(inspectTrieSummarizeFlag.Name); summarizePath != "" {
+		if ctx.NArg() > 0 {
+			return fmt.Errorf("block number argument is not supported with --%s", inspectTrieSummarizeFlag.Name)
+		}
+		config.DumpPath = summarizePath
+		log.Info("Summarizing trie dump", "path", summarizePath, "top", topN)
+		return trie.Summarize(summarizePath, config)
+	}
+	if ctx.NArg() > 1 {
+		return fmt.Errorf("excessive number of arguments: %v", ctx.Command.ArgsUsage)
+	}
+
+	stack, _ := makeConfigNode(ctx)
+	db := utils.MakeChainDatabase(ctx, stack, false)
+	defer stack.Close()
+	defer db.Close()
+
+	var (
+		trieRoot common.Hash
+		hash     common.Hash
+		number   uint64
+	)
+	switch {
+	case ctx.NArg() == 0 || ctx.Args().Get(0) == "latest":
+		head := rawdb.ReadHeadHeaderHash(db)
+		n, ok := rawdb.ReadHeaderNumber(db, head)
+		if !ok {
+			return fmt.Errorf("could not load head block hash")
+		}
+		number = n
+	case ctx.Args().Get(0) == "snapshot":
+		trieRoot = rawdb.ReadSnapshotRoot(db)
+		number = math.MaxUint64
+	default:
+		var err error
+		number, err = strconv.ParseUint(ctx.Args().Get(0), 10, 64)
+		if err != nil {
+			return fmt.Errorf("failed to parse blocknum, Args[0]: %v, err: %v", ctx.Args().Get(0), err)
+		}
+	}
+
+	if number != math.MaxUint64 {
+		hash = rawdb.ReadCanonicalHash(db, number)
+		if hash == (common.Hash{}) {
+			return fmt.Errorf("canonical hash for block %d not found", number)
+		}
+		blockHeader := rawdb.ReadHeader(db, hash, number)
+		trieRoot = blockHeader.Root
+	}
+	if trieRoot == (common.Hash{}) {
+		log.Error("Empty root hash")
+	}
+
+	config.DumpPath = ctx.String(inspectTrieDumpPathFlag.Name)
+	if config.DumpPath == "" {
+		config.DumpPath = stack.ResolvePath("trie-dump.bin")
+	}
+
+	triedb := utils.MakeTrieDatabase(ctx, stack, db, false, true, false)
+	defer triedb.Close()
+
+	if contractAddr := ctx.String(inspectTrieContractFlag.Name); contractAddr != "" {
+		address := common.HexToAddress(contractAddr)
+		log.Info("Inspecting contract", "address", address, "root", trieRoot, "block", number)
+		return trie.InspectContract(triedb, db, trieRoot, address)
+	}
+
+	log.Info("Inspecting trie", "root", trieRoot, "block", number, "dump", config.DumpPath, "top", topN)
+	return trie.Inspect(triedb, trieRoot, config)
+}
+
 func showDBStats(db ethdb.KeyValueStater) {
 	stats, err := db.Stat()
 	if err != nil {
@@ -424,6 +554,21 @@ func dbCompact(ctx *cli.Context) error {
 	log.Info("Stats after compaction")
 	showDBStats(db)
 	return nil
+}
+
+func dbPebbleUpgrade(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	path := stack.ResolvePath("chaindata")
+	dbType := rawdb.PreexistingDatabase(path)
+	if dbType == "" {
+		return fmt.Errorf("no database found at %s", path)
+	}
+	if dbType != rawdb.DBPebble {
+		return fmt.Errorf("database at %s is %s, not pebble", path, dbType)
+	}
+	return pebble.Upgrade(path)
 }
 
 // dbGet shows the value of a given database key
@@ -689,6 +834,24 @@ func (iter *snapshotIterator) Release() {
 	iter.storage.Release()
 }
 
+type codeIterator struct {
+	iter ethdb.Iterator
+}
+
+func (iter *codeIterator) Next() (byte, []byte, []byte, bool) {
+	for iter.iter.Next() {
+		key := iter.iter.Key()
+		if bytes.HasPrefix(key, rawdb.CodePrefix) && len(key) == (len(rawdb.CodePrefix)+common.HashLength) {
+			return utils.OpBatchAdd, key, iter.iter.Value(), true
+		}
+	}
+	return 0, nil, nil, false
+}
+
+func (iter *codeIterator) Release() {
+	iter.iter.Release()
+}
+
 // chainExporters defines the export scheme for all exportable chain data.
 var chainExporters = map[string]func(db ethdb.Database) utils.ChainDataIterator{
 	"preimage": func(db ethdb.Database) utils.ChainDataIterator {
@@ -699,6 +862,10 @@ var chainExporters = map[string]func(db ethdb.Database) utils.ChainDataIterator{
 		account := db.NewIterator(rawdb.SnapshotAccountPrefix, nil)
 		storage := db.NewIterator(rawdb.SnapshotStoragePrefix, nil)
 		return &snapshotIterator{account: account, storage: storage}
+	},
+	"code": func(db ethdb.Database) utils.ChainDataIterator {
+		iter := db.NewIterator(rawdb.CodePrefix, nil)
+		return &codeIterator{iter: iter}
 	},
 }
 

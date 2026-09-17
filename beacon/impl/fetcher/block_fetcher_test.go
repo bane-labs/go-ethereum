@@ -13,9 +13,11 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
 )
@@ -86,9 +88,15 @@ func newTester() *fetcherTester {
 		blocks:  map[common.Hash]*types.Block{genesis.Hash(): genesis},
 		drops:   make(map[string]bool),
 	}
-	tester.fetcher = NewBlockFetcher(tester.getBlock, tester.verifyHeader, tester.broadcastBlock,
-		tester.chainHeight, tester.chainFinalizedHeight, tester.insertChain, tester.informDownload,
-		tester.dropPeer, nil, nil)
+	chainReader := ChainReader{
+		GetBlock:             tester.getBlock,
+		VerifyHeader:         tester.verifyHeader,
+		ChainHeight:          tester.chainHeight,
+		ChainFinalizedHeight: tester.chainFinalizedHeight,
+	}
+	tester.fetcher = NewBlockFetcher(chainReader, tester.broadcastBlock,
+		tester.insertChain, tester.informDownload,
+		tester.dropPeer, Fetcher{})
 	tester.fetcher.Start()
 
 	return tester
@@ -193,7 +201,7 @@ func (f *fetcherTester) makeHeaderFetcher(blocks map[common.Hash]*types.Block, d
 }
 
 // makeBodyFetcher retrieves a block body fetcher associated with a simulated peer.
-func (f *fetcherTester) makeBodyFetcher(blocks map[common.Hash]*types.Block, drift time.Duration) BodyRequesterFn {
+func (f *fetcherTester) makeBodyFetcher(blocks map[common.Hash]*types.Block, drift time.Duration) RequesterFn {
 	closure := make(map[common.Hash]*types.Block)
 	for hash, block := range blocks {
 		closure[hash] = block
@@ -211,11 +219,19 @@ func (f *fetcherTester) makeBodyFetcher(blocks map[common.Hash]*types.Block, dri
 			}
 		}
 		// Return on a new thread
-		bodies := make([]*eth.BlockBody, len(transactions))
+		bodies := make([]eth.BlockBody, len(transactions))
 		for i, txs := range transactions {
-			bodies[i] = &eth.BlockBody{
-				Transactions: txs,
-				Uncles:       uncles[i],
+			txsRlpList, err := rlp.EncodeToRawList(txs)
+			if err != nil {
+				return nil, err
+			}
+			unclesRlpList, err := rlp.EncodeToRawList(uncles[i])
+			if err != nil {
+				return nil, err
+			}
+			bodies[i] = eth.BlockBody{
+				Transactions: txsRlpList,
+				Uncles:       unclesRlpList,
 			}
 		}
 		req := &eth.Request{
@@ -224,6 +240,50 @@ func (f *fetcherTester) makeBodyFetcher(blocks map[common.Hash]*types.Block, dri
 		res := &eth.Response{
 			Req:  req,
 			Res:  (*eth.BlockBodiesResponse)(&bodies),
+			Time: drift,
+			Done: make(chan error, 1), // Ignore the returned status
+		}
+		go func() {
+			sink <- res
+		}()
+		return req, nil
+	}
+}
+
+func (f *fetcherTester) makeBALFetcher(blocks map[common.Hash]*types.Block, drift time.Duration) RequesterFn {
+	closure := make(map[common.Hash]*types.Block)
+	for hash, block := range blocks {
+		closure[hash] = block
+	}
+	// Create a function that returns blocks from the closure
+	return func(peer string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+		// Gather the block BALs to return
+		bals := make([]*bal.BlockAccessList, 0, len(hashes))
+
+		for _, hash := range hashes {
+			if block, ok := closure[hash]; ok {
+				bals = append(bals, block.AccessList())
+			}
+		}
+		// Return on a new thread
+		balRlps := make([]rlp.RawValue, 0, len(bals))
+		for _, bal := range bals {
+			if bal == nil {
+				balRlps = append(balRlps, rlp.EmptyString)
+			} else {
+				data, err := rlp.EncodeToBytes(bal)
+				if err != nil {
+					panic(err)
+				}
+				balRlps = append(balRlps, data)
+			}
+		}
+		req := &eth.Request{
+			Peer: peer,
+		}
+		res := &eth.Response{
+			Req:  req,
+			Res:  (*eth.BlockAccessListResponse)(&balRlps),
 			Time: drift,
 			Done: make(chan error, 1), // Ignore the returned status
 		}
@@ -337,8 +397,9 @@ func testSequentialAnnouncements(t *testing.T) {
 
 	tester := newTester()
 	defer tester.fetcher.Stop()
-	tester.fetcher.fetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
-	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
+	tester.fetcher.fetcher.FetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchBALs = tester.makeBALFetcher(blocks, 0)
 
 	// Iteratively announce blocks until all are imported
 	imported := make(chan interface{})
@@ -369,14 +430,16 @@ func testConcurrentAnnouncements(t *testing.T) {
 	tester := newTester()
 	headerFetcher := tester.makeHeaderFetcher(blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher(blocks, 0)
+	balFetcher := tester.makeBALFetcher(blocks, 0)
 
 	var counter atomic.Uint32
 	headerWrapper := func(peer string, hash common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 		counter.Add(1)
 		return headerFetcher(peer, hash, sink)
 	}
-	tester.fetcher.fetchHeader = headerWrapper
-	tester.fetcher.fetchBodies = bodyFetcher
+	tester.fetcher.fetcher.FetchHeader = headerWrapper
+	tester.fetcher.fetcher.FetchBodies = bodyFetcher
+	tester.fetcher.fetcher.FetchBALs = balFetcher
 	// Iteratively announce blocks until all are imported
 	imported := make(chan interface{})
 	tester.fetcher.importedHook = func(header *types.Header, block *types.Block) {
@@ -411,6 +474,7 @@ func testPendingDeduplication(t *testing.T) {
 	tester := newTester()
 	headerFetcher := tester.makeHeaderFetcher(blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher(blocks, 0)
+	balFetcher := tester.makeBALFetcher(blocks, 0)
 
 	delay := 50 * time.Millisecond
 	var counter atomic.Uint32
@@ -429,8 +493,9 @@ func testPendingDeduplication(t *testing.T) {
 		}
 		return req, err
 	}
-	tester.fetcher.fetchHeader = headerWrapper
-	tester.fetcher.fetchBodies = bodyFetcher
+	tester.fetcher.fetcher.FetchHeader = headerWrapper
+	tester.fetcher.fetcher.FetchBodies = bodyFetcher
+	tester.fetcher.fetcher.FetchBALs = balFetcher
 	checkNonExist := func() bool {
 		return tester.getBlock(hashes[0]) == nil
 	}
@@ -494,8 +559,9 @@ func testDistantAnnouncementDiscarding(t *testing.T) {
 	tester.blocks = map[common.Hash]*types.Block{head: blocks[head]}
 	tester.lock.Unlock()
 
-	tester.fetcher.fetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
-	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
+	tester.fetcher.fetcher.FetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchBALs = tester.makeBALFetcher(blocks, 0)
 
 	fetching := make(chan struct{}, 2)
 	tester.fetcher.fetchingHook = func(hashes []common.Hash) { fetching <- struct{}{} }
@@ -545,8 +611,9 @@ func testFinalizedAnnouncementDiscarding(t *testing.T) {
 	}
 	tester.lock.Unlock()
 
-	tester.fetcher.fetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
-	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
+	tester.fetcher.fetcher.FetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchBALs = tester.makeBALFetcher(blocks, 0)
 
 	fetching := make(chan struct{}, 2)
 	tester.fetcher.fetchingHook = func(hashes []common.Hash) { fetching <- struct{}{} }
@@ -576,8 +643,9 @@ func testInvalidNumberAnnouncement(t *testing.T) {
 	hashes, blocks := makeChain(1, 0, genesis)
 
 	tester := newTester()
-	tester.fetcher.fetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
-	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
+	tester.fetcher.fetcher.FetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchBALs = tester.makeBALFetcher(blocks, 0)
 
 	imported := make(chan interface{})
 	announced := make(chan interface{}, 2)
@@ -634,8 +702,9 @@ func TestEmptyBlockShortCircuit(t *testing.T) {
 
 	tester := newTester()
 	defer tester.fetcher.Stop()
-	tester.fetcher.fetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
-	tester.fetcher.fetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
+	tester.fetcher.fetcher.FetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchBALs = tester.makeBALFetcher(blocks, 0)
 
 	// Add a monitoring hook for all internal events
 	fetching := make(chan []common.Hash)

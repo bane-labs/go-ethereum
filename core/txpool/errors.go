@@ -78,4 +78,10 @@ var (
 	// ErrInflightTxLimitReached is returned when the maximum number of in-flight
 	// transactions is reached for specific accounts.
 	ErrInflightTxLimitReached = errors.New("in-flight transaction limit reached for delegated accounts")
+
+	// ErrKZGVerificationError is returned when a KZG proof was not verified correctly.
+	ErrKZGVerificationError = errors.New("KZG verification error")
+
+	// ErrSidecarFormatError is returned when sidecar is malformed
+	ErrSidecarFormatError = errors.New("Wrong sidecar format")
 )

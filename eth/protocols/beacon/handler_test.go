@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/p2p/tracker"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/holiman/uint256"
 )
@@ -126,7 +127,7 @@ func TestHandleBlobsByRoot(t *testing.T) {
 
 	backend := &testBackend{}
 
-	peer, _ := newTestPeer("peer", BEACON1, backend)
+	peer, _ := newTestPeer("peer", BEACON2, backend)
 	defer peer.close()
 
 	// Create test blocks
@@ -143,11 +144,18 @@ func TestHandleBlobsByRoot(t *testing.T) {
 	// Test cases
 	tests := []struct {
 		name    string
+		treq    tracker.Request
 		msg     *mockMsg
 		wantErr bool
 	}{
 		{
 			name: "Valid blob response",
+			treq: tracker.Request{
+				ID:       1,
+				ReqCode:  GetBlobsMsg,
+				RespCode: BlobsMsg,
+				Size:     1,
+			},
 			msg: &mockMsg{
 				code: BlobsMsg,
 				data: &BlobsPacket{
@@ -159,6 +167,12 @@ func TestHandleBlobsByRoot(t *testing.T) {
 		},
 		{
 			name: "Empty blob response",
+			treq: tracker.Request{
+				ID:       2,
+				ReqCode:  GetBlobsMsg,
+				RespCode: BlobsMsg,
+				Size:     1,
+			},
 			msg: &mockMsg{
 				code: BlobsMsg,
 				data: &BlobsPacket{
@@ -170,6 +184,12 @@ func TestHandleBlobsByRoot(t *testing.T) {
 		},
 		{
 			name: "Invalid request ID",
+			treq: tracker.Request{
+				ID:       0,
+				ReqCode:  GetBlobsMsg,
+				RespCode: BlobsMsg,
+				Size:     1,
+			},
 			msg: &mockMsg{
 				code: BlobsMsg,
 				data: &BlobsPacket{
@@ -181,6 +201,12 @@ func TestHandleBlobsByRoot(t *testing.T) {
 		},
 		{
 			name: "Non-continuous blocks",
+			treq: tracker.Request{
+				ID:       3,
+				ReqCode:  GetBlobsMsg,
+				RespCode: BlobsMsg,
+				Size:     1,
+			},
 			msg: &mockMsg{
 				code: BlobsMsg,
 				data: &BlobsPacket{
@@ -194,6 +220,7 @@ func TestHandleBlobsByRoot(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			peer.tracker.Track(tt.treq)
 			err := handleBlobs(backend, tt.msg, peer.Peer)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("handleBlocksByRange() error = %v, wantErr %v", err, tt.wantErr)
@@ -234,6 +261,7 @@ func createMockBlobTx(sidecar *types.BlobTxSidecar) *types.Transaction {
 
 func createMockSidecar() *types.BlobTxSidecar {
 	return &types.BlobTxSidecar{
+		Version:     types.BlobSidecarVersion1,
 		Blobs:       []kzg4844.Blob{emptyBlob, emptyBlob, emptyBlob, emptyBlob},
 		Commitments: []kzg4844.Commitment{emptyBlobCommit, emptyBlobCommit, emptyBlobCommit, emptyBlobCommit},
 		Proofs:      []kzg4844.Proof{emptyBlobProof, emptyBlobProof, emptyBlobProof, emptyBlobProof},

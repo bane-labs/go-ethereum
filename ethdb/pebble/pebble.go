@@ -18,6 +18,7 @@
 package pebble
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"runtime"
@@ -26,8 +27,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cockroachdb/pebble"
-	"github.com/cockroachdb/pebble/bloom"
+	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/bloom"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -52,7 +53,7 @@ const (
 	degradationWarnInterval = time.Minute
 )
 
-// Database is a persistent key-value store based on the pebble storage engine.
+// Database is a persistent key-value store based on the pebble v2 storage engine.
 // Apart from basic data storage functionality it also supports batch writes and
 // iterating over the keyspace in binary-alphabetical order.
 type Database struct {
@@ -77,8 +78,8 @@ type Database struct {
 	zombieMemTablesGauge   *metrics.Gauge   // Gauge for tracking the number of zombie memory tables
 	blockCacheHitGauge     *metrics.Gauge   // Gauge for tracking the number of total hit in the block cache
 	blockCacheMissGauge    *metrics.Gauge   // Gauge for tracking the number of total miss in the block cache
-	tableCacheHitGauge     *metrics.Gauge   // Gauge for tracking the number of total hit in the table cache
-	tableCacheMissGauge    *metrics.Gauge   // Gauge for tracking the number of total miss in the table cache
+	tableCacheHitGauge     *metrics.Gauge   // Gauge for tracking the number of total hit in the file cache
+	tableCacheMissGauge    *metrics.Gauge   // Gauge for tracking the number of total miss in the file cache
 	filterHitGauge         *metrics.Gauge   // Gauge for tracking the number of total hit in bloom filter
 	filterMissGauge        *metrics.Gauge   // Gauge for tracking the number of total miss in bloom filter
 	estimatedCompDebtGauge *metrics.Gauge   // Gauge for tracking the number of bytes that need to be compacted
@@ -186,7 +187,7 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 		handles = minHandles
 	}
 	logger := log.New("database", file)
-	logger.Info("Allocated cache and file handles", "cache", common.StorageSize(cache*1024*1024), "handles", handles)
+	logger.Info("Allocated cache and file handles", "cache", common.StorageSize(cache*1024*1024), "handles", handles, "version", "v2")
 
 	// The max memtable size is limited by the uint32 offsets stored in
 	// internal/arenaskl.node, DeferredBatchOp, and flushableBatchEntry.
@@ -205,8 +206,8 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 	// limit unchanged allows writes to be flushed more smoothly. This helps
 	// avoid compaction spikes and mitigates write stalls caused by heavy
 	// compaction workloads.
-	memTableLimit := 4
-	memTableSize := cache * 1024 * 1024 / 2 / memTableLimit
+	memTableNumber := 4
+	memTableSize := cache * 1024 * 1024 / 2 / memTableNumber
 
 	// The memory table size is currently capped at maxMemTableSize-1 due to a
 	// known bug in the pebble where maxMemTableSize is not recognized as a
@@ -232,6 +233,7 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 		// of course). Geth is expected to handle recovery from an unclean shutdown.
 		writeOptions: pebble.NoSync,
 	}
+	numCPU := runtime.NumCPU()
 	opt := &pebble.Options{
 		// Pebble has a single combined cache area and the write
 		// buffers are taken from this too. Assign all available
@@ -243,27 +245,43 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 		// Note, there may have more than two memory tables in the system.
 		MemTableSize: uint64(memTableSize),
 
-		// MemTableStopWritesThreshold places a hard limit on the size
+		// MemTableStopWritesThreshold places a hard limit on the number
 		// of the existent MemTables(including the frozen one).
+		//
 		// Note, this must be the number of tables not the size of all memtables
 		// according to https://github.com/cockroachdb/pebble/blob/master/options.go#L738-L742
 		// and to https://github.com/cockroachdb/pebble/blob/master/db.go#L1892-L1903.
-		MemTableStopWritesThreshold: memTableLimit,
+		//
+		// MemTableStopWritesThreshold is set to twice the maximum number of
+		// allowed memtables to accommodate temporary spikes.
+		MemTableStopWritesThreshold: memTableNumber * 2,
 
 		// The default compaction concurrency(1 thread),
 		// Here use all available CPUs for faster compaction.
-		MaxConcurrentCompactions: runtime.NumCPU,
+		CompactionConcurrencyRange: func() (int, int) { return 1, numCPU },
 
 		// Per-level options. Options for at least one level must be specified. The
 		// options for the last level are used for all subsequent levels.
-		Levels: []pebble.LevelOptions{
-			{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 4 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 8 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 16 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 32 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 64 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 128 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
+		Levels: [7]pebble.LevelOptions{
+			{FilterPolicy: bloom.FilterPolicy(10)},
+			{FilterPolicy: bloom.FilterPolicy(10)},
+			{FilterPolicy: bloom.FilterPolicy(10)},
+			{FilterPolicy: bloom.FilterPolicy(10)},
+			{FilterPolicy: bloom.FilterPolicy(10)},
+			{FilterPolicy: bloom.FilterPolicy(10)},
+
+			// Pebble doesn't use the Bloom filter at level6 for read efficiency.
+			{},
+		},
+		// Per-level target file sizes (replaces LevelOptions.TargetFileSize in v2).
+		TargetFileSizes: [7]int64{
+			2 * 1024 * 1024,
+			4 * 1024 * 1024,
+			8 * 1024 * 1024,
+			16 * 1024 * 1024,
+			32 * 1024 * 1024,
+			64 * 1024 * 1024,
+			128 * 1024 * 1024,
 		},
 		ReadOnly: readonly,
 		EventListener: &pebble.EventListener{
@@ -293,10 +311,28 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 		// the compaction debt as around 10GB. By reducing it to 2, the compaction
 		// debt will be less than 1GB, but with more frequent compactions scheduled.
 		L0CompactionThreshold: 2,
+
+		// FormatFlushableIngest is the minimum FormatMajorVersion supported by
+		// pebble v2. The more advanced version can be enabled later.
+		//
+		// This version is supported by both v1 and v2. It serves as the natural
+		// bridge point: a v1 database can be ratcheted up to FormatFlushableIngest
+		// using pebble v1, and then pebble v2 can open it since that's its minimum.
+		FormatMajorVersion: formatMinV2,
 	}
 	// Disable seek compaction explicitly. Check https://github.com/ethereum/go-ethereum/pull/20130
 	// for more details.
 	opt.Experimental.ReadSamplingMultiplier = -1
+
+	// These two settings define the conditions under which compaction concurrency
+	// is increased. Specifically, one additional compaction job will be enabled when:
+	// - there is one more overlapping sub-level0;
+	// - there is an additional 256 MB of compaction debt;
+	//
+	// The maximum concurrency is still capped by CompactionConcurrencyRange, but with
+	// these settings compactions can scale up more readily.
+	opt.Experimental.L0CompactionConcurrency = 1
+	opt.Experimental.CompactionDebtConcurrency = 1 << 28 // 256MB
 
 	// Open the db and recover any potential corruptions
 	innerDB, err := pebble.Open(file, opt)
@@ -490,7 +526,7 @@ func (d *Database) Compact(start []byte, limit []byte) error {
 	if limit == nil {
 		limit = ethdb.MaximumKey
 	}
-	return d.db.Compact(start, limit, true) // Parallelization is preferred
+	return d.db.Compact(context.Background(), start, limit, true) // Parallelization is preferred
 }
 
 // Path returns the path to the database directory.
@@ -549,10 +585,10 @@ func (d *Database) meter(refresh time.Duration, namespace string) {
 		compTimes[i%2] = compTime
 
 		for _, levelMetrics := range stats.Levels {
-			nWrite += int64(levelMetrics.BytesCompacted)
-			nWrite += int64(levelMetrics.BytesFlushed)
-			compWrite += int64(levelMetrics.BytesCompacted)
-			compRead += int64(levelMetrics.BytesRead)
+			nWrite += int64(levelMetrics.TableBytesCompacted)
+			nWrite += int64(levelMetrics.TableBytesFlushed)
+			compWrite += int64(levelMetrics.TableBytesCompacted)
+			compRead += int64(levelMetrics.TableBytesRead)
 		}
 
 		nWrite += int64(stats.WAL.BytesWritten)
@@ -591,8 +627,8 @@ func (d *Database) meter(refresh time.Duration, namespace string) {
 		d.liveMemTablesGauge.Update(stats.MemTable.Count)
 		d.zombieMemTablesGauge.Update(stats.MemTable.ZombieCount)
 		d.estimatedCompDebtGauge.Update(int64(stats.Compact.EstimatedDebt))
-		d.tableCacheHitGauge.Update(stats.TableCache.Hits)
-		d.tableCacheMissGauge.Update(stats.TableCache.Misses)
+		d.tableCacheHitGauge.Update(stats.FileCache.Hits)
+		d.tableCacheMissGauge.Update(stats.FileCache.Misses)
 		d.blockCacheHitGauge.Update(stats.BlockCache.Hits)
 		d.blockCacheMissGauge.Update(stats.BlockCache.Misses)
 		d.filterHitGauge.Update(stats.Filter.Hits)
@@ -603,7 +639,7 @@ func (d *Database) meter(refresh time.Duration, namespace string) {
 			if i >= len(d.levelsGauge) {
 				d.levelsGauge = append(d.levelsGauge, metrics.GetOrRegisterGauge(namespace+fmt.Sprintf("tables/level%v", i), nil))
 			}
-			d.levelsGauge[i].Update(level.NumFiles)
+			d.levelsGauge[i].Update(level.TablesCount)
 		}
 
 		// Sleep a bit, then repeat the stats collection
@@ -713,6 +749,12 @@ func (b *batch) Replay(w ethdb.KeyValueWriter) error {
 			return fmt.Errorf("unhandled operation, keytype: %v", kind)
 		}
 	}
+}
+
+// Close closes the batch and releases all associated resources. After it is
+// closed, any subsequent operations on this batch are undefined.
+func (b *batch) Close() {
+	b.b.Close()
 }
 
 // pebbleIterator is a wrapper of underlying iterator in storage engine.

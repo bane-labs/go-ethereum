@@ -452,12 +452,15 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		SafeBlockHash:      head.ParentHash,
 		FinalizedBlockHash: head.ParentHash,
 	}
+	emptyUint64 := uint64(0)
 	attributes := engine.PayloadAttributes{
 		Timestamp:             timestamp,
 		Random:                common.Hash{},
 		SuggestedFeeRecipient: w.feeRecipient,
 		Withdrawals:           make([]*types.Withdrawal, 0),
 		BeaconRoot:            &types.EmptyRootHash,
+		SlotNumber:            &emptyUint64,
+		TargetGasLimit:        &emptyUint64,
 	}
 
 	var forkChoiceMethod string
@@ -467,21 +470,39 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
 		attributes.Withdrawals = nil
 		attributes.BeaconRoot = nil
+		attributes.SlotNumber = nil
+		attributes.TargetGasLimit = nil
 	case forks.Shanghai:
 		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
 		attributes.BeaconRoot = nil
+		attributes.SlotNumber = nil
+		attributes.TargetGasLimit = nil
 	case forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
 		forkChoiceMethod = "engine_forkchoiceUpdatedV3"
+		attributes.SlotNumber = nil
+		attributes.TargetGasLimit = nil
+	case forks.Amsterdam:
+		// TODO: custodyColumns has not set
+		forkChoiceMethod = "engine_forkchoiceUpdatedV4"
+	case forks.Bogota:
+		// TODO: add support for engine_forkchoiceUpdatedV5 when EL supports it
+		forkChoiceMethod = "engine_forkchoiceUpdatedV5"
 	default:
 		return engine.ForkChoiceResponse{}, fmt.Errorf("fork %s is not supported for engine_forkchoiceUpdated", w.chain.Config().LatestFork(timestamp).String())
 	}
 
 	// Set mining attributes only when the worker is set to be mining.
 	var err error
+	var params *engine.PayloadAttributes
+	var custodyColumns *types.CustodyBitmap
 	if requestMine {
-		err = w.rpc.CallContext(w.ctx, &resp, forkChoiceMethod, update, attributes)
-	} else {
-		err = w.rpc.CallContext(w.ctx, &resp, forkChoiceMethod, update, nil)
+		params = &attributes
+	}
+	switch forkChoiceMethod {
+	case "engine_forkchoiceUpdatedV2", "engine_forkchoiceUpdatedV3":
+		err = w.rpc.CallContext(w.ctx, &resp, forkChoiceMethod, update, params)
+	case "engine_forkchoiceUpdatedV4", "engine_forkchoiceUpdatedV5":
+		err = w.rpc.CallContext(w.ctx, &resp, forkChoiceMethod, update, params, custodyColumns)
 	}
 	if err != nil {
 		return engine.ForkChoiceResponse{}, err
@@ -498,6 +519,8 @@ func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloa
 		getPayloadMethod = "engine_getPayloadV2"
 	case engine.PayloadV3:
 		getPayloadMethod = "engine_getPayloadV5"
+	case engine.PayloadV4:
+		getPayloadMethod = "engine_getPayloadV6"
 	default:
 		return engine.ExecutionPayloadEnvelope{}, fmt.Errorf("version %v is not supported for engine_getPayload", payloadID.Version())
 	}
@@ -519,20 +542,26 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 		newPayloadMethod = "engine_newPayloadV3"
 	case forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
 		newPayloadMethod = "engine_newPayloadV4"
+	case forks.Amsterdam:
+		newPayloadMethod = "engine_newPayloadV5"
+	case forks.Bogota:
+		// TODO: add support for engine_newPayloadV6 when EL supports it
+		newPayloadMethod = "engine_newPayloadV6"
 	default:
 		return engine.PayloadStatusV1{}, fmt.Errorf("fork %s is not supported for engine_getPayload", w.chain.Config().LatestFork(timestamp).String())
 	}
-	if newPayloadMethod == "engine_newPayloadV2" {
+	switch newPayloadMethod {
+	case "engine_newPayloadV2":
 		err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload)
 		if err != nil {
 			return engine.PayloadStatusV1{}, err
 		}
-	} else if newPayloadMethod == "engine_newPayloadV3" {
+	case "engine_newPayloadV3":
 		err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot)
 		if err != nil {
 			return engine.PayloadStatusV1{}, err
 		}
-	} else {
+	default:
 		err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, requestsHash)
 		if err != nil {
 			return engine.PayloadStatusV1{}, err
