@@ -1218,7 +1218,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 						gp   = gasPool.Snapshot()
 					)
 					state.SetTxContext(pre.transactions[i].Hash(), i, uint32(i+1))
-					receipt, bal, err := core.ApplyTransaction(evm, gasPool, state, pre.header, pre.transactions[i])
+					receipt, bal, err := core.ApplyTransaction(context.Background(), evm, gasPool, state, pre.header, pre.transactions[i])
 					if err != nil {
 						state.RevertToSnapshot(snap)
 						gasPool.Set(gp)
@@ -1286,7 +1286,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 				gp   = gasPool.Snapshot()
 			)
 			state.SetTxContext(decryptedTx.Hash(), i, uint32(i+1))
-			receipt, bal, err := core.ApplyTransaction(evm, gasPool, state, pre.header, decryptedTx)
+			receipt, bal, err := core.ApplyTransaction(context.Background(), evm, gasPool, state, pre.header, decryptedTx)
 			if err != nil {
 				state.RevertToSnapshot(snap)
 				gasPool.Set(gp)
