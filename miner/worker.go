@@ -402,10 +402,10 @@ func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase
 }
 
 func (miner *Miner) commitTransaction(ctx context.Context, env *environment, tx *types.Transaction) (err error) {
-	_, _, spanEnd := telemetry.StartSpan(ctx, "miner.commitTransaction")
+	ctx, _, spanEnd := telemetry.StartSpan(ctx, "miner.commitTransaction")
 	defer spanEnd(&err)
 	if tx.Type() == types.BlobTxType {
-		return miner.commitBlobTransaction(env, tx)
+		return miner.commitBlobTransaction(ctx, env, tx)
 	}
 	// Check whether the tx is an Envelope. If it is an Envelope and
 	// policy doesn't allow any more Envelopes in this block, ignore.
@@ -417,7 +417,7 @@ func (miner *Miner) commitTransaction(ctx context.Context, env *environment, tx 
 			return nil
 		}
 	}
-	receipt, bal, err := miner.applyTransaction(env, tx)
+	receipt, bal, err := miner.applyTransaction(ctx, env, tx)
 	if err != nil {
 		return err
 	}
@@ -432,7 +432,7 @@ func (miner *Miner) commitTransaction(ctx context.Context, env *environment, tx 
 	return nil
 }
 
-func (miner *Miner) commitBlobTransaction(env *environment, tx *types.Transaction) error {
+func (miner *Miner) commitBlobTransaction(ctx context.Context, env *environment, tx *types.Transaction) error {
 	sc := tx.BlobTxSidecar()
 	if sc == nil {
 		panic("blob transaction without blobs in miner")
@@ -445,7 +445,7 @@ func (miner *Miner) commitBlobTransaction(env *environment, tx *types.Transactio
 	if env.blobs+len(sc.Blobs) > maxBlobs {
 		return errors.New("max data blobs reached")
 	}
-	receipt, bal, err := miner.applyTransaction(env, tx)
+	receipt, bal, err := miner.applyTransaction(ctx, env, tx)
 	if err != nil {
 		return err
 	}
@@ -462,12 +462,12 @@ func (miner *Miner) commitBlobTransaction(env *environment, tx *types.Transactio
 }
 
 // applyTransaction runs the transaction. If execution fails, state and gas pool are reverted.
-func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*types.Receipt, *bal.ConstructionBlockAccessList, error) {
+func (miner *Miner) applyTransaction(ctx context.Context, env *environment, tx *types.Transaction) (*types.Receipt, *bal.ConstructionBlockAccessList, error) {
 	var (
 		snap = env.state.Snapshot()
 		gp   = env.gasPool.Snapshot()
 	)
-	receipt, bal, err := core.ApplyTransaction(env.evm, env.gasPool, env.state, env.header, tx)
+	receipt, bal, err := core.ApplyTransaction(ctx, env.evm, env.gasPool, env.state, env.header, tx)
 	if err != nil {
 		env.state.RevertToSnapshot(snap)
 		env.gasPool.Set(gp)
