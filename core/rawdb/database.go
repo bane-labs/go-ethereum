@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
+	"github.com/ethereum/go-ethereum/internal/tablewriter"
 	"github.com/ethereum/go-ethereum/log"
 	"golang.org/x/sync/errgroup"
 )
@@ -112,7 +113,7 @@ func (db *nofreezedb) Ancients() (uint64, error) {
 }
 
 // Tail returns an error as we don't have a backing chain freezer.
-func (db *nofreezedb) Tail() (uint64, error) {
+func (db *nofreezedb) Tail(group string) (uint64, error) {
 	return 0, errNotSupported
 }
 
@@ -132,7 +133,7 @@ func (db *nofreezedb) TruncateHead(items uint64) (uint64, error) {
 }
 
 // TruncateTail returns an error as we don't have a backing chain freezer.
-func (db *nofreezedb) TruncateTail(items uint64) (uint64, error) {
+func (db *nofreezedb) TruncateTail(group string, items uint64) (uint64, error) {
 	return 0, errNotSupported
 }
 
@@ -330,6 +331,7 @@ func Open(db ethdb.KeyValueStore, opts OpenOptions) (ethdb.Database, error) {
 		}()
 	}
 	return &freezerdb{
+		readOnly:      opts.ReadOnly,
 		ancientRoot:   opts.Ancient,
 		KeyValueStore: db,
 		chainFreezer:  frdb,
@@ -350,17 +352,40 @@ const (
 // PreexistingDatabase checks the given data directory whether a database is already
 // instantiated at that location, and if so, returns the type of database (or the
 // empty string).
+//
+// The database flavors are told apart by their on-disk file layout:
+//
+//	            CURRENT   marker.manifest.*   OPTIONS*
+//	leveldb        x
+//	pebble v1      x                              x
+//	pebble v2                      x              x
 func PreexistingDatabase(path string) string {
-	if _, err := os.Stat(filepath.Join(path, "CURRENT")); err != nil {
+	var (
+		hasCurrent = fileExists(filepath.Join(path, "CURRENT"))
+		hasMarker  = anyFileMatches(filepath.Join(path, "marker.manifest.*"))
+		hasOptions = anyFileMatches(filepath.Join(path, "OPTIONS*"))
+	)
+	switch {
+	case hasMarker, hasCurrent && hasOptions:
+		return DBPebble
+	case hasCurrent:
+		return DBLeveldb
+	default:
 		return "" // No pre-existing db
 	}
-	if matches, err := filepath.Glob(filepath.Join(path, "OPTIONS*")); len(matches) > 0 || err != nil {
-		if err != nil {
-			panic(err) // only possible if the pattern is malformed
-		}
-		return DBPebble
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func anyFileMatches(pattern string) bool {
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		panic(err) // only possible if the pattern is malformed
 	}
-	return DBLeveldb
+	return len(matches) > 0
 }
 
 type counter uint64
@@ -411,6 +436,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		tds                stat
 		numHashPairings    stat
 		hashNumPairings    stat
+		blockAccessList    stat
 		legacyTries        stat
 		stateLookups       stat
 		accountTries       stat
@@ -428,7 +454,8 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		filterMapBlockLV   stat
 
 		// Path-mode archive data
-		stateIndex stat
+		stateIndex    stat
+		trienodeIndex stat
 
 		// Verkle statistics
 		verkleTries        stat
@@ -475,12 +502,15 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 				bodies.add(size)
 			case bytes.HasPrefix(key, blockReceiptsPrefix) && len(key) == (len(blockReceiptsPrefix)+8+common.HashLength):
 				receipts.add(size)
-			case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerTDSuffix):
+			case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerTDSuffix) && len(key) == (len(headerPrefix)+8+common.HashLength+len(headerTDSuffix)):
 				tds.add(size)
-			case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerHashSuffix):
+			case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerHashSuffix) && len(key) == (len(headerPrefix)+8+len(headerHashSuffix)):
 				numHashPairings.add(size)
 			case bytes.HasPrefix(key, headerNumberPrefix) && len(key) == (len(headerNumberPrefix)+common.HashLength):
 				hashNumPairings.add(size)
+			case bytes.HasPrefix(key, accessListPrefix) && len(key) == len(accessListPrefix)+8+common.HashLength:
+				blockAccessList.add(size)
+
 			case IsLegacyTrieNode(key, it.Value()):
 				legacyTries.add(size)
 			case bytes.HasPrefix(key, stateIDPrefix) && len(key) == len(stateIDPrefix)+common.HashLength:
@@ -523,8 +553,19 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 				bloomBits.add(size)
 
 			// Path-based historic state indexes
-			case bytes.HasPrefix(key, StateHistoryIndexPrefix) && len(key) >= len(StateHistoryIndexPrefix)+common.HashLength:
+			case bytes.HasPrefix(key, StateHistoryAccountMetadataPrefix) && len(key) == len(StateHistoryAccountMetadataPrefix)+common.HashLength:
 				stateIndex.add(size)
+			case bytes.HasPrefix(key, StateHistoryStorageMetadataPrefix) && len(key) == len(StateHistoryStorageMetadataPrefix)+2*common.HashLength:
+				stateIndex.add(size)
+			case bytes.HasPrefix(key, StateHistoryAccountBlockPrefix) && len(key) == len(StateHistoryAccountBlockPrefix)+common.HashLength+4:
+				stateIndex.add(size)
+			case bytes.HasPrefix(key, StateHistoryStorageBlockPrefix) && len(key) == len(StateHistoryStorageBlockPrefix)+2*common.HashLength+4:
+				stateIndex.add(size)
+
+			case bytes.HasPrefix(key, TrienodeHistoryMetadataPrefix) && len(key) >= len(TrienodeHistoryMetadataPrefix)+common.HashLength:
+				trienodeIndex.add(size)
+			case bytes.HasPrefix(key, TrienodeHistoryBlockPrefix) && len(key) >= len(TrienodeHistoryBlockPrefix)+common.HashLength+4:
+				trienodeIndex.add(size)
 
 			// Verkle trie data is detected, determine the sub-category
 			case bytes.HasPrefix(key, VerklePrefix):
@@ -611,6 +652,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Difficulties", tds.sizeString(), tds.countString()},
 		{"Key-Value store", "Block number->hash", numHashPairings.sizeString(), numHashPairings.countString()},
 		{"Key-Value store", "Block hash->number", hashNumPairings.sizeString(), hashNumPairings.countString()},
+		{"Key-Value store", "Block accessList", blockAccessList.sizeString(), blockAccessList.countString()},
 		{"Key-Value store", "Transaction index", txLookups.sizeString(), txLookups.countString()},
 		{"Key-Value store", "Log index filter-map rows", filterMapRows.sizeString(), filterMapRows.countString()},
 		{"Key-Value store", "Log index last-block-of-map", filterMapLastBlock.sizeString(), filterMapLastBlock.countString()},
@@ -621,12 +663,13 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Path trie state lookups", stateLookups.sizeString(), stateLookups.countString()},
 		{"Key-Value store", "Path trie account nodes", accountTries.sizeString(), accountTries.countString()},
 		{"Key-Value store", "Path trie storage nodes", storageTries.sizeString(), storageTries.countString()},
-		{"Key-Value store", "Path state history indexes", stateIndex.sizeString(), stateIndex.countString()},
 		{"Key-Value store", "Verkle trie nodes", verkleTries.sizeString(), verkleTries.countString()},
 		{"Key-Value store", "Verkle trie state lookups", verkleStateLookups.sizeString(), verkleStateLookups.countString()},
 		{"Key-Value store", "Trie preimages", preimages.sizeString(), preimages.countString()},
 		{"Key-Value store", "Account snapshot", accountSnaps.sizeString(), accountSnaps.countString()},
 		{"Key-Value store", "Storage snapshot", storageSnaps.sizeString(), storageSnaps.countString()},
+		{"Key-Value store", "Historical state index", stateIndex.sizeString(), stateIndex.countString()},
+		{"Key-Value store", "Historical trie index", trienodeIndex.sizeString(), trienodeIndex.countString()},
 		{"Key-Value store", "Beacon sync headers", beaconHeaders.sizeString(), beaconHeaders.countString()},
 		{"Key-Value store", "Clique snapshots", cliqueSnaps.sizeString(), cliqueSnaps.countString()},
 		{"Key-Value store", "Singleton metadata", metadata.sizeString(), metadata.countString()},
@@ -638,18 +681,18 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		return err
 	}
 	for _, ancient := range ancients {
-		for _, table := range ancient.sizes {
+		for _, table := range ancient.tables {
 			stats = append(stats, []string{
 				fmt.Sprintf("Ancient store (%s)", strings.Title(ancient.name)),
 				strings.Title(table.name),
 				table.size.String(),
-				fmt.Sprintf("%d", ancient.count()),
+				fmt.Sprintf("%d", table.count),
 			})
 		}
 		total.Add(uint64(ancient.size()))
 	}
 
-	table := newTableWriter(os.Stdout)
+	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"Database", "Category", "Size", "Items"})
 	table.SetFooter([]string{"", "Total", common.StorageSize(total.Load()).String(), fmt.Sprintf("%d", count.Load())})
 	table.AppendBulk(stats)
@@ -671,7 +714,7 @@ var knownMetadataKeys = [][]byte{
 	snapshotGeneratorKey, snapshotRecoveryKey, txIndexTailKey, fastTxLookupLimitKey,
 	uncleanShutdownKey, badBlockKey, transitionStatusKey, skeletonSyncStatusKey,
 	persistentStateIDKey, trieJournalKey, snapshotSyncStatusKey, snapSyncStatusFlagKey,
-	filterMapsRangeKey, headStateHistoryIndexKey, VerkleTransitionStatePrefix,
+	filterMapsRangeKey, headStateHistoryIndexKey, headTrienodeHistoryIndexKey, VerkleTransitionStatePrefix,
 	beaconSyncTrustedHeadKey,
 }
 
@@ -727,7 +770,7 @@ func ReadChainMetadata(db ethdb.KeyValueStore) [][]string {
 // is periodically called and if it returns an error then SafeDeleteRange
 // stops and also returns that error. The callback is not called if native
 // range delete is used or there are a small number of keys only. The bool
-// argument passed to the callback is true if enrties have actually been
+// argument passed to the callback is true if entries have actually been
 // deleted already.
 func SafeDeleteRange(db ethdb.KeyValueStore, start, end []byte, hashScheme bool, stopCallback func(bool) bool) error {
 	if !hashScheme {

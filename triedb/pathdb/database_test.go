@@ -143,7 +143,7 @@ type testerConfig struct {
 	layers       int    // Number of state transitions to generate for
 	enableIndex  bool   // Enable state history indexing or not
 	journalDir   string // Directory path for persisting journal files
-	isVerkle     bool   // Enables Verkle trie mode if true
+	isUBT        bool   // Enables Verkle trie mode if true
 
 	writeBuffer *int // Optional, the size of memory allocated for write buffer
 	trieCache   *int // Optional, the size of memory allocated for trie cache
@@ -182,7 +182,8 @@ func newTester(t *testing.T, config *testerConfig) *tester {
 			WriteBufferSize:     config.writeBufferSize(),
 			NoAsyncFlush:        true,
 			JournalDirectory:    config.journalDir,
-		}, config.isVerkle)
+			NoHistoryIndexDelay: true,
+		}, config.isUBT)
 
 		obj = &tester{
 			db:           db,
@@ -656,6 +657,38 @@ func TestDatabaseRecoverable(t *testing.T) {
 	}
 }
 
+// TestRecoverableDisabled checks that a database disabled for state sync
+// reports nothing as recoverable, matching Recover which refuses to roll
+// back mid-sync. Regression test for a snap-sync restart crash loop: during
+// chain repair Recoverable returned true while Recover returned
+// errDatabaseWaitSync, so setHeadBeyondRoot tripped a log.Crit.
+func TestRecoverableDisabled(t *testing.T) {
+	maxDiffLayers = 4
+	defer func() { maxDiffLayers = 128 }()
+
+	tester := newTester(t, &testerConfig{layers: 12})
+	defer tester.release()
+
+	// A state below the disk layer is recoverable while the database is active.
+	root := tester.roots[tester.bottomIndex()-1]
+	if !tester.db.Recoverable(root) {
+		t.Fatalf("state below the disk layer should be recoverable while active")
+	}
+	// Disable the database to simulate an interrupted, still-running snap sync.
+	if err := tester.db.Disable(); err != nil {
+		t.Fatalf("failed to disable database: %v", err)
+	}
+	// Recover refuses while the sync is in progress.
+	if err := tester.db.Recover(root); !errors.Is(err, errDatabaseWaitSync) {
+		t.Fatalf("Recover: want errDatabaseWaitSync, got %v", err)
+	}
+	// Recoverable must agree, otherwise chain repair enters a Recover it
+	// believes is safe and crashes on the waitSync error.
+	if tester.db.Recoverable(root) {
+		t.Fatalf("disabled database must not report any state as recoverable")
+	}
+}
+
 func TestExecuteRollback(t *testing.T) {
 	// Redefine the diff layer depth allowance for faster testing.
 	maxDiffLayers = 4
@@ -744,6 +777,84 @@ func TestDisable(t *testing.T) {
 	}
 	if tester.db.tree.bottom().rootHash() != stored {
 		t.Fatalf("Root hash is not matched exp %x got %x", stored, tester.db.tree.bottom().rootHash())
+	}
+}
+
+// TestAdoptSyncedState verifies that AdoptSyncedState rejects a wrong root,
+// writes the on-disk markers that say the snapshot is already complete,
+// leaves a single fresh disk layer with no generator attached, and clears
+// out stale state histories.
+func TestAdoptSyncedState(t *testing.T) {
+	maxDiffLayers = 4
+	defer func() {
+		maxDiffLayers = 128
+	}()
+
+	tester := newTester(t, &testerConfig{layers: 12})
+	defer tester.release()
+
+	// Push everything down to disk so the trie root is the persistent root.
+	if err := tester.db.Commit(tester.lastHash(), false); err != nil {
+		t.Fatalf("Failed to commit, err: %v", err)
+	}
+	stored := crypto.Keccak256Hash(rawdb.ReadAccountTrieNode(tester.db.diskdb, nil))
+
+	// Mimic the snap-syncing state.
+	if err := tester.db.Disable(); err != nil {
+		t.Fatalf("Failed to disable database: %v", err)
+	}
+	// Mismatched root must be rejected.
+	if err := tester.db.AdoptSyncedState(types.EmptyRootHash); err == nil {
+		t.Fatal("Mismatched root should be rejected")
+	}
+	if err := tester.db.AdoptSyncedState(stored); err != nil {
+		t.Fatalf("AdoptSyncedState failed: %v", err)
+	}
+
+	// On-disk markers reflect a completed snapshot.
+	if got := rawdb.ReadSnapshotRoot(tester.db.diskdb); got != stored {
+		t.Fatalf("SnapshotRoot mismatch: got %x want %x", got, stored)
+	}
+	if blob := rawdb.ReadSnapshotGenerator(tester.db.diskdb); len(blob) == 0 {
+		t.Fatal("Generator journal not written")
+	} else {
+		var entry journalGenerator
+		if err := rlp.DecodeBytes(blob, &entry); err != nil {
+			t.Fatalf("Failed to decode generator journal: %v", err)
+		}
+		if !entry.Done {
+			t.Fatal("Generator journal should be marked Done")
+		}
+		// RLP turns a nil slice into an empty one on decode, so check length.
+		if len(entry.Marker) != 0 {
+			t.Fatalf("Generator marker should be empty, got %x", entry.Marker)
+		}
+	}
+	if rawdb.ReadSnapSyncStatusFlag(tester.db.diskdb) != rawdb.StateSyncFinished {
+		t.Fatal("Sync-status flag should be StateSyncFinished")
+	}
+	if tester.db.waitSync {
+		t.Fatal("waitSync should be false after adopt")
+	}
+
+	// State histories are purged.
+	if n, err := tester.db.stateFreezer.Ancients(); err != nil || n != 0 {
+		t.Fatalf("State histories not purged: count=%d err=%v", n, err)
+	}
+
+	// Layer tree has a single disk layer with no generator attached.
+	if got := tester.db.tree.len(); got != 1 {
+		t.Fatalf("Expected single layer, got %d", got)
+	}
+	dl := tester.db.tree.bottom()
+	if dl.rootHash() != stored {
+		t.Fatalf("Disk layer root mismatch: got %x want %x", dl.rootHash(), stored)
+	}
+	if dl.generator != nil {
+		t.Fatal("Disk layer should have no generator after adopt")
+	}
+	if dl.genMarker() != nil {
+		t.Fatal("genMarker should be nil after adopt")
 	}
 }
 
@@ -950,7 +1061,7 @@ func TestDatabaseIndexRecovery(t *testing.T) {
 	var (
 		dIndex int
 		roots  = env.roots
-		hr     = newHistoryReader(env.db.diskdb, env.db.stateFreezer)
+		hr     = newStateHistoryReader(env.db.diskdb, env.db.stateFreezer)
 	)
 	for i, root := range roots {
 		if root == dRoot {
@@ -986,7 +1097,7 @@ func TestDatabaseIndexRecovery(t *testing.T) {
 			t.Fatalf("Unexpected state history found, %d", i)
 		}
 	}
-	remain, err := env.db.IndexProgress()
+	remain, _, err := env.db.IndexProgress()
 	if err != nil {
 		t.Fatalf("Failed to obtain the progress, %v", err)
 	}
@@ -1000,7 +1111,7 @@ func TestDatabaseIndexRecovery(t *testing.T) {
 			panic(fmt.Errorf("failed to update state changes, err: %w", err))
 		}
 	}
-	remain, err = env.db.IndexProgress()
+	remain, _, err = env.db.IndexProgress()
 	if err != nil {
 		t.Fatalf("Failed to obtain the progress, %v", err)
 	}
@@ -1011,7 +1122,7 @@ func TestDatabaseIndexRecovery(t *testing.T) {
 
 	// Ensure the truncated state histories become accessible
 	bRoot = env.db.tree.bottom().rootHash()
-	hr = newHistoryReader(env.db.diskdb, env.db.stateFreezer)
+	hr = newStateHistoryReader(env.db.diskdb, env.db.stateFreezer)
 	for i, root := range roots {
 		if root == bRoot {
 			break

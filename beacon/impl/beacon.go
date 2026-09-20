@@ -32,11 +32,11 @@ type Beacon struct {
 
 // New creates a mock beacon client with basic mining functionality. It supports customized
 // fork choice rules and transaction filtering for messages from P2P beacon protocol.
-func New(eth miner.Backend, rpc *rpc.Client, mux *event.TypeMux, coinbase common.Address,
+func New(eth miner.Backend, downloader miner.Downloader, rpc *rpc.Client, coinbase common.Address,
 	shouldPreserve miner.ShouldPreserveFn, txFilter miner.TransactionFilterFn) *Beacon {
 	b := &Beacon{
 		chain:   eth.BlockChain(),
-		miner:   miner.New(eth, rpc, mux, coinbase, shouldPreserve, txFilter),
+		miner:   miner.New(eth, downloader, rpc, coinbase, shouldPreserve, txFilter),
 		blockCh: make(chan *types.Block),
 	}
 
@@ -61,26 +61,29 @@ func (b *Beacon) StartSynchronizer(lightSync synchronizer.LightSyncFn) {
 // StartBlockFetcher enables the block fetching functionality of the beacon client.
 // This is also a part of initialization, to connect to the protocol layer.
 func (b *Beacon) StartBlockFetcher(broadcastBlock fetcher.BlockBroadcasterFn, dropPeer fetcher.PeerDropFn,
-	fetchHeader fetcher.HeaderRequesterFn, fetchBodies fetcher.BodyRequesterFn) {
+	blockDataFetcher fetcher.Fetcher) {
 
-	validator := func(header *types.Header) error {
-		return b.chain.Engine().VerifyHeader(b.chain, header)
-	}
-	heighter := func() uint64 {
-		return b.chain.CurrentBlock().Number.Uint64()
-	}
-	finalizeHeighter := func() uint64 {
-		fblock := b.chain.CurrentFinalBlock()
-		if fblock == nil {
-			return 0
-		}
-		return fblock.Number.Uint64()
+	chainReader := fetcher.ChainReader{
+		GetBlock: b.chain.GetBlockByHash,
+		VerifyHeader: func(header *types.Header) error {
+			return b.chain.Engine().VerifyHeader(b.chain, header)
+		},
+		ChainHeight: func() uint64 {
+			return b.chain.CurrentBlock().Number.Uint64()
+		},
+		ChainFinalizedHeight: func() uint64 {
+			fblock := b.chain.CurrentFinalBlock()
+			if fblock == nil {
+				return 0
+			}
+			return fblock.Number.Uint64()
+		},
 	}
 
 	b.broadcastBlock = broadcastBlock
-	b.blockFetcher = fetcher.NewBlockFetcher(b.chain.GetBlockByHash, validator,
-		broadcastBlock, heighter, finalizeHeighter, b.InsertBlock, b.InformNewBlock,
-		dropPeer, fetchHeader, fetchBodies)
+	b.blockFetcher = fetcher.NewBlockFetcher(chainReader,
+		broadcastBlock, b.InsertBlock, b.InformNewBlock,
+		dropPeer, blockDataFetcher)
 	b.blockFetcher.Start()
 }
 

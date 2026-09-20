@@ -102,7 +102,7 @@ func (env *testEnv) setGasTip(gasTip uint64) {
 func (env *testEnv) makeTx(nonce uint64, gasPrice *big.Int) *types.Transaction {
 	if nonce == 0 {
 		head := env.chain.CurrentHeader()
-		state, _ := env.chain.StateAt(head.Root)
+		state, _ := env.chain.StateAt(head)
 		nonce = state.GetNonce(address)
 	}
 	if gasPrice == nil {
@@ -114,7 +114,7 @@ func (env *testEnv) makeTx(nonce uint64, gasPrice *big.Int) *types.Transaction {
 
 func (env *testEnv) makeTxs(n int) []*types.Transaction {
 	head := env.chain.CurrentHeader()
-	state, _ := env.chain.StateAt(head.Root)
+	state, _ := env.chain.StateAt(head)
 	nonce := state.GetNonce(address)
 
 	var txs []*types.Transaction
@@ -149,7 +149,7 @@ func TestResubmit(t *testing.T) {
 	txs := env.makeTxs(10)
 	txsA := txs[:len(txs)/2]
 	txsB := txs[len(txs)/2:]
-	env.pool.Add(txsA, true, true)
+	env.pool.Add(txsA, true)
 
 	pending, queued := env.pool.ContentFrom(address)
 	if len(pending) != len(txsA) || len(queued) != 0 {
@@ -181,7 +181,7 @@ func TestJournal(t *testing.T) {
 	txs := env.makeTxs(10)
 	txsA := txs[:len(txs)/2]
 	txsB := txs[len(txs)/2:]
-	env.pool.Add(txsA, true, true)
+	env.pool.Add(txsA, true)
 
 	pending, queued := env.pool.ContentFrom(address)
 	if len(pending) != len(txsA) || len(queued) != 0 {

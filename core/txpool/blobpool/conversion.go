@@ -1,4 +1,4 @@
-// Copyright 2025 The go-ethereum Authors
+// Copyright 2026 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -32,10 +32,15 @@ import (
 // with 6 blobs each) would consume approximately 1.5GB of memory.
 const maxPendingConversionTasks = 2048
 
+type convertResult struct {
+	ptx *BlobTxForPool
+	err error
+}
+
 // txConvert represents a conversion task with an attached legacy blob transaction.
 type txConvert struct {
 	tx   *types.Transaction // Legacy blob transaction
-	done chan error         // Channel for signaling back if the conversion succeeds
+	done chan convertResult // Channel for signaling back if the conversion succeeds
 }
 
 // conversionQueue is a dedicated queue for converting legacy blob transactions
@@ -43,27 +48,22 @@ type txConvert struct {
 // it is performed in the background by a single thread, ensuring the main Geth
 // process is not overloaded.
 type conversionQueue struct {
-	tasks      chan *txConvert
-	startBilly chan func()
-	quit       chan struct{}
-	closed     chan struct{}
+	tasks           chan *txConvert
+	startConversion chan func()
+	quit            chan struct{}
+	closed          chan struct{}
 
-	billyQueue    []func()
-	billyTaskDone chan struct{}
-
-	// This channel will be closed when the first billy conversion finishes.
-	// It's added for unit tests to synchronize with the conversion progress.
-	anyBillyConversionDone chan struct{}
+	queue    []func()
+	taskDone chan struct{}
 }
 
 // newConversionQueue constructs the conversion queue.
 func newConversionQueue() *conversionQueue {
 	q := &conversionQueue{
-		tasks:                  make(chan *txConvert),
-		startBilly:             make(chan func()),
-		quit:                   make(chan struct{}),
-		closed:                 make(chan struct{}),
-		anyBillyConversionDone: make(chan struct{}),
+		tasks:           make(chan *txConvert),
+		startConversion: make(chan func()),
+		quit:            make(chan struct{}),
+		closed:          make(chan struct{}),
 	}
 	go q.loop()
 	return q
@@ -73,20 +73,21 @@ func newConversionQueue() *conversionQueue {
 // for conversion.
 //
 // This function may block for a long time until the transaction is processed.
-func (q *conversionQueue) convert(tx *types.Transaction) error {
-	done := make(chan error, 1)
+func (q *conversionQueue) convert(tx *types.Transaction) (*BlobTxForPool, error) {
+	done := make(chan convertResult, 1)
 	select {
 	case q.tasks <- &txConvert{tx: tx, done: done}:
-		return <-done
+		res := <-done
+		return res.ptx, res.err
 	case <-q.closed:
-		return errors.New("conversion queue closed")
+		return nil, errors.New("conversion queue closed")
 	}
 }
 
-// launchBillyConversion starts a conversion task in the background.
-func (q *conversionQueue) launchBillyConversion(fn func()) error {
+// launchConversion starts a conversion task in the background.
+func (q *conversionQueue) launchConversion(fn func()) error {
 	select {
-	case q.startBilly <- fn:
+	case q.startConversion <- fn:
 		return nil
 	case <-q.closed:
 		return errors.New("conversion queue closed")
@@ -110,18 +111,13 @@ func (q *conversionQueue) run(tasks []*txConvert, done chan struct{}, interrupt 
 
 	for _, t := range tasks {
 		if interrupt != nil && interrupt.Load() != 0 {
-			t.done <- errors.New("conversion is interrupted")
-			continue
-		}
-		sidecar := t.tx.BlobTxSidecar()
-		if sidecar == nil {
-			t.done <- errors.New("tx without sidecar")
+			t.done <- convertResult{err: errors.New("conversion is interrupted")}
 			continue
 		}
 		// Run the conversion, the original sidecar will be mutated in place
 		start := time.Now()
-		err := sidecar.ToV1()
-		t.done <- err
+		ptx, err := newBlobTxForPool(t.tx)
+		t.done <- convertResult{ptx: ptx, err: err}
 		log.Trace("Converted legacy blob tx", "hash", t.tx.Hash(), "err", err, "elapsed", common.PrettyDuration(time.Since(start)))
 	}
 }
@@ -137,15 +133,13 @@ func (q *conversionQueue) loop() {
 		// blob transactions requiring conversion will not be excessive. However,
 		// a hard cap is applied as a protective measure.
 		txTasks []*txConvert
-
-		firstBilly = true
 	)
 
 	for {
 		select {
 		case t := <-q.tasks:
 			if len(txTasks) >= maxPendingConversionTasks {
-				t.done <- errors.New("conversion queue is overloaded")
+				t.done <- convertResult{err: errors.New("conversion queue is overloaded")}
 				continue
 			}
 			txTasks = append(txTasks, t)
@@ -161,17 +155,21 @@ func (q *conversionQueue) loop() {
 
 		case <-done:
 			done, interrupt = nil, nil
-
-		case fn := <-q.startBilly:
-			q.billyQueue = append(q.billyQueue, fn)
-			q.runNextBillyTask()
-
-		case <-q.billyTaskDone:
-			if firstBilly {
-				close(q.anyBillyConversionDone)
-				firstBilly = false
+			if len(txTasks) > 0 {
+				done, interrupt = make(chan struct{}), new(atomic.Int32)
+				tasks := slices.Clone(txTasks)
+				txTasks = txTasks[:0]
+				go q.run(tasks, done, interrupt)
 			}
-			q.runNextBillyTask()
+
+		case fn := <-q.startConversion:
+			q.queue = append(q.queue, fn)
+			if q.taskDone == nil {
+				q.runNextTask()
+			}
+
+		case <-q.taskDone:
+			q.runNextTask()
 
 		case <-q.quit:
 			if done != nil {
@@ -179,25 +177,33 @@ func (q *conversionQueue) loop() {
 				interrupt.Store(1)
 				<-done
 			}
-			if q.billyTaskDone != nil {
+			if q.taskDone != nil {
 				log.Debug("Waiting for blobpool billy conversion to exit")
-				<-q.billyTaskDone
+				<-q.taskDone
 			}
+			// Signal any tasks that were queued for the next batch but never started
+			// so callers blocked in convert() receive an error instead of hanging.
+			for _, t := range txTasks {
+				// Best-effort notify; t.done is a buffered channel of size 1
+				// created by convert(), and we send exactly once per task.
+				t.done <- convertResult{err: errors.New("conversion queue closed")}
+			}
+			// Drop references to allow GC of the backing array.
+			txTasks = txTasks[:0]
 			return
 		}
 	}
 }
 
-func (q *conversionQueue) runNextBillyTask() {
-	if len(q.billyQueue) == 0 {
-		q.billyTaskDone = nil
+func (q *conversionQueue) runNextTask() {
+	if len(q.queue) == 0 {
+		q.taskDone = nil
 		return
 	}
-
-	fn := q.billyQueue[0]
-	q.billyQueue = append(q.billyQueue[:0], q.billyQueue[1:]...)
+	fn := q.queue[0]
+	q.queue = append(q.queue[:0], q.queue[1:]...)
 
 	done := make(chan struct{})
 	go func() { defer close(done); fn() }()
-	q.billyTaskDone = done
+	q.taskDone = done
 }
