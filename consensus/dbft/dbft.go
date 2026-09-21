@@ -1181,7 +1181,6 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 			allLogs  []*types.Log
 			evm      = vm.NewEVM(core.NewEVMBlockContext(pre.header, c.chain, &pre.header.Coinbase), state, c.chain.Config(), vm.Config{})
 			gasPool  = core.NewGasPool(pre.header.GasLimit)
-			gasUsed  = uint64(0)
 
 			blockAccessList = bal.NewConstructionBlockAccessList()
 		)
@@ -1321,7 +1320,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
 		pre.finalTransactions = txx
 		pre.finalState = state
 		pre.finalReceipts = receipts
-		pre.finalGASUsed = gasUsed
+		pre.finalGASUsed = gasPool.Used()
 		pre.finalBal = blockAccessList
 		c.envelopeFeed.Send(envelopes)
 		c.staticPool.ResetStatic()
