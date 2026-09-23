@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/beacon/impl/fetcher"
 	"github.com/ethereum/go-ethereum/beacon/impl/miner"
 	"github.com/ethereum/go-ethereum/beacon/impl/synchronizer"
@@ -180,6 +181,17 @@ func (b *Beacon) GetTransaction(hash common.Hash) *types.Transaction {
 // NotifyTransactions notifies the miner about transactions seen in the beacon protocol.
 func (b *Beacon) NotifyTransactions(txs []*types.Transaction) {
 	b.miner.NotifyTransactions(txs)
+}
+
+// GetBlobs tries to find blob data from the consensus level. This is useful for BFT
+// consensus.
+func (b *Beacon) GetBlobs(hashes []common.Hash) *engine.BlobsBundle {
+	return b.miner.GetBlobs(hashes)
+}
+
+// NotifyBlobs notifies the miner about blob data seen in the beacon protocol.
+func (b *Beacon) NotifyBlobs(bundle *engine.BlobsBundle) {
+	b.miner.NotifyBlobs(bundle)
 }
 
 // SubscribeTransactionEvents subscribes to transaction events from the miner.

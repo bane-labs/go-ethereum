@@ -459,7 +459,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		bft.WithEthAPIBackend(eth.APIBackend)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
 		bft.WithTxPool(eth.TxPool())
-		bft.WithRequestTxs(eth.handler.RequestTransactions)
+		bft.WithRequestTxs(eth.handler.RequestPooledTransactions)
 		err := bft.WithLogLevel(config.DBFTLogLevel)
 		if err != nil {
 			return nil, err

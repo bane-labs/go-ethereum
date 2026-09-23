@@ -7,6 +7,7 @@ import (
 	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -289,28 +290,59 @@ func (p *Peer) AsyncSendNewBlobsRoot(hash common.Hash) {
 	}
 }
 
-// ReplyTransactionsRLP is the response to RequestTxs.
-func (p *Peer) ReplyTransactionsRLP(id uint64, hashes []common.Hash, txs []rlp.RawValue) error {
-	return p2p.Send(p.rw, TransactionsMsg, &TransactionsRLPPacket{
-		RequestId:               id,
-		TransactionsRLPResponse: txs,
+// ReplyPooledTransactionsRLP is the response to RequestPooledTransactions.
+func (p *Peer) ReplyPooledTransactionsRLP(id uint64, hashes []common.Hash, txs []rlp.RawValue) error {
+	return p2p.Send(p.rw, PooledTransactionsMsg, &PooledTransactionsRLPPacket{
+		RequestId:                     id,
+		PooledTransactionsRLPResponse: txs,
 	})
 }
 
-// RequestTransactions fetches a batch of transactions from a remote node.
-func (p *Peer) RequestTransactions(hashes []common.Hash) error {
-	p.Log().Debug("Fetching batch of transactions", "count", len(hashes))
+// RequestPooledTransactions fetches a batch of pooled transactions from a remote node.
+func (p *Peer) RequestPooledTransactions(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of pooled transactions", "count", len(hashes))
 	id := rand.Uint64()
 
 	p.tracker.Track(tracker.Request{
 		ID:       id,
-		ReqCode:  GetTransactionsMsg,
-		RespCode: TransactionsMsg,
+		ReqCode:  GetPooledTransactionsMsg,
+		RespCode: PooledTransactionsMsg,
 		Size:     len(hashes),
 	})
-	return p2p.Send(p.rw, GetTransactionsMsg, &GetTransactionsPacket{
-		RequestId:              id,
-		GetTransactionsRequest: hashes,
+	return p2p.Send(p.rw, GetPooledTransactionsMsg, &GetPooledTransactionsPacket{
+		RequestId:                    id,
+		GetPooledTransactionsRequest: hashes,
+	})
+}
+
+// ReplyPooledBlobsRLP is the response to RequestPooledBlobs.
+func (p *Peer) ReplyPooledBlobs(id uint64, hashes []common.Hash, bundle *engine.BlobsBundle) error {
+	res := PooledBlobsResponse{
+		Commitments: bundle.Commitments,
+		Blobs:       bundle.Blobs,
+		Proofs:      bundle.Proofs,
+	}
+
+	return p2p.Send(p.rw, PooledBlobsMsg, &PooledBlobsPacket{
+		RequestId:           id,
+		PooledBlobsResponse: res,
+	})
+}
+
+// RequestPooledBlobs fetches a batch of pooled blobs from a remote node.
+func (p *Peer) RequestPooledBlobs(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of pooled blobs", "count", len(hashes))
+	id := rand.Uint64()
+
+	p.tracker.Track(tracker.Request{
+		ID:       id,
+		ReqCode:  GetPooledBlobsMsg,
+		RespCode: PooledBlobsMsg,
+		Size:     len(hashes),
+	})
+	return p2p.Send(p.rw, GetPooledBlobsMsg, &GetPooledBlobsPacket{
+		RequestId:             id,
+		GetPooledBlobsRequest: hashes,
 	})
 }
 

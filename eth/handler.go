@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/dchest/siphash"
+	"github.com/ethereum/go-ethereum/beacon/engine"
 	beaconfetch "github.com/ethereum/go-ethereum/beacon/impl/fetcher"
 	beaconSync "github.com/ethereum/go-ethereum/beacon/impl/synchronizer"
 	"github.com/ethereum/go-ethereum/common"
@@ -121,6 +122,8 @@ type Beacon interface {
 	EnqueueBlock(peer string, block *types.Block)
 	GetTransaction(hash common.Hash) *types.Transaction
 	NotifyTransactions(txs []*types.Transaction)
+	GetBlobs(hashes []common.Hash) *engine.BlobsBundle
+	NotifyBlobs(blobs *engine.BlobsBundle)
 }
 
 // FileSystem is enough of a FileSystem to satisfy [Service].
@@ -972,8 +975,8 @@ func (st *blockRangeState) currentRange() eth.BlockRangeUpdatePacket {
 	return *st.next.Load()
 }
 
-// RequestTransactions will send GetTransactionsMsg to neighbor peers.
-func (h *handler) RequestTransactions(txHashes []common.Hash) {
+// RequestPooledTransactions will send GetPooledTransactionsMsg to neighbor peers.
+func (h *handler) RequestPooledTransactions(txHashes []common.Hash) {
 	if len(txHashes) == 0 {
 		return
 	}
@@ -992,9 +995,36 @@ func (h *handler) RequestTransactions(txHashes []common.Hash) {
 			if peer.Version() < beaconproto.BEACON2 {
 				continue
 			}
-			err := peer.RequestTransactions(txHashes[start:stop])
+			err := peer.RequestPooledTransactions(txHashes[start:stop])
 			if err != nil {
 				log.Error("Failed to request transactions", "txHashes", txHashes, "peer", peer.ID(), "error", err)
+			}
+		}
+	}
+}
+
+func (h *handler) RequestPooledBlobs(versionedHashed []common.Hash) {
+	if len(versionedHashed) == 0 {
+		return
+	}
+	peers := h.peers.allBeacons()
+	for i := 0; i <= len(versionedHashed)/maxHashesCount; i++ {
+		start := i * maxHashesCount
+		stop := (i + 1) * maxHashesCount
+		if stop > len(versionedHashed) {
+			stop = len(versionedHashed)
+		}
+		if start == stop {
+			break
+		}
+		// Broadcast request to all neighbors.
+		for _, peer := range peers {
+			if peer.Version() < beaconproto.BEACON3 {
+				continue
+			}
+			err := peer.RequestPooledBlobs(versionedHashed[start:stop])
+			if err != nil {
+				log.Error("Failed to request blobs", "versionedHashed", versionedHashed, "peer", peer.ID(), "error", err)
 			}
 		}
 	}

@@ -84,26 +84,30 @@ type Decoder interface {
 	Time() time.Time
 }
 
-var beacon1 = map[uint64]msgHandler{
-	NewBlockHashesMsg: handleNewBlockhashes,
-	NewBlockMsg:       handleNewBlock,
-	NewBlobsRootMsg:   handleNewBlobsRoot,
-	GetBlobsMsg:       handleGetBlobs,
-	BlobsMsg:          handleBlobs,
-	GetBatchBlobsMsg:  handleGetBatchBlobs,
-	BatchBlobsMsg:     handleBatchBlobs,
+var beacon2 = map[uint64]msgHandler{
+	NewBlockHashesMsg:        handleNewBlockhashes,
+	NewBlockMsg:              handleNewBlock,
+	NewBlobsRootMsg:          handleNewBlobsRoot,
+	GetBlobsMsg:              handleGetBlobs,
+	BlobsMsg:                 handleBlobs,
+	GetBatchBlobsMsg:         handleGetBatchBlobs,
+	BatchBlobsMsg:            handleBatchBlobs,
+	GetPooledTransactionsMsg: handleGetPooledTransactions,
+	PooledTransactionsMsg:    handlePooledTransactions,
 }
 
-var beacon2 = map[uint64]msgHandler{
-	NewBlockHashesMsg:  handleNewBlockhashes,
-	NewBlockMsg:        handleNewBlock,
-	NewBlobsRootMsg:    handleNewBlobsRoot,
-	GetBlobsMsg:        handleGetBlobs,
-	BlobsMsg:           handleBlobs,
-	GetBatchBlobsMsg:   handleGetBatchBlobs,
-	BatchBlobsMsg:      handleBatchBlobs,
-	GetTransactionsMsg: handleGetTransactions,
-	TransactionsMsg:    handleTransactions,
+var beacon3 = map[uint64]msgHandler{
+	NewBlockHashesMsg:        handleNewBlockhashes,
+	NewBlockMsg:              handleNewBlock,
+	NewBlobsRootMsg:          handleNewBlobsRoot,
+	GetBlobsMsg:              handleGetBlobs,
+	BlobsMsg:                 handleBlobs,
+	GetBatchBlobsMsg:         handleGetBatchBlobs,
+	BatchBlobsMsg:            handleBatchBlobs,
+	GetPooledTransactionsMsg: handleGetPooledTransactions,
+	PooledTransactionsMsg:    handlePooledTransactions,
+	GetPooledBlobsMsg:        handleGetPooledBlobs,
+	PooledBlobsMsg:           handlePooledBlobs,
 }
 
 // handleMessage is invoked whenever an inbound message is received from a
@@ -121,10 +125,10 @@ func handleMessage(backend Backend, peer *Peer) error {
 	defer msg.Discard()
 
 	var handlers map[uint64]msgHandler
-	if peer.version == BEACON1 {
-		handlers = beacon1
-	} else if peer.version == BEACON2 {
+	if peer.version == BEACON2 {
 		handlers = beacon2
+	} else if peer.version == BEACON3 {
+		handlers = beacon3
 	} else {
 		return fmt.Errorf("unknown beacon protocol version: %v", peer.version)
 	}

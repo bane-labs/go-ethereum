@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
@@ -103,6 +104,17 @@ func (miner *Miner) NotifyTransactions(txs []*types.Transaction) {
 		miner.txFeed.Send(tx)
 	}
 	miner.worker.cacheTransactions(txs)
+}
+
+// GetBlobs tries to find blob data from the latest payload that the
+// miner has seen.
+func (miner *Miner) GetBlobs(hashes []common.Hash) *engine.BlobsBundle {
+	return miner.worker.getBlobs(hashes)
+}
+
+// NotifyBlobs notifies the miner about blob data seen in the beacon protocol.
+func (miner *Miner) NotifyBlobs(bundle *engine.BlobsBundle) {
+	miner.worker.cacheBlobs(bundle)
 }
 
 // update keeps track of the downloader events. Please be aware that this is a one shot type of update loop.

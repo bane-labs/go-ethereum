@@ -76,24 +76,8 @@ func handleGetBlobs(backend Backend, msg Decoder, peer *Peer) error {
 
 func handleBlobs(backend Backend, msg Decoder, peer *Peer) error {
 	ann := new(BlobsPacket)
-	switch peer.version {
-	case BEACON1:
-		ann1 := new(BlobsPacket1)
-		if err := msg.Decode(ann1); err != nil {
-			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-		}
-		ann.RequestId = ann1.RequestId
-		bss := make(types.BlobSidecars, 0, len(ann1.Sidecars))
-		for _, sc := range ann1.Sidecars {
-			bss = append(bss, types.NewBlobTxSidecar(types.BlobSidecarVersion0, sc.Blobs, sc.Commitments, sc.Proofs))
-		}
-		ann.Sidecars = bss
-	case BEACON2:
-		if err := msg.Decode(ann); err != nil {
-			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-		}
-	default:
-		return fmt.Errorf("unknown beacon protocol version: %v", peer.version)
+	if err := msg.Decode(ann); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 
 	tresp := tracker.Response{ID: ann.RequestId, MsgCode: BlobsMsg, Size: ann.Sidecars.Len()}
@@ -123,28 +107,8 @@ func handleGetBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
 
 func handleBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
 	res := new(BatchBlobsPacket)
-	switch peer.version {
-	case BEACON1:
-		res1 := new(BatchBlobsPacket1)
-		if err := msg.Decode(res1); err != nil {
-			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-		}
-		bbr := make(BatchBlobsResponse, 0, len(res1.BatchBlobsResponse1))
-		for _, scs1 := range res1.BatchBlobsResponse1 {
-			scs := make(types.BlobSidecars, 0, len(scs1))
-			for _, sc1 := range scs1 {
-				scs = append(scs, types.NewBlobTxSidecar(types.BlobSidecarVersion0, sc1.Blobs, sc1.Commitments, sc1.Proofs))
-			}
-			bbr = append(bbr, scs)
-		}
-		res.RequestId = res1.RequestId
-		res.BatchBlobsResponse = bbr
-	case BEACON2:
-		if err := msg.Decode(res); err != nil {
-			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-		}
-	default:
-		return fmt.Errorf("unknown beacon protocol version: %v", peer.version)
+	if err := msg.Decode(res); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 
 	tresp := tracker.Response{ID: res.RequestId, MsgCode: BatchBlobsMsg, Size: len(res.BatchBlobsResponse)}
@@ -161,23 +125,23 @@ func handleBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
 	return nil
 }
 
-func handleGetTransactions(backend Backend, msg Decoder, peer *Peer) error {
-	req := new(GetTransactionsPacket)
+func handleGetPooledTransactions(backend Backend, msg Decoder, peer *Peer) error {
+	req := new(GetPooledTransactionsPacket)
 	if err := msg.Decode(req); err != nil {
-		return fmt.Errorf("msg %v, decode err: %v", GetTransactionsMsg, err)
+		return fmt.Errorf("msg %v, decode err: %v", GetPooledTransactionsMsg, err)
 	}
 
-	log.Debug("Receive GetTransactions request", "from", peer.id, "req", req)
+	log.Debug("Receive GetPooledTransactions request", "from", peer.id, "req", req)
 
 	return backend.Handle(peer, req)
 }
 
-func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
-	res := new(TransactionsPacket)
+func handlePooledTransactions(backend Backend, msg Decoder, peer *Peer) error {
+	res := new(PooledTransactionsPacket)
 	if err := msg.Decode(res); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
-	for i, tx := range res.TransactionsResponse {
+	for i, tx := range res.PooledTransactionsResponse {
 		// Validate and mark the remote transaction
 		if tx == nil {
 			return fmt.Errorf("%w: transaction %d is nil", errDecode, i)
@@ -185,12 +149,38 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	}
 	tresp := tracker.Response{
 		ID:      res.RequestId,
-		MsgCode: TransactionsMsg,
-		Size:    len(res.TransactionsResponse),
+		MsgCode: PooledTransactionsMsg,
+		Size:    len(res.PooledTransactionsResponse),
 	}
 	if err := peer.tracker.Fulfil(tresp); err != nil {
-		return fmt.Errorf("Transactions: %w", err)
+		return fmt.Errorf("PooledTransactions: %w", err)
 	}
-	log.Debug("Receive Transactions response", "from", peer.id, "requestId", res.RequestId, "transactions", len(res.TransactionsResponse))
+	log.Debug("Receive PooledTransactions response", "from", peer.id, "requestId", res.RequestId, "transactions", len(res.PooledTransactionsResponse))
+	return backend.Handle(peer, res)
+}
+
+func handleGetPooledBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	req := new(GetPooledBlobsPacket)
+	if err := msg.Decode(req); err != nil {
+		return fmt.Errorf("msg %v, decode err: %v", GetPooledBlobsMsg, err)
+	}
+	log.Debug("Receive GetPooledBlobs request", "from", peer.id, "req", req)
+	return backend.Handle(peer, req)
+}
+
+func handlePooledBlobs(backend Backend, msg Decoder, peer *Peer) error {
+	res := new(PooledBlobsPacket)
+	if err := msg.Decode(res); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+	tresp := tracker.Response{
+		ID:      res.RequestId,
+		MsgCode: PooledBlobsMsg,
+		Size:    len(res.PooledBlobsResponse.Blobs),
+	}
+	if err := peer.tracker.Fulfil(tresp); err != nil {
+		return fmt.Errorf("PooledBlobs: %w", err)
+	}
+	log.Debug("Receive PooledBlobs response", "from", peer.id, "requestId", res.RequestId, "blobs", len(res.PooledBlobsResponse.Blobs))
 	return backend.Handle(peer, res)
 }
