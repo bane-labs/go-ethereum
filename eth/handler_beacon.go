@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -78,11 +79,17 @@ func (h *beaconHandler) Handle(peer *beacon.Peer, packet beacon.Packet) error {
 	case *beacon.GetBatchBlobsPacket:
 		return h.handleGetBatchBlobsPacket(peer, packet)
 
-	case *beacon.GetTransactionsPacket:
-		return h.handleGetTransactionsPacket(peer, packet)
+	case *beacon.GetCachedTransactionsPacket:
+		return h.handleGetCachedTransactionsPacket(peer, packet)
 
-	case *beacon.TransactionsPacket:
-		return h.handleTransactions(peer, packet)
+	case *beacon.CachedTransactionsPacket:
+		return h.handleCachedTransactions(peer, packet)
+
+	case *beacon.GetCachedBlobsPacket:
+		return h.handleGetCachedBlobsPacket(peer, packet)
+
+	case *beacon.CachedBlobsPacket:
+		return h.handleCachedBlobs(peer, packet)
 
 	default:
 		return fmt.Errorf("unexpected beacon packet type: %T", packet)
@@ -382,17 +389,17 @@ func (h *beaconHandler) selectBlobTransferPeers(excludePeer *string) []*beaconPe
 	return transfer
 }
 
-// handleGetTransactionsPacket is CL-level search for transactions by hash. It extends
+// handleGetCachedTransactionsPacket is CL-level search for transactions by hash. It extends
 // the EL transaction retrieval by taking pending payloads into consideration. This is
 // useful for BFT consensus to find missing transactions during block processing.
-func (h *beaconHandler) handleGetTransactionsPacket(peer *beacon.Peer, packet *beacon.GetTransactionsPacket) error {
+func (h *beaconHandler) handleGetCachedTransactionsPacket(peer *beacon.Peer, packet *beacon.GetCachedTransactionsPacket) error {
 	// Gather transactions until the fetch or network limits is reached
 	var (
 		bytes  int
 		hashes []common.Hash
 		txs    []rlp.RawValue
 	)
-	for _, hash := range packet.GetTransactionsRequest {
+	for _, hash := range packet.GetCachedTransactionsRequest {
 		if bytes >= softResponseLimit {
 			break
 		}
@@ -416,14 +423,14 @@ func (h *beaconHandler) handleGetTransactionsPacket(peer *beacon.Peer, packet *b
 		txs = append(txs, encoded)
 		bytes += len(encoded)
 	}
-	return peer.ReplyTransactionsRLP(packet.RequestId, hashes, txs)
+	return peer.ReplyCachedTransactionsRLP(packet.RequestId, hashes, txs)
 }
 
-func (h *beaconHandler) handleTransactions(peer *beacon.Peer, packet *beacon.TransactionsPacket) error {
+func (h *beaconHandler) handleCachedTransactions(peer *beacon.Peer, packet *beacon.CachedTransactionsPacket) error {
 	// If we receive any blob transactions missing sidecars, or with
 	// sidecars that don't correspond to the versioned hashes reported
 	// in the header, disconnect from the sending peer.
-	for _, tx := range packet.TransactionsResponse {
+	for _, tx := range packet.CachedTransactionsResponse {
 		if tx.Type() == types.BlobTxType {
 			if tx.BlobTxSidecar() == nil {
 				return errors.New("received sidecar-less blob transaction")
@@ -433,6 +440,26 @@ func (h *beaconHandler) handleTransactions(peer *beacon.Peer, packet *beacon.Tra
 			}
 		}
 	}
-	h.beacon.NotifyTransactions(packet.TransactionsResponse)
+	h.beacon.NotifyTransactions(packet.CachedTransactionsResponse)
+	return nil
+}
+
+func (h *beaconHandler) handleGetCachedBlobsPacket(peer *beacon.Peer, packet *beacon.GetCachedBlobsPacket) error {
+	// Try to find the blob sidecar from the CL.
+	hashes := packet.GetCachedBlobsRequest
+	bundle := h.beacon.GetBlobs(packet.GetCachedBlobsRequest)
+
+	return peer.ReplyCachedBlobs(packet.RequestId, hashes, bundle)
+}
+
+func (h *beaconHandler) handleCachedBlobs(peer *beacon.Peer, packet *beacon.CachedBlobsPacket) error {
+	// Notify the CL of the received blobs.
+	bundle := engine.BlobsBundle{
+		Blobs:       packet.CachedBlobsResponse.Blobs,
+		Commitments: packet.CachedBlobsResponse.Commitments,
+		Proofs:      packet.CachedBlobsResponse.Proofs,
+	}
+	// TODO: Validate the received blobs against the commitments and proofs before notifying the CL.
+	h.beacon.NotifyBlobs(&bundle)
 	return nil
 }
