@@ -186,10 +186,11 @@ type DBFT struct {
 	// stored in txCbList and checked against the incoming transactions. If
 	// subsequent incoming transaction was requested then it'll be sent to the
 	// buffered txs channel.
-	requestTxs func(hashed []common.Hash)
-	txCbList   atomic.Value
-	txSub      event.Subscription
-	txEvents   chan *types.Transaction
+	requestTxs   func(hashed []common.Hash)
+	requestBlobs func(hashed []common.Hash)
+	txCbList     atomic.Value
+	txSub        event.Subscription
+	txEvents     chan *types.Transaction
 
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
@@ -969,6 +970,17 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 	// transactions via internal mechanism in this consensus view).
 	c.sealingTransactions = nil
 
+	if req.extended {
+		// TODO: Only request missing blobs
+		hashes := make([]common.Hash, 0)
+		for _, tx := range req.Txs {
+			if tx.Tx.Type() == types.BlobTxType {
+				hashes = append(hashes, tx.Tx.BlobHashes()...)
+			}
+		}
+		c.requestBlobs(hashes)
+	}
+
 	return nil
 }
 
@@ -1583,6 +1595,11 @@ func (c *DBFT) WithBroadcast(f func(m *dbftproto.Message) error) {
 // WithRequestTxs sets callback to request the missing transactions from neighbor nodese.
 func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 	c.requestTxs = f
+}
+
+// WithRequestBlobs sets callback to request the missing blobs from neighbor nodes.
+func (c *DBFT) WithRequestBlobs(f func(hashed []common.Hash)) {
+	c.requestBlobs = f
 }
 
 // WithBeacon initializes beacon protocol related channels and functions.
