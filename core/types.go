@@ -64,8 +64,8 @@ type ProcessResult struct {
 	// fork validation is performed before accessing it.
 	Bal *bal.ConstructionBlockAccessList
 
-	// digest carries the block bloom and the receipt root, hashed alongside
-	// execution by the receipt pipeline. It is nil for a result assembled
-	// elsewhere, and the validator hashes the receipts itself in that case.
-	digest *receiptDigest
+	// pipeline digests the receipts and the access list alongside execution
+	// and validation. It is nil for a result assembled elsewhere, and the
+	// validator computes the receipt digests itself in that case.
+	pipeline *digestPipeline
 }
