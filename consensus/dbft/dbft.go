@@ -247,7 +247,7 @@ type DBFT struct {
 	sealingState    *state.StateDB
 	sealingBlock    *types.Block
 	sealingReceipts types.Receipts
-	sealingBal      *bal.ConstructionBlockAccessList
+	sealingBal      *bal.BlockAccessList
 
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
 	chain  ChainHeaderReader
@@ -570,7 +570,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 		if ctx.IsPrimary() {
 			res.state = c.sealingState
 			res.receipts = c.sealingReceipts
-			res.accessList = c.sealingBal.ToEncodingObj()
+			res.accessList = c.sealingBal
 		}
 		return res
 	}
@@ -583,7 +583,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 			header:              c.sealingBlock.Header(),
 			withdrawals:         c.sealingBlock.Withdrawals(),
 			transactions:        c.sealingBlock.Transactions(),
-			accessList:          c.sealingBal.ToEncodingObj(),
+			accessList:          c.sealingBal,
 			localSignatureBytes: nil,
 			state:               c.sealingState,
 			receipts:            c.sealingReceipts,
@@ -749,7 +749,7 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 	c.sealingState = state
 	c.sealingBlock = res
 	c.sealingReceipts = result.Receipts
-	c.sealingBal = result.Bal
+	c.sealingBal = result.Bal.ToEncodingObj()
 
 	req.SealingProposal = c.sealingProposal
 	if len(c.lastBlockSealHash) == common.HashLength {
