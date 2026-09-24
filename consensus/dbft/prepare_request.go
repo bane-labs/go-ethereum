@@ -19,6 +19,10 @@ type prepareRequest struct {
 	TxHashes []common.Hash
 	Txs      []*Transaction
 
+	verified     []dbft.Transaction[common.Hash]
+	missingTxs   map[common.Hash]int
+	missingBlobs map[common.Hash][]common.Hash // mapping from tx hash to blob hashes
+
 	// Fields that should be included into PrepareRequest for its verification for
 	// pre-NeoXAMEV fork. Starting from NeoXAMEV+1 height these fields are filled
 	// only if multisignature signing scheme is enforced.
@@ -34,28 +38,9 @@ func (p *prepareRequest) Timestamp() uint64 { return p.SealingProposal.Time * Ns
 // Nonce implements the payload.PrepareRequest interface.
 func (p *prepareRequest) Nonce() uint64 { return 0 }
 
-// TransactionHashes implements the payload.PrepareRequest interface.
-func (p *prepareRequest) TransactionHashes() []common.Hash {
-	if p.extended {
-		res := make([]common.Hash, len(p.Txs))
-		for i, tx := range p.Txs {
-			res[i] = tx.Hash()
-		}
-		return res
-	}
-	return p.TxHashes
-}
-
 // Transactions implements the payload.PrepareRequest interface.
-func (p *prepareRequest) Transactions() []dbft.Transaction[common.Hash] {
-	if !p.extended {
-		panic("bug: should not be called on PrepareRequestV1")
-	}
-	res := make([]dbft.Transaction[common.Hash], len(p.Txs))
-	for i, tx := range p.Txs {
-		res[i] = tx
-	}
-	return res
+func (p *prepareRequest) Transactions() ([]dbft.Transaction[common.Hash], map[common.Hash]int) {
+	return p.verified, p.missingTxs
 }
 
 // prepareRequestV0Aux represents an auxiluary structure for RLP prepareRequest

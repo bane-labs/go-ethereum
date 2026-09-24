@@ -369,7 +369,6 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithProcessBlock[common.Hash](c.processBlockCb),
 		dbft.WithNewBlockFromContext[common.Hash](c.newBlockFromContextCb),
 		dbft.WithWatchOnly[common.Hash](func() bool { return false }),
-		dbft.WithGetTxs[common.Hash](c.getTxCb),
 		dbft.WithGetVerified[common.Hash](c.getVerifiedCb),
 		dbft.WithRequestTx[common.Hash](c.requestTxCb),
 		dbft.WithStopTxFlow[common.Hash](c.stopTxFlowCb),
@@ -634,45 +633,6 @@ func (c *DBFT) isPrepareRequestExtensionEnabled() bool {
 	return c.config.prepareRequestExtensionEnablingHeight >= 0 && int64(c.dbft.Context.BlockIndex) >= c.config.prepareRequestExtensionEnablingHeight
 }
 
-// getTxCb is a dbft library setting callback.
-func (c *DBFT) getTxCb(isMissing func(h common.Hash) bool) []dbft.Transaction[common.Hash] {
-	ctx := c.dbft.Context
-	pReq := ctx.PreparationPayloads[ctx.PrimaryIndex].GetPrepareRequest().(*prepareRequest)
-	hits := make([]dbft.Transaction[common.Hash], 0, max(len(pReq.Txs), len(pReq.TxHashes))) // tiny hack to save a few lines of code.
-	if c.isPrepareRequestExtensionEnabled() {
-		for _, tx := range pReq.Txs {
-			if !isMissing(tx.Tx.Hash()) {
-				continue
-			}
-			if tx.Tx.Type() != types.BlobTxType {
-				hits = append(hits, tx)
-				continue
-			}
-
-			// Blob transactions require separate blob verification, hence send
-			// it to dBFT iff blob is available and verified. Treat missing/empty
-			// blob transactions as missing until the node is able to fetch and
-			// verify the blob.
-			blob := c.txpool.Get(tx.Tx.Hash())
-			if blob != nil {
-				hits = append(hits, tx.Tx.WithoutBlobTxSidecar())
-			}
-		}
-	} else {
-		for _, h := range pReq.TxHashes {
-			if isMissing(h) {
-				continue
-			}
-			tx := c.txpool.Get(h)
-			if tx != nil {
-				hits = append(hits, tx.WithoutBlobTxSidecar())
-			}
-		}
-	}
-
-	return hits
-}
-
 // getVerifiedCb is a dbft library setting callback.
 func (c *DBFT) getVerifiedCb() []dbft.Transaction[common.Hash] {
 	var txs types.Transactions
@@ -694,18 +654,35 @@ func (c *DBFT) getVerifiedCb() []dbft.Transaction[common.Hash] {
 }
 
 // requestTxCb is a dbft library setting callback.
-func (c *DBFT) requestTxCb(misses map[common.Hash]int) {
+func (c *DBFT) requestTxCb(misses []common.Hash) {
 	if len(misses) == 0 {
 		return
 	}
 
-	sorted := make([]common.Hash, 0, len(misses))
-	for h := range misses {
-		sorted = append(sorted, h)
+	if c.isPrepareRequestExtensionEnabled() {
+		// Retrieve versionedHashes of missing blobs based on PrepareRequest data.
+		ctx := c.dbft.Context
+		req := ctx.PreparationPayloads[ctx.PrimaryIndex].GetPrepareRequest().(*prepareRequest)
+		hashes := make([]common.Hash, 0)
+		for _, h := range misses {
+			blobs, ok := req.missingBlobs[h]
+			if !ok {
+				panic("bug: missing sidecar hashes data in PrepareRequest")
+			}
+			hashes = append(hashes, blobs...)
+		}
+		slices.SortFunc(hashes, common.Hash.Cmp)
+		c.requestBlobs(hashes)
+		// TODO: update analogue of txCbList and properly deal with incoming blob notification.
+	} else {
+		sorted := make([]common.Hash, 0, len(misses))
+		for _, h := range misses {
+			sorted = append(sorted, h)
+		}
+		slices.SortFunc(sorted, common.Hash.Cmp)
+		c.txCbList.Store(sorted)
+		c.requestTxs(sorted)
 	}
-	slices.SortFunc(sorted, common.Hash.Cmp)
-	c.txCbList.Store(sorted)
-	c.requestTxs(sorted)
 }
 
 // stopTxFlowCb is a dbft library setting callback.
@@ -981,6 +958,44 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 	// sealingTransactions are not needed for proper dBFT functioning (dBFT will collect
 	// transactions via internal mechanism in this consensus view).
 	c.sealingTransactions = nil
+
+	// Fill in internal PrepareRequest fields.
+	// TODO: primary doesn't have this code, move it to a separate method and reuse.
+	txs := make([]dbft.Transaction[common.Hash], len(req.Txs))
+	missingBlobs := make(map[common.Hash][]common.Hash)
+	missingTxs := make(map[common.Hash]int)
+	if c.isPrepareRequestExtensionEnabled() {
+		for i, tx := range req.Txs {
+			if tx.Tx.Type() != types.BlobTxType {
+				txs[i] = tx.Tx
+				continue
+			}
+
+			// Blob transactions require separate blob verification, hence send
+			// it to dBFT iff blob is available and verified. Treat missing/empty
+			// blob transactions as missing until the node is able to fetch and
+			// verify the blob.
+			blob := c.txpool.Get(tx.Tx.Hash())
+			if blob != nil {
+				txs[i] = tx.Tx.WithoutBlobTxSidecar()
+			} else {
+				missingBlobs[tx.Tx.Hash()] = tx.Tx.BlobHashes()
+				missingTxs[tx.Tx.Hash()] = i
+			}
+		}
+	} else {
+		for i, tx := range req.Txs {
+			verified := c.txpool.Get(tx.Tx.Hash())
+			if verified != nil {
+				txs[i] = verified.WithoutBlobTxSidecar()
+			} else {
+				missingTxs[tx.Tx.Hash()] = i
+			}
+		}
+	}
+	req.verified = txs
+	req.missingBlobs = missingBlobs
+	req.missingTxs = missingTxs
 
 	return nil
 }
