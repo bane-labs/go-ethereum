@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -459,7 +460,55 @@ func (h *beaconHandler) handleCachedBlobs(peer *beacon.Peer, packet *beacon.Cach
 		Commitments: packet.CachedBlobsResponse.Commitments,
 		Proofs:      packet.CachedBlobsResponse.Proofs,
 	}
-	// TODO: Validate the received blobs against the commitments and proofs before notifying the CL.
+	// Validate the received blobs against the commitments and proofs before notifying the CL.
+	if len(bundle.Blobs) != len(bundle.Commitments) {
+		return errors.New("mismatched lengths of blobs and commitments")
+	}
+	expectedCellProofs := len(bundle.Blobs) * kzg4844.CellsPerBlob
+	// Only V1 blobs are supported in this protocol, same as the EL blobpool rules.
+	if len(bundle.Proofs) != expectedCellProofs {
+		return errors.New("mismatched lengths of blobs and proofs")
+	}
+	// Shortcut if there are no blobs to verify.
+	if expectedCellProofs == 0 {
+		return nil
+	}
+	allCells := make([]kzg4844.Cell, 0, expectedCellProofs)
+	allCommitments := make([]kzg4844.Commitment, 0, len(bundle.Blobs))
+	allProofs := make([]kzg4844.Proof, 0, expectedCellProofs)
+	allIndices := make([]uint64, kzg4844.CellsPerBlob)
+	for i := range allIndices {
+		allIndices[i] = uint64(i)
+	}
+	for blobIdx := range bundle.Blobs {
+		// Check blob size and compute cells.
+		if len(bundle.Blobs[blobIdx]) != len(kzg4844.Blob{}) {
+			return errors.New("invalid blob size")
+		}
+		blob := kzg4844.Blob(bundle.Blobs[blobIdx])
+		cells, err := kzg4844.ComputeCells([]kzg4844.Blob{blob})
+		if err != nil {
+			return fmt.Errorf("failed to compute cells for blob %d: %w", blobIdx, err)
+		}
+		// Check commitment size.
+		if len(bundle.Commitments[blobIdx]) != len(kzg4844.Commitment{}) {
+			return errors.New("invalid commitment size")
+		}
+		// Check proof size.
+		for cellIdx := 0; cellIdx < kzg4844.CellsPerBlob; cellIdx++ {
+			cellProofIdx := blobIdx*kzg4844.CellsPerBlob + cellIdx
+			if len(bundle.Proofs[cellProofIdx]) != len(kzg4844.Proof{}) {
+				return errors.New("invalid proof size")
+			}
+			allCells = append(allCells, cells[cellIdx])
+			allProofs = append(allProofs, kzg4844.Proof(bundle.Proofs[cellProofIdx]))
+		}
+		allCommitments = append(allCommitments, kzg4844.Commitment(bundle.Commitments[blobIdx]))
+	}
+	// Verify the cells against the commitments and proofs.
+	if err := kzg4844.VerifyCells(allCells, allCommitments, allProofs, allIndices); err != nil {
+		return fmt.Errorf("failed to verify cells for blobs: %w", err)
+	}
 	h.beacon.NotifyBlobs(&bundle)
 	return nil
 }
