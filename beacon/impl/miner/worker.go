@@ -80,7 +80,6 @@ type worker struct {
 	pendingPayloadID       *engine.PayloadID
 	pendingTransactions    types.Transactions
 	pendingVersionedHashes []common.Hash
-	isCellProofEnabled     bool
 	pendingBlobs           []hexutil.Bytes
 	pendingCommitments     []hexutil.Bytes
 	pendingProofs          []hexutil.Bytes
@@ -267,7 +266,6 @@ func (w *worker) requestWork(timestamp uint64) {
 	// Cache the new block's transactions for potential future use, e.g. for BFT missing transaction request.
 	w.pendingTransactions = block.Transactions()
 	w.pendingVersionedHashes = versionedHashes
-	w.isCellProofEnabled = w.chain.Config().IsOsaka(block.Number(), block.Time())
 	w.pendingBlobs = payload.BlobsBundle.Blobs
 	w.pendingCommitments = payload.BlobsBundle.Commitments
 	w.pendingProofs = payload.BlobsBundle.Proofs
@@ -307,36 +305,20 @@ func (w *worker) getTransaction(hash common.Hash) *types.Transaction {
 				for idx, vHash := range w.pendingVersionedHashes {
 					hashToIndex[vHash] = idx
 				}
-				// The sidecar has different format based on its version.
-				if w.isCellProofEnabled {
-					version = types.BlobSidecarVersion1
-					proofs = make([]kzg4844.Proof, len(blobHashes)*kzg4844.CellProofsPerBlob)
-					for i, blobHash := range blobHashes {
-						m, exists := hashToIndex[blobHash]
-						if exists {
-							copy(blobs[i][:], w.pendingBlobs[m])
-							copy(commitments[i][:], w.pendingCommitments[m])
-							for n := range kzg4844.CellProofsPerBlob {
-								copy(proofs[i*kzg4844.CellProofsPerBlob+n][:], w.pendingProofs[m*kzg4844.CellProofsPerBlob+n])
-							}
-						} else {
-							log.Error("Blob is missing in the cache", "txhash", hash, "blobhash", blobHash)
-							return nil
+				// Only support blob V1, same as the EL blobpool rules.
+				version = types.BlobSidecarVersion1
+				proofs = make([]kzg4844.Proof, len(blobHashes)*kzg4844.CellProofsPerBlob)
+				for i, blobHash := range blobHashes {
+					m, exists := hashToIndex[blobHash]
+					if exists {
+						copy(blobs[i][:], w.pendingBlobs[m])
+						copy(commitments[i][:], w.pendingCommitments[m])
+						for n := range kzg4844.CellProofsPerBlob {
+							copy(proofs[i*kzg4844.CellProofsPerBlob+n][:], w.pendingProofs[m*kzg4844.CellProofsPerBlob+n])
 						}
-					}
-				} else {
-					version = types.BlobSidecarVersion0
-					proofs = make([]kzg4844.Proof, len(blobHashes))
-					for i, blobHash := range blobHashes {
-						m, exists := hashToIndex[blobHash]
-						if exists {
-							copy(blobs[i][:], w.pendingBlobs[m])
-							copy(commitments[i][:], w.pendingCommitments[m])
-							copy(proofs[i][:], w.pendingProofs[m])
-						} else {
-							log.Error("Blob is missing in the cache", "txhash", hash, "blobhash", blobHash)
-							return nil
-						}
+					} else {
+						log.Error("Blob is missing in the cache", "txhash", hash, "blobhash", blobHash)
+						return nil
 					}
 				}
 				return tx.WithBlobTxSidecar(types.NewBlobTxSidecar(version, blobs, commitments, proofs))
@@ -373,16 +355,7 @@ func (w *worker) cacheTransactions(txs []*types.Transaction) {
 			if sidecar == nil {
 				continue
 			}
-			switch tx.BlobTxSidecar().Version {
-			case types.BlobSidecarVersion0:
-				if w.isCellProofEnabled {
-					continue
-				}
-			case types.BlobSidecarVersion1:
-				if !w.isCellProofEnabled {
-					continue
-				}
-			default:
+			if tx.BlobTxSidecar().Version < types.BlobSidecarVersion1 {
 				continue
 			}
 			if err := core.ValidateBlobSidecar(sidecar, tx.BlobHashes()); err != nil {
@@ -420,12 +393,8 @@ func (w *worker) getBlobs(hashes []common.Hash) *engine.BlobsBundle {
 		if idx, exists := hashToIndex[hash]; exists {
 			bundle.Blobs = append(bundle.Blobs, w.pendingBlobs[idx])
 			bundle.Commitments = append(bundle.Commitments, w.pendingCommitments[idx])
-			if w.isCellProofEnabled {
-				for n := 0; n < kzg4844.CellProofsPerBlob; n++ {
-					bundle.Proofs = append(bundle.Proofs, w.pendingProofs[idx*kzg4844.CellProofsPerBlob+n])
-				}
-			} else {
-				bundle.Proofs = append(bundle.Proofs, w.pendingProofs[idx])
+			for n := 0; n < kzg4844.CellProofsPerBlob; n++ {
+				bundle.Proofs = append(bundle.Proofs, w.pendingProofs[idx*kzg4844.CellProofsPerBlob+n])
 			}
 		}
 	}
@@ -450,12 +419,8 @@ func (w *worker) cacheBlobs(bundle *engine.BlobsBundle) {
 		w.pendingVersionedHashes = append(w.pendingVersionedHashes, vhash)
 		w.pendingBlobs = append(w.pendingBlobs, bundle.Blobs[i])
 		w.pendingCommitments = append(w.pendingCommitments, bundle.Commitments[i])
-		if w.isCellProofEnabled {
-			for n := 0; n < kzg4844.CellProofsPerBlob; n++ {
-				w.pendingProofs = append(w.pendingProofs, bundle.Proofs[i*kzg4844.CellProofsPerBlob+n])
-			}
-		} else {
-			w.pendingProofs = append(w.pendingProofs, bundle.Proofs[i])
+		for n := 0; n < kzg4844.CellProofsPerBlob; n++ {
+			w.pendingProofs = append(w.pendingProofs, bundle.Proofs[i*kzg4844.CellProofsPerBlob+n])
 		}
 		hashToIndex[vhash] = len(w.pendingVersionedHashes)
 	}
