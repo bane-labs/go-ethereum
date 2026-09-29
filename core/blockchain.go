@@ -3175,7 +3175,7 @@ func (bc *BlockChain) getParentState(block *types.Block) (*state.StateDB, *types
 			return nil, nil, fmt.Errorf("failed to retrieve canonical parent by number to process block state (number %d, hash %s)", block.NumberU64()-1, block.ParentHash().String())
 		}
 	}
-	statedb, err := bc.StateAt(parent.Header())
+	statedb, err := bc.StateAt(parent.Root(), parent.Number(), parent.Time())
 	if err != nil {
 		return nil, parent.Header(), fmt.Errorf("failed to retrieve state at %d, %s: %w", parent.NumberU64(), parent.Root(), err)
 	}
