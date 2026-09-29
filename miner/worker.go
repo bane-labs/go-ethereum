@@ -317,7 +317,7 @@ func (miner *Miner) prepareWork(ctx context.Context, genParams *generateParams, 
 	}
 	// Set baseFee and GasLimit if we are on an EIP-1559 chain
 	if miner.chainConfig.IsLondon(header.Number) {
-		state, err := miner.chain.StateAt(parent)
+		state, err := miner.chain.StateAt(parent.Root, parent.Number, parent.Time)
 		if err != nil {
 			log.Error("Failed to get state", "err", err)
 			return nil, err

@@ -109,7 +109,7 @@ func (c *DBFT) handleDKG(snapshot *snapshot, keystore *antimev.KeyStore, h *type
 	taskList := make(taskList, 0)
 	amevAddress := keystore.Address()
 	if state == nil {
-		s, err := c.chain.StateAt(h)
+		s, err := c.chain.StateAt(h.Root, h.Number, h.Time)
 		if err != nil {
 			return fmt.Errorf("failed to call StateAt: %v", err)
 		}
