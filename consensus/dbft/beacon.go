@@ -1,6 +1,7 @@
 package dbft
 
 import (
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 )
@@ -11,4 +12,5 @@ type Beacon interface {
 	BlockBroadcaster() chan<- *types.Block
 	SubscribeSyncingEvents(ch chan<- bool) event.Subscription
 	SubscribeTransactionEvents(ch chan<- *types.Transaction) event.Subscription
+	SubscribeBlobEvents(ch chan<- []common.Hash) event.Subscription
 }
