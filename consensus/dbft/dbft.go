@@ -200,7 +200,7 @@ type DBFT struct {
 	txSub        event.Subscription
 	txEvents     chan *types.Transaction
 	blobSub      event.Subscription
-	blobEvents   chan *types.BlobTxSidecar
+	blobEvents   chan []common.Hash
 
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
@@ -351,7 +351,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 
 		messages:        make(chan Payload, msgsChCap),
 		txEvents:        make(chan *types.Transaction, txSubCap),
-		blobEvents:      make(chan *types.BlobTxSidecar, txSubCap),
+		blobEvents:      make(chan []common.Hash, txSubCap),
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
 		syncingEvents:   make(chan bool, 2),
 
@@ -2443,21 +2443,21 @@ events:
 			c.dbft.OnReceive(&msg)
 		case tx := <-c.txEvents:
 			c.dbft.OnTransaction(&Transaction{Tx: tx.WithoutBlobTxSidecar()})
-		case blob := <-c.blobEvents:
+		case hashes := <-c.blobEvents:
 			ctx := c.dbft.Context
 			req := ctx.PreparationPayloads[ctx.PrimaryIndex].GetPrepareRequest().(*prepareRequest)
-			var i int
 			// TODO: refactor and optimize, depending on the content of `blob`.
-			// @txhsl the idea is to filter out received and verified blob parts and if a sidecar
-			// is completely collected and verified, notify dBFT about "new" blob transaction.
-			for txH, missingBlobHashes := range req.missingBlobs {
-				for _, incomingBlobHash := range blob.BlobHashes() {
-					if slices.Contains(missingBlobHashes, incomingBlobHash) { // TODO: change this rule to define when blob is collected and verified.
-						i = req.missingTxs[txH]
+			for txHash, blobHashes := range req.missingBlobs {
+				complete := true
+				for _, vh := range blobHashes {
+					if !slices.Contains(hashes, common.Hash(vh.Bytes())) { // TODO: change this rule to define when blob is collected and verified.
+						complete = false
 					}
 				}
+				if complete {
+					c.dbft.OnTransaction(req.Txs[req.missingTxs[txHash]]) // the blob transaction itself (without sidecars) is already present in PrepareRequest.
+				}
 			}
-			c.dbft.OnTransaction(req.Txs[i]) // the blob transaction itself (without sidecars) is already present in PrepareRequest.
 		case h := <-c.chainHeadEvents:
 			c.handleChainBlock(h.Header, true)
 		case err := <-c.chainHeadSub.Err():

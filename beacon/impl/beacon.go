@@ -200,6 +200,12 @@ func (b *Beacon) SubscribeTransactionEvents(ch chan<- *types.Transaction) event.
 	return b.miner.SubscribeTransactionEvents(ch)
 }
 
+// SubscribeBlobEvents subscribes to blob events from the miner.
+// This is useful for BFT consensus to listen on missing blob responses.
+func (b *Beacon) SubscribeBlobEvents(ch chan<- []common.Hash) event.Subscription {
+	return b.miner.SubscribeBlobEvents(ch)
+}
+
 // Close closes the beacon client service.
 func (b *Beacon) Close() error {
 	b.miner.Close()
