@@ -27,9 +27,9 @@ type prepareRequest struct {
 
 	// Auxiliary fields for incoming prepareRequest filled in during its verification
 	// and used by the dBFT library.
-	verified     []dbft.Transaction[common.Hash] // the list of verified transactions of type [*Transaction].
+	verified     []dbft.Transaction[common.Hash] // the list of verified transactions of type [*Transaction]. May contain gaps (nil items) in place of missing blob transactions.
 	missingTxs   map[common.Hash]int             // mapping from the missing transaction hash to its index in the list of proposed transactions.
-	missingBlobs map[common.Hash][]common.Hash   // mapping from tx hash to the list of blob commitment hashes.
+	missingBlobs map[common.Hash]struct{}        // a map of missing blob commitment hashes.
 }
 
 var _ dbft.PrepareRequest[common.Hash] = (*prepareRequest)(nil)
