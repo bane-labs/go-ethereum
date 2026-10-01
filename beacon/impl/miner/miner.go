@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
@@ -46,6 +47,7 @@ type Miner struct {
 	worker      *worker
 	syncingFeed event.Feed              // Event feed for syncing status changes, a CL notifier as proxy
 	txFeed      event.Feed              // Event feed for new transactions delivered through CL
+	blobFeed    event.Feed              // Event feed for new blob data delivered through CL
 	scope       event.SubscriptionScope // Subscription scope for miner events
 
 	txFilter TransactionFilterFn // Optional filter for transactions subscription
@@ -103,6 +105,25 @@ func (miner *Miner) NotifyTransactions(txs []*types.Transaction) {
 		miner.txFeed.Send(tx)
 	}
 	miner.worker.cacheTransactions(txs)
+}
+
+// GetBlobs tries to find blob data from the latest payload that the
+// miner has seen.
+func (miner *Miner) GetBlobs(hashes []common.Hash) *engine.BlobsBundle {
+	return miner.worker.getBlobs(hashes)
+}
+
+// NotifyBlobs notifies the miner about blob data seen in the beacon protocol.
+func (miner *Miner) NotifyBlobs(bundle *engine.BlobsBundle) {
+	if len(bundle.Blobs) == 0 {
+		return
+	}
+	hashes := make([]common.Hash, 0, len(bundle.Commitments))
+	for _, cmt := range bundle.Commitments {
+		hashes = append(hashes, convertKzgCommitmentToVersionedHash(cmt))
+	}
+	miner.blobFeed.Send(hashes)
+	miner.worker.cacheBlobs(bundle)
 }
 
 // update keeps track of the downloader events. Please be aware that this is a one shot type of update loop.
@@ -202,4 +223,9 @@ func (miner *Miner) SubscribeSyncingEvents(ch chan<- bool) event.Subscription {
 // SubscribeTransactionEvents subscribes to transaction events from the miner, should only be used in CL.
 func (miner *Miner) SubscribeTransactionEvents(ch chan<- *types.Transaction) event.Subscription {
 	return miner.scope.Track(miner.txFeed.Subscribe(ch))
+}
+
+// SubscribeBlobEvents subscribes to blob events from the miner, should only be used in CL.
+func (miner *Miner) SubscribeBlobEvents(ch chan<- []common.Hash) event.Subscription {
+	return miner.scope.Track(miner.blobFeed.Subscribe(ch))
 }

@@ -20,6 +20,11 @@ type (
 		// [dbft.WithNewRecoveryMessage] callback or based on the consensus [message]
 		// height during [message] RLP decoding.
 		version dbftutil.ExtraVersion
+		// isNeoXPrepareRequestExtensionEnabled tells whether an extended version
+		// of PrepareRequest is used at the given height. This field is filled
+		// manually either in [dbft.WithNewRecoveryMessage] callback or during
+		// [message] RLP decoding.
+		isNeoXPrepareRequestExtensionEnabled func(height *big.Int) bool
 
 		PreparationPayloads []*preparationCompact
 		PreCommitPayloads   []*preCommitCompact
@@ -75,9 +80,10 @@ func (m *recoveryMessage) AddPayload(p dbft.ConsensusPayload[common.Hash]) {
 	switch p.Type() {
 	case dbft.PrepareRequestType:
 		m.PrepareRequest = &message{
-			Type:       prepareRequestType,
-			ViewNumber: p.ViewNumber(),
-			msgPayload: p.GetPrepareRequest().(*prepareRequest),
+			Type:                                 prepareRequestType,
+			ViewNumber:                           p.ViewNumber(),
+			msgPayload:                           p.GetPrepareRequest().(*prepareRequest),
+			isNeoXPrepareRequestExtensionEnabled: m.isNeoXPrepareRequestExtensionEnabled,
 		}
 		h := p.Hash()
 		m.PreparationHashExt = &h
@@ -258,7 +264,11 @@ func (m *recoveryMessage) EncodeRLP(w io.Writer) error {
 
 // DecodeRLP decodes recoveryMessage from RLP.
 func (m *recoveryMessage) DecodeRLP(s *rlp.Stream) error {
-	var aux recoveryMessageAux
+	var aux = recoveryMessageAux{
+		PrepareRequest: &message{
+			isNeoXPrepareRequestExtensionEnabled: m.isNeoXPrepareRequestExtensionEnabled, // obligatory for proper PrepareRequest decoding (if presented).
+		},
+	}
 	if err := s.Decode(&aux); err != nil {
 		return err
 	}
