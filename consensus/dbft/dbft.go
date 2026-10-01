@@ -190,15 +190,16 @@ type DBFT struct {
 	// incoming transactions. If a subsequent incoming transaction was requested,
 	// then it'll be sent to the buffered txEvents channel.
 	requestTxs func(hashed []common.Hash)
+	txCbList   atomic.Value
+	txSub      event.Subscription
+	txEvents   chan *types.Transaction
+
 	// requestBlobs is a callback which is called after PrepareRequestExtension
 	// fork to request the missing blob sidecar parts from neighbor nodes.
-	// Requested sidecar part hashes are stored in txCbList and checked against
-	// the incoming sidecar parts. If a subsequent incoming sidecar part was
-	// requested, then it'll be sent to the buffered blobEvents channel.
+	// Incoming sidecar parts are checked against prepareRequest-level map of
+	// missing sidecar part hashes. If a subsequent incoming sidecar part was
+	// found, then it'll be sent to the buffered blobEvents channel.
 	requestBlobs func(hashed []common.Hash)
-	txCbList     atomic.Value
-	txSub        event.Subscription
-	txEvents     chan *types.Transaction
 	blobSub      event.Subscription
 	blobEvents   chan []common.Hash
 
@@ -681,33 +682,24 @@ func (c *DBFT) getVerifiedCb() []dbft.Transaction[common.Hash] {
 
 // requestTxCb is a dbft library setting callback.
 func (c *DBFT) requestTxCb(misses iter.Seq[common.Hash]) {
-	var (
-		sorted   []common.Hash
-		requestF func(hashes []common.Hash)
-	)
 	if c.isPrepareRequestExtensionEnabled() {
 		// Retrieve versionedHashes of missing blobs based on PrepareRequest data.
 		ctx := c.dbft.Context
 		req := ctx.PreparationPayloads[ctx.PrimaryIndex].GetPrepareRequest().(*prepareRequest)
-		sorted = make([]common.Hash, 0, len(req.missingBlobs)) // best case of at least 1 missing hash per sidecar.
+		missing := make([]common.Hash, 0, len(req.missingBlobs))
 		for h := range misses {
-			blobHs, ok := req.missingBlobs[h]
-			if !ok {
-				panic("bug: missing sidecar hashes data in PrepareRequest")
-			}
-			sorted = append(sorted, blobHs...)
+			missing = append(missing, req.Txs[req.missingTxs[h]].Tx.BlobHashes()...)
 		}
-		requestF = c.requestBlobs
+		c.requestBlobs(missing)
 	} else {
-		sorted = make([]common.Hash, 0, len(c.dbft.MissingTransactions)) // tiny hack to avoid reallocation.
+		sorted := make([]common.Hash, 0, len(c.dbft.MissingTransactions)) // tiny hack to avoid reallocation.
 		for h := range misses {
 			sorted = append(sorted, h)
 		}
-		requestF = c.requestTxs
+		slices.SortFunc(sorted, common.Hash.Cmp)
+		c.txCbList.Store(sorted)
+		c.requestTxs(sorted)
 	}
-	slices.SortFunc(sorted, common.Hash.Cmp)
-	c.txCbList.Store(sorted)
-	requestF(sorted)
 }
 
 // stopTxFlowCb is a dbft library setting callback.
@@ -995,7 +987,7 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 // the unknown hashes in the prepareRequest.
 func (c *DBFT) processMissingTransactions(req *prepareRequest) {
 	txs := make([]dbft.Transaction[common.Hash], len(req.Txs))
-	missingBlobs := make(map[common.Hash][]common.Hash)
+	missingBlobs := make(map[common.Hash]struct{})
 	missingTxs := make(map[common.Hash]int)
 	if c.isPrepareRequestExtensionEnabled() {
 		for i, tx := range req.Txs {
@@ -1008,13 +1000,15 @@ func (c *DBFT) processMissingTransactions(req *prepareRequest) {
 			// it to dBFT iff blob is available and verified. Treat missing/empty
 			// blob transactions as missing until the node is able to fetch and
 			// verify the blob.
-			blob := c.txpool.Get(tx.Tx.Hash()) // TODO: @txhsl, replace with direct Get from blob pool? Is there an indicator if all parts of a sidecar are present and verified by the node?
+			blob := c.txpool.Get(tx.Tx.Hash())
 			if blob != nil {
 				txs[i] = &Transaction{
 					Tx: tx.Tx.WithoutBlobTxSidecar(),
 				}
 			} else {
-				missingBlobs[tx.Tx.Hash()] = tx.Tx.BlobHashes()
+				for _, h := range tx.Tx.BlobHashes() {
+					missingBlobs[h] = struct{}{}
+				}
 				missingTxs[tx.Tx.Hash()] = i
 			}
 		}
@@ -2380,7 +2374,6 @@ func (c *DBFT) waitForNewSealingProposal(desiredHeight uint64, updateContext boo
 	}
 
 	c.sealingProposal = lastProposal.Header()
-	// TODO: @txhsl, is it guaranteed that if lastProposal contains a blob transaction, then all sidecar parts of this blob are verified by the node?
 	c.sealingTransactions = lastProposal.Transactions()
 	log.Info("Sealing proposal updated",
 		"number", c.sealingProposal.Number,
@@ -2443,21 +2436,34 @@ events:
 			c.dbft.OnReceive(&msg)
 		case tx := <-c.txEvents:
 			c.dbft.OnTransaction(&Transaction{Tx: tx.WithoutBlobTxSidecar()})
-		case hashes := <-c.blobEvents:
+		case blobHashes := <-c.blobEvents:
 			ctx := c.dbft.Context
-			req := ctx.PreparationPayloads[ctx.PrimaryIndex].GetPrepareRequest().(*prepareRequest)
-			// TODO: refactor and optimize, depending on the content of `blob`.
-			for txHash, blobHashes := range req.missingBlobs {
-				complete := true
-				for _, vh := range blobHashes {
-					if !slices.Contains(hashes, common.Hash(vh.Bytes())) { // TODO: change this rule to define when blob is collected and verified.
-						complete = false
-					}
-				}
-				if complete {
-					c.dbft.OnTransaction(req.Txs[req.missingTxs[txHash]]) // the blob transaction itself (without sidecars) is already present in PrepareRequest.
+			pReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
+			if pReq == nil { // not received yet.
+				continue
+			}
+			var (
+				req       = pReq.GetPrepareRequest().(*prepareRequest)
+				requested bool
+			)
+			for _, h := range blobHashes {
+				if _, ok := req.missingBlobs[h]; ok {
+					delete(req.missingBlobs, h)
+					requested = true
 				}
 			}
+			if !requested {
+				continue
+			}
+
+			// Once all missing blobs are collected, notify consensus about all missing transactions at once.
+			if len(req.missingBlobs) == 0 {
+				for _, i := range req.missingTxs {
+					c.dbft.OnTransaction(req.Txs[i]) // the blob transaction itself (without sidecars) is already present in PrepareRequest.
+				}
+				clear(req.missingTxs)
+			}
+
 		case h := <-c.chainHeadEvents:
 			c.handleChainBlock(h.Header, true)
 		case err := <-c.chainHeadSub.Err():
@@ -2521,12 +2527,16 @@ events:
 	}
 	c.chainHeadSub.Unsubscribe()
 	c.txSub.Unsubscribe()
+	c.blobSub.Unsubscribe()
 	c.syncingSub.Unsubscribe()
 	c.eventLoopRunning.Store(false)
 drainLoop:
 	for {
 		select {
 		case <-c.messages:
+		case <-c.txEvents:
+		case <-c.blobEvents:
+		case <-c.syncingEvents:
 		case <-c.chainHeadEvents:
 		default:
 			break drainLoop
