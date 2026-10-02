@@ -17,7 +17,7 @@ type prepareRequest struct {
 	// instead of the hashes only.
 	extended bool
 	TxHashes []common.Hash
-	Txs      []*Transaction
+	Txs      []*types.Transaction
 
 	// Fields that should be included into PrepareRequest for its verification for
 	// pre-NeoXAMEV fork. Starting from NeoXAMEV+1 height these fields are filled
@@ -27,12 +27,11 @@ type prepareRequest struct {
 
 	// Auxiliary fields for incoming prepareRequest filled in during its verification
 	// and used by the dBFT library.
-	verified     []dbft.Transaction[common.Hash] // the list of verified transactions of type [*Transaction]. May contain gaps (nil items) in place of missing blob transactions.
-	missingTxs   map[common.Hash]int             // mapping from the missing transaction hash to its index in the list of proposed transactions.
-	missingBlobs map[common.Hash]struct{}        // a map of missing blob commitment hashes.
+	missingTxs   map[common.Hash]int      // mapping from the missing transaction hash to its index in the list of proposed transactions.
+	missingBlobs map[common.Hash]struct{} // a map of missing blob commitment hashes.
 }
 
-var _ dbft.PrepareRequest[common.Hash] = (*prepareRequest)(nil)
+var _ dbft.PrepareRequest[common.Hash, *types.Transaction] = (*prepareRequest)(nil)
 
 // Timestamp implements the payload.PrepareRequest interface.
 func (p *prepareRequest) Timestamp() uint64 { return p.SealingProposal.Time * NsInS }
@@ -41,8 +40,8 @@ func (p *prepareRequest) Timestamp() uint64 { return p.SealingProposal.Time * Ns
 func (p *prepareRequest) Nonce() uint64 { return 0 }
 
 // Transactions implements the payload.PrepareRequest interface.
-func (p *prepareRequest) Transactions() ([]dbft.Transaction[common.Hash], map[common.Hash]int) {
-	return p.verified, p.missingTxs
+func (p *prepareRequest) Transactions() ([]*types.Transaction, map[common.Hash]int) {
+	return p.Txs, p.missingTxs
 }
 
 // prepareRequestV0Aux represents an auxiluary structure for RLP prepareRequest
@@ -65,7 +64,7 @@ type prepareRequestV0Aux struct {
 // info (the full list of transactions instead of hashes only).
 type prepareRequestV1Aux struct {
 	SealingProposal *types.Header
-	Txs             []*Transaction
+	Txs             []*types.Transaction
 
 	// Fields that should be included into PrepareRequest for its verification for
 	// pre-NeoXAMEV fork. Starting from NeoXAMEV+1 height these fields are filled

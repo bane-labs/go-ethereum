@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
+	"github.com/ethereum/go-ethereum/core/types"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/nspcc-dev/dbft"
@@ -71,10 +72,10 @@ type (
 	}
 )
 
-var _ dbft.RecoveryMessage[common.Hash] = (*recoveryMessage)(nil)
+var _ dbft.RecoveryMessage[common.Hash, *types.Transaction] = (*recoveryMessage)(nil)
 
 // AddPayload implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) AddPayload(p dbft.ConsensusPayload[common.Hash]) {
+func (m *recoveryMessage) AddPayload(p dbft.ConsensusPayload[common.Hash, *types.Transaction]) {
 	validator := uint8(p.ValidatorIndex())
 
 	switch p.Type() {
@@ -126,7 +127,7 @@ func (m *recoveryMessage) AddPayload(p dbft.ConsensusPayload[common.Hash]) {
 }
 
 // GetPrepareRequest implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetPrepareRequest(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey, primary uint16) dbft.ConsensusPayload[common.Hash] {
+func (m *recoveryMessage) GetPrepareRequest(p dbft.ConsensusPayload[common.Hash, *types.Transaction], validators []dbft.PublicKey, primary uint16) dbft.ConsensusPayload[common.Hash, *types.Transaction] {
 	if m.PrepareRequest == nil {
 		return nil
 	}
@@ -152,12 +153,12 @@ func (m *recoveryMessage) GetPrepareRequest(p dbft.ConsensusPayload[common.Hash]
 }
 
 // GetPrepareResponses implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetPrepareResponses(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash] {
+func (m *recoveryMessage) GetPrepareResponses(p dbft.ConsensusPayload[common.Hash, *types.Transaction], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash, *types.Transaction] {
 	if m.PreparationHashExt == nil {
 		return nil
 	}
 
-	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.PreparationPayloads))
+	ps := make([]dbft.ConsensusPayload[common.Hash, *types.Transaction], len(m.PreparationPayloads))
 
 	for i, resp := range m.PreparationPayloads {
 		r := fromPayload(prepareResponseType, p.(*Payload), &prepareResponse{
@@ -174,8 +175,8 @@ func (m *recoveryMessage) GetPrepareResponses(p dbft.ConsensusPayload[common.Has
 }
 
 // GetChangeViews implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetChangeViews(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash] {
-	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.ChangeViewPayloads))
+func (m *recoveryMessage) GetChangeViews(p dbft.ConsensusPayload[common.Hash, *types.Transaction], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash, *types.Transaction] {
+	ps := make([]dbft.ConsensusPayload[common.Hash, *types.Transaction], len(m.ChangeViewPayloads))
 
 	for i, cv := range m.ChangeViewPayloads {
 		c := fromPayload(changeViewType, p.(*Payload), &changeView{
@@ -194,8 +195,8 @@ func (m *recoveryMessage) GetChangeViews(p dbft.ConsensusPayload[common.Hash], v
 }
 
 // GetPreCommits implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetPreCommits(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash] {
-	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.PreCommitPayloads))
+func (m *recoveryMessage) GetPreCommits(p dbft.ConsensusPayload[common.Hash, *types.Transaction], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash, *types.Transaction] {
+	ps := make([]dbft.ConsensusPayload[common.Hash, *types.Transaction], len(m.PreCommitPayloads))
 
 	for i, c := range m.PreCommitPayloads {
 		cc := fromPayload(preCommitType, p.(*Payload), &preCommit{dataExt: c.Data})
@@ -210,8 +211,8 @@ func (m *recoveryMessage) GetPreCommits(p dbft.ConsensusPayload[common.Hash], va
 }
 
 // GetCommits implements the payload.RecoveryMessage interface.
-func (m *recoveryMessage) GetCommits(p dbft.ConsensusPayload[common.Hash], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash] {
-	ps := make([]dbft.ConsensusPayload[common.Hash], len(m.CommitPayloads))
+func (m *recoveryMessage) GetCommits(p dbft.ConsensusPayload[common.Hash, *types.Transaction], validators []dbft.PublicKey) []dbft.ConsensusPayload[common.Hash, *types.Transaction] {
+	ps := make([]dbft.ConsensusPayload[common.Hash, *types.Transaction], len(m.CommitPayloads))
 
 	for i, c := range m.CommitPayloads {
 		cc := fromPayload(commitType, p.(*Payload), &commit{version: m.version, signature: c.Signature})
