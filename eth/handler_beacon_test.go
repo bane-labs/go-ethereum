@@ -6,8 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/beacon/engine"
+	beaconfetch "github.com/ethereum/go-ethereum/beacon/impl/fetcher"
+	beaconSync "github.com/ethereum/go-ethereum/beacon/impl/synchronizer"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/event"
@@ -68,8 +74,8 @@ func testBroadcastBlock(t *testing.T, peers, bcasts int) {
 		defer sourcePipe.Close()
 		defer sinkPipe.Close()
 
-		sourcePeer := beacon.NewPeer(beacon.BEACON1, p2p.NewPeerPipe(enode.ID{byte(i)}, "", nil, sourcePipe), sourcePipe)
-		sinkPeer := beacon.NewPeer(beacon.BEACON1, p2p.NewPeerPipe(enode.ID{0}, "", nil, sinkPipe), sinkPipe)
+		sourcePeer := beacon.NewPeer(beacon.BEACON2, p2p.NewPeerPipe(enode.ID{byte(i)}, "", nil, sourcePipe), sourcePipe)
+		sinkPeer := beacon.NewPeer(beacon.BEACON2, p2p.NewPeerPipe(enode.ID{0}, "", nil, sinkPipe), sinkPipe)
 		defer sourcePeer.Close()
 		defer sinkPeer.Close()
 
@@ -121,7 +127,7 @@ func testBroadcastBlock(t *testing.T, peers, bcasts int) {
 
 // Tests that a propagated malformed block (uncles or transactions don't match
 // with the hashes in the header) gets discarded and not broadcast forward.
-func TestBroadcastMalformedBlock1(t *testing.T) { testBroadcastMalformedBlock(t, beacon.BEACON1) }
+func TestBroadcastMalformedBlock(t *testing.T) { testBroadcastMalformedBlock(t, beacon.BEACON2) }
 
 func testBroadcastMalformedBlock(t *testing.T, protocol uint) {
 	t.Parallel()
@@ -181,5 +187,66 @@ func testBroadcastMalformedBlock(t *testing.T, protocol uint) {
 			t.Fatalf("malformed block forwarded")
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
+}
+
+// Test that a valid blob bundle is accepted and forwarded to the beacon notifier.
+type testBeaconNotifier struct {
+	bundle *engine.BlobsBundle
+}
+
+func (n *testBeaconNotifier) StartSynchronizer(beaconSync.LightSyncFn) {}
+func (n *testBeaconNotifier) StartBlockFetcher(beaconfetch.BlockBroadcasterFn, beaconfetch.PeerDropFn, beaconfetch.Fetcher) {
+}
+func (n *testBeaconNotifier) NotifyBlockAnnon(string, common.Hash, uint64, time.Time) {}
+func (n *testBeaconNotifier) EnqueueBlock(string, *types.Block)                       {}
+func (n *testBeaconNotifier) GetTransaction(common.Hash) *types.Transaction           { return nil }
+func (n *testBeaconNotifier) NotifyTransactions([]*types.Transaction)                 {}
+func (n *testBeaconNotifier) GetBlobs([]common.Hash) *engine.BlobsBundle              { return nil }
+func (n *testBeaconNotifier) NotifyBlobs(blobs *engine.BlobsBundle)                   { n.bundle = blobs }
+
+func TestHandleCachedBlobsValidBundle(t *testing.T) {
+	t.Parallel()
+
+	blobCount := 3
+	bundle := engine.BlobsBundle{
+		Blobs:       make([]hexutil.Bytes, 0, blobCount),
+		Commitments: make([]hexutil.Bytes, 0, blobCount),
+		Proofs:      make([]hexutil.Bytes, 0, blobCount*kzg4844.CellsPerBlob),
+	}
+	for i := range blobCount {
+		blob := kzg4844.Blob{}
+		blob[0] = byte(i)
+		blob[1] = byte(i + 1)
+		commitment, err := kzg4844.BlobToCommitment(&blob)
+		if err != nil {
+			t.Fatalf("failed to compute commitment for blob %d: %v", i, err)
+		}
+		proofs, err := kzg4844.ComputeCellProofs(&blob)
+		if err != nil {
+			t.Fatalf("failed to compute proofs for blob %d: %v", i, err)
+		}
+		bundle.Blobs = append(bundle.Blobs, hexutil.Bytes(blob[:]))
+		bundle.Commitments = append(bundle.Commitments, hexutil.Bytes(commitment[:]))
+		for _, proof := range proofs {
+			bundle.Proofs = append(bundle.Proofs, hexutil.Bytes(proof[:]))
+		}
+	}
+	if len(bundle.Proofs) != blobCount*kzg4844.CellsPerBlob {
+		t.Fatalf("expected %d proofs, got %d", blobCount*kzg4844.CellsPerBlob, len(bundle.Proofs))
+	}
+
+	notifier := &testBeaconNotifier{}
+	h := &beaconHandler{beacon: notifier}
+	packet := &beacon.CachedBlobsPacket{CachedBlobsResponse: beacon.CachedBlobsResponse{
+		Blobs:       bundle.Blobs,
+		Commitments: bundle.Commitments,
+		Proofs:      bundle.Proofs,
+	}}
+	if err := h.handleCachedBlobs(nil, packet); err != nil {
+		t.Fatalf("valid cached blob bundle rejected: %v", err)
+	}
+	if notifier.bundle == nil {
+		t.Fatal("beacon notifier did not receive valid blob bundle")
 	}
 }

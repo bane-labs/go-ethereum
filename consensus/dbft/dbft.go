@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"math/big"
 	"os"
 	"sync"
@@ -79,7 +80,9 @@ var (
 )
 
 const (
-	// txSubCap is the capacity of channel that receives transaction notifications from mempool.
+	// txSubCap is the capacity of channel that receives transaction notifications from mempool
+	// (for pre-NeoXPrepareRequestExtension fork) or the channel that receives incoming blob
+	// commitment notifications from the blob pool (for post-NeoXPrepareRequestExtension fork).
 	txSubCap = 100
 	// msgsChCap is a capacity of channel that accepts consensus messages from
 	// dBFT protocol.
@@ -181,15 +184,24 @@ type DBFT struct {
 	// about a new consensus payload to be sent.
 	broadcast func(m *dbftproto.Message) error
 
-	// requestTxs is a callback which is called to request the missing
-	// transactions from neighbor nodes. Requested transactions hashes are
-	// stored in txCbList and checked against the incoming transactions. If
-	// subsequent incoming transaction was requested then it'll be sent to the
-	// buffered txs channel.
+	// requestTxs is a callback which is called prior to PrepareRequestExtension
+	// fork to request the missing transactions from neighbor nodes. Requested
+	// transactions hashes are stored in txCbList and checked against the
+	// incoming transactions. If a subsequent incoming transaction was requested,
+	// then it'll be sent to the buffered txEvents channel.
 	requestTxs func(hashed []common.Hash)
 	txCbList   atomic.Value
 	txSub      event.Subscription
 	txEvents   chan *types.Transaction
+
+	// requestBlobs is a callback which is called after PrepareRequestExtension
+	// fork to request the missing blob sidecar parts from neighbor nodes.
+	// Incoming sidecar parts are checked against prepareRequest-level map of
+	// missing sidecar part hashes. If a subsequent incoming sidecar part was
+	// found, then it'll be sent to the buffered blobEvents channel.
+	requestBlobs func(hashed []common.Hash)
+	blobSub      event.Subscription
+	blobEvents   chan []common.Hash
 
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
@@ -210,7 +222,7 @@ type DBFT struct {
 	blockFeed    event.Feed              // Event feed for new Blocks
 	scope        event.SubscriptionScope // Subscription scope for dBFT events
 
-	dbft             *dbft.DBFT[common.Hash]
+	dbft             *dbft.DBFT[common.Hash, *types.Transaction]
 	dbftStarted      atomic.Bool
 	eventLoopRunning atomic.Bool
 	blockQueue       *blockQueue
@@ -283,10 +295,11 @@ type DBFT struct {
 // config represents Engine configuration.
 type config struct {
 	*params.DBFTConfig
-	dkgEnablingHeight      int64
-	antiMEVEnablingHeight  int64
-	enforceECDSASignatures bool
-	logLevel               *zap.AtomicLevel
+	dkgEnablingHeight                     int64
+	antiMEVEnablingHeight                 int64
+	prepareRequestExtensionEnablingHeight int64
+	enforceECDSASignatures                bool
+	logLevel                              *zap.AtomicLevel
 }
 
 // zkFiles represents ZK-DKG configuration about R1CS and PK files.
@@ -304,9 +317,10 @@ type zkFiles struct {
 // signers set to the ones provided by the user.
 func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	cfg := &config{
-		DBFTConfig:            chainCfg.DBFT,
-		dkgEnablingHeight:     -1,
-		antiMEVEnablingHeight: -1,
+		DBFTConfig:                            chainCfg.DBFT,
+		dkgEnablingHeight:                     -1,
+		antiMEVEnablingHeight:                 -1,
+		prepareRequestExtensionEnablingHeight: -1,
 	}
 	if cfg.SecondsPerBlock == 0 {
 		return nil, errors.New("zero-period dBFT chain is not supported")
@@ -328,6 +342,9 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	if chainCfg.NeoXAMEVBlock != nil {
 		cfg.antiMEVEnablingHeight = chainCfg.NeoXAMEVBlock.Int64()
 	}
+	if chainCfg.NeoXPrepareRequestExtensionBlock != nil {
+		cfg.prepareRequestExtensionEnablingHeight = chainCfg.NeoXPrepareRequestExtensionBlock.Int64()
+	}
 
 	c := &DBFT{
 		config:       cfg,
@@ -335,6 +352,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 
 		messages:        make(chan Payload, msgsChCap),
 		txEvents:        make(chan *types.Transaction, txSubCap),
+		blobEvents:      make(chan []common.Hash, txSubCap),
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
 		syncingEvents:   make(chan bool, 2),
 
@@ -355,44 +373,43 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		return nil, fmt.Errorf("failed to initialize dBFT logger: %w", err)
 	}
 	c.config.logLevel = logLevel
-	dbftCfg := []func(*dbft.Config[common.Hash]){
-		dbft.WithTimer[common.Hash](timer.New()),
-		dbft.WithLogger[common.Hash](logger),
-		dbft.WithSecondsPerBlock[common.Hash](time.Duration(bftCfg.SecondsPerBlock) * time.Second),
-		dbft.WithGetKeyPair[common.Hash](c.getKeyPairCb),
-		dbft.WithCurrentHeight[common.Hash](c.currentHeightCb),
-		dbft.WithCurrentBlockHash[common.Hash](c.currentBlockHashCb),
-		dbft.WithGetValidators[common.Hash](c.getValidatorsCb),
-		dbft.WithProcessBlock[common.Hash](c.processBlockCb),
-		dbft.WithNewBlockFromContext[common.Hash](c.newBlockFromContextCb),
-		dbft.WithWatchOnly[common.Hash](func() bool { return false }),
-		dbft.WithGetTx[common.Hash](c.getTxCb),
-		dbft.WithGetVerified[common.Hash](c.getVerifiedCb),
-		dbft.WithRequestTx[common.Hash](c.requestTxCb),
-		dbft.WithStopTxFlow[common.Hash](c.stopTxFlowCb),
-		dbft.WithNewConsensusPayload[common.Hash](c.newConsensusPayloadCb),
-		dbft.WithNewPrepareRequest[common.Hash](c.newPrepareRequestCb),
-		dbft.WithNewCommit[common.Hash](c.newCommitCb),
-		dbft.WithNewPrepareResponse[common.Hash](c.newPrepareResponseCb),
-		dbft.WithNewChangeView[common.Hash](c.newChangeViewCb),
-		dbft.WithNewRecoveryRequest[common.Hash](c.newRecoveryRequestCb),
-		dbft.WithNewRecoveryMessage[common.Hash](c.newRecoveryMessageCb),
-		dbft.WithVerifyPrepareResponse[common.Hash](func(_ dbft.ConsensusPayload[common.Hash]) error { return nil }),
-		dbft.WithVerifyCommit[common.Hash](c.verifyCommitCb),
-		dbft.WithVerifyPrepareRequest[common.Hash](c.verifyPrepareRequestCb),
-		dbft.WithVerifyBlock[common.Hash](c.verifyBlockCb),
-		dbft.WithBroadcast[common.Hash](c.broadcastCb),
-		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash](c.config.antiMEVEnablingHeight),
+	dbftCfg := []func(*dbft.Config[common.Hash, *types.Transaction]){
+		dbft.WithTimer[common.Hash, *types.Transaction](timer.New()),
+		dbft.WithLogger[common.Hash, *types.Transaction](logger),
+		dbft.WithTimePerBlock[common.Hash, *types.Transaction](func() time.Duration { return time.Duration(bftCfg.SecondsPerBlock) * time.Second }),
+		dbft.WithGetKeyPair[common.Hash, *types.Transaction](c.getKeyPairCb),
+		dbft.WithCurrentHeight[common.Hash, *types.Transaction](c.currentHeightCb),
+		dbft.WithCurrentBlockHash[common.Hash, *types.Transaction](c.currentBlockHashCb),
+		dbft.WithGetValidators[common.Hash, *types.Transaction](c.getValidatorsCb),
+		dbft.WithProcessBlock[common.Hash, *types.Transaction](c.processBlockCb),
+		dbft.WithNewBlockFromContext[common.Hash, *types.Transaction](c.newBlockFromContextCb),
+		dbft.WithWatchOnly[common.Hash, *types.Transaction](func() bool { return false }),
+		dbft.WithGetVerified[common.Hash, *types.Transaction](c.getVerifiedCb),
+		dbft.WithRequestTx[common.Hash, *types.Transaction](c.requestTxCb),
+		dbft.WithStopTxFlow[common.Hash, *types.Transaction](c.stopTxFlowCb),
+		dbft.WithNewConsensusPayload[common.Hash, *types.Transaction](c.newConsensusPayloadCb),
+		dbft.WithNewPrepareRequest[common.Hash, *types.Transaction](c.newPrepareRequestCb),
+		dbft.WithNewCommit[common.Hash, *types.Transaction](c.newCommitCb),
+		dbft.WithNewPrepareResponse[common.Hash, *types.Transaction](c.newPrepareResponseCb),
+		dbft.WithNewChangeView[common.Hash, *types.Transaction](c.newChangeViewCb),
+		dbft.WithNewRecoveryRequest[common.Hash, *types.Transaction](c.newRecoveryRequestCb),
+		dbft.WithNewRecoveryMessage[common.Hash, *types.Transaction](c.newRecoveryMessageCb),
+		dbft.WithVerifyPrepareResponse[common.Hash, *types.Transaction](func(_ dbft.ConsensusPayload[common.Hash, *types.Transaction]) error { return nil }),
+		dbft.WithVerifyCommit[common.Hash, *types.Transaction](c.verifyCommitCb),
+		dbft.WithVerifyPrepareRequest[common.Hash, *types.Transaction](c.verifyPrepareRequestCb),
+		dbft.WithVerifyBlock[common.Hash, *types.Transaction](c.verifyBlockCb),
+		dbft.WithBroadcast[common.Hash, *types.Transaction](c.broadcastCb),
+		dbft.WithAntiMEVExtensionEnablingHeight[common.Hash, *types.Transaction](c.config.antiMEVEnablingHeight),
 	}
 	if c.config.antiMEVEnablingHeight >= 0 {
 		dbftCfg = append(dbftCfg,
-			dbft.WithNewPreCommit[common.Hash](c.newPreCommitCb),
-			dbft.WithVerifyPreCommit[common.Hash](func(preCommit dbft.ConsensusPayload[common.Hash]) error { return nil }),
-			dbft.WithNewPreBlockFromContext[common.Hash](c.newPreBlockFromContextCb),
-			dbft.WithVerifyPreBlock[common.Hash](c.verifyPreBlockCb),
+			dbft.WithNewPreCommit[common.Hash, *types.Transaction](c.newPreCommitCb),
+			dbft.WithVerifyPreCommit[common.Hash, *types.Transaction](func(preCommit dbft.ConsensusPayload[common.Hash, *types.Transaction]) error { return nil }),
+			dbft.WithNewPreBlockFromContext[common.Hash, *types.Transaction](c.newPreBlockFromContextCb),
+			dbft.WithVerifyPreBlock[common.Hash, *types.Transaction](c.verifyPreBlockCb),
 			dbft.WithProcessPreBlock(c.processPreBlockCb))
 	}
-	c.dbft, err = dbft.New[common.Hash](dbftCfg...)
+	c.dbft, err = dbft.New[common.Hash, *types.Transaction](dbftCfg...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize dBFT: %w", err)
 	}
@@ -455,7 +472,7 @@ func (c *DBFT) currentBlockHashCb() common.Hash {
 }
 
 // getValidatorsCb is a dbft library setting callback.
-func (c *DBFT) getValidatorsCb(txs ...dbft.Transaction[common.Hash]) []dbft.PublicKey {
+func (c *DBFT) getValidatorsCb(txs ...*types.Transaction) []dbft.PublicKey {
 	if c.lastBlockHash.Cmp(common.Hash{}) == 0 {
 		// Program bug.
 		panic("last block hash wasn't initialized")
@@ -489,7 +506,7 @@ func (c *DBFT) getValidatorsCb(txs ...dbft.Transaction[common.Hash]) []dbft.Publ
 }
 
 // processBlockCb is a dbft library setting callback.
-func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
+func (c *DBFT) processBlockCb(b dbft.Block[common.Hash, *types.Transaction]) error {
 	dbftBlock := b.(*Block)
 	if uint64(dbftBlock.Index()) <= c.lastIndex {
 		return nil
@@ -551,7 +568,7 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash]) error {
 }
 
 // newBlockFromContextCb is a dbft library setting callback.
-func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[common.Hash] {
+func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Transaction]) dbft.Block[common.Hash, *types.Transaction] {
 	if !c.chain.Config().IsNeoXAMEV(big.NewInt(int64(ctx.BlockIndex))) {
 		prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
 		if prepareReq == nil {
@@ -636,52 +653,44 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 	}
 }
 
-// getTxCb is a dbft library setting callback.
-func (c *DBFT) getTxCb(h common.Hash) dbft.Transaction[common.Hash] {
-	tx := c.txpool.Get(h)
-	// This check is needed, because in case of missing transaction dBFT
-	// expects a pure nil.
-	if tx != nil {
-		return &Transaction{
-			Tx: tx.WithoutBlobTxSidecar(),
-		}
-	}
-
-	// Do not try to retrieve on-chain transaction.
-	return nil
+// isPrepareRequestExtensionEnabled denotes whether extended format of PrepareRequest
+// should be used at the current dBFT context height. This method must only be called
+// by dBFT event loop since it performs access to the dBFT context.
+func (c *DBFT) isPrepareRequestExtensionEnabled() bool {
+	return c.config.prepareRequestExtensionEnablingHeight >= 0 && int64(c.dbft.Context.BlockIndex) >= c.config.prepareRequestExtensionEnablingHeight
 }
 
 // getVerifiedCb is a dbft library setting callback.
-func (c *DBFT) getVerifiedCb() []dbft.Transaction[common.Hash] {
-	var txs types.Transactions
+func (c *DBFT) getVerifiedCb() []*types.Transaction {
 	// Check the sealing proposal, because c.sealingTransactions may be nil
 	// in case of missing pending transactions, and it's OK.
 	if c.sealingProposal == nil {
 		// Program bug.
 		panic("missing pending sealing work")
 	}
-	txs = c.sealingTransactions
-
-	res := make([]dbft.Transaction[common.Hash], len(txs))
-	for i := range txs {
-		res[i] = &Transaction{
-			Tx: txs[i],
-		}
-	}
-	return res
+	return c.sealingTransactions
 }
 
 // requestTxCb is a dbft library setting callback.
-func (c *DBFT) requestTxCb(hashes ...common.Hash) {
-	if len(hashes) == 0 {
-		return
+func (c *DBFT) requestTxCb(misses iter.Seq[common.Hash]) {
+	if c.isPrepareRequestExtensionEnabled() {
+		// Retrieve versionedHashes of missing blobs based on PrepareRequest data.
+		ctx := c.dbft.Context
+		req := ctx.PreparationPayloads[ctx.PrimaryIndex].GetPrepareRequest().(*prepareRequest)
+		missing := make([]common.Hash, 0, len(req.missingBlobs))
+		for h := range misses {
+			missing = append(missing, req.Txs[req.missingTxs[h]].BlobHashes()...)
+		}
+		c.requestBlobs(missing)
+	} else {
+		sorted := make([]common.Hash, 0, len(c.dbft.MissingTransactions)) // tiny hack to avoid reallocation.
+		for h := range misses {
+			sorted = append(sorted, h)
+		}
+		slices.SortFunc(sorted, common.Hash.Cmp)
+		c.txCbList.Store(sorted)
+		c.requestTxs(sorted)
 	}
-
-	sorted := slices.Clone(hashes)
-	slices.SortFunc(sorted, common.Hash.Cmp)
-	c.txCbList.Store(sorted)
-
-	c.requestTxs(sorted)
 }
 
 // stopTxFlowCb is a dbft library setting callback.
@@ -691,8 +700,22 @@ func (c *DBFT) stopTxFlowCb() {
 }
 
 // newPrepareRequestCb is a dbft library setting callback.
-func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Hash) dbft.PrepareRequest[common.Hash] {
+func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txs []*types.Transaction) dbft.PrepareRequest[common.Hash, *types.Transaction] {
+	if c.isPrepareRequestExtensionEnabled() {
+		return c.newPrepareRequestAux(ts, nonce, nil, txs)
+	}
+	txHashes := make([]common.Hash, len(txs))
+	for i := range txs {
+		txHashes[i] = txs[i].Hash()
+	}
+	return c.newPrepareRequestAux(ts, nonce, txHashes, nil)
+}
+
+// newPrepareRequestAux is a generic implementation of newPrepareRequestCb capable of creating
+// both legacy and extended formats of prepareRequest.
+func (c *DBFT) newPrepareRequestAux(ts uint64, nonce uint64, txHashes []common.Hash, txs []*types.Transaction) dbft.PrepareRequest[common.Hash, *types.Transaction] {
 	var req = new(prepareRequest)
+	req.extended = txs != nil
 	if c.sealingProposal == nil {
 		panic("bug: sealing proposal is not initialized")
 	}
@@ -756,7 +779,11 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 		req.ParentSealHashV0.SetBytes(c.lastBlockSealHash)
 	}
 	req.ParentExtra = c.lastBlockExtra
-	req.TxHashes = txHashes
+	if req.extended {
+		req.Txs = txs
+	} else {
+		req.TxHashes = txHashes
+	}
 
 	return req
 }
@@ -793,15 +820,17 @@ func (c *DBFT) newRecoveryRequestCb(ts uint64) dbft.RecoveryRequest {
 }
 
 // newRecoveryMessageCb is a dbft library setting callback.
-func (c *DBFT) newRecoveryMessageCb() dbft.RecoveryMessage[common.Hash] {
+func (c *DBFT) newRecoveryMessageCb() dbft.RecoveryMessage[common.Hash, *types.Transaction] {
+	h := big.NewInt(int64(c.dbft.Context.BlockIndex))
 	r := &recoveryMessage{
-		version: c.getBlockExtraVersion(big.NewInt(int64(c.dbft.Context.BlockIndex))),
+		version:                              c.getBlockExtraVersion(h),
+		isNeoXPrepareRequestExtensionEnabled: c.chain.Config().IsNeoXPrepareRequestExtension,
 	}
 	return r
 }
 
 // verifyCommitCb is a dbft library setting callback.
-func (c *DBFT) verifyCommitCb(p dbft.ConsensusPayload[common.Hash]) error {
+func (c *DBFT) verifyCommitCb(p dbft.ConsensusPayload[common.Hash, *types.Transaction]) error {
 	cc := p.GetCommit().(*commit)
 	h := big.NewInt(int64(p.Height()))
 
@@ -842,7 +871,7 @@ func (c *DBFT) verifyCommitCb(p dbft.ConsensusPayload[common.Hash]) error {
 }
 
 // verifyPrepareRequestCb is a dbft library setting callback.
-func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) error {
+func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash, *types.Transaction]) error {
 	req := p.GetPrepareRequest().(*prepareRequest)
 	if req.SealingProposal == nil {
 		return errors.New("failed to verify PrepareRequest: sealing proposal is nil")
@@ -935,11 +964,53 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 	// transactions via internal mechanism in this consensus view).
 	c.sealingTransactions = nil
 
+	// Fill in internal prepareRequest fields.
+	c.processMissingTransactions(req)
 	return nil
 }
 
+// processMissingTransactions iterates through the proposed transactions, filters out
+// unknown ones (or in case of blob transactions, unknown sidecar parts) and stores
+// the unknown hashes in the prepareRequest.
+func (c *DBFT) processMissingTransactions(req *prepareRequest) {
+	missingBlobs := make(map[common.Hash]struct{})
+	missingTxs := make(map[common.Hash]int)
+	if c.isPrepareRequestExtensionEnabled() {
+		for i, tx := range req.Txs {
+			if tx.Type() != types.BlobTxType {
+				continue
+			}
+
+			// Blob transactions require separate blob verification, hence send
+			// it to dBFT iff blob is available and verified. Treat missing/empty
+			// blob transactions as missing until the node is able to fetch and
+			// verify the blob.
+			blob := c.txpool.Get(tx.Hash())
+			if blob != nil {
+				req.Txs[i] = tx.WithoutBlobTxSidecar() // replace transaction in-place since we don't need sidecars in the dBFT process.
+			} else {
+				for _, h := range tx.BlobHashes() {
+					missingBlobs[h] = struct{}{}
+				}
+				missingTxs[tx.Hash()] = i
+			}
+		}
+	} else {
+		for i, tx := range req.Txs {
+			verified := c.txpool.Get(tx.Hash())
+			if verified != nil {
+				req.Txs[i] = tx.WithoutBlobTxSidecar() // replace transaction in-place since we don't need sidecars in the dBFT process.
+			} else {
+				missingTxs[tx.Hash()] = i
+			}
+		}
+	}
+	req.missingBlobs = missingBlobs
+	req.missingTxs = missingTxs
+}
+
 // verifyPreBlockCb is a dbft library setting callback.
-func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
+func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash, *types.Transaction]) bool {
 	dbftBlock := b.(*PreBlock)
 	parent := c.chain.CurrentBlock()
 	if parent.Number.Cmp(dbftBlock.header.Number) >= 0 {
@@ -993,7 +1064,7 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash]) bool {
 }
 
 // verifyBlockCb is a dbft library setting callback.
-func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash]) bool {
+func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash, *types.Transaction]) bool {
 	if !c.chain.Config().IsNeoXAMEV(big.NewInt(int64(c.dbft.Context.BlockIndex))) {
 		dbftBlock := b.(*Block)
 		parent := c.chain.CurrentBlock()
@@ -1045,7 +1116,7 @@ func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash]) bool {
 }
 
 // broadcastCb is a dbft library setting callback.
-func (c *DBFT) broadcastCb(p dbft.ConsensusPayload[common.Hash]) {
+func (c *DBFT) broadcastCb(p dbft.ConsensusPayload[common.Hash, *types.Transaction]) {
 	if err := p.(*Payload).Sign(c.dbft.Priv.(*Signer)); err != nil {
 		log.Warn("can't sign consensus payload", "error", err)
 	}
@@ -1063,7 +1134,7 @@ func (c *DBFT) newPreCommitCb(data []byte) dbft.PreCommit {
 }
 
 // newPreBlockFromContextCb is a dbft library setting callback.
-func (c *DBFT) newPreBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.PreBlock[common.Hash] {
+func (c *DBFT) newPreBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Transaction]) dbft.PreBlock[common.Hash, *types.Transaction] {
 	prepareReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
 	if prepareReq == nil {
 		panic("can't create new PreBlock from context: prepare request is nil")
@@ -1073,7 +1144,7 @@ func (c *DBFT) newPreBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Pre
 }
 
 // processPreBlockCb is a dbft library setting callback.
-func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash]) error {
+func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash, *types.Transaction]) error {
 	var (
 		ctx = c.dbft.Context
 		pre = b.(*PreBlock)
@@ -1551,6 +1622,11 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 	c.requestTxs = f
 }
 
+// WithRequestBlobs sets callback to request the missing blob tx commitments from neighbor nodes.
+func (c *DBFT) WithRequestBlobs(f func(hashed []common.Hash)) {
+	c.requestBlobs = f
+}
+
 // WithBeacon initializes beacon protocol related channels and functions.
 func (c *DBFT) WithBeacon(beacon Beacon, syncing SyncingFn) {
 	// The channel to broadcast new blocks in beacon protocol.
@@ -1559,6 +1635,8 @@ func (c *DBFT) WithBeacon(beacon Beacon, syncing SyncingFn) {
 	c.refreshProposal = beacon.RefreshPendingPayload
 	// The channel to receive transactions from CL.
 	c.txSub = beacon.SubscribeTransactionEvents(c.txEvents)
+	// The channel to receive verified blob parts from CL.
+	c.blobSub = beacon.SubscribeBlobEvents(c.blobEvents)
 	// The direct checker of miner working state.
 	c.syncingSub = beacon.SubscribeSyncingEvents(c.syncingEvents)
 	c.syncing = syncing
@@ -2337,7 +2415,35 @@ events:
 			log.Debug("received message", fields...)
 			c.dbft.OnReceive(&msg)
 		case tx := <-c.txEvents:
-			c.dbft.OnTransaction(&Transaction{Tx: tx.WithoutBlobTxSidecar()})
+			c.dbft.OnTransaction(tx.WithoutBlobTxSidecar())
+		case blobHashes := <-c.blobEvents:
+			ctx := c.dbft.Context
+			pReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
+			if pReq == nil { // not received yet.
+				continue
+			}
+			var (
+				req       = pReq.GetPrepareRequest().(*prepareRequest)
+				requested bool
+			)
+			for _, h := range blobHashes {
+				if _, ok := req.missingBlobs[h]; ok {
+					delete(req.missingBlobs, h)
+					requested = true
+				}
+			}
+			if !requested {
+				continue
+			}
+
+			// Once all missing blobs are collected, notify consensus about all missing transactions at once.
+			if len(req.missingBlobs) == 0 {
+				for _, i := range req.missingTxs {
+					c.dbft.OnTransaction(req.Txs[i]) // the blob transaction itself (without sidecars) is already present in PrepareRequest.
+				}
+				clear(req.missingTxs)
+			}
+
 		case h := <-c.chainHeadEvents:
 			c.handleChainBlock(h.Header, true)
 		case err := <-c.chainHeadSub.Err():
@@ -2399,15 +2505,18 @@ events:
 			)
 		}
 	}
-	c.dbft.Timer.Stop()
 	c.chainHeadSub.Unsubscribe()
 	c.txSub.Unsubscribe()
+	c.blobSub.Unsubscribe()
 	c.syncingSub.Unsubscribe()
 	c.eventLoopRunning.Store(false)
 drainLoop:
 	for {
 		select {
 		case <-c.messages:
+		case <-c.txEvents:
+		case <-c.blobEvents:
+		case <-c.syncingEvents:
 		case <-c.chainHeadEvents:
 		default:
 			break drainLoop
@@ -2430,7 +2539,7 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 		return nil
 	}
 
-	p := payloadFromMessage(cp, c.getBlockExtraVersion)
+	p := payloadFromMessage(cp, c.getBlockExtraVersion, c.chain.Config().IsNeoXPrepareRequestExtension)
 	// decode payload data into message
 	if err := p.decodeData(); err != nil {
 		log.Info("can't decode payload data", "hash", cp.Hash(), "error", err)
@@ -2475,11 +2584,12 @@ func (c *DBFT) FilterMissingTransaction(txs []*types.Transaction) []*types.Trans
 	return known
 }
 
-func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion) *Payload {
+func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion, isNeoXPrepareRequestExtensionEnabled func(height *big.Int) bool) *Payload {
 	return &Payload{
 		Message: *ep,
 		message: message{
-			getBlockExtraVersion: getBlockExtraVersion,
+			getBlockExtraVersion:                 getBlockExtraVersion,
+			isNeoXPrepareRequestExtensionEnabled: isNeoXPrepareRequestExtensionEnabled,
 		},
 	}
 }
@@ -2502,7 +2612,7 @@ func (c *DBFT) validatePayload(p *Payload) error {
 	return nil
 }
 
-func (c *DBFT) newConsensusPayloadCb(ctx *dbft.Context[common.Hash], t dbft.MessageType, msg any) dbft.ConsensusPayload[common.Hash] {
+func (c *DBFT) newConsensusPayloadCb(ctx *dbft.Context[common.Hash, *types.Transaction], t dbft.MessageType, msg any) dbft.ConsensusPayload[common.Hash, *types.Transaction] {
 	var cp = new(Payload)
 	cp.BlockIndex = uint64(ctx.BlockIndex)
 	cp.message.ValidatorIndex = byte(ctx.MyIndex)

@@ -13,7 +13,7 @@ import (
 	"github.com/nspcc-dev/dbft"
 )
 
-var _ dbft.PreBlock[common.Hash] = (*PreBlock)(nil)
+var _ dbft.PreBlock[common.Hash, *types.Transaction] = (*PreBlock)(nil)
 
 // PreBlock is a wrapper around Eth block that implements [dbft.PreBlock] interface.
 // It holds some initial proposed block's data as far as standard/encrypted
@@ -118,27 +118,17 @@ func (p *PreBlock) Verify(pub dbft.PublicKey, data []byte) error {
 }
 
 // Transactions implements [dbft.PreBlock] interface.
-func (b *PreBlock) Transactions() []dbft.Transaction[common.Hash] {
-	dst := make([]dbft.Transaction[common.Hash], len(b.transactions))
-	for i, tx := range b.transactions {
-		dst[i] = &Transaction{
-			Tx: tx,
-		}
-	}
-	return dst
+func (b *PreBlock) Transactions() []*types.Transaction {
+	return b.transactions
 }
 
 // SetTransactions implements [dbft.PreBlock] interface. txx may contain encrypted
 // Envelope transactions.
-func (b *PreBlock) SetTransactions(txx []dbft.Transaction[common.Hash]) {
-	var (
-		txs       = make([]*types.Transaction, len(txx))
-		envelopes []envelopeData // don't allocate, Envelopes supposed to be rare.
-	)
+func (b *PreBlock) SetTransactions(txx []*types.Transaction) {
+	var envelopes []envelopeData // don't allocate, Envelopes supposed to be rare.
 	for i, tx := range txx {
-		txs[i] = tx.(*Transaction).Tx
-		if !b.enforceECDSASignatures && antimev.IsEnvelope(txs[i]) {
-			d, err := decodeEnvelopeData(txs[i].Data())
+		if !b.enforceECDSASignatures && antimev.IsEnvelope(tx) {
+			d, err := decodeEnvelopeData(tx.Data())
 			if err != nil {
 				// Not an Envelope in fact since it contains malformed data. Include
 				// it as a simple transaction.
@@ -152,7 +142,7 @@ func (b *PreBlock) SetTransactions(txx []dbft.Transaction[common.Hash]) {
 			envelopes = append(envelopes, d)
 		}
 	}
-	b.transactions = txs
+	b.transactions = txx
 	b.envelopesData = envelopes
 }
 
