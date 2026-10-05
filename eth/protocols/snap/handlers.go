@@ -574,7 +574,7 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket) (
 				return nodes, fmt.Errorf("%w: invalid account node request", errBadRequest)
 			}
 			blob, resolved, err := accTrie.GetNode(accKey)
-			loads += resolved // always account database reads, even for failures
+			loads += max(resolved, 1) // charge per request regardless of the cache
 			if err != nil {
 				break
 			}
@@ -618,7 +618,7 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket) (
 					return nil, fmt.Errorf("%w: invalid storage key: %v", errBadRequest, err)
 				}
 				blob, resolved, err := stTrie.GetNode(path)
-				loads += resolved // always account database reads, even for failures
+				loads += max(resolved, 1) // charge per request regardless of the cache
 				if err != nil {
 					break
 				}
