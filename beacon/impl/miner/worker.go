@@ -336,7 +336,7 @@ func (w *worker) getTransaction(hash common.Hash) *types.Transaction {
 func (w *worker) cacheTransactions(txs []*types.Transaction) {
 	w.forkMu.Lock()
 	defer w.forkMu.Unlock()
-	// Build a map from versioned hash to index for O(1) lookups.
+	// Build a map from transaction hash to index for O(1) lookups.
 	hashToIndex := make(map[common.Hash]int, len(w.pendingTransactions))
 	for idx, tx := range w.pendingTransactions {
 		hashToIndex[tx.Hash()] = idx
@@ -363,6 +363,7 @@ func (w *worker) cacheTransactions(txs []*types.Transaction) {
 				continue
 			}
 			w.pendingTransactions = append(w.pendingTransactions, tx.WithoutBlobTxSidecar())
+			hashToIndex[tx.Hash()] = len(w.pendingTransactions) - 1
 			w.pendingVersionedHashes = append(w.pendingVersionedHashes, tx.BlobHashes()...)
 			for i := range sidecar.Blobs {
 				w.pendingBlobs = append(w.pendingBlobs, sidecar.Blobs[i][:])
@@ -427,7 +428,7 @@ func (w *worker) cacheBlobs(hashes []common.Hash, bundle *engine.BlobsBundle) {
 		for n := 0; n < kzg4844.CellProofsPerBlob; n++ {
 			w.pendingProofs = append(w.pendingProofs, bundle.Proofs[i*kzg4844.CellProofsPerBlob+n])
 		}
-		hashToIndex[vhash] = len(w.pendingVersionedHashes)
+		hashToIndex[vhash] = len(w.pendingVersionedHashes) - 1
 	}
 }
 
