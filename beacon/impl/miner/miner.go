@@ -21,6 +21,9 @@ type ShouldPreserveFn func(header *types.Header) bool
 // TransactionFilterFn is the type of function to filter transactions before they are sent to subscribers.
 type TransactionFilterFn func(txs []*types.Transaction) []*types.Transaction
 
+// BlobFilterFn is the type of function to filter blob hashes before they are sent to subscribers.
+type BlobFilterFn func(blobs []common.Hash) []common.Hash
+
 // Backend wraps all methods required for mining. Only full node is capable
 // to offer all the functions here.
 type Backend interface {
@@ -50,13 +53,14 @@ type Miner struct {
 	blobFeed    event.Feed              // Event feed for new blob data delivered through CL
 	scope       event.SubscriptionScope // Subscription scope for miner events
 
-	txFilter TransactionFilterFn // Optional filter for transactions subscription
+	txFilter   TransactionFilterFn // Optional filter for transactions subscription
+	blobFilter BlobFilterFn        // Optional filter for blob subscription
 
 	wg sync.WaitGroup
 }
 
 func New(eth Backend, downloader Downloader, rpc *rpc.Client, coinbase common.Address,
-	shouldPreserve ShouldPreserveFn, txFilter TransactionFilterFn) *Miner {
+	shouldPreserve ShouldPreserveFn, txFilter TransactionFilterFn, blobFilter BlobFilterFn) *Miner {
 	miner := &Miner{
 		backend:    eth,
 		downloader: downloader,
@@ -65,6 +69,7 @@ func New(eth Backend, downloader Downloader, rpc *rpc.Client, coinbase common.Ad
 		stopCh:     make(chan struct{}),
 		worker:     newWorker(eth, rpc, coinbase, shouldPreserve),
 		txFilter:   txFilter,
+		blobFilter: blobFilter,
 	}
 	miner.wg.Add(1)
 	go miner.update()
@@ -122,8 +127,11 @@ func (miner *Miner) NotifyBlobs(bundle *engine.BlobsBundle) {
 	for _, cmt := range bundle.Commitments {
 		hashes = append(hashes, convertKzgCommitmentToVersionedHash(cmt))
 	}
+	if miner.blobFilter != nil {
+		hashes = miner.blobFilter(hashes)
+	}
 	miner.blobFeed.Send(hashes)
-	miner.worker.cacheBlobs(bundle)
+	miner.worker.cacheBlobs(hashes, bundle)
 }
 
 // update keeps track of the downloader events. Please be aware that this is a one shot type of update loop.

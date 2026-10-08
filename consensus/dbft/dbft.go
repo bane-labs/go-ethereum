@@ -200,6 +200,7 @@ type DBFT struct {
 	// missing sidecar part hashes. If a subsequent incoming sidecar part was
 	// found, then it'll be sent to the buffered blobEvents channel.
 	requestBlobs func(hashed []common.Hash)
+	blobCbList   atomic.Value
 	blobSub      event.Subscription
 	blobEvents   chan []common.Hash
 
@@ -690,6 +691,7 @@ func (c *DBFT) requestTxCb(misses iter.Seq[common.Hash]) {
 		for h := range misses {
 			missing = append(missing, req.Txs[req.missingTxs[h]].Tx.BlobHashes()...)
 		}
+		c.blobCbList.Store(missing)
 		c.requestBlobs(missing)
 	} else {
 		sorted := make([]common.Hash, 0, len(c.dbft.MissingTransactions)) // tiny hack to avoid reallocation.
@@ -704,8 +706,8 @@ func (c *DBFT) requestTxCb(misses iter.Seq[common.Hash]) {
 
 // stopTxFlowCb is a dbft library setting callback.
 func (c *DBFT) stopTxFlowCb() {
-	var hashes []common.Hash
-	c.txCbList.Store(hashes)
+	c.txCbList.Store([]common.Hash{})
+	c.blobCbList.Store([]common.Hash{})
 }
 
 // newPrepareRequestCb is a dbft library setting callback.
@@ -2598,6 +2600,24 @@ func (c *DBFT) FilterMissingTransaction(txs []*types.Transaction) []*types.Trans
 			_, found := slices.BinarySearchFunc(cbList.([]common.Hash), tx.Hash(), common.Hash.Cmp)
 			if found {
 				known = append(known, tx)
+			}
+		}
+	}
+	return known
+}
+
+// FilterMissingBlob is a dBFT helper to filter blob hashes that are known as missing.
+func (c *DBFT) FilterMissingBlob(blobHashes []common.Hash) []common.Hash {
+	if c.dbft == nil || !c.dbftStarted.Load() {
+		return nil
+	}
+
+	known := make([]common.Hash, 0, len(blobHashes))
+	cbList := c.blobCbList.Load()
+	if cbList != nil {
+		for _, h := range blobHashes {
+			if slices.Contains(cbList.([]common.Hash), h) {
+				known = append(known, h)
 			}
 		}
 	}

@@ -480,11 +480,13 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Set up local beacon client
 	var txCacheFilter beaconMiner.TransactionFilterFn
+	var blobCacheFilter beaconMiner.BlobFilterFn
 	if bft != nil {
 		txCacheFilter = bft.FilterMissingTransaction
+		blobCacheFilter = bft.FilterMissingBlob
 	}
 	eth.internalRPC = stack.Attach()
-	eth.beacon = beaconImpl.New(eth, eth.Downloader(), eth.internalRPC, eth.feeRecipient, eth.shouldPreserve, txCacheFilter)
+	eth.beacon = beaconImpl.New(eth, eth.Downloader(), eth.internalRPC, eth.feeRecipient, eth.shouldPreserve, txCacheFilter, blobCacheFilter)
 	eth.handler.connectBeacon(eth.beacon)
 	eth.filesystem.SetGetTransactionFn(func(hash common.Hash) *types.Transaction {
 		if tx := eth.blobTxPool.Get(hash); tx != nil {

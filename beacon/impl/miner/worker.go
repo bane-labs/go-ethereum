@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -402,8 +403,9 @@ func (w *worker) getBlobs(hashes []common.Hash) *engine.BlobsBundle {
 }
 
 // cacheBlobs adds blob data to the pending cache, so mark as
-// seen during this round of consensus.
-func (w *worker) cacheBlobs(bundle *engine.BlobsBundle) {
+// seen during this round of consensus. Only the blobs included
+// in the hash list will be accepted.
+func (w *worker) cacheBlobs(hashes []common.Hash, bundle *engine.BlobsBundle) {
 	w.forkMu.Lock()
 	defer w.forkMu.Unlock()
 
@@ -413,6 +415,9 @@ func (w *worker) cacheBlobs(bundle *engine.BlobsBundle) {
 	}
 	for i := range bundle.Blobs {
 		vhash := convertKzgCommitmentToVersionedHash(bundle.Commitments[i])
+		if !slices.Contains(hashes, vhash) {
+			continue
+		}
 		if _, exists := hashToIndex[vhash]; exists {
 			continue
 		}
