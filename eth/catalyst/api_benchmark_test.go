@@ -806,7 +806,8 @@ func makeBenchNewPayload(b *testing.B, numTx int) (engine.ExecutableData, []comm
 		ExcessBlobGas: new(uint64),
 	}
 	vhashes := []common.Hash{}
-	block, err := engine.ExecutableDataToBlockNoHash(data, vhashes, &beaconRoot, [][]byte{})
+	requestsHash := types.EmptyRequestsHash
+	block, err := engine.ExecutableDataToBlockNoHash(data, vhashes, &beaconRoot, &requestsHash)
 	if err != nil {
 		b.Fatalf("assembling the payload failed: %v", err)
 	}
@@ -848,7 +849,8 @@ func (s *newPayloadDecodeStub) NewPayloadV4(ctx context.Context, params engine.E
 		for i, r := range executionRequests {
 			requests[i] = r
 		}
-		if _, err := engine.ExecutableDataToBlock(params, versionedHashes, beaconRoot, requests); err != nil {
+		requestHash := types.CalcRequestsHash(requests)
+		if _, err := engine.ExecutableDataToBlock(params, versionedHashes, beaconRoot, &requestHash); err != nil {
 			s.err = err
 		}
 	}
