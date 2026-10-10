@@ -81,6 +81,7 @@ func (m *recoveryMessage) AddPayload(p dbft.ConsensusPayload[common.Hash]) {
 	case dbft.PrepareRequestType:
 		m.PrepareRequest = &message{
 			Type:                                 prepareRequestType,
+			BlockIndex:                           uint64(p.Height()),
 			ViewNumber:                           p.ViewNumber(),
 			msgPayload:                           p.GetPrepareRequest().(*prepareRequest),
 			isNeoXPrepareRequestExtensionEnabled: m.isNeoXPrepareRequestExtensionEnabled,
