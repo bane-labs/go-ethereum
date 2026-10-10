@@ -564,7 +564,7 @@ func TestTruncateHeadBelowGroupTail(t *testing.T) {
 		payload = bytes.Repeat([]byte{0xab}, 32)
 		tables  = []string{
 			ChainFreezerHashTable, ChainFreezerHeaderTable,
-			ChainFreezerBodiesTable, ChainFreezerReceiptTable, ChainFreezerBALTable,
+			ChainFreezerBodiesTable, ChainFreezerReceiptTable, ChainFreezerDifficultyTable, ChainFreezerBALTable,
 		}
 	)
 	f, err := NewFreezer(dir, "", false, 2049, chainFreezerTableConfigs)
