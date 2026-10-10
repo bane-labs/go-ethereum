@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/beacon/impl/fetcher"
 	"github.com/ethereum/go-ethereum/beacon/impl/miner"
 	"github.com/ethereum/go-ethereum/beacon/impl/synchronizer"
@@ -33,10 +34,10 @@ type Beacon struct {
 // New creates a mock beacon client with basic mining functionality. It supports customized
 // fork choice rules and transaction filtering for messages from P2P beacon protocol.
 func New(eth miner.Backend, downloader miner.Downloader, rpc *rpc.Client, coinbase common.Address,
-	shouldPreserve miner.ShouldPreserveFn, txFilter miner.TransactionFilterFn) *Beacon {
+	shouldPreserve miner.ShouldPreserveFn, txFilter miner.TransactionFilterFn, blobFilter miner.BlobFilterFn) *Beacon {
 	b := &Beacon{
 		chain:   eth.BlockChain(),
-		miner:   miner.New(eth, downloader, rpc, coinbase, shouldPreserve, txFilter),
+		miner:   miner.New(eth, downloader, rpc, coinbase, shouldPreserve, txFilter, blobFilter),
 		blockCh: make(chan *types.Block),
 	}
 
@@ -182,10 +183,27 @@ func (b *Beacon) NotifyTransactions(txs []*types.Transaction) {
 	b.miner.NotifyTransactions(txs)
 }
 
+// GetBlobs tries to find blob data from the consensus level. This is useful for BFT
+// consensus.
+func (b *Beacon) GetBlobs(hashes []common.Hash) *engine.BlobsBundle {
+	return b.miner.GetBlobs(hashes)
+}
+
+// NotifyBlobs notifies the miner about blob data seen in the beacon protocol.
+func (b *Beacon) NotifyBlobs(bundle *engine.BlobsBundle) {
+	b.miner.NotifyBlobs(bundle)
+}
+
 // SubscribeTransactionEvents subscribes to transaction events from the miner.
 // This is useful for BFT consensus to listen on missing transaction responses.
 func (b *Beacon) SubscribeTransactionEvents(ch chan<- *types.Transaction) event.Subscription {
 	return b.miner.SubscribeTransactionEvents(ch)
+}
+
+// SubscribeBlobEvents subscribes to blob events from the miner.
+// This is useful for BFT consensus to listen on missing blob responses.
+func (b *Beacon) SubscribeBlobEvents(ch chan<- []common.Hash) event.Subscription {
+	return b.miner.SubscribeBlobEvents(ch)
 }
 
 // Close closes the beacon client service.

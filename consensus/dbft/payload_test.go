@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
@@ -81,8 +82,10 @@ func TestPayloadSerializable(t *testing.T) {
 	require.NoError(t, rlp.DecodeBytes(b, actual))
 	require.Equal(t, expected.Message, *actual)
 
-	actualP := payloadFromMessage(actual, nil)
+	actualP := payloadFromMessage(actual, func(*big.Int) dbftutil.ExtraVersion { return dbftutil.ExtraV0 }, func(*big.Int) bool { return false })
 	require.NoError(t, actualP.decodeData())
 
+	actualP.message.getBlockExtraVersion = nil
+	actualP.message.isNeoXPrepareRequestExtensionEnabled = nil
 	require.Equal(t, expected, actualP)
 }

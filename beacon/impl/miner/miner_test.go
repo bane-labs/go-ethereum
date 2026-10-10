@@ -252,7 +252,7 @@ func createMiner(t *testing.T) (*Miner, *mockDownloader, func(skipMiner bool)) {
 	shouldPreserve := func(_ *types.Header) bool {
 		return false
 	}
-	miner := New(backend, downloader, &rpc.Client{}, etherbase, shouldPreserve, nil)
+	miner := New(backend, downloader, &rpc.Client{}, etherbase, shouldPreserve, nil, nil)
 	cleanup := func(skipMiner bool) {
 		bc.Stop()
 		engine.Close()

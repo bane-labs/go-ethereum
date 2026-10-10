@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
@@ -19,6 +20,9 @@ type ShouldPreserveFn func(header *types.Header) bool
 
 // TransactionFilterFn is the type of function to filter transactions before they are sent to subscribers.
 type TransactionFilterFn func(txs []*types.Transaction) []*types.Transaction
+
+// BlobFilterFn is the type of function to filter blob hashes before they are sent to subscribers.
+type BlobFilterFn func(blobs []common.Hash) []common.Hash
 
 // Backend wraps all methods required for mining. Only full node is capable
 // to offer all the functions here.
@@ -46,15 +50,17 @@ type Miner struct {
 	worker      *worker
 	syncingFeed event.Feed              // Event feed for syncing status changes, a CL notifier as proxy
 	txFeed      event.Feed              // Event feed for new transactions delivered through CL
+	blobFeed    event.Feed              // Event feed for new blob data delivered through CL
 	scope       event.SubscriptionScope // Subscription scope for miner events
 
-	txFilter TransactionFilterFn // Optional filter for transactions subscription
+	txFilter   TransactionFilterFn // Optional filter for transactions subscription
+	blobFilter BlobFilterFn        // Optional filter for blob subscription
 
 	wg sync.WaitGroup
 }
 
 func New(eth Backend, downloader Downloader, rpc *rpc.Client, coinbase common.Address,
-	shouldPreserve ShouldPreserveFn, txFilter TransactionFilterFn) *Miner {
+	shouldPreserve ShouldPreserveFn, txFilter TransactionFilterFn, blobFilter BlobFilterFn) *Miner {
 	miner := &Miner{
 		backend:    eth,
 		downloader: downloader,
@@ -63,6 +69,7 @@ func New(eth Backend, downloader Downloader, rpc *rpc.Client, coinbase common.Ad
 		stopCh:     make(chan struct{}),
 		worker:     newWorker(eth, rpc, coinbase, shouldPreserve),
 		txFilter:   txFilter,
+		blobFilter: blobFilter,
 	}
 	miner.wg.Add(1)
 	go miner.update()
@@ -103,6 +110,28 @@ func (miner *Miner) NotifyTransactions(txs []*types.Transaction) {
 		miner.txFeed.Send(tx)
 	}
 	miner.worker.cacheTransactions(txs)
+}
+
+// GetBlobs tries to find blob data from the latest payload that the
+// miner has seen.
+func (miner *Miner) GetBlobs(hashes []common.Hash) *engine.BlobsBundle {
+	return miner.worker.getBlobs(hashes)
+}
+
+// NotifyBlobs notifies the miner about blob data seen in the beacon protocol.
+func (miner *Miner) NotifyBlobs(bundle *engine.BlobsBundle) {
+	if len(bundle.Blobs) == 0 {
+		return
+	}
+	hashes := make([]common.Hash, 0, len(bundle.Commitments))
+	for _, cmt := range bundle.Commitments {
+		hashes = append(hashes, convertKzgCommitmentToVersionedHash(cmt))
+	}
+	if miner.blobFilter != nil {
+		hashes = miner.blobFilter(hashes)
+	}
+	miner.blobFeed.Send(hashes)
+	miner.worker.cacheBlobs(hashes, bundle)
 }
 
 // update keeps track of the downloader events. Please be aware that this is a one shot type of update loop.
@@ -202,4 +231,9 @@ func (miner *Miner) SubscribeSyncingEvents(ch chan<- bool) event.Subscription {
 // SubscribeTransactionEvents subscribes to transaction events from the miner, should only be used in CL.
 func (miner *Miner) SubscribeTransactionEvents(ch chan<- *types.Transaction) event.Subscription {
 	return miner.scope.Track(miner.txFeed.Subscribe(ch))
+}
+
+// SubscribeBlobEvents subscribes to blob events from the miner, should only be used in CL.
+func (miner *Miner) SubscribeBlobEvents(ch chan<- []common.Hash) event.Subscription {
+	return miner.scope.Track(miner.blobFeed.Subscribe(ch))
 }

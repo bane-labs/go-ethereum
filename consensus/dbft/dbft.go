@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"math/big"
 	"os"
 	"sync"
@@ -79,7 +80,9 @@ var (
 )
 
 const (
-	// txSubCap is the capacity of channel that receives transaction notifications from mempool.
+	// txSubCap is the capacity of channel that receives transaction notifications from mempool
+	// (for pre-NeoXPrepareRequestExtension fork) or the channel that receives incoming blob
+	// commitment notifications from the blob pool (for post-NeoXPrepareRequestExtension fork).
 	txSubCap = 100
 	// msgsChCap is a capacity of channel that accepts consensus messages from
 	// dBFT protocol.
@@ -181,15 +184,25 @@ type DBFT struct {
 	// about a new consensus payload to be sent.
 	broadcast func(m *dbftproto.Message) error
 
-	// requestTxs is a callback which is called to request the missing
-	// transactions from neighbor nodes. Requested transactions hashes are
-	// stored in txCbList and checked against the incoming transactions. If
-	// subsequent incoming transaction was requested then it'll be sent to the
-	// buffered txs channel.
+	// requestTxs is a callback which is called prior to PrepareRequestExtension
+	// fork to request the missing transactions from neighbor nodes. Requested
+	// transactions hashes are stored in txCbList and checked against the
+	// incoming transactions. If a subsequent incoming transaction was requested,
+	// then it'll be sent to the buffered txEvents channel.
 	requestTxs func(hashed []common.Hash)
 	txCbList   atomic.Value
 	txSub      event.Subscription
 	txEvents   chan *types.Transaction
+
+	// requestBlobs is a callback which is called after PrepareRequestExtension
+	// fork to request the missing blob sidecar parts from neighbor nodes.
+	// Incoming sidecar parts are checked against prepareRequest-level map of
+	// missing sidecar part hashes. If a subsequent incoming sidecar part was
+	// found, then it'll be sent to the buffered blobEvents channel.
+	requestBlobs func(hashed []common.Hash)
+	blobCbList   atomic.Value
+	blobSub      event.Subscription
+	blobEvents   chan []common.Hash
 
 	// various chain/mempool events and subscription management:
 	chainHeadSub    event.Subscription
@@ -283,10 +296,11 @@ type DBFT struct {
 // config represents Engine configuration.
 type config struct {
 	*params.DBFTConfig
-	dkgEnablingHeight      int64
-	antiMEVEnablingHeight  int64
-	enforceECDSASignatures bool
-	logLevel               *zap.AtomicLevel
+	dkgEnablingHeight                     int64
+	antiMEVEnablingHeight                 int64
+	prepareRequestExtensionEnablingHeight int64
+	enforceECDSASignatures                bool
+	logLevel                              *zap.AtomicLevel
 }
 
 // zkFiles represents ZK-DKG configuration about R1CS and PK files.
@@ -304,9 +318,10 @@ type zkFiles struct {
 // signers set to the ones provided by the user.
 func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	cfg := &config{
-		DBFTConfig:            chainCfg.DBFT,
-		dkgEnablingHeight:     -1,
-		antiMEVEnablingHeight: -1,
+		DBFTConfig:                            chainCfg.DBFT,
+		dkgEnablingHeight:                     -1,
+		antiMEVEnablingHeight:                 -1,
+		prepareRequestExtensionEnablingHeight: -1,
 	}
 	if cfg.SecondsPerBlock == 0 {
 		return nil, errors.New("zero-period dBFT chain is not supported")
@@ -328,6 +343,9 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	if chainCfg.NeoXAMEVBlock != nil {
 		cfg.antiMEVEnablingHeight = chainCfg.NeoXAMEVBlock.Int64()
 	}
+	if chainCfg.NeoXPrepareRequestExtensionBlock != nil {
+		cfg.prepareRequestExtensionEnablingHeight = chainCfg.NeoXPrepareRequestExtensionBlock.Int64()
+	}
 
 	c := &DBFT{
 		config:       cfg,
@@ -335,6 +353,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 
 		messages:        make(chan Payload, msgsChCap),
 		txEvents:        make(chan *types.Transaction, txSubCap),
+		blobEvents:      make(chan []common.Hash, txSubCap),
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
 		syncingEvents:   make(chan bool, 2),
 
@@ -358,7 +377,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 	dbftCfg := []func(*dbft.Config[common.Hash]){
 		dbft.WithTimer[common.Hash](timer.New()),
 		dbft.WithLogger[common.Hash](logger),
-		dbft.WithSecondsPerBlock[common.Hash](time.Duration(bftCfg.SecondsPerBlock) * time.Second),
+		dbft.WithTimePerBlock[common.Hash](func() time.Duration { return time.Duration(bftCfg.SecondsPerBlock) * time.Second }),
 		dbft.WithGetKeyPair[common.Hash](c.getKeyPairCb),
 		dbft.WithCurrentHeight[common.Hash](c.currentHeightCb),
 		dbft.WithCurrentBlockHash[common.Hash](c.currentBlockHashCb),
@@ -366,7 +385,6 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		dbft.WithProcessBlock[common.Hash](c.processBlockCb),
 		dbft.WithNewBlockFromContext[common.Hash](c.newBlockFromContextCb),
 		dbft.WithWatchOnly[common.Hash](func() bool { return false }),
-		dbft.WithGetTx[common.Hash](c.getTxCb),
 		dbft.WithGetVerified[common.Hash](c.getVerifiedCb),
 		dbft.WithRequestTx[common.Hash](c.requestTxCb),
 		dbft.WithStopTxFlow[common.Hash](c.stopTxFlowCb),
@@ -636,19 +654,11 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 	}
 }
 
-// getTxCb is a dbft library setting callback.
-func (c *DBFT) getTxCb(h common.Hash) dbft.Transaction[common.Hash] {
-	tx := c.txpool.Get(h)
-	// This check is needed, because in case of missing transaction dBFT
-	// expects a pure nil.
-	if tx != nil {
-		return &Transaction{
-			Tx: tx.WithoutBlobTxSidecar(),
-		}
-	}
-
-	// Do not try to retrieve on-chain transaction.
-	return nil
+// isPrepareRequestExtensionEnabled denotes whether extended format of PrepareRequest
+// should be used at the current dBFT context height. This method must only be called
+// by dBFT event loop since it performs access to the dBFT context.
+func (c *DBFT) isPrepareRequestExtensionEnabled() bool {
+	return c.config.prepareRequestExtensionEnablingHeight >= 0 && int64(c.dbft.Context.BlockIndex) >= c.config.prepareRequestExtensionEnablingHeight
 }
 
 // getVerifiedCb is a dbft library setting callback.
@@ -672,27 +682,55 @@ func (c *DBFT) getVerifiedCb() []dbft.Transaction[common.Hash] {
 }
 
 // requestTxCb is a dbft library setting callback.
-func (c *DBFT) requestTxCb(hashes ...common.Hash) {
-	if len(hashes) == 0 {
-		return
+func (c *DBFT) requestTxCb(misses iter.Seq[common.Hash]) {
+	if c.isPrepareRequestExtensionEnabled() {
+		// Retrieve versionedHashes of missing blobs based on PrepareRequest data.
+		ctx := c.dbft.Context
+		req := ctx.PreparationPayloads[ctx.PrimaryIndex].GetPrepareRequest().(*prepareRequest)
+		missing := make([]common.Hash, 0, len(req.missingBlobs))
+		for h := range misses {
+			missing = append(missing, req.Txs[req.missingTxs[h]].Tx.BlobHashes()...)
+		}
+		c.blobCbList.Store(missing)
+		c.requestBlobs(missing)
+	} else {
+		sorted := make([]common.Hash, 0, len(c.dbft.MissingTransactions)) // tiny hack to avoid reallocation.
+		for h := range misses {
+			sorted = append(sorted, h)
+		}
+		slices.SortFunc(sorted, common.Hash.Cmp)
+		c.txCbList.Store(sorted)
+		c.requestTxs(sorted)
 	}
-
-	sorted := slices.Clone(hashes)
-	slices.SortFunc(sorted, common.Hash.Cmp)
-	c.txCbList.Store(sorted)
-
-	c.requestTxs(sorted)
 }
 
 // stopTxFlowCb is a dbft library setting callback.
 func (c *DBFT) stopTxFlowCb() {
-	var hashes []common.Hash
-	c.txCbList.Store(hashes)
+	c.txCbList.Store([]common.Hash{})
+	c.blobCbList.Store([]common.Hash{})
 }
 
 // newPrepareRequestCb is a dbft library setting callback.
-func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Hash) dbft.PrepareRequest[common.Hash] {
+func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txs []dbft.Transaction[common.Hash]) dbft.PrepareRequest[common.Hash] {
+	if c.isPrepareRequestExtensionEnabled() {
+		var txCp = make([]*Transaction, len(txs))
+		for i := range txs {
+			txCp[i] = txs[i].(*Transaction)
+		}
+		return c.newPrepareRequestAux(ts, nonce, nil, txCp)
+	}
+	txHashes := make([]common.Hash, len(txs))
+	for i := range txs {
+		txHashes[i] = txs[i].Hash()
+	}
+	return c.newPrepareRequestAux(ts, nonce, txHashes, nil)
+}
+
+// newPrepareRequestAux is a generic implementation of newPrepareRequestCb capable of creating
+// both legacy and extended formats of prepareRequest.
+func (c *DBFT) newPrepareRequestAux(ts uint64, nonce uint64, txHashes []common.Hash, txs []*Transaction) dbft.PrepareRequest[common.Hash] {
 	var req = new(prepareRequest)
+	req.extended = txs != nil
 	if c.sealingProposal == nil {
 		panic("bug: sealing proposal is not initialized")
 	}
@@ -756,7 +794,11 @@ func (c *DBFT) newPrepareRequestCb(ts uint64, nonce uint64, txHashes []common.Ha
 		req.ParentSealHashV0.SetBytes(c.lastBlockSealHash)
 	}
 	req.ParentExtra = c.lastBlockExtra
-	req.TxHashes = txHashes
+	if req.extended {
+		req.Txs = txs
+	} else {
+		req.TxHashes = txHashes
+	}
 
 	return req
 }
@@ -794,8 +836,10 @@ func (c *DBFT) newRecoveryRequestCb(ts uint64) dbft.RecoveryRequest {
 
 // newRecoveryMessageCb is a dbft library setting callback.
 func (c *DBFT) newRecoveryMessageCb() dbft.RecoveryMessage[common.Hash] {
+	h := big.NewInt(int64(c.dbft.Context.BlockIndex))
 	r := &recoveryMessage{
-		version: c.getBlockExtraVersion(big.NewInt(int64(c.dbft.Context.BlockIndex))),
+		version:                              c.getBlockExtraVersion(h),
+		isNeoXPrepareRequestExtensionEnabled: c.chain.Config().IsNeoXPrepareRequestExtension,
 	}
 	return r
 }
@@ -935,7 +979,58 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 	// transactions via internal mechanism in this consensus view).
 	c.sealingTransactions = nil
 
+	// Fill in internal prepareRequest fields.
+	c.processMissingTransactions(req)
 	return nil
+}
+
+// processMissingTransactions iterates through the proposed transactions, filters out
+// unknown ones (or in case of blob transactions, unknown sidecar parts) and stores
+// the unknown hashes in the prepareRequest.
+func (c *DBFT) processMissingTransactions(req *prepareRequest) {
+	var txs []dbft.Transaction[common.Hash]
+	missingBlobs := make(map[common.Hash]struct{})
+	missingTxs := make(map[common.Hash]int)
+	if c.isPrepareRequestExtensionEnabled() {
+		txs = make([]dbft.Transaction[common.Hash], len(req.Txs))
+		for i, tx := range req.Txs {
+			if tx.Tx.Type() != types.BlobTxType {
+				txs[i] = tx
+				continue
+			}
+
+			// Blob transactions require separate blob verification, hence send
+			// it to dBFT iff blob is available and verified. Treat missing/empty
+			// blob transactions as missing until the node is able to fetch and
+			// verify the blob.
+			blob := c.txpool.Get(tx.Tx.Hash())
+			if blob != nil {
+				txs[i] = &Transaction{
+					Tx: tx.Tx.WithoutBlobTxSidecar(),
+				}
+			} else {
+				for _, h := range tx.Tx.BlobHashes() {
+					missingBlobs[h] = struct{}{}
+				}
+				missingTxs[tx.Tx.Hash()] = i
+			}
+		}
+	} else {
+		txs = make([]dbft.Transaction[common.Hash], len(req.TxHashes))
+		for i, hash := range req.TxHashes {
+			verified := c.txpool.Get(hash)
+			if verified != nil {
+				txs[i] = &Transaction{
+					Tx: verified.WithoutBlobTxSidecar(),
+				}
+			} else {
+				missingTxs[hash] = i
+			}
+		}
+	}
+	req.verified = txs
+	req.missingBlobs = missingBlobs
+	req.missingTxs = missingTxs
 }
 
 // verifyPreBlockCb is a dbft library setting callback.
@@ -1551,6 +1646,11 @@ func (c *DBFT) WithRequestTxs(f func(hashed []common.Hash)) {
 	c.requestTxs = f
 }
 
+// WithRequestBlobs sets callback to request the missing blob tx commitments from neighbor nodes.
+func (c *DBFT) WithRequestBlobs(f func(hashed []common.Hash)) {
+	c.requestBlobs = f
+}
+
 // WithBeacon initializes beacon protocol related channels and functions.
 func (c *DBFT) WithBeacon(beacon Beacon, syncing SyncingFn) {
 	// The channel to broadcast new blocks in beacon protocol.
@@ -1559,6 +1659,8 @@ func (c *DBFT) WithBeacon(beacon Beacon, syncing SyncingFn) {
 	c.refreshProposal = beacon.RefreshPendingPayload
 	// The channel to receive transactions from CL.
 	c.txSub = beacon.SubscribeTransactionEvents(c.txEvents)
+	// The channel to receive verified blob parts from CL.
+	c.blobSub = beacon.SubscribeBlobEvents(c.blobEvents)
 	// The direct checker of miner working state.
 	c.syncingSub = beacon.SubscribeSyncingEvents(c.syncingEvents)
 	c.syncing = syncing
@@ -2338,6 +2440,34 @@ events:
 			c.dbft.OnReceive(&msg)
 		case tx := <-c.txEvents:
 			c.dbft.OnTransaction(&Transaction{Tx: tx.WithoutBlobTxSidecar()})
+		case blobHashes := <-c.blobEvents:
+			ctx := c.dbft.Context
+			pReq := ctx.PreparationPayloads[ctx.PrimaryIndex]
+			if pReq == nil { // not received yet.
+				continue
+			}
+			var (
+				req       = pReq.GetPrepareRequest().(*prepareRequest)
+				requested bool
+			)
+			for _, h := range blobHashes {
+				if _, ok := req.missingBlobs[h]; ok {
+					delete(req.missingBlobs, h)
+					requested = true
+				}
+			}
+			if !requested {
+				continue
+			}
+
+			// Once all missing blobs are collected, notify consensus about all missing transactions at once.
+			if len(req.missingBlobs) == 0 {
+				for _, i := range req.missingTxs {
+					c.dbft.OnTransaction(req.Txs[i]) // the blob transaction itself (without sidecars) is already present in PrepareRequest.
+				}
+				clear(req.missingTxs)
+			}
+
 		case h := <-c.chainHeadEvents:
 			c.handleChainBlock(h.Header, true)
 		case err := <-c.chainHeadSub.Err():
@@ -2399,15 +2529,18 @@ events:
 			)
 		}
 	}
-	c.dbft.Timer.Stop()
 	c.chainHeadSub.Unsubscribe()
 	c.txSub.Unsubscribe()
+	c.blobSub.Unsubscribe()
 	c.syncingSub.Unsubscribe()
 	c.eventLoopRunning.Store(false)
 drainLoop:
 	for {
 		select {
 		case <-c.messages:
+		case <-c.txEvents:
+		case <-c.blobEvents:
+		case <-c.syncingEvents:
 		case <-c.chainHeadEvents:
 		default:
 			break drainLoop
@@ -2430,7 +2563,7 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 		return nil
 	}
 
-	p := payloadFromMessage(cp, c.getBlockExtraVersion)
+	p := payloadFromMessage(cp, c.getBlockExtraVersion, c.chain.Config().IsNeoXPrepareRequestExtension)
 	// decode payload data into message
 	if err := p.decodeData(); err != nil {
 		log.Info("can't decode payload data", "hash", cp.Hash(), "error", err)
@@ -2475,11 +2608,30 @@ func (c *DBFT) FilterMissingTransaction(txs []*types.Transaction) []*types.Trans
 	return known
 }
 
-func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion) *Payload {
+// FilterMissingBlob is a dBFT helper to filter blob hashes that are known as missing.
+func (c *DBFT) FilterMissingBlob(blobHashes []common.Hash) []common.Hash {
+	if c.dbft == nil || !c.dbftStarted.Load() {
+		return nil
+	}
+
+	known := make([]common.Hash, 0, len(blobHashes))
+	cbList := c.blobCbList.Load()
+	if cbList != nil {
+		for _, h := range blobHashes {
+			if slices.Contains(cbList.([]common.Hash), h) {
+				known = append(known, h)
+			}
+		}
+	}
+	return known
+}
+
+func payloadFromMessage(ep *dbftproto.Message, getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion, isNeoXPrepareRequestExtensionEnabled func(height *big.Int) bool) *Payload {
 	return &Payload{
 		Message: *ep,
 		message: message{
-			getBlockExtraVersion: getBlockExtraVersion,
+			getBlockExtraVersion:                 getBlockExtraVersion,
+			isNeoXPrepareRequestExtensionEnabled: isNeoXPrepareRequestExtensionEnabled,
 		},
 	}
 }
