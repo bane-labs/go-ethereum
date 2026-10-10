@@ -988,10 +988,11 @@ func (c *DBFT) verifyPrepareRequestCb(p dbft.ConsensusPayload[common.Hash]) erro
 // unknown ones (or in case of blob transactions, unknown sidecar parts) and stores
 // the unknown hashes in the prepareRequest.
 func (c *DBFT) processMissingTransactions(req *prepareRequest) {
-	txs := make([]dbft.Transaction[common.Hash], len(req.Txs))
+	var txs []dbft.Transaction[common.Hash]
 	missingBlobs := make(map[common.Hash]struct{})
 	missingTxs := make(map[common.Hash]int)
 	if c.isPrepareRequestExtensionEnabled() {
+		txs = make([]dbft.Transaction[common.Hash], len(req.Txs))
 		for i, tx := range req.Txs {
 			if tx.Tx.Type() != types.BlobTxType {
 				txs[i] = tx
@@ -1015,14 +1016,15 @@ func (c *DBFT) processMissingTransactions(req *prepareRequest) {
 			}
 		}
 	} else {
-		for i, tx := range req.Txs {
-			verified := c.txpool.Get(tx.Tx.Hash())
+		txs = make([]dbft.Transaction[common.Hash], len(req.TxHashes))
+		for i, hash := range req.TxHashes {
+			verified := c.txpool.Get(hash)
 			if verified != nil {
 				txs[i] = &Transaction{
 					Tx: verified.WithoutBlobTxSidecar(),
 				}
 			} else {
-				missingTxs[tx.Tx.Hash()] = i
+				missingTxs[hash] = i
 			}
 		}
 	}
