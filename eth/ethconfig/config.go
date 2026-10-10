@@ -53,7 +53,7 @@ var FullNodeGPO = gasprice.Config{
 
 // Defaults contains default settings for use on the Ethereum main net.
 var Defaults = Config{
-	HistoryMode:             history.KeepAll,
+	HistoryMode:             history.HistoryPolicy{Mode: history.KeepAll},
 	SyncMode:                SnapSync,
 	NetworkId:               0, // enable auto configuration of networkID == chainID
 	TxLookupLimit:           2350000,
@@ -98,7 +98,7 @@ type Config struct {
 	SyncMode  SyncMode
 
 	// HistoryMode configures chain history retention.
-	HistoryMode history.HistoryMode
+	HistoryMode history.HistoryPolicy
 
 	// This can be set to list of enrtree:// URLs which will be queried for
 	// nodes to connect to.
@@ -106,8 +106,9 @@ type Config struct {
 	SnapDiscoveryURLs []string
 
 	// State options.
-	NoPruning  bool // Whether to disable pruning and flush everything to disk
-	NoPrefetch bool // Whether to disable prefetching and only load state on demand
+	NoPruning         bool // Whether to disable pruning and flush everything to disk
+	NoPrefetch        bool // Whether to disable prefetching and only load state on demand
+	NoPrecompileCache bool // Whether to disable precompile result caching
 
 	// Deprecated: use 'TransactionHistory' instead.
 	TxLookupLimit uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
@@ -183,9 +184,6 @@ type Config struct {
 
 	// Generate execution witnesses and self-check against them (testing purpose)
 	StatelessSelfValidation bool
-
-	// Enables tracking of state size
-	EnableStateSizeTracking bool
 
 	// SnapV2 enables the experimental snap/2 (EIP-8189, BAL-based) sync protocol:
 	// the node advertises snap/2 on the wire and uses the snap/2 state syncer.
