@@ -4778,7 +4778,7 @@ func testRestartDuringInterruptedHeadersBeforeCutoff(t *testing.T, disk bool) {
 	// Replay the next batch up to its tail truncation: the headers are in the
 	// ancient store and the head markers point at the last of them, but the
 	// block data tail is still where the previous batch left it.
-	if _, err := rawdb.WriteAncientHeaderChain(db, headers[16:24]); err != nil {
+	if _, err := rawdb.WriteAncientHeaderChain(db, headers[16:24], new(big.Int)); err != nil {
 		t.Fatalf("failed to write headers to ancient store: %v", err)
 	}
 	batch := db.NewBatch()
