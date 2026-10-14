@@ -260,7 +260,6 @@ type DBFT struct {
 	sealingState    *state.StateDB
 	sealingBlock    *types.Block
 	sealingReceipts types.Receipts
-	sealingBal      *bal.BlockAccessList
 
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
 	chain        ChainHeaderReader
@@ -546,7 +545,7 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash, *types.Transaction]) err
 	// BAL is only meaningful from Amsterdam onward; skip pre-Amsterdam blocks
 	// to avoid persisting and serving empty BALs over the network.
 	if dbftBlock.accessList != nil && block.AccessList() == nil && c.chain.Config().IsAmsterdam(block.Number(), block.Time()) {
-		block = block.WithAccessList(dbftBlock.accessList)
+		block = block.WithAccessListUnsafe(dbftBlock.accessList)
 	}
 
 	// Firstly, notify chain about new block.
@@ -576,13 +575,15 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Trans
 			header:      pre.header,
 			withdrawals: pre.withdrawals,
 		}
+		if pre.finalBal != nil {
+			res.accessList = pre.finalBal.ToEncodingObj()
+		}
 
 		// If we're primary, then reuse sealing state got after PrepareRequest
 		// construction.
 		if ctx.IsPrimary() {
 			res.state = c.sealingState
 			res.receipts = c.sealingReceipts
-			res.accessList = c.sealingBal
 		}
 		return res
 	}
@@ -595,7 +596,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Trans
 			header:              c.sealingBlock.Header(),
 			withdrawals:         c.sealingBlock.Withdrawals(),
 			transactions:        c.sealingBlock.Transactions(),
-			accessList:          c.sealingBal,
+			accessList:          c.sealingBlock.AccessList(),
 			localSignatureBytes: nil,
 			state:               c.sealingState,
 			receipts:            c.sealingReceipts,
@@ -646,10 +647,10 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Trans
 		header:              res.Header(),
 		withdrawals:         res.Withdrawals(),
 		transactions:        res.Transactions(),
+		accessList:          res.AccessList(),
 		localSignatureBytes: nil,
 		state:               pre.finalState,
 		receipts:            pre.finalReceipts,
-		accessList:          pre.finalBal.ToEncodingObj(),
 	}
 }
 
@@ -773,7 +774,6 @@ func (c *DBFT) newPrepareRequestAux(ts uint64, nonce uint64, txHashes []common.H
 	c.sealingState = state
 	c.sealingBlock = res
 	c.sealingReceipts = result.Receipts
-	c.sealingBal = result.Bal.ToEncodingObj()
 
 	req.SealingProposal = c.sealingProposal
 	if len(c.lastBlockSealHash) == common.HashLength {
@@ -1105,6 +1105,7 @@ func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash, *types.Transaction]) bool
 
 		dbftBlock.state = state
 		dbftBlock.receipts = result.Receipts
+		dbftBlock.accessList = result.Bal.ToEncodingObj()
 
 		return true
 	}
@@ -1503,6 +1504,10 @@ func (c *DBFT) newPreBlockFromContext(sealingProposal *types.Header) *PreBlock {
 	// Withdrawals are temporary empty if Shanghai is passed.
 	if c.chain.Config().IsShanghai(h.Number, h.Time) {
 		res.withdrawals = emptyWithdrawals
+	}
+	// AccessList is temporary empty if Amsterdam is passed.
+	if c.chain.Config().IsAmsterdam(h.Number, h.Time) {
+		res.finalBal = bal.NewConstructionBlockAccessList()
 	}
 
 	return res

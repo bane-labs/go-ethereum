@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -11,8 +12,10 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/dbft/light"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 const rollBackBlocks = 2 // The number of blocks to roll back when requesting headers, and the extra 1 more block is for safe reorg
@@ -303,85 +306,197 @@ func (b *beaconLightSyncer) executeTask(peer *peerConnection, req *beaconLightRe
 				b.drop(peer.id)
 				return
 			}
+
 			// If the verification is successful, update the trusted hash and repeat until
 			// the light chain is extended. Here we take n-1, since n may get reorg
-			trusted := headers[len(headers)-2]
-			latest := headers[len(headers)-1]
-			_, bodies, err := b.fetchBodiesByHash(peer, req.cancel, []common.Hash{trusted.Hash(), latest.Hash()})
-			if err != nil {
-				// If downloader is canceled, then abort and wait for a new start
-				if err == errCanceled {
-					b.scheduleRevertRequest(req)
-					return
-				}
-				log.Debug("Failed to fetch new bodies", "err", err)
-				b.scheduleRevertRequest(req)
-				b.drop(peer.id)
-				return
-			}
-			if len(bodies) != 2 {
-				log.Debug("Received invalid number of new bodies", "len", len(bodies))
-				b.scheduleRevertRequest(req)
-				b.drop(peer.id)
-				return
-			}
-			// decode
-			decodeBody := func(body eth.BlockBody) (txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
-				var err error
-				txs, err = body.Transactions.Items()
-				if err != nil {
-					log.Debug(fmt.Errorf("%w: bad transactions: %v", errInvalidBody, err).Error())
-					return
-				}
-				uncles, err = body.Uncles.Items()
-				if err != nil {
-					log.Debug(fmt.Errorf("%w: bad uncles: %v", errInvalidBody, err).Error())
-					return
-				}
-				if body.Withdrawals != nil {
-					withdrawals, err = body.Withdrawals.Items()
-					if err != nil {
-						log.Debug(fmt.Errorf("%w: bad withdrawals: %v", errInvalidBody, err).Error())
-						return
-					}
-				}
-				return
-			}
-			txs0, uncles0, withdrawals0 := decodeBody(bodies[0])
-			txs1, uncles1, withdrawals1 := decodeBody(bodies[1])
-			// Verify the bodies match the headers, if not, retry
-			// Rebuild the block trusted to be finalized
-			body := types.Body{
-				Transactions: txs0,
-				Uncles:       uncles0,
-				Withdrawals:  withdrawals0,
-			}
-			finalizedBlock := types.NewBlockWithHeader(trusted).WithBody(body)
-			// Rebuild the block temporarily latest
-			body = types.Body{
-				Transactions: txs1,
-				Uncles:       uncles1,
-				Withdrawals:  withdrawals1,
-			}
-			latestBlock := types.NewBlockWithHeader(latest).WithBody(body)
-			if finalizedBlock.Hash() != trusted.Hash() || latestBlock.Hash() != latest.Hash() {
-				log.Debug("Received invalid new bodies", "trusted", trusted.Hash(), "latest", latest.Hash())
-				b.scheduleRevertRequest(req)
-				b.drop(peer.id)
-				return
-			}
+			b.rebuildBlocks(peer, req, headers, metas)
+		}
+	}
+}
+
+func (b *beaconLightSyncer) rebuildBlocks(peer *peerConnection, req *beaconLightRequest, headers []*types.Header, metas []common.Hash) {
+	const expectedResponseNum = 2 // We expect to receive 2 blocks, one for the trusted block and one for the latest block
+	trusted := headers[len(headers)-2]
+	latest := headers[len(headers)-1]
+	requestHeaders := []*types.Header{trusted, latest}
+	reqHashes := []common.Hash{trusted.Hash(), latest.Hash()}
+	balsCh := make(chan []*bal.BlockAccessList)
+
+	// toFetchBals is set if any of the blocks have a non-empty access list hash
+	toFetchBals := false
+	for _, header := range requestHeaders {
+		if header.BlockAccessListHash != nil && !header.EmptyBlockAccessListHash() {
+			toFetchBals = true
+		}
+	}
+	// fetch the access lists in parallel with the bodies, since they are independent and can be retrieved concurrently
+	go func() {
+		defer close(balsCh)
+
+		if !toFetchBals {
 			select {
-			case req.deliver <- &beaconLightResponse{
-				peer:           peer,
-				reqid:          req.id,
-				headers:        headers,
-				metas:          metas,
-				finalizedBlock: finalizedBlock,
-				latestBlock:    latestBlock,
-			}:
 			case <-req.cancel:
+			case balsCh <- []*bal.BlockAccessList{{}, {}}:
+			}
+			return
+		}
+		hashes, bals, err := b.fetchBALsByHash(peer, req.cancel, reqHashes)
+		if err != nil {
+			// If downloader is canceled, then abort and wait for a new start
+			if err == errCanceled {
+				b.scheduleRevertRequest(req)
+				return
+			}
+			log.Debug("Failed to fetch new BALs", "err", err)
+			b.scheduleRevertRequest(req)
+			b.drop(peer.id)
+			return
+		}
+		if len(bals) != expectedResponseNum {
+			log.Debug("Received invalid number of new BALs", "len", len(bals))
+			b.scheduleRevertRequest(req)
+			b.drop(peer.id)
+			return
+		}
+		lists := make([]*bal.BlockAccessList, len(requestHeaders))
+		for i, header := range requestHeaders {
+			if bytes.Equal(bals[i], rlp.EmptyString) {
+				lists[i] = &bal.BlockAccessList{}
+				continue
+			}
+			// Validate the content against the hash committed in the header and
+			// decode it. Anything invalid is a protocol violation.
+			if header.BlockAccessListHash == nil || hashes[i] != *header.BlockAccessListHash {
+				log.Debug("Received invalid BALs", "len", len(bals))
+				b.scheduleRevertRequest(req)
+				b.drop(peer.id)
+				return
+			}
+			list := new(bal.BlockAccessList)
+			if err := rlp.DecodeBytes(bals[i], list); err != nil {
+				log.Debug("Received invalid BALs", "len", len(bals))
+				b.scheduleRevertRequest(req)
+				b.drop(peer.id)
+				return
+			}
+			lists[i] = list
+		}
+		select {
+		case <-req.cancel:
+		case balsCh <- lists:
+		}
+	}()
+
+	hashes, bodies, err := b.fetchBodiesByHash(peer, req.cancel, reqHashes)
+	if err != nil {
+		// If downloader is canceled, then abort and wait for a new start
+		if err == errCanceled {
+			b.scheduleRevertRequest(req)
+			return
+		}
+		log.Debug("Failed to fetch new bodies", "err", err)
+		b.scheduleRevertRequest(req)
+		b.drop(peer.id)
+		return
+	}
+	if len(bodies) != expectedResponseNum {
+		log.Debug("Received invalid number of new bodies", "len", len(bodies))
+		b.scheduleRevertRequest(req)
+		b.drop(peer.id)
+		return
+	}
+
+	// decode
+	decodeBody := func(header *types.Header, index int) (*types.Body, error) {
+		if hashes.TransactionRoots[index] != header.TxHash {
+			return nil, errInvalidBody
+		}
+		if hashes.UncleHashes[index] != header.UncleHash {
+			return nil, errInvalidBody
+		}
+		if header.WithdrawalsHash == nil {
+			// nil hash means that withdrawals should not be present in body
+			if bodies[index].Withdrawals != nil {
+				return nil, errInvalidBody
+			}
+		} else { // non-nil hash: body must have withdrawals
+			if bodies[index].Withdrawals == nil {
+				return nil, errInvalidBody
+			}
+			if hashes.WithdrawalRoots[index] != *header.WithdrawalsHash {
+				return nil, errInvalidBody
 			}
 		}
+
+		var err error
+		var withdrawals []*types.Withdrawal
+		txs, err := bodies[index].Transactions.Items()
+		if err != nil {
+			log.Debug(fmt.Errorf("%w: bad transactions: %v", errInvalidBody, err).Error())
+			return nil, err
+		}
+		uncles, err := bodies[index].Uncles.Items()
+		if err != nil {
+			log.Debug(fmt.Errorf("%w: bad uncles: %v", errInvalidBody, err).Error())
+			return nil, err
+		}
+		if bodies[index].Withdrawals != nil {
+			withdrawals, err = bodies[index].Withdrawals.Items()
+			if err != nil {
+				log.Debug(fmt.Errorf("%w: bad withdrawals: %v", errInvalidBody, err).Error())
+				return nil, err
+			}
+		}
+		return &types.Body{
+			Transactions: txs,
+			Uncles:       uncles,
+			Withdrawals:  withdrawals,
+		}, nil
+	}
+
+	var decodedBodies [expectedResponseNum]*types.Body
+	for i, header := range requestHeaders {
+		body, err := decodeBody(header, i)
+		if err != nil {
+			log.Debug("Failed to decode body", "err", err)
+			return
+		}
+		decodedBodies[i] = body
+	}
+
+	var bals []*bal.BlockAccessList
+	select {
+	case <-req.cancel:
+		return
+	case bals = <-balsCh:
+	}
+	if len(bals) != expectedResponseNum {
+		log.Error("Received invalid number of new BALs", "len", len(bals))
+		return
+	}
+
+	// Verify the bodies match the headers, if not, retry
+	// Rebuild the block trusted to be finalized
+	finalizedBlock := types.NewBlockWithHeader(trusted).WithBody(*decodedBodies[0])
+	if finalizedBlock.Header().BlockAccessListHash != nil {
+		finalizedBlock = finalizedBlock.WithAccessListUnsafe(bals[0])
+	}
+	// Rebuild the block temporarily latest
+	latestBlock := types.NewBlockWithHeader(latest).WithBody(*decodedBodies[1])
+	if latestBlock.Header().BlockAccessListHash != nil {
+		latestBlock = latestBlock.WithAccessListUnsafe(bals[1])
+	}
+
+	select {
+	case req.deliver <- &beaconLightResponse{
+		peer:           peer,
+		reqid:          req.id,
+		headers:        headers,
+		metas:          metas,
+		finalizedBlock: finalizedBlock,
+		latestBlock:    latestBlock,
+	}:
+	case <-req.cancel:
 	}
 }
 
@@ -426,6 +541,50 @@ func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan str
 		res.Done <- nil
 
 		return meta, *resp, nil
+	}
+}
+
+func (b *beaconLightSyncer) fetchBALsByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) ([]common.Hash, eth.BlockAccessListResponse, error) {
+	// Create the response sink and send the network request
+	start := time.Now()
+	resCh := make(chan *eth.Response)
+
+	req, err := p.peer.RequestBALs(hashes, resCh)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer req.Close()
+
+	// Wait until the response arrives, the request is cancelled or times out
+	ttl := b.peers.rates.TargetTimeout()
+
+	timeoutTimer := time.NewTimer(ttl)
+	defer timeoutTimer.Stop()
+
+	select {
+	case <-cancel:
+		return nil, nil, errCanceled
+
+	case <-timeoutTimer.C:
+		// BAL retrieval timed out, update the metrics
+		p.log.Debug("BAL request timed out", "elapsed", ttl)
+		balTimeoutMeter.Mark(1)
+
+		return nil, nil, errTimeout
+
+	case res := <-resCh:
+		bals := *res.Res.(*eth.BlockAccessListResponse)
+		hashes := res.Meta.([]common.Hash) // {keccak256 hash per entry, zero hash if unavailable}
+		// BALs successfully retrieved, update the metrics
+		balReqTimer.Update(time.Since(start))
+		balInMeter.Mark(int64(len(bals)))
+
+		// Don't reject the packet even if it turns out to be bad, downloader will
+		// disconnect the peer on its own terms. Simply delivery the BALs to
+		// be processed by the caller
+		res.Done <- nil
+
+		return hashes, bals, nil
 	}
 }
 
