@@ -542,7 +542,7 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 		newPayloadMethod = "engine_newPayloadV3"
 	case forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
 		newPayloadMethod = "engine_newPayloadV4"
-	case forks.Amsterdam:
+	case forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5:
 		newPayloadMethod = "engine_newPayloadV5"
 	case forks.Bogota:
 		// TODO: add support for engine_newPayloadV6 when EL supports it

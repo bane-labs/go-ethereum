@@ -554,6 +554,24 @@ func (f *BlockFetcher) loop() {
 					timeout := time.NewTimer(2 * fetchTimeout) // 2x leeway before dropping the peer
 					defer timeout.Stop()
 
+					// fetch the access lists in parallel with the bodies, since they are independent and can be retrieved concurrently
+					balsCh := make(chan []*bal.BlockAccessList)
+					if toFetchBals {
+						go func(peer string, hashes []common.Hash) {
+							defer close(balsCh)
+
+							balList, err := f.fetchBals(peer, hashes)
+							if err != nil {
+								log.Debug(fmt.Errorf("%w: failed to fetch BALs: %v", errInvalidBody, err).Error())
+								return
+							}
+							select {
+							case <-timeout.C:
+							case balsCh <- balList:
+							}
+						}(peer, hashes)
+					}
+
 					select {
 					case res := <-resCh:
 						res.Done <- nil
@@ -586,17 +604,26 @@ func (f *BlockFetcher) loop() {
 							})
 						}
 
-						// fetch Bals
+						// If we need to fetch BALs, wait for them to arrive. If not, create an empty list of BALs
 						var balList []*bal.BlockAccessList
 						if toFetchBals {
-							balList, err = f.fetchBals(peer, hashes)
-							if err != nil {
-								log.Debug(fmt.Errorf("%w: failed to fetch BALs: %v", errInvalidBody, err).Error())
+							select {
+							case <-timeout.C:
+								f.dropPeer(peer)
 								return
+							case balList = <-balsCh:
+								if balList == nil {
+									f.dropPeer(peer)
+									return
+								}
 							}
 						} else {
 							// If we don't have any BALs, we make an empty list of BALs
 							balList = make([]*bal.BlockAccessList, len(bodyList))
+							emptyBAL := new(bal.BlockAccessList)
+							for i := range balList {
+								balList[i] = emptyBAL
+							}
 						}
 
 						f.FilterBodies(peer, bodyList, balList, time.Now())
@@ -655,6 +682,10 @@ func (f *BlockFetcher) loop() {
 							}
 							if block.Header().EmptyBlockAccessListHash() {
 								block = block.WithAccessListUnsafe(new(bal.BlockAccessList))
+							} else if block.Header().BlockAccessListHash != nil {
+								log.Debug("Need to fetch block access list", "BlockAccessListHash", block.Header().BlockAccessListHash)
+								incomplete = append(incomplete, announce)
+								continue
 							}
 							block.ReceivedAt = task.time
 
@@ -774,7 +805,7 @@ func (f *BlockFetcher) loop() {
 						if f.getBlock(hash) == nil {
 							block := types.NewBlockWithHeader(announce.header).WithBody(task.bodies[i])
 							if announce.header.BlockAccessListHash != nil {
-								block = block.WithAccessList(task.bals[i])
+								block = block.WithAccessListUnsafe(task.bals[i])
 							}
 							block.ReceivedAt = task.time
 							blocks = append(blocks, block)
@@ -1023,9 +1054,8 @@ func (f *BlockFetcher) fetchBals(peer string, hashes []common.Hash) ([]*bal.Bloc
 		bals := *res.Res.(*eth.BlockAccessListResponse)
 		// decode
 		for index := 0; index < len(bals); index++ {
-			var accessList *bal.BlockAccessList
+			accessList := new(bal.BlockAccessList)
 			if !bytes.Equal(bals[index], rlp.EmptyString) {
-				accessList = new(bal.BlockAccessList)
 				if err := rlp.DecodeBytes(bals[index], accessList); err != nil {
 					return nil, fmt.Errorf("failed to decode BAL: %w", err)
 				}

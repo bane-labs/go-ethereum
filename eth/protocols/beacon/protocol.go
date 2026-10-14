@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -104,10 +105,17 @@ func (p *NewBlockHashesPacket) Unpack() ([]common.Hash, []uint64) {
 	return hashes, numbers
 }
 
-// NewBlockPacket is the network packet for the block propagation message.
-type NewBlockPacket struct {
+// NewBlockPacket1 is the network packet for the block propagation message.
+type NewBlockPacket1 struct {
 	Block *types.Block
 	TD    *big.Int
+}
+
+// NewBlockPacket is the network packet for the block propagation message.
+type NewBlockPacket struct {
+	Block      *types.Block
+	TD         *big.Int
+	AccessList *bal.BlockAccessList // The accessList in the types.Block will not be encoded, so here we have added it separately.
 }
 
 // NewBlobsRootPacket is the network packet for blobs block hash.
@@ -217,6 +225,9 @@ func (*StatusPacket2) Kind() byte   { return StatusMsg }
 
 func (*NewBlockHashesPacket) Name() string { return "NewBlockHashes" }
 func (*NewBlockHashesPacket) Kind() byte   { return NewBlockHashesMsg }
+
+func (*NewBlockPacket1) Name() string { return "NewBlock" }
+func (*NewBlockPacket1) Kind() byte   { return NewBlockMsg }
 
 func (*NewBlockPacket) Name() string { return "NewBlock" }
 func (*NewBlockPacket) Kind() byte   { return NewBlockMsg }

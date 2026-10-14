@@ -37,6 +37,16 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 		log.Warn("Propagated block has invalid body", "have", hash, "exp", ann.Block.TxHash())
 		return nil // TODO(karalabe): return error eventually, but wait a few releases
 	}
+	if ann.Block.Header().BlockAccessListHash != nil {
+		if ann.AccessList == nil {
+			log.Warn("Propagated block has nil access list", "blockHash", ann.Block.Hash())
+			return nil
+		}
+		if hash := ann.AccessList.Hash(); hash != *ann.Block.Header().BlockAccessListHash {
+			log.Warn("Propagated block has invalid access list", "have", hash, "exp", *ann.Block.Header().BlockAccessListHash)
+			return nil
+		}
+	}
 	ann.Block.ReceivedAt = msg.Time()
 	ann.Block.ReceivedFrom = peer
 
