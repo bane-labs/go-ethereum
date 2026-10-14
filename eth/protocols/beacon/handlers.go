@@ -98,7 +98,7 @@ func handleBlobs(backend Backend, msg Decoder, peer *Peer) error {
 			bss = append(bss, types.NewBlobTxSidecar(types.BlobSidecarVersion0, sc.Blobs, sc.Commitments, sc.Proofs))
 		}
 		ann.Sidecars = bss
-	case BEACON2:
+	case BEACON2, BEACON3:
 		if err := msg.Decode(ann); err != nil {
 			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 		}
@@ -149,7 +149,7 @@ func handleBatchBlobs(backend Backend, msg Decoder, peer *Peer) error {
 		}
 		res.RequestId = res1.RequestId
 		res.BatchBlobsResponse = bbr
-	case BEACON2:
+	case BEACON2, BEACON3:
 		if err := msg.Decode(res); err != nil {
 			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 		}
