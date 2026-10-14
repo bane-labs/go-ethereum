@@ -46,7 +46,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
-	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 )
@@ -262,9 +261,9 @@ func (b *EthAPIBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.B
 	if header == nil {
 		return nil, nil, errors.New("header not found")
 	}
-	stateDb, err := b.eth.BlockChain().StateAt(header)
+	stateDb, err := b.eth.BlockChain().StateAt(header.Root, header.Number, header.Time)
 	if err != nil {
-		stateDb, err = b.eth.BlockChain().HistoricState(header)
+		stateDb, err = b.eth.BlockChain().HistoricState(header.Root, header.Number, header.Time)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -287,9 +286,9 @@ func (b *EthAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockN
 		if blockNrOrHash.RequireCanonical && b.eth.blockchain.GetCanonicalHash(header.Number.Uint64()) != hash {
 			return nil, nil, errors.New("hash is not currently canonical")
 		}
-		stateDb, err := b.eth.BlockChain().StateAt(header)
+		stateDb, err := b.eth.BlockChain().StateAt(header.Root, header.Number, header.Time)
 		if err != nil {
-			stateDb, err = b.eth.BlockChain().HistoricState(header)
+			stateDb, err = b.eth.BlockChain().HistoricState(header.Root, header.Number, header.Time)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -567,12 +566,12 @@ func (b *EthAPIBackend) CurrentHeader() *types.Header {
 	return b.eth.blockchain.CurrentHeader()
 }
 
-func (b *EthAPIBackend) Miner() *miner.Miner {
-	return b.eth.Miner()
+func (b *EthAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
+	return b.eth.stateAtBlock(ctx, block, base, readOnly, preferDisk)
 }
 
-func (b *EthAPIBackend) StartMining() error {
-	return b.eth.StartMining()
+func (b *EthAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int) (*types.Transaction, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
+	return b.eth.stateAtTransaction(ctx, block, txIndex)
 }
 
 func (b *EthAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {

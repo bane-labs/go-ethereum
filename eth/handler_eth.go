@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
 // ethHandler implements the eth.Backend interface to handle the various network
@@ -62,7 +63,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 	// Consume any broadcasts and announces, forwarding the rest to the downloader
 	switch packet := packet.(type) {
 	case *eth.NewPooledTransactionHashesPacket72:
-		hashes, err := h.txFetcher.Notify(peer.ID(), packet.Types, packet.Sizes, packet.Hashes)
+		hashes, err := h.txFetcher.Notify(peer.ID(), peer.Version(), packet.Types, packet.Sizes, packet.Hashes)
 		if err != nil {
 			return err
 		}
@@ -72,7 +73,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		return nil
 
 	case *eth.NewPooledTransactionHashesPacket71:
-		_, err := h.txFetcher.Notify(peer.ID(), packet.Types, packet.Sizes, packet.Hashes)
+		_, err := h.txFetcher.Notify(peer.ID(), peer.Version(), packet.Types, packet.Sizes, packet.Hashes)
 		return err
 
 	case *eth.TransactionsPacket:
@@ -100,13 +101,28 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		if err != nil {
 			return fmt.Errorf("Cells: %v", err)
 		}
-		cells := make([][]kzg4844.Cell, len(outer))
+		var (
+			cells = make([][]kzg4844.Cell, len(outer))
+			count = packet.Mask.OneCount()
+		)
 		for i := range outer {
-			if outer[i].Len() > params.BlobTxMaxBlobs*kzg4844.CellsPerBlob {
+			n := outer[i].Len()
+			if n == 0 {
+				continue
+			}
+			if n > params.BlobTxMaxBlobs*kzg4844.CellsPerBlob {
 				return fmt.Errorf("Cells: cells per tx exceeded the possible maximum")
 			}
-			if cells[i], err = outer[i].Items(); err != nil {
-				return fmt.Errorf("Cells: %v", err)
+			if count == 0 || n%count != 0 {
+				return fmt.Errorf("Cells: %d cells inconsistent with %d custody indices", n, count)
+			}
+			cells[i] = make([]kzg4844.Cell, n)
+			blobs := n / count
+			it := outer[i].ContentIterator()
+			for j := 0; it.Next(); j++ {
+				if err := rlp.DecodeBytes(it.Value(), &cells[i][(j%blobs)*count+j/blobs]); err != nil {
+					return fmt.Errorf("Cells: %v", err)
+				}
 			}
 		}
 		return h.blobFetcher.Enqueue(peer.ID(), packet.Hashes, cells, packet.Mask)
@@ -133,6 +149,15 @@ func handleTransactions(peer *eth.Peer, list []*types.Transaction, directBroadca
 				}
 				if err := tx.BlobTxSidecar().ValidateBlobCommitmentHashes(tx.BlobHashes()); err != nil {
 					return err
+				}
+				// eth72 delivers blob transactions without the blob payload,
+				// earlier versions with all blobs.
+				if blobs := len(tx.BlobTxSidecar().Blobs); peer.Version() >= eth.ETH72 {
+					if blobs != 0 {
+						return errors.New("received blob transaction with blob payload on eth72")
+					}
+				} else if blobs != len(tx.BlobHashes()) {
+					return errors.New("incorrect number of blobs (len(blobs) != len(vhashes))")
 				}
 			}
 		}

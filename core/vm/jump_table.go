@@ -29,8 +29,8 @@ type (
 	// memorySizeFunc returns the required size, and whether the operation overflowed a uint64
 	memorySizeFunc func(*Stack) (size uint64, overflow bool)
 
-	regularGasFunc func(*EVM, *Contract, *Stack, *Memory, uint64) (uint64, error)
-	stateGasFunc   func(*EVM, *Contract, *Stack) (uint64, error)
+	executionGasFunc func(*EVM, *Contract, *Stack, *Memory, uint64) (uint64, error)
+	stateGasFunc     func(*EVM, *Contract, *Stack) (uint64, error)
 )
 
 type operation struct {
@@ -99,6 +99,32 @@ func newBogotaInstructionSet() JumpTable {
 }
 
 func newVerkleInstructionSet() JumpTable {
+	instructionSet := newShanghaiInstructionSet()
+	enable4762(&instructionSet)
+	return validate(instructionSet)
+}
+
+func newAmsterdamInstructionSet() JumpTable {
+	instructionSet := newOsakaInstructionSet()
+	enable7843(&instructionSet)        // EIP-7843 (SLOTNUM opcode)
+	enable8024(&instructionSet)        // EIP-8024 (Backward compatible SWAPN, DUPN, EXCHANGE)
+	enable8037And8038(&instructionSet) // EIP-8037 (state-gas metering) + EIP-8038 (state-access repricing)
+	return validate(instructionSet)
+}
+
+func newOsakaInstructionSet() JumpTable {
+	instructionSet := newPragueInstructionSet()
+	enable7939(&instructionSet) // EIP-7939 (CLZ opcode)
+	return validate(instructionSet)
+}
+
+func newPragueInstructionSet() JumpTable {
+	instructionSet := newCancunInstructionSet()
+	enable7702(&instructionSet) // EIP-7702 Setcode transaction type
+	return validate(instructionSet)
+}
+
+func newCancunInstructionSet() JumpTable {
 	instructionSet := newShanghaiInstructionSet()
 	enable4762(&instructionSet)
 	return validate(instructionSet)

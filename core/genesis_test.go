@@ -186,7 +186,6 @@ func TestGenesisHashes(t *testing.T) {
 	}{
 		{DefaultGenesisBlock(), params.MainnetGenesisHash},
 		{DefaultSepoliaGenesisBlock(), params.SepoliaGenesisHash},
-		{DefaultHoleskyGenesisBlock(), params.HoleskyGenesisHash},
 		{DefaultHoodiGenesisBlock(), params.HoodiGenesisHash},
 	} {
 		// Test via MustCommit
@@ -218,13 +217,6 @@ func TestGenesisCommit(t *testing.T) {
 	// This value should have been set as default in the ToBlock method.
 	if genesisBlock.Difficulty().Cmp(params.GenesisDifficulty) != 0 {
 		t.Errorf("assumption wrong: want: %d, got: %v", params.GenesisDifficulty, genesisBlock.Difficulty())
-	}
-
-	// Expect the stored total difficulty to be the difficulty of the genesis block.
-	stored := rawdb.ReadTd(db, genesisBlock.Hash(), genesisBlock.NumberU64())
-
-	if stored.Cmp(genesisBlock.Difficulty()) != 0 {
-		t.Errorf("inequal difficulty; stored: %v, genesisBlock: %v", stored, genesisBlock.Difficulty())
 	}
 }
 

@@ -19,7 +19,6 @@ package legacypool
 
 import (
 	"errors"
-	"fmt"
 	"maps"
 	"math"
 	"math/big"
@@ -147,7 +146,7 @@ type BlockChain interface {
 	GetBlock(hash common.Hash, number uint64) *types.Block
 
 	// StateAt returns a state database for a given chain header (generally the head).
-	StateAt(header *types.Header) (*state.StateDB, error)
+	StateAt(root common.Hash, number *big.Int, time uint64) (*state.StateDB, error)
 }
 
 // Config are the configuration parameters of the transaction pool.
@@ -308,6 +307,7 @@ func New(config Config, chain BlockChain) *LegacyPool {
 // with InitStatic.
 func NewStatic(config Config, chain BlockChain) *LegacyPool {
 	// Create the transaction pool with its initial settings
+	signer := types.LatestSigner(chain.Config())
 	pool := &LegacyPool{
 		config:      config,
 		chain:       chain,
@@ -371,19 +371,9 @@ func (pool *LegacyPool) InitStatic(gasTip uint64, head *types.Header, statedb *s
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	// If the state is provided, then use it directly.
-	var err error
-	if statedb == nil {
-		statedb, err = pool.chain.StateAt(head)
-		if err != nil {
-			if !allowMissingState {
-				return fmt.Errorf("failed to get state at %d (%s): %w", head.Number.Uint64(), head.Root, err)
-			}
-			statedb, err = pool.chain.StateAt(pool.chain.Genesis().Header())
-			if err != nil {
-				return fmt.Errorf("failed to get state at %d by empty root: %w", head.Number.Uint64(), err)
-			}
-		}
+	statedb, err := txpool.HeadState(pool.chainconfig, pool.chain.StateAt, head)
+	if err != nil {
+		return err
 	}
 	pool.currentHead.Store(head)
 	pool.currentState = statedb
@@ -1498,7 +1488,7 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 	if newHead == nil {
 		newHead = pool.chain.CurrentBlock() // Special case during testing
 	}
-	statedb, err := pool.chain.StateAt(newHead)
+	statedb, err := pool.chain.StateAt(newHead.Root, newHead.Number, newHead.Time)
 	if err != nil {
 		log.Error("Failed to reset txpool state", "err", err)
 		return

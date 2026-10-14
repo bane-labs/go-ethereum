@@ -39,7 +39,6 @@ import (
 	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/syncer"
-	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/internal/telemetry/tracesetup"
 	"github.com/ethereum/go-ethereum/internal/version"
@@ -101,6 +100,7 @@ var deprecatedConfigFields = map[string]bool{
 	"ethconfig.Config.LightPeers":              true,
 	"ethconfig.Config.LightNoPrune":            true,
 	"ethconfig.Config.LightNoSyncServe":        true,
+	"ethconfig.Config.EnableStateSizeTracking": true,
 }
 
 type ethstatsConfig struct {
@@ -223,7 +223,7 @@ func constructDevModeBanner(ctx *cli.Context, cfg gethConfig) string {
 }
 
 // makeFullNode loads geth configuration and creates the Ethereum backend.
-func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
+func makeFullNode(ctx *cli.Context) *node.Node {
 	stack, cfg := makeConfigNode(ctx)
 	if ctx.IsSet(utils.OverrideOsaka.Name) {
 		v := ctx.Uint64(utils.OverrideOsaka.Name)
@@ -323,7 +323,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 			utils.Fatalf("failed to register catalyst service: %v", err)
 		}
 	}
-	return stack, backend
+	return stack
 }
 
 // dumpConfig is the dumpconfig command.

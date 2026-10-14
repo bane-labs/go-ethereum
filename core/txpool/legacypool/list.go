@@ -367,7 +367,16 @@ func (l *list) Replace(tx *types.Transaction) (bool, *types.Transaction) {
 	if overflow {
 		return false, nil
 	}
-	l.totalcost.Add(l.totalcost, cost)
+	total, overflow := new(uint256.Int).AddOverflow(l.totalcost, cost)
+	if overflow {
+		return false, nil
+	}
+	l.totalcost = total
+
+	// Old is being replaced, subtract old cost
+	if old != nil {
+		l.subTotalCost([]*types.Transaction{old})
+	}
 
 	// Otherwise overwrite the old transaction with the current one
 	l.txs.Put(tx)

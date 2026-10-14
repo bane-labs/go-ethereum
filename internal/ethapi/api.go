@@ -64,10 +64,6 @@ const maxGetStorageSlots = 1024
 // requested in a single eth_getProof call.
 const maxGetProofKeys = 1024
 
-// baseFeeCacheCap is a capacity of nextBaseFee cache containing the cached
-// BasedFee values calculated for the recently requested heights.
-const baseFeeCacheCap = 5
-
 var errBlobTxNotSupported = errors.New("signing blob transactions not supported")
 var errSubClosed = errors.New("chain subscription closed")
 
@@ -259,6 +255,15 @@ func flattenTxs(txs types.Transactions, header *types.Header, cfg *params.ChainC
 	return dump
 }
 
+// flattenTxs builds the RPC transaction map keyed by nonce for a set of pool txs.
+func flattenTxs(txs types.Transactions, header *types.Header, cfg *params.ChainConfig) map[string]*RPCTransaction {
+	dump := make(map[string]*RPCTransaction, len(txs))
+	for _, tx := range txs {
+		dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, header, cfg)
+	}
+	return dump
+}
+
 // Content returns the transactions contained within the transaction pool.
 func (api *TxPoolAPI) Content() map[string]map[string]map[string]*RPCTransaction {
 	pending, queue := api.b.TxPoolContent()
@@ -267,14 +272,13 @@ func (api *TxPoolAPI) Content() map[string]map[string]map[string]*RPCTransaction
 		"queued":  make(map[string]map[string]*RPCTransaction, len(queue)),
 	}
 	curHeader := api.b.CurrentHeader()
-	baseFee := api.nextBaseFeeCache.getNextBaseFee(curHeader.Number.Int64())
 	// Flatten the pending transactions
 	for account, txs := range pending {
-		content["pending"][account.Hex()] = flattenTxs(txs, curHeader, api.b.ChainConfig(), baseFee)
+		content["pending"][account.Hex()] = flattenTxs(txs, curHeader, api.b.ChainConfig())
 	}
 	// Flatten the queued transactions
 	for account, txs := range queue {
-		content["queued"][account.Hex()] = flattenTxs(txs, curHeader, api.b.ChainConfig(), baseFee)
+		content["queued"][account.Hex()] = flattenTxs(txs, curHeader, api.b.ChainConfig())
 	}
 	return content
 }
@@ -284,12 +288,12 @@ func (api *TxPoolAPI) ContentFrom(addr common.Address) map[string]map[string]*RP
 	content := make(map[string]map[string]*RPCTransaction, 2)
 	pending, queue := api.b.TxPoolContentFrom(addr)
 	curHeader := api.b.CurrentHeader()
-	baseFee := api.nextBaseFeeCache.getNextBaseFee(curHeader.Number.Int64())
+
 	// Build the pending transactions
-	content["pending"] = flattenTxs(pending, curHeader, api.b.ChainConfig(), baseFee)
+	content["pending"] = flattenTxs(pending, curHeader, api.b.ChainConfig())
 
 	// Build the queued transactions
-	content["queued"] = flattenTxs(queue, curHeader, api.b.ChainConfig(), baseFee)
+	content["queued"] = flattenTxs(queue, curHeader, api.b.ChainConfig())
 
 	return content
 }
@@ -563,23 +567,27 @@ func decodeStorageKey(s string) (h common.Hash, inputLength int, err error) {
 }
 
 // GetHeaderByNumber returns the requested canonical block header.
-//   - When number is -1 the chain pending header is returned.
 //   - When number is -2 the chain latest header is returned.
 //   - When number is -3 the chain finalized header is returned.
 //   - When number is -4 the chain safe header is returned.
+//
+// Per the specification, the result is null for the pending tag and for a
+// safe or finalized tag that cannot be resolved to a block.
 func (api *BlockChainAPI) GetHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (map[string]interface{}, error) {
-	header, err := api.b.HeaderByNumber(ctx, number)
-	if header != nil && err == nil {
-		response := RPCMarshalHeader(header)
-		if number == rpc.PendingBlockNumber {
-			// Pending header need to nil out a few fields
-			for _, field := range []string{"hash", "nonce", "miner"} {
-				response[field] = nil
-			}
-		}
-		return response, err
+	if number == rpc.PendingBlockNumber {
+		return nil, nil
 	}
-	return nil, err
+	header, err := api.b.HeaderByNumber(ctx, number)
+	if err != nil {
+		if number == rpc.SafeBlockNumber || number == rpc.FinalizedBlockNumber {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if header == nil {
+		return nil, nil
+	}
+	return RPCMarshalHeader(header), nil
 }
 
 // GetHeaderByHash returns the requested header by hash.
@@ -937,10 +945,12 @@ func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.S
 
 func applyMessage(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, header *types.Header, timeout time.Duration, gp *core.GasPool, blockContext *vm.BlockContext, vmConfig *vm.Config, precompiles vm.PrecompiledContracts) (*core.ExecutionResult, error) {
 	// Get a new instance of the EVM.
-	if err := args.CallDefaults(gp.Gas(), blockContext.BaseFee, b.ChainConfig().ChainID); err != nil {
+	available := gp.Available(b.ChainConfig().IsAmsterdam(header.Number, header.Time))
+	if err := args.CallDefaults(available, blockContext.BaseFee, b.ChainConfig().ChainID); err != nil {
 		return nil, err
 	}
-	msg := args.ToMessage(header.BaseFee, true)
+	msg := args.ToMessage(header.BaseFee, true).SkipExecutionGasCapCheck()
+
 	// Lower the basefee to 0 to avoid breaking EVM
 	// invariants (basefee < feecap).
 	if msg.GasPrice.Sign() == 0 {
@@ -991,7 +1001,6 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 	if state == nil || err != nil {
 		return nil, err
 	}
-
 	return doCall(ctx, b, args, state, header, overrides, blockOverrides, timeout, globalGasCap)
 }
 
@@ -1466,13 +1475,25 @@ func (api *BlockChainAPI) Config(ctx context.Context) (*configResponse, error) {
 		}
 	}
 	var (
-		c = api.b.ChainConfig()
-		t = api.b.CurrentHeader().Time
+		c       = api.b.ChainConfig()
+		t       = api.b.CurrentHeader().Time
+		current = c.LatestFork(t)
+		last    = c.LatestFork(^uint64(0))
 	)
+	// The next scheduled fork is not necessarily the next fork enum value:
+	// optional forks (e.g. BPOs) may be left unconfigured, so skip past them
+	// until the first fork with a configured activation time.
+	var next *uint64
+	for f := current + 1; f <= last; f++ {
+		if ts := c.Timestamp(f); ts != nil {
+			next = ts
+			break
+		}
+	}
 	resp := configResponse{
-		Next:    assemble(c, c.Timestamp(c.LatestFork(t)+1)),
-		Current: assemble(c, c.Timestamp(c.LatestFork(t))),
-		Last:    assemble(c, c.Timestamp(c.LatestFork(^uint64(0)))),
+		Current: assemble(c, c.Timestamp(current)),
+		Next:    assemble(c, next),
+		Last:    assemble(c, c.Timestamp(last)),
 	}
 	// Nil out last if no future-fork is configured.
 	if resp.Next == nil {
@@ -1500,9 +1521,11 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 		}
 	}
 
-	// Ensure any missing fields are filled, extract the recipient and input data
-	if err = args.setFeeDefaults(ctx, b, header); err != nil {
-		return nil, 0, nil, err
+	// Leave fees at zero when all fee fields are omitted so simulation does not require funds for gas.
+	if args.GasPrice != nil || args.MaxFeePerGas != nil || args.MaxPriorityFeePerGas != nil || args.BlobFeeCap != nil {
+		if err = args.setFeeDefaults(ctx, b, header); err != nil {
+			return nil, 0, nil, err
+		}
 	}
 	if args.Nonce == nil {
 		nonce := hexutil.Uint64(db.GetNonce(args.from()))
@@ -1527,12 +1550,6 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 	addressesToExclude := map[common.Address]struct{}{args.from(): {}, to: {}}
 	for _, addr := range precompiles {
 		addressesToExclude[addr] = struct{}{}
-	}
-
-	// Prevent redundant operations if args contain more authorizations than EVM may handle
-	maxAuthorizations := uint64(*args.Gas) / params.CallNewAccountGas
-	if uint64(len(args.AuthorizationList)) > maxAuthorizations {
-		return nil, 0, nil, errors.New("insufficient gas to process all authorizations")
 	}
 
 	for _, auth := range args.AuthorizationList {
@@ -1695,8 +1712,7 @@ func (api *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common
 	if !found {
 		// No finalized transaction, try to retrieve it from the pool
 		if tx := api.b.GetPoolTransaction(hash); tx != nil {
-			baseFee := api.nextBaseFeeCache.getNextBaseFee(api.b.CurrentHeader().Number.Int64())
-			return NewRPCPendingTransaction(tx, api.b.CurrentHeader(), api.b.ChainConfig(), baseFee), nil
+			return NewRPCPendingTransaction(tx, api.b.CurrentHeader(), api.b.ChainConfig()), nil
 		}
 		// If also not in the pool there is a chance the tx indexer is still in progress.
 		if !api.b.TxIndexDone() {
@@ -2183,12 +2199,11 @@ func (api *TransactionAPI) PendingTransactions() ([]*RPCTransaction, error) {
 		}
 	}
 	curHeader := api.b.CurrentHeader()
-	baseFee := api.nextBaseFeeCache.getNextBaseFee(api.b.CurrentHeader().Number.Int64())
 	transactions := make([]*RPCTransaction, 0, len(pending))
 	for _, tx := range pending {
 		from, _ := types.Sender(api.signer, tx)
 		if _, exists := accounts[from]; exists {
-			transactions = append(transactions, NewRPCPendingTransaction(tx, curHeader, api.b.ChainConfig(), baseFee))
+			transactions = append(transactions, NewRPCPendingTransaction(tx, curHeader, api.b.ChainConfig()))
 		}
 	}
 	return transactions, nil

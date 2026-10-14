@@ -61,6 +61,8 @@ type testTxPool struct {
 
 	custody map[common.Hash]types.CustodyBitmap
 
+	custody map[common.Hash]types.CustodyBitmap
+
 	txFeed       event.Feed   // Notification feed to allow waiting for inclusion
 	reannoTxFeed event.Feed   // Notification feed to allow waiting for reannouncement
 	lock         sync.RWMutex // Protects the transaction pool

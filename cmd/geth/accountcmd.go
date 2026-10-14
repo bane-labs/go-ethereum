@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/urfave/cli/v2"
 )
 
@@ -222,60 +221,22 @@ func accountList(ctx *cli.Context) error {
 	return nil
 }
 
-// tries unlocking the specified account a few times.
-func unlockAccount(ks *keystore.KeyStore, address string, i int, passwords []string) (accounts.Account, string) {
-	account, err := utils.MakeAddress(ks, address)
+// readPasswordFromFile reads the first line of the given file, trims line endings,
+// and returns the password and whether the reading was successful.
+func readPasswordFromFile(path string) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	text, err := os.ReadFile(path)
 	if err != nil {
-		utils.Fatalf("Could not list accounts: %v", err)
+		utils.Fatalf("Failed to read password file: %v", err)
 	}
-	for trials := 0; trials < 3; trials++ {
-		prompt := fmt.Sprintf("Unlocking account %s | Attempt %d/%d", address, trials+1, 3)
-		password := utils.GetPassPhraseWithList(prompt, false, i, passwords)
-		err = ks.Unlock(account, password)
-		if err == nil {
-			log.Info("Unlocked account", "address", account.Address.Hex())
-			return account, password
-		}
-		if err, ok := err.(*keystore.AmbiguousAddrError); ok {
-			log.Info("Unlocked account", "address", account.Address.Hex())
-			return ambiguousAddrRecovery(ks, err, password), password
-		}
-		if err != keystore.ErrDecrypt {
-			// No need to prompt again if the error is not decryption-related.
-			break
-		}
+	lines := strings.Split(string(text), "\n")
+	if len(lines) == 0 {
+		return "", false
 	}
-	// All trials expended to unlock account, bail out
-	utils.Fatalf("Failed to unlock account %s (%v)", address, err)
-
-	return accounts.Account{}, ""
-}
-
-func ambiguousAddrRecovery(ks *keystore.KeyStore, err *keystore.AmbiguousAddrError, auth string) accounts.Account {
-	fmt.Printf("Multiple key files exist for address %x:\n", err.Addr)
-	for _, a := range err.Matches {
-		fmt.Println("  ", a.URL)
-	}
-	fmt.Println("Testing your password against all of them...")
-	var match *accounts.Account
-	for i, a := range err.Matches {
-		if e := ks.Unlock(a, auth); e == nil {
-			match = &err.Matches[i]
-			break
-		}
-	}
-	if match == nil {
-		utils.Fatalf("None of the listed files could be unlocked.")
-		return accounts.Account{}
-	}
-	fmt.Printf("Your password unlocked %s\n", match.URL)
-	fmt.Println("In order to avoid this warning, you need to remove the following duplicate key files:")
-	for _, a := range err.Matches {
-		if a != *match {
-			fmt.Println("  ", a.URL)
-		}
-	}
-	return *match
+	// Sanitise DOS line endings.
+	return strings.TrimRight(lines[0], "\r"), true
 }
 
 // readPasswordFromFile reads the first line of the given file, trims line endings,
