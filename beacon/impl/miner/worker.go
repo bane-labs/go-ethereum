@@ -240,16 +240,11 @@ func (w *worker) requestWork(timestamp uint64) {
 	for _, commitment := range payload.BlobsBundle.Commitments {
 		versionedHashes = append(versionedHashes, convertKzgCommitmentToVersionedHash(commitment))
 	}
-	var requestsHash *common.Hash
-	if payload.Requests != nil {
-		h := types.CalcRequestsHash(payload.Requests)
-		requestsHash = &h
-	}
 	var beaconRoot *common.Hash
 	if fork := w.chain.Config().LatestFork(timestamp); fork >= forks.Cancun {
 		beaconRoot = &types.EmptyRootHash
 	}
-	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, beaconRoot, requestsHash)
+	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, beaconRoot, payload.Requests)
 	if err != nil {
 		log.Error("Failed to rebuild full block", "err", err)
 		return

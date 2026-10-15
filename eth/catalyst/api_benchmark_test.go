@@ -31,6 +31,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -805,7 +806,7 @@ func makeBenchNewPayload(b *testing.B, numTx int) (engine.ExecutableData, []comm
 		ExcessBlobGas: new(uint64),
 	}
 	vhashes := []common.Hash{}
-	block, err := engine.ExecutableDataToBlockNoHash(data, vhashes, &beaconRoot, &common.Hash{})
+	block, err := engine.ExecutableDataToBlockNoHash(data, vhashes, &beaconRoot, [][]byte{})
 	if err != nil {
 		b.Fatalf("assembling the payload failed: %v", err)
 	}
@@ -841,9 +842,13 @@ type newPayloadDecodeStub struct {
 	err     error
 }
 
-func (s *newPayloadDecodeStub) NewPayloadV4(ctx context.Context, params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (engine.PayloadStatusV1, error) {
+func (s *newPayloadDecodeStub) NewPayloadV4(ctx context.Context, params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, executionRequests []hexutil.Bytes) (engine.PayloadStatusV1, error) {
 	if s.toBlock {
-		if _, err := engine.ExecutableDataToBlock(params, versionedHashes, beaconRoot, requestsHash); err != nil {
+		requests := make([][]byte, len(executionRequests))
+		for i, r := range executionRequests {
+			requests[i] = r
+		}
+		if _, err := engine.ExecutableDataToBlock(params, versionedHashes, beaconRoot, requests); err != nil {
 			s.err = err
 		}
 	}
