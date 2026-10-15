@@ -94,7 +94,7 @@ type ExecutableData struct {
 	ReceiptsRoot    common.Hash         `json:"receiptsRoot"  gencodec:"required"`
 	LogsBloom       []byte              `json:"logsBloom"     gencodec:"required"`
 	Random          common.Hash         `json:"prevRandao"    gencodec:"required"`
-	Difficulty      uint64              `json:"difficulty"    gencodec:"required"` // TODO: Should remove after TTD reaches.
+	Difficulty      uint64              `json:"difficulty"    gencodec:"required"`
 	Number          uint64              `json:"blockNumber"   gencodec:"required"`
 	GasLimit        uint64              `json:"gasLimit"      gencodec:"required"`
 	GasUsed         uint64              `json:"gasUsed"       gencodec:"required"`
@@ -270,8 +270,8 @@ func DecodeTransactions(enc [][]byte) ([]*types.Transaction, error) {
 // and that the blockhash of the constructed block matches the parameters. Nil
 // Withdrawals value will propagate through the returned block. Empty
 // Withdrawals value must be passed via non-nil, length 0 value in data.
-func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
-	block, err := executableDataToBlock(data, versionedHashes, beaconRoot, requestsHash)
+func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte) (*types.Block, error) {
+	block, err := executableDataToBlock(data, versionedHashes, beaconRoot, requests)
 	if err != nil {
 		return nil, err
 	}
@@ -293,8 +293,8 @@ func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, b
 // ExecutableDataToBlockNoHash is analogous to ExecutableDataToBlock, but is used
 // for stateless execution, so it skips checking if the executable data hashes to
 // the requested hash (stateless has to *compute* the root hash, it's not given).
-func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
-	block, err := executableDataToBlock(data, versionedHashes, beaconRoot, requestsHash)
+func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte) (*types.Block, error) {
+	block, err := executableDataToBlock(data, versionedHashes, beaconRoot, requests)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +303,7 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 
 // executableDataToBlock assembles the block without its access list body and
 // without checking the block hash.
-func executableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
+func executableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte) (*types.Block, error) {
 	txs, err := DecodeTransactions(data.Transactions)
 	if err != nil {
 		return nil, err
@@ -322,10 +322,27 @@ func executableDataToBlock(data ExecutableData, versionedHashes []common.Hash, b
 	for _, tx := range txs {
 		blobHashes = append(blobHashes, tx.BlobHashes()...)
 	}
+	// if len(blobHashes) != len(versionedHashes) {
+	// 	return nil, fmt.Errorf("invalid number of versionedHashes: %v blobHashes: %v", versionedHashes, blobHashes)
+	// }
+	// for i := 0; i < len(blobHashes); i++ {
+	// 	if blobHashes[i] != versionedHashes[i] {
+	// 		return nil, fmt.Errorf("invalid versionedHash at %v: %v blobHash: %v", i, versionedHashes[i], blobHashes[i])
+	// 	}
+	// }
+	// Only set withdrawalsRoot if it is non-nil. This allows CLs to use
+	// ExecutableData before withdrawals are enabled by marshaling
+	// Withdrawals as the json null value.
 	var withdrawalsRoot *common.Hash
 	if data.Withdrawals != nil {
 		h := types.DeriveSha(types.Withdrawals(data.Withdrawals), trie.NewStackTrie(nil))
 		withdrawalsRoot = &h
+	}
+
+	var requestsHash *common.Hash
+	if requests != nil {
+		h := types.CalcRequestsHash(requests)
+		requestsHash = &h
 	}
 
 	// If Amsterdam is enabled, data.BlockAccessList is always non-nil,
