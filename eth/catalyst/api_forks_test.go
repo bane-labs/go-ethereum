@@ -49,7 +49,7 @@ func fcuV3(api *ConsensusAPI, state engine.ForkchoiceStateV1, attrs *engine.Payl
 }
 
 func newPayloadV4(api *ConsensusAPI, e *engine.ExecutionPayloadEnvelope) (engine.PayloadStatusV1, error) {
-	return api.NewPayloadV4(context.Background(), *e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsHashOf(e))
+	return api.NewPayloadV4(context.Background(), *e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsOf(e))
 }
 
 var engineForks = []engineFork{
@@ -123,7 +123,7 @@ var engineForks = []engineFork{
 			return api.GetPayloadV6(id)
 		},
 		newPayload: func(api *ConsensusAPI, e *engine.ExecutionPayloadEnvelope) (engine.PayloadStatusV1, error) {
-			return api.NewPayloadV5(context.Background(), *e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsHashOf(e))
+			return api.NewPayloadV5(context.Background(), *e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsOf(e))
 		},
 	},
 }
