@@ -110,7 +110,7 @@ var PrecompiledContractsBerlin = PrecompiledContracts{
 // contracts used starting from NeoXDKG fork. It includes Cancun precompiles
 // concatenated with BLS precompiles with adjusted addresses, so that the resulting
 // list of precompiles addresses remains continuous.
-var PrecompiledContractsNeoXDKG = map[common.Address]PrecompiledContract{
+var PrecompiledContractsNeoXDKG = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x01}): &ecrecover{},
 	common.BytesToAddress([]byte{0x02}): &sha256hash{},
 	common.BytesToAddress([]byte{0x03}): &ripemd160hash{},
@@ -262,7 +262,7 @@ func activePrecompiledContracts(rules params.Rules) *PrecompiledContracts {
 	case rules.IsCancun:
 		return &PrecompiledContractsCancun
 	case rules.IsNeoXDKG:
-		return PrecompiledContractsNeoXDKG
+		return &PrecompiledContractsNeoXDKG
 	case rules.IsBerlin:
 		return &PrecompiledContractsBerlin
 	case rules.IsIstanbul:

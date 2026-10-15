@@ -767,18 +767,6 @@ func SystemContractAllocs() types.GenesisAlloc {
 	}
 }
 
-// DefaultHoodiGenesisBlock returns the Hoodi network genesis block.
-func DefaultHoodiGenesisBlock() *Genesis {
-	return &Genesis{
-		Config:     params.HoodiChainConfig,
-		Nonce:      0x1234,
-		GasLimit:   0x2255100,
-		Difficulty: big.NewInt(0x01),
-		Timestamp:  1742212800,
-		Alloc:      decodePrealloc(hoodiAllocData),
-	}
-}
-
 // DeveloperGenesisBlock returns the 'geth --dev' genesis block.
 func DeveloperGenesisBlock(gasLimit uint64, faucet *common.Address) *Genesis {
 	// Override the default period to the user requested one

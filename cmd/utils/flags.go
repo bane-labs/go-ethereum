@@ -158,11 +158,6 @@ var (
 		Usage:    "Hoodi network: pre-configured proof-of-stake test network",
 		Category: flags.EthCategory,
 	}
-	HoodiFlag = &cli.BoolFlag{
-		Name:     "hoodi",
-		Usage:    "Hoodi network: pre-configured proof-of-stake test network",
-		Category: flags.EthCategory,
-	}
 	// Dev mode
 	DeveloperFlag = &cli.BoolFlag{
 		Name:     "dev",
@@ -598,6 +593,11 @@ var (
 	}
 
 	// Miner settings
+	MiningEnabledFlag = &cli.BoolFlag{
+		Name:     "mine",
+		Usage:    "Enable mining",
+		Category: flags.MinerCategory,
+	}
 	MinerGasLimitFlag = &cli.Uint64Flag{
 		Name:     "miner.gaslimit",
 		Usage:    "Target gas ceiling for mined blocks",
@@ -633,6 +633,12 @@ var (
 	}
 
 	// Account settings
+	UnlockedAccountFlag = &cli.StringFlag{
+		Name:     "unlock",
+		Usage:    "Comma separated list of accounts to unlock",
+		Value:    "",
+		Category: flags.AccountCategory,
+	}
 	PasswordFileFlag = &cli.PathFlag{
 		Name:      "password",
 		Usage:     "Password file to use for non-interactive password input",
@@ -1550,6 +1556,31 @@ func MakeDatabaseHandles(max int) int {
 	return int(raised / 2) // Leave half for networking and other stuff
 }
 
+// MakeAddress converts an account specified directly as a hex encoded string or
+// a key index in the key store to an internal account representation.
+func MakeAddress(ks *keystore.KeyStore, account string) (accounts.Account, error) {
+	// If the specified account is a valid address, return it
+	if common.IsHexAddress(account) {
+		return accounts.Account{Address: common.HexToAddress(account)}, nil
+	}
+	// Otherwise try to interpret the account as a keystore index
+	index, err := strconv.Atoi(account)
+	if err != nil || index < 0 {
+		return accounts.Account{}, fmt.Errorf("invalid account address or index %q", account)
+	}
+	log.Warn("-------------------------------------------------------------------")
+	log.Warn("Referring to accounts by order in the keystore folder is dangerous!")
+	log.Warn("This functionality is deprecated and will be removed in the future!")
+	log.Warn("Please use explicit addresses! (can search via `geth account list`)")
+	log.Warn("-------------------------------------------------------------------")
+
+	accs := ks.Accounts()
+	if len(accs) <= index {
+		return accounts.Account{}, fmt.Errorf("index %d higher than number of accounts %d", index, len(accs))
+	}
+	return accs[index], nil
+}
+
 // setEtherbase retrieves the etherbase from the directly specified command line flags.
 func setEtherbase(ctx *cli.Context, cfg *ethconfig.Config) {
 	if !ctx.IsSet(MinerPendingFeeRecipientFlag.Name) {
@@ -1810,21 +1841,6 @@ func setTxPool(ctx *cli.Context, cfg *legacypool.Config) {
 	}
 	if ctx.IsSet(TxPoolAMEVCacheFlag.Name) {
 		cfg.AMEVCache = ctx.Bool(TxPoolAMEVCacheFlag.Name)
-	}
-}
-
-func setBlobPool(ctx *cli.Context, cfg *blobpool.Config) {
-	if ctx.IsSet(BlobPoolDataDirFlag.Name) {
-		cfg.Datadir = ctx.String(BlobPoolDataDirFlag.Name)
-	}
-	if ctx.IsSet(BlobPoolDataCapFlag.Name) {
-		cfg.Datacap = ctx.Uint64(BlobPoolDataCapFlag.Name)
-	}
-	if ctx.IsSet(BlobPoolPriceBumpFlag.Name) {
-		cfg.PriceBump = ctx.Uint64(BlobPoolPriceBumpFlag.Name)
-	}
-	if ctx.IsSet(BlobPoolFetchProbabilityFlag.Name) {
-		cfg.FetchProbability = ctx.Uint64(BlobPoolFetchProbabilityFlag.Name)
 	}
 }
 

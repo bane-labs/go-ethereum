@@ -753,14 +753,6 @@ func (b testBackend) GetDKGIndex(blockNum uint64, validatorIndex int) (int, erro
 	return 0, nil
 }
 
-func (b testBackend) HistoryPruningCutoff() uint64 {
-	bn, _ := b.chain.HistoryPruningCutoff()
-	return bn
-}
-func (b testBackend) HistoryRetention() HistoryRetention {
-	return HistoryRetention{StateScheme: b.chain.TrieDB().Scheme()}
-}
-
 func TestEstimateGas(t *testing.T) {
 	t.Parallel()
 	// Initialize test accounts

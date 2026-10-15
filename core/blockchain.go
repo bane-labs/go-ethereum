@@ -45,6 +45,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -1303,6 +1304,7 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 
 	// Prepare the genesis block and reinitialise the chain
 	batch := bc.db.NewBatch()
+	rawdb.WriteTd(batch, genesis.Hash(), genesis.NumberU64(), genesis.Difficulty())
 	rawdb.WriteBlock(batch, genesis)
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write genesis block", "err", err)
@@ -1410,10 +1412,6 @@ func (bc *BlockChain) stopWithoutSaving() {
 	// Signal shutdown to all goroutines.
 	bc.InterruptInsert(true)
 
-	// Stop state size tracker
-	if bc.stateSizer != nil {
-		bc.stateSizer.Stop()
-	}
 	// Now wait for all chain modifications to end and persistent goroutines to exit.
 	//
 	// Note: Close waits for the mutex to become available, i.e. any running chain
@@ -1710,11 +1708,12 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 // writeBlockWithoutState writes only the block and its metadata to the database,
 // but does not write any state. This is used to construct competing side forks
 // up to the point where they exceed the canonical total difficulty.
-func (bc *BlockChain) writeBlockWithoutState(block *types.Block) (err error) {
+func (bc *BlockChain) writeBlockWithoutState(block *types.Block, td *big.Int) (err error) {
 	if bc.insertStopped() {
 		return errInsertionInterrupted
 	}
 	batch := bc.db.NewBatch()
+	rawdb.WriteTd(batch, block.Hash(), block.NumberU64(), td)
 	rawdb.WriteBlock(batch, block)
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write block into disk", "err", err)
@@ -1743,9 +1742,12 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	if ptd == nil {
 		return consensus.ErrUnknownAncestor
 	}
+	// Make sure no inconsistent state is leaked during insertion
+	externTd := new(big.Int).Add(block.Difficulty(), ptd)
+
 	// Irrelevant of the canonical status, write the block itself to the database.
 	//
-	// Note all the components of block(hash->number map, header, body, receipts)
+	// Note all the components of block(td, hash->number map, header, body, receipts)
 	// should be written atomically. BlockBatch is used for containing all components.
 	var (
 		batch      = bc.db.NewBatch()
@@ -2546,6 +2548,11 @@ func (bc *BlockChain) insertSideChain(ctx context.Context, block *types.Block, i
 			canonical := bc.GetBlockByNumber(number)
 			if canonical != nil && canonical.Hash() == block.Hash() {
 				// Not a sidechain block, this is a re-import of a canon block which has it's state pruned
+
+				// Collect the TD of the block. Since we know it's a canon one,
+				// we can get it directly, and not (like further below) use
+				// the parent and then add the block on top
+				externTd = bc.GetTd(block.Hash(), block.NumberU64())
 				continue
 			}
 			if canonical != nil && canonical.Root() == block.Root() {
@@ -2564,6 +2571,11 @@ func (bc *BlockChain) insertSideChain(ctx context.Context, block *types.Block, i
 				return nil, it.index, errors.New("sidechain ghost-state attack")
 			}
 		}
+		if externTd == nil {
+			externTd = bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+		}
+		externTd = new(big.Int).Add(externTd, block.Difficulty())
+
 		if !bc.HasBlock(block.Hash(), block.NumberU64()) {
 			start := time.Now()
 			if err := bc.writeBlockWithoutState(block, externTd); err != nil {
@@ -3051,13 +3063,9 @@ func (bc *BlockChain) logForkReadiness(block *types.Block) {
 func summarizeBadBlock(block *types.Block, receipts []*types.Receipt, config *params.ChainConfig, err error) string {
 	var receiptString string
 	for i, receipt := range receipts {
-		logStrings := make([]string, 0, len(receipt.Logs))
-		for _, l := range receipt.Logs {
-			logStrings = append(logStrings, fmt.Sprintf("{address: %v, topics: %v, data: %#x}", l.Address, l.Topics, l.Data))
-		}
-		receiptString += fmt.Sprintf("\n  %d: cumulative: %v gas: %v contract: %v status: %v tx: %v logs: [%s] bloom: %x state: %x",
+		receiptString += fmt.Sprintf("\n  %d: cumulative: %v gas: %v contract: %v status: %v tx: %v logs: %v bloom: %x state: %x",
 			i, receipt.CumulativeGasUsed, receipt.GasUsed, receipt.ContractAddress.Hex(),
-			receipt.Status, receipt.TxHash.Hex(), strings.Join(logStrings, ", "), receipt.Bloom, receipt.PostState)
+			receipt.Status, receipt.TxHash.Hex(), receipt.Logs, receipt.Bloom, receipt.PostState)
 	}
 	version, vcs := version.Info()
 	platform := fmt.Sprintf("%s %s %s %s", version, runtime.Version(), runtime.GOARCH, runtime.GOOS)
@@ -3200,7 +3208,7 @@ func (bc *BlockChain) getParentState(block *types.Block) (*state.StateDB, *types
 			return nil, nil, fmt.Errorf("failed to retrieve canonical parent by number to process block state (number %d, hash %s)", block.NumberU64()-1, block.ParentHash().String())
 		}
 	}
-	statedb, err := bc.StateAt(parent.Header())
+	statedb, err := bc.StateAt(parent.Root(), parent.Number(), parent.Time())
 	if err != nil {
 		return nil, parent.Header(), fmt.Errorf("failed to retrieve state at %d, %s: %w", parent.NumberU64(), parent.Root(), err)
 	}
@@ -3210,59 +3218,55 @@ func (bc *BlockChain) getParentState(block *types.Block) (*state.StateDB, *types
 // ProcessState processes the state changes according to the Ethereum rules by running
 // the transaction messages using the statedb (if given) and applying any rewards to both
 // the processor (coinbase) and any included uncles. It doesn't persist any data.
-func (bc *BlockChain) ProcessState(ctx context.Context, block *types.Block, statedb *state.StateDB) (*state.StateDB, *ProcessResult, error) {
+func (bc *BlockChain) ProcessState(ctx context.Context, block *types.Block, statedb *state.StateDB) (*state.StateDB, *ProcessResult, *bal.BlockAccessList, error) {
 	var err error
 	if statedb == nil {
 		statedb, _, err = bc.getParentState(block)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 
-	res, err := bc.processor.Process(ctx, block, statedb, bc.jumpDestCache, bc.cfg.VmConfig, nil)
+	res, err := bc.processor.Process(ctx, block, statedb, bc.jumpDestCache, bc.precompileCache, bc.cfg.VmConfig, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to process block: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to process block: %w", err)
 	}
-	return statedb, res, nil
+	bal, _ := res.encodedAccessList()
+	return statedb, res, bal, nil
 }
 
 // VerifyBlock validates Block body. If checkState is disabled, then this method does
 // not perform in-block transactions processing or resulting state/receipts/gas used
 // validation since it's aimed to work with encrypted Enveloped transactions in this
 // mode.
-func (bc *BlockChain) VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, *ProcessResult, error) {
+func (bc *BlockChain) VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, *ProcessResult, *bal.BlockAccessList, error) {
 	err := bc.validator.ValidateBody(block)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to validate body: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to validate body: %w", err)
 	}
 
 	statedb, parentHeader, err := bc.getParentState(block)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// verify baseFee
 	baseFee := eip1559.CalcBaseFeeDBFT(bc.chainConfig, parentHeader, statedb)
 	if block.BaseFee().Cmp(baseFee) != 0 {
-		return nil, nil, fmt.Errorf("failed to verify policy baseFee, expected: %v, current: %v", baseFee, block.BaseFee())
+		return nil, nil, nil, fmt.Errorf("failed to verify policy baseFee, expected: %v, current: %v", baseFee, block.BaseFee())
 	}
 
 	if !checkState {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
-	statedb, res, err := bc.ProcessState(context.Background(), block, statedb)
+	statedb, res, bal, err := bc.ProcessState(context.Background(), block, statedb)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to process block state: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to process block state: %w", err)
 	}
 
 	if err := bc.validator.ValidateState(block, statedb, res, false); err != nil {
-		return nil, nil, fmt.Errorf("failed to verify state: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to verify state: %w", err)
 	}
-	return statedb, res, nil
-}
-
-// StateSizer returns the state size tracker, or nil if it's not initialized
-func (bc *BlockChain) StateSizer() *state.SizeTracker {
-	return bc.stateSizer
+	return statedb, res, bal, nil
 }

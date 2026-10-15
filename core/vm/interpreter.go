@@ -170,7 +170,7 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 	for {
 		if debug {
 			// Capture pre-execution values for tracing.
-			logged, pcCopy, gasCopy = false, pc, contract.Gas.RegularGas
+			logged, pcCopy, gasCopy = false, pc, contract.Gas
 		}
 
 		if isEIP4762 && !contract.IsDeployment && !contract.IsSystemCall {

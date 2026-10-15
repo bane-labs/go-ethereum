@@ -81,7 +81,7 @@ type txGasAndReward struct {
 // processBlock takes a blockFees structure with the blockNumber, the header and optionally
 // the block field filled in, retrieves the block from the backend if not present yet and
 // fills in the rest of the fields.
-func (oracle *Oracle) processBlock(bf *blockFees, percentiles []float64) {
+func (oracle *Oracle) processBlock(ctx context.Context, bf *blockFees, percentiles []float64) {
 	config := oracle.backend.ChainConfig()
 
 	// Fill in base fee and next base fee.

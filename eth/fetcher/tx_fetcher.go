@@ -136,13 +136,6 @@ type txMetadataWithSeq struct {
 	seq uint64
 }
 
-// txMetadataWithSeq is a wrapper of transaction metadata with an extra field
-// tracking the transaction sequence number.
-type txMetadataWithSeq struct {
-	txMetadata
-	seq uint64
-}
-
 // txRequest represents an in-flight transaction retrieval request destined to
 // a specific peers.
 type txRequest struct {

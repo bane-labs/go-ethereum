@@ -64,6 +64,10 @@ const maxGetStorageSlots = 1024
 // requested in a single eth_getProof call.
 const maxGetProofKeys = 1024
 
+// baseFeeCacheCap is a capacity of nextBaseFee cache containing the cached
+// BasedFee values calculated for the recently requested heights.
+const baseFeeCacheCap = 5
+
 var errBlobTxNotSupported = errors.New("signing blob transactions not supported")
 var errSubClosed = errors.New("chain subscription closed")
 
@@ -255,15 +259,6 @@ func flattenTxs(txs types.Transactions, header *types.Header, cfg *params.ChainC
 	return dump
 }
 
-// flattenTxs builds the RPC transaction map keyed by nonce for a set of pool txs.
-func flattenTxs(txs types.Transactions, header *types.Header, cfg *params.ChainConfig) map[string]*RPCTransaction {
-	dump := make(map[string]*RPCTransaction, len(txs))
-	for _, tx := range txs {
-		dump[fmt.Sprintf("%d", tx.Nonce())] = NewRPCPendingTransaction(tx, header, cfg)
-	}
-	return dump
-}
-
 // Content returns the transactions contained within the transaction pool.
 func (api *TxPoolAPI) Content() map[string]map[string]map[string]*RPCTransaction {
 	pending, queue := api.b.TxPoolContent()
@@ -272,13 +267,14 @@ func (api *TxPoolAPI) Content() map[string]map[string]map[string]*RPCTransaction
 		"queued":  make(map[string]map[string]*RPCTransaction, len(queue)),
 	}
 	curHeader := api.b.CurrentHeader()
+	baseFee := api.nextBaseFeeCache.getNextBaseFee(curHeader.Number.Int64())
 	// Flatten the pending transactions
 	for account, txs := range pending {
-		content["pending"][account.Hex()] = flattenTxs(txs, curHeader, api.b.ChainConfig())
+		content["pending"][account.Hex()] = flattenTxs(txs, curHeader, api.b.ChainConfig(), baseFee)
 	}
 	// Flatten the queued transactions
 	for account, txs := range queue {
-		content["queued"][account.Hex()] = flattenTxs(txs, curHeader, api.b.ChainConfig())
+		content["queued"][account.Hex()] = flattenTxs(txs, curHeader, api.b.ChainConfig(), baseFee)
 	}
 	return content
 }
@@ -288,12 +284,12 @@ func (api *TxPoolAPI) ContentFrom(addr common.Address) map[string]map[string]*RP
 	content := make(map[string]map[string]*RPCTransaction, 2)
 	pending, queue := api.b.TxPoolContentFrom(addr)
 	curHeader := api.b.CurrentHeader()
-
+	baseFee := api.nextBaseFeeCache.getNextBaseFee(curHeader.Number.Int64())
 	// Build the pending transactions
-	content["pending"] = flattenTxs(pending, curHeader, api.b.ChainConfig())
+	content["pending"] = flattenTxs(pending, curHeader, api.b.ChainConfig(), baseFee)
 
 	// Build the queued transactions
-	content["queued"] = flattenTxs(queue, curHeader, api.b.ChainConfig())
+	content["queued"] = flattenTxs(queue, curHeader, api.b.ChainConfig(), baseFee)
 
 	return content
 }
@@ -1712,7 +1708,8 @@ func (api *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common
 	if !found {
 		// No finalized transaction, try to retrieve it from the pool
 		if tx := api.b.GetPoolTransaction(hash); tx != nil {
-			return NewRPCPendingTransaction(tx, api.b.CurrentHeader(), api.b.ChainConfig()), nil
+			baseFee := api.nextBaseFeeCache.getNextBaseFee(api.b.CurrentHeader().Number.Int64())
+			return NewRPCPendingTransaction(tx, api.b.CurrentHeader(), api.b.ChainConfig(), baseFee), nil
 		}
 		// If also not in the pool there is a chance the tx indexer is still in progress.
 		if !api.b.TxIndexDone() {
@@ -2199,11 +2196,12 @@ func (api *TransactionAPI) PendingTransactions() ([]*RPCTransaction, error) {
 		}
 	}
 	curHeader := api.b.CurrentHeader()
+	baseFee := api.nextBaseFeeCache.getNextBaseFee(api.b.CurrentHeader().Number.Int64())
 	transactions := make([]*RPCTransaction, 0, len(pending))
 	for _, tx := range pending {
 		from, _ := types.Sender(api.signer, tx)
 		if _, exists := accounts[from]; exists {
-			transactions = append(transactions, NewRPCPendingTransaction(tx, curHeader, api.b.ChainConfig()))
+			transactions = append(transactions, NewRPCPendingTransaction(tx, curHeader, api.b.ChainConfig(), baseFee))
 		}
 	}
 	return transactions, nil

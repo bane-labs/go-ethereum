@@ -72,13 +72,14 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		return p.processParallel(ctx, block, statedb, jumpDestCache, precompileCache, cfg)
 	}
 	var (
-		config      = p.chainConfig()
-		receipts    = make(types.Receipts, 0, len(block.Transactions()))
-		header      = block.Header()
-		blockHash   = block.Hash()
-		blockNumber = block.Number()
-		allLogs     []*types.Log
-		gp          = NewGasPool(block.GasLimit())
+		config        = p.chainConfig()
+		receipts      = make(types.Receipts, 0, len(block.Transactions()))
+		envelopeCount = uint64(0)
+		header        = block.Header()
+		blockHash     = block.Hash()
+		blockNumber   = block.Number()
+		allLogs       []*types.Log
+		gp            = NewGasPool(block.GasLimit())
 
 		// The receipts are digested on a pipeline of their own, fed as the
 		// transactions finish, so the block bloom and the receipt root are
@@ -562,7 +563,7 @@ func onSystemCallStart(tracer *tracing.Hooks, ctx *tracing.VMContext) {
 
 // AssembleBlock finalizes the state and assembles the block with provided
 // body and receipts.
-func AssembleBlock(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt, blockAccessList *bal.ConstructionBlockAccessList) *types.Block {
+func AssembleBlock(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt, blockAccessList *bal.BlockAccessList) *types.Block {
 	// Assign the post-transition state root
 	rules := chain.Config().Rules(header.Number, header.Difficulty.Sign() == 0, header.Time)
 	header.Root = state.IntermediateRoot(rules)
@@ -571,10 +572,9 @@ func AssembleBlock(chain consensus.ChainHeaderReader, header *types.Header, stat
 		return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil))
 	}
 	// Assign the BlockAccessListHash if Amsterdam has been enabled
-	bal := blockAccessList.ToEncodingObj()
-	balHash := bal.Hash()
+	balHash := blockAccessList.Hash()
 	header.BlockAccessListHash = &balHash
-	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)).WithAccessListUnsafe(bal)
+	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)).WithAccessListUnsafe(blockAccessList)
 }
 
 // ProcessOnPersist applies a system call to the governance contract.
@@ -646,6 +646,9 @@ func applyLocalSystemCall(to common.Address, data []byte, evm *vm.EVM, blockAcce
 	if evm.StateDB.AccessEvents() != nil {
 		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
 	}
-	blockAccessList.Merge(evm.StateDB.Finalise(true))
+	accessList := evm.StateDB.Finalise(evm.GetRules())
+	if evm.GetRules().IsAmsterdam {
+		blockAccessList.Merge(accessList)
+	}
 	return nil
 }

@@ -571,9 +571,13 @@ func (b *Block) WithWithdrawals(withdrawals []*Withdrawal) *Block {
 		header:       b.header,
 		transactions: b.transactions,
 		uncles:       b.uncles,
-		withdrawals:  b.withdrawals,
-		accessList:   accessList,
+		accessList:   b.accessList,
 	}
+	if withdrawals != nil {
+		block.withdrawals = make([]*Withdrawal, len(withdrawals))
+		copy(block.withdrawals, withdrawals)
+	}
+	return block
 }
 
 // Hash returns the keccak256 hash of b's header.

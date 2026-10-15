@@ -143,31 +143,17 @@ evm:
 	@echo "Run \"$(GOBIN)/evm\" to launch evm."
 
 #? all: Build all packages and executables.
-#? evm: Build evm.
-evm:
-	$(GORUN) build/ci.go install ./cmd/evm
-	@echo "Done building."
-	@echo "Run \"$(GOBIN)/evm\" to launch evm."
-
-#? all: Build all packages and executables.
 all:
 	$(GORUN) build/ci.go install
 
-#? test: Run the tests.
 #? test: Run the tests.
 test: all
 	$(GORUN) build/ci.go test
 
 #? lint: Run certain pre-selected linters.
-#? lint: Run certain pre-selected linters.
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
 
-#? fmt: Ensure consistent code formatting.
-fmt:
-	gofmt -s -w $(shell find . -name "*.go")
-
-#? clean: Clean go cache, built executables, and the auto generated folder.
 #? fmt: Ensure consistent code formatting.
 fmt:
 	gofmt -s -w $(shell find . -name "*.go")
@@ -185,18 +171,12 @@ devtools:
 	env GOBIN= go install golang.org/x/tools/cmd/stringer@latest
 	env GOBIN= go install github.com/fjl/gencodec@latest
 	env GOBIN= go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	env GOBIN= go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 	env GOBIN= go install ./cmd/abigen
 	@type "solc" 2> /dev/null || echo 'Please install solc'
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'
 
 #? help: Get more info on make commands.
 help: Makefile
-	@echo ''
-	@echo 'Usage:'
-	@echo '  make [target]'
-	@echo ''
-	@echo 'Targets:'
 	@echo ''
 	@echo 'Usage:'
 	@echo '  make [target]'

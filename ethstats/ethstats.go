@@ -66,6 +66,7 @@ type backend interface {
 	SubscribeNewPayloadEvent(ch chan<- core.NewPayloadEvent) event.Subscription
 	CurrentHeader() *types.Header
 	HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error)
+	GetTd(ctx context.Context, hash common.Hash) *big.Int
 	Stats() (pending int, queued int)
 	SyncProgress(ctx context.Context) ethereum.SyncProgress
 }
@@ -701,6 +702,7 @@ func (s *Service) assembleBlockStats(header *types.Header) *blockStats {
 		if header == nil {
 			header = s.backend.CurrentHeader()
 		}
+		td = s.backend.GetTd(context.Background(), header.Hash())
 		txs = []txStats{}
 	}
 	// Assemble and return the block stats
@@ -715,7 +717,7 @@ func (s *Service) assembleBlockStats(header *types.Header) *blockStats {
 		GasUsed:    header.GasUsed,
 		GasLimit:   header.GasLimit,
 		Diff:       header.Difficulty.String(),
-		TotalDiff:  "0", // unknown post-merge with pruned chain tail
+		TotalDiff:  td.String(),
 		Txs:        txs,
 		TxHash:     header.TxHash,
 		Root:       header.Root,

@@ -674,28 +674,3 @@ func TestTruncateHeadBelowGroupTail(t *testing.T) {
 		t.Fatalf("block data tail after reopen = %d, want 10", tail)
 	}
 }
-
-func TestFreezerSuite(t *testing.T) {
-	ancienttest.TestAncientSuite(t, func(kinds []string) ethdb.AncientStore {
-		tables := make(map[string]freezerTableConfig)
-		for _, kind := range kinds {
-			tables[kind] = freezerTableConfig{
-				noSnappy:  true,
-				tailGroup: ancienttest.TailGroup,
-			}
-		}
-		f, _ := newFreezerForTesting(t, tables)
-		return f
-	})
-	ancienttest.TestResettableAncientSuite(t, func(kinds []string) ethdb.ResettableAncientStore {
-		tables := make(map[string]freezerTableConfig)
-		for _, kind := range kinds {
-			tables[kind] = freezerTableConfig{
-				noSnappy:  true,
-				tailGroup: ancienttest.TailGroup,
-			}
-		}
-		f, _ := newResettableFreezer(t.TempDir(), "", false, 2048, tables)
-		return f
-	})
-}

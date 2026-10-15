@@ -293,69 +293,13 @@ func (miner *Miner) buildPayload(ctx context.Context, args *BuildPayloadArgs, wi
 	// Construct a payload object for return.
 	payload := newPayload(empty.block, empty.requests, empty.witness, payloadID)
 
-	// Spin up a routine for updating the payload in background. This strategy
-	// can maximum the revenue for including transactions with highest fee.
-	go func() {
-		var iteration int
-		bCtx, bSpan, bSpanEnd := telemetry.StartSpan(ctx, "miner.background",
-			telemetry.Int64Attribute("block.number", int64(empty.block.NumberU64())),
-		)
-		defer func() {
-			bSpan.SetAttributes(telemetry.IntAttribute("iterations.total", iteration))
-			bSpanEnd(nil)
-		}()
-
-		// Setup the timer for re-building the payload. The initial clock is kept
-		// for triggering process immediately.
-		timer := time.NewTimer(0)
-		defer timer.Stop()
-
-		// Setup the timer for terminating the process if SECONDS_PER_SLOT (12s in
-		// the Mainnet configuration) have passed since the point in time identified
-		// by the timestamp parameter.
-		endTimer := time.NewTimer(time.Second * 12)
-
-		fullParams := &generateParams{
-			timestamp:      args.Timestamp,
-			forceTime:      true,
-			parentHash:     args.Parent,
-			coinbase:       args.FeeRecipient,
-			random:         args.Random,
-			withdrawals:    args.Withdrawals,
-			beaconRoot:     args.BeaconRoot,
-			slotNum:        args.SlotNum,
-			targetGasLimit: args.TargetGasLimit,
-			noTxs:          false,
-		}
-		for {
-			select {
-			case <-timer.C:
-				// When block building takes close to the full recommit interval,
-				// the timer fires near-instantly on the next iteration. If the
-				// payload was resolved during that build, both timer.C and
-				// payload.stop are ready and Go's select picks one at random.
-				// Check payload.stop first to avoid an unnecessary generateWork.
-				select {
-				case <-payload.stop:
-					payload.updateSpanForDelivery(bSpan)
-					log.Info("Stopping work on payload", "id", payload.id, "reason", "delivery")
-					return
-				default:
-				}
-				start := time.Now()
-				iteration++
-				miner.runBuildIteration(bCtx, start, iteration, payload, fullParams, witness)
-				timer.Reset(max(0, miner.config.Recommit-time.Since(start)))
-			case <-payload.stop:
-				payload.updateSpanForDelivery(bSpan)
-				log.Info("Stopping work on payload", "id", payload.id, "reason", "delivery")
-				return
-			case <-endTimer.C:
-				bSpan.SetAttributes(telemetry.StringAttribute("exit.reason", "timeout"))
-				log.Info("Stopping work on payload", "id", payload.id, "reason", "timeout")
-				return
-			}
-		}
+	var iteration int
+	bCtx, bSpan, bSpanEnd := telemetry.StartSpan(ctx, "miner.background",
+		telemetry.Int64Attribute("block.number", int64(empty.block.NumberU64())),
+	)
+	defer func() {
+		bSpan.SetAttributes(telemetry.IntAttribute("iterations.total", iteration))
+		bSpanEnd(nil)
 	}()
 
 	// Fullfil the payload with transactions.

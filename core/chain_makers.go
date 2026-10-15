@@ -412,27 +412,6 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 			evm := vm.NewEVM(blockContext, statedb, cm.config, vm.Config{})
 			ProcessBeaconBlockRoot(*b.header.ParentBeaconRoot, evm, b.bal)
 		}
-		b.bal.Merge(bal)
-
-		body := types.Body{
-			Transactions: b.txs,
-			Uncles:       b.uncles,
-			Withdrawals:  b.withdrawals,
-		}
-		if !config.IsShanghai(b.header.Number, b.header.Time) {
-			if body.Withdrawals != nil {
-				panic("unexpected withdrawal before shanghai")
-			}
-		} else {
-			if body.Withdrawals == nil {
-				body.Withdrawals = make([]*types.Withdrawal, 0)
-			}
-		}
-		// Apply the consensus-specific post-transaction changes
-		b.engine.Finalize(cm, b.header, statedb, &body, uint32(len(b.txs)+1), b.bal)
-
-		// Assemble the block for delivery.
-		block := AssembleBlock(cm, b.header, statedb, &body, b.receipts, b.bal)
 
 		requests, bal := b.collectRequests(false)
 		if requests != nil {
@@ -459,7 +438,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		b.engine.Finalize(cm, b.header, statedb, &body)
 
 		// Assemble the block for delivery.
-		block := AssembleBlock(cm, b.header, statedb, &body, b.receipts, b.bal)
+		block := AssembleBlock(cm, b.header, statedb, &body, b.receipts, b.bal.ToEncodingObj())
 
 		// Write state changes to db
 		rules := config.Rules(b.header.Number, b.header.Difficulty.Sign() == 0, b.header.Time)

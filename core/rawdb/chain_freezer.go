@@ -339,16 +339,6 @@ func (f *chainFreezer) freezeRange(nfdb *nofreezedb, number, limit uint64) (hash
 			// absence placeholder.
 			bals := ReadAccessListRLP(nfdb, hash, number)
 
-			// An empty block access list is allowed and may occur in multiple
-			// scenarios, such as:
-			//   - pre-Amsterdam blocks
-			//   - post-Amsterdam blocks with the BAL absent (e.g. pruned by network)
-			//   - post-Amsterdam blocks with an explicitly empty BAL
-			//
-			// In these cases, a nil entry will be stored in the BAL table as the
-			// absence placeholder.
-			bals := ReadAccessListRLP(nfdb, hash, number)
-
 			// Write to the batch.
 			if err := op.AppendRaw(ChainFreezerHashTable, number, hash[:]); err != nil {
 				return fmt.Errorf("can't write hash to Freezer: %v", err)

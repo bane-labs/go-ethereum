@@ -307,7 +307,6 @@ func New(config Config, chain BlockChain) *LegacyPool {
 // with InitStatic.
 func NewStatic(config Config, chain BlockChain) *LegacyPool {
 	// Create the transaction pool with its initial settings
-	signer := types.LatestSigner(chain.Config())
 	pool := &LegacyPool{
 		config:      config,
 		chain:       chain,

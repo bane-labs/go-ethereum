@@ -273,8 +273,11 @@ func RecoverBlobs(cells []Cell, cellIndices []uint64) ([]Blob, error) {
 		return nil, err
 	}
 	if blobs, ok := blobsFromDataCells(cells, cellIndices); ok {
+		return blobs, nil
+	}
 	if useCKZG.Load() {
 		return ckzgRecoverBlobs(cells, cellIndices)
+	}
 	return gokzgRecoverBlobs(cells, cellIndices)
 }
 
