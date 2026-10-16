@@ -429,7 +429,7 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	sim.b.Engine().Finalize(chainHeadReader, header, sim.state, blockBody)
 
 	// Assemble the block
-	b := core.AssembleBlock(chainHeadReader, header, sim.state, blockBody, receipts, blockAccessList)
+	b := core.AssembleBlock(chainHeadReader, header, sim.state, blockBody, receipts, blockAccessList.ToEncodingObj())
 
 	repairLogs(callResults, b.Hash())
 	return b, callResults, senders, nil

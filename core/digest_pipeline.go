@@ -174,10 +174,10 @@ func (r *ProcessResult) receiptRoot() common.Hash {
 	return types.DeriveSha(r.Receipts, trie.NewStackTrie(nil))
 }
 
-// encodedAccessList returns the block access list in its encoding form along
+// EncodedAccessList returns the block access list in its encoding form along
 // with its hash, converted alongside validation. Both are empty for a result
 // assembled without a pipeline.
-func (r *ProcessResult) encodedAccessList() (*bal.BlockAccessList, common.Hash) {
+func (r *ProcessResult) EncodedAccessList() (*bal.BlockAccessList, common.Hash) {
 	if r.pipeline == nil {
 		return nil, common.Hash{}
 	}

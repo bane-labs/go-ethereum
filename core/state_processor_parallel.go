@@ -334,7 +334,6 @@ func (p *StateProcessor) processParallel(ctx context.Context, block *types.Block
 		Requests: requests,
 		Logs:     allLogs,
 		GasUsed:  gp.Used(),
-		Bal:      blockAccessList,
 		pipeline: pipeline,
 	}, nil
 }

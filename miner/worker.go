@@ -242,7 +242,7 @@ func (miner *Miner) generateWork(ctx context.Context, genParam *generateParams, 
 
 	// Assemble the block for delivery.
 	_, _, assembleSpanEnd := telemetry.StartSpan(ctx, "miner.AssembleBlock")
-	block := core.AssembleBlock(miner.chain, work.header, work.state, &body, work.receipts, work.bal)
+	block := core.AssembleBlock(miner.chain, work.header, work.state, &body, work.receipts, work.bal.ToEncodingObj())
 	assembleSpanEnd(nil)
 
 	// Check for db errors. If anything happened during the mining or IntermediateRoot, such as a
