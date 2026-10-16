@@ -448,7 +448,7 @@ func (w *worker) feedback(block *types.Block, reorgCheck bool) error {
 	payload := engine.BlockToExecutableData(block, nil, nil, nil)
 
 	// Send payload through RPC. TODO: collect and include versioned hashes if possible
-	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, block.RequestsHash(), block.Time())
+	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, payload.Requests, block.Time())
 	if err != nil {
 		return err
 	}
@@ -569,7 +569,7 @@ func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloa
 }
 
 // sendPayload sends new block back to EL through RPC.
-func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash, timestamp uint64) (engine.PayloadStatusV1, error) {
+func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte, timestamp uint64) (engine.PayloadStatusV1, error) {
 	var newPayloadMethod string
 	var status engine.PayloadStatusV1
 	switch w.chain.Config().LatestFork(timestamp) {
@@ -599,7 +599,11 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 			return engine.PayloadStatusV1{}, err
 		}
 	default:
-		err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, requestsHash)
+		hexRequests := make([]hexutil.Bytes, len(requests))
+		for i := range requests {
+			hexRequests[i] = hexutil.Bytes(requests[i])
+		}
+		err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, hexRequests)
 		if err != nil {
 			return engine.PayloadStatusV1{}, err
 		}
