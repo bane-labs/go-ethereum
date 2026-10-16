@@ -438,7 +438,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		b.engine.Finalize(cm, b.header, statedb, &body)
 
 		// Assemble the block for delivery.
-		block := AssembleBlock(cm, b.header, statedb, &body, b.receipts, b.bal)
+		block := AssembleBlock(cm, b.header, statedb, &body, b.receipts, b.bal.ToEncodingObj())
 
 		// Write state changes to db
 		rules := config.Rules(b.header.Number, b.header.Difficulty.Sign() == 0, b.header.Time)

@@ -576,7 +576,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Trans
 			withdrawals: pre.withdrawals,
 		}
 		if pre.finalBal != nil {
-			res.accessList = pre.finalBal.ToEncodingObj()
+			res.accessList = pre.finalBal
 		}
 
 		// If we're primary, then reuse sealing state got after PrepareRequest
@@ -768,7 +768,8 @@ func (c *DBFT) newPrepareRequestAux(ts uint64, nonce uint64, txHashes []common.H
 	c.Finalize(c.chain, header, state, &body)
 
 	// Assemble the block for delivery.
-	res := core.AssembleBlock(c.chain, header, state, &body, result.Receipts, result.Bal)
+	bal, _ := result.EncodedAccessList()
+	res := core.AssembleBlock(c.chain, header, state, &body, result.Receipts, bal)
 
 	c.sealingProposal = res.Header()
 	c.sealingState = state
@@ -1057,7 +1058,7 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash, *types.Transaction]
 	dbftBlock.finalState = state
 	dbftBlock.finalReceipts = result.Receipts
 	dbftBlock.finalGASUsed = result.GasUsed
-	dbftBlock.finalBal = result.Bal
+	dbftBlock.finalBal, _ = result.EncodedAccessList()
 
 	return true
 }
@@ -1105,7 +1106,7 @@ func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash, *types.Transaction]) bool
 
 		dbftBlock.state = state
 		dbftBlock.receipts = result.Receipts
-		dbftBlock.accessList = result.Bal.ToEncodingObj()
+		dbftBlock.accessList, _ = result.EncodedAccessList()
 
 		return true
 	}
@@ -1392,7 +1393,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash, *types.Transaction
 		pre.finalState = state
 		pre.finalReceipts = receipts
 		pre.finalGASUsed = gasPool.Used()
-		pre.finalBal = blockAccessList
+		pre.finalBal = blockAccessList.ToEncodingObj()
 		c.envelopeFeed.Send(envelopes)
 		c.staticPool.ResetStatic()
 	}
@@ -1507,7 +1508,7 @@ func (c *DBFT) newPreBlockFromContext(sealingProposal *types.Header) *PreBlock {
 	}
 	// AccessList is temporary empty if Amsterdam is passed.
 	if c.chain.Config().IsAmsterdam(h.Number, h.Time) {
-		res.finalBal = bal.NewConstructionBlockAccessList()
+		res.finalBal = new(bal.BlockAccessList)
 	}
 
 	return res

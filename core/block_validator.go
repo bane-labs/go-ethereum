@@ -180,7 +180,7 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 	}
 	// Verify Block-level accessList once Amsterdam is enabled
 	if v.config.IsAmsterdam(block.Number(), block.Time()) {
-		enc, local := res.encodedAccessList()
+		enc, local := res.EncodedAccessList()
 		if enc == nil {
 			return errors.New("block access list is not available in amsterdam")
 		}
