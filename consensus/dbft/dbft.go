@@ -562,9 +562,6 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash]) dbft.Block[
 			header:      pre.header,
 			withdrawals: pre.withdrawals,
 		}
-		if pre.finalBal != nil {
-			res.accessList = pre.finalBal
-		}
 
 		// If we're primary, then reuse sealing state got after PrepareRequest
 		// construction.
@@ -1434,10 +1431,6 @@ func (c *DBFT) newPreBlockFromContext(sealingProposal *types.Header) *PreBlock {
 	// Withdrawals are temporary empty if Shanghai is passed.
 	if c.chain.Config().IsShanghai(h.Number, h.Time) {
 		res.withdrawals = emptyWithdrawals
-	}
-	// AccessList is temporary empty if Amsterdam is passed.
-	if c.chain.Config().IsAmsterdam(h.Number, h.Time) {
-		res.finalBal = new(bal.BlockAccessList)
 	}
 
 	return res
