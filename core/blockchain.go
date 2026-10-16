@@ -2490,7 +2490,7 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 	// block. The validator has already verified the hash matches the header.
 	// BAL is only meaningful from Amsterdam onward; skip pre-Amsterdam blocks
 	// to avoid persisting and serving empty BALs over the network.
-	if enc, _ := res.encodedAccessList(); enc != nil && block.AccessList() == nil && bc.chainConfig.IsAmsterdam(block.Number(), block.Time()) {
+	if enc, _ := res.EncodedAccessList(); enc != nil && block.AccessList() == nil && bc.chainConfig.IsAmsterdam(block.Number(), block.Time()) {
 		block = block.WithAccessListUnsafe(enc)
 	}
 

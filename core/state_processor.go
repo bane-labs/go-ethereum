@@ -176,7 +176,6 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		Requests: requests,
 		Logs:     allLogs,
 		GasUsed:  gp.Used(),
-		Bal:      blockAccessList,
 		pipeline: pipeline,
 	}, nil
 }
@@ -564,7 +563,7 @@ func onSystemCallStart(tracer *tracing.Hooks, ctx *tracing.VMContext) {
 
 // AssembleBlock finalizes the state and assembles the block with provided
 // body and receipts.
-func AssembleBlock(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt, blockAccessList *bal.ConstructionBlockAccessList) *types.Block {
+func AssembleBlock(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt, bal *bal.BlockAccessList) *types.Block {
 	// Assign the post-transition state root
 	rules := chain.Config().Rules(header.Number, header.Difficulty.Sign() == 0, header.Time)
 	header.Root = state.IntermediateRoot(rules)
@@ -573,7 +572,6 @@ func AssembleBlock(chain consensus.ChainHeaderReader, header *types.Header, stat
 		return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil))
 	}
 	// Assign the BlockAccessListHash if Amsterdam has been enabled
-	bal := blockAccessList.ToEncodingObj()
 	balHash := bal.Hash()
 	header.BlockAccessListHash = &balHash
 	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)).WithAccessListUnsafe(bal)

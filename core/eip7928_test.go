@@ -155,7 +155,7 @@ func assertParallelEquiv(t *testing.T, gspec *Genesis, engine consensus.Engine, 
 	if got := types.DeriveSha(parRes.Receipts, trie.NewStackTrie(nil)); got != block.ReceiptHash() {
 		t.Fatalf("parallel receipt root %x != committed %x", got, block.ReceiptHash())
 	}
-	_, parBalHash := parRes.encodedAccessList()
+	_, parBalHash := parRes.EncodedAccessList()
 	if p, s := parBalHash, *block.BlockAccessListHash(); p != s {
 		t.Fatalf("parallel access list hash %x != committed %x", p, s)
 	}
@@ -167,7 +167,7 @@ func assertParallelEquiv(t *testing.T, gspec *Genesis, engine consensus.Engine, 
 	}
 
 	// Parallel and sequential must agree on every re-executed output.
-	_, seqBalHash := seqRes.encodedAccessList()
+	_, seqBalHash := seqRes.EncodedAccessList()
 	if p, s := parBalHash, seqBalHash; p != s {
 		t.Fatalf("rebuilt access list hash: parallel %x != sequential %x", p, s)
 	}
@@ -197,7 +197,7 @@ func assertParallelEquiv(t *testing.T, gspec *Genesis, engine consensus.Engine, 
 		if want := types.DeriveSha(res.Receipts, trie.NewStackTrie(nil)); digest.root != want {
 			t.Fatalf("digested receipt root %x != derived %x", digest.root, want)
 		}
-		if enc, hash := res.encodedAccessList(); enc == nil || enc.Hash() != hash {
+		if enc, hash := res.EncodedAccessList(); enc == nil || enc.Hash() != hash {
 			t.Fatalf("digested access list hash %x != encoded", hash)
 		}
 	}
