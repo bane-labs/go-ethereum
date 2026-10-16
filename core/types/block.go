@@ -571,6 +571,7 @@ func (b *Block) WithWithdrawals(withdrawals []*Withdrawal) *Block {
 		header:       b.header,
 		transactions: b.transactions,
 		uncles:       b.uncles,
+		accessList:   b.accessList,
 	}
 	if withdrawals != nil {
 		block.withdrawals = make([]*Withdrawal, len(withdrawals))

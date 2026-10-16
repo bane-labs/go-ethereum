@@ -22,7 +22,7 @@ const (
 // network IDs, difficulties, head and genesis blocks.
 func (p *Peer) Handshake(network uint64, chain *core.BlockChain, blobSync bool) error {
 	switch p.version {
-	case BEACON2:
+	case BEACON2, BEACON3:
 		return p.handshake2(network, chain, blobSync)
 	case BEACON1:
 		return p.handshake1(network, chain, blobSync)

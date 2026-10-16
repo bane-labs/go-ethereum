@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -240,16 +241,11 @@ func (w *worker) requestWork(timestamp uint64) {
 	for _, commitment := range payload.BlobsBundle.Commitments {
 		versionedHashes = append(versionedHashes, convertKzgCommitmentToVersionedHash(commitment))
 	}
-	var requestsHash *common.Hash
-	if payload.Requests != nil {
-		h := types.CalcRequestsHash(payload.Requests)
-		requestsHash = &h
-	}
 	var beaconRoot *common.Hash
 	if fork := w.chain.Config().LatestFork(timestamp); fork >= forks.Cancun {
 		beaconRoot = &types.EmptyRootHash
 	}
-	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, beaconRoot, requestsHash)
+	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, beaconRoot, payload.Requests)
 	if err != nil {
 		log.Error("Failed to rebuild full block", "err", err)
 		return
@@ -411,7 +407,7 @@ func (w *worker) feedback(block *types.Block, reorgCheck bool) error {
 	payload := engine.BlockToExecutableData(block, nil, nil, nil)
 
 	// Send payload through RPC. TODO: collect and include versioned hashes if possible
-	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, block.RequestsHash(), block.Time())
+	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, payload.Requests, block.Time())
 	if err != nil {
 		return err
 	}
@@ -532,7 +528,7 @@ func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloa
 }
 
 // sendPayload sends new block back to EL through RPC.
-func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash, timestamp uint64) (engine.PayloadStatusV1, error) {
+func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte, timestamp uint64) (engine.PayloadStatusV1, error) {
 	var newPayloadMethod string
 	var status engine.PayloadStatusV1
 	switch w.chain.Config().LatestFork(timestamp) {
@@ -542,7 +538,7 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 		newPayloadMethod = "engine_newPayloadV3"
 	case forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
 		newPayloadMethod = "engine_newPayloadV4"
-	case forks.Amsterdam:
+	case forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5:
 		newPayloadMethod = "engine_newPayloadV5"
 	case forks.Bogota:
 		// TODO: add support for engine_newPayloadV6 when EL supports it
@@ -562,7 +558,11 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 			return engine.PayloadStatusV1{}, err
 		}
 	default:
-		err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, requestsHash)
+		hexRequests := make([]hexutil.Bytes, len(requests))
+		for i := range requests {
+			hexRequests[i] = hexutil.Bytes(requests[i])
+		}
+		err := w.rpc.CallContext(w.ctx, &status, newPayloadMethod, payload, versionedHashes, beaconRoot, hexRequests)
 		if err != nil {
 			return engine.PayloadStatusV1{}, err
 		}

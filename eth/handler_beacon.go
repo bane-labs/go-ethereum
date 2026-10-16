@@ -66,6 +66,9 @@ func (h *beaconHandler) Handle(peer *beacon.Peer, packet beacon.Packet) error {
 		hashes, numbers := packet.Unpack()
 		return h.handleBlockAnnounces(peer, hashes, numbers)
 
+	case *beacon.NewBlockPacket1:
+		return h.handleBlockBroadcast1(peer, packet)
+
 	case *beacon.NewBlockPacket:
 		return h.handleBlockBroadcast(peer, packet)
 
@@ -113,8 +116,36 @@ func (h *beaconHandler) handleBlockAnnounces(peer *beacon.Peer, hashes []common.
 
 // handleBlockBroadcast is invoked from a peer's message handler when it transmits a
 // block broadcast for the local node to process.
+func (h *beaconHandler) handleBlockBroadcast1(peer *beacon.Peer, packet *beacon.NewBlockPacket1) error {
+	block := packet.Block
+	td := packet.TD
+
+	// Schedule the block for import
+	if h.beacon != nil {
+		h.beacon.EnqueueBlock(peer.ID(), block)
+	}
+
+	// Assuming the block is importable by the peer, but possibly not yet done so,
+	// calculate the head hash and TD that the peer truly must have.
+	var (
+		trueHead = block.ParentHash()
+		trueTD   = new(big.Int).Sub(td, block.Difficulty())
+		trueNum  = block.NumberU64() - 1
+	)
+	// Update the peer's total difficulty if better than the previous
+	if _, td, _ := peer.Head(); trueTD.Cmp(td) > 0 {
+		peer.SetHead(trueHead, trueTD, trueNum)
+	}
+	return nil
+}
+
+// handleBlockBroadcast is invoked from a peer's message handler when it transmits a
+// block broadcast for the local node to process.
 func (h *beaconHandler) handleBlockBroadcast(peer *beacon.Peer, packet *beacon.NewBlockPacket) error {
 	block := packet.Block
+	if block.Header().BlockAccessListHash != nil {
+		block = block.WithAccessListUnsafe(packet.AccessList)
+	}
 	td := packet.TD
 
 	// Schedule the block for import
