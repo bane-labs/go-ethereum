@@ -646,6 +646,9 @@ func applyLocalSystemCall(to common.Address, data []byte, evm *vm.EVM, blockAcce
 	if evm.StateDB.AccessEvents() != nil {
 		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
 	}
-	blockAccessList.Merge(evm.StateDB.Finalise(evm.GetRules()))
+	accessList := evm.StateDB.Finalise(evm.GetRules())
+	if evm.GetRules().IsAmsterdam {
+		blockAccessList.Merge(accessList)
+	}
 	return nil
 }
