@@ -581,6 +581,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Trans
 		if ctx.IsPrimary() {
 			res.state = c.sealingState
 			res.receipts = c.sealingReceipts
+			res.accessList = c.sealingBlock.AccessList()
 		}
 		return res
 	}
