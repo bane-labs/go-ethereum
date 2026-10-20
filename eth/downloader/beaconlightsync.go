@@ -329,7 +329,7 @@ func (b *beaconLightSyncer) rebuildBlocks(peer *peerConnection, req *beaconLight
 			toFetchBals = true
 		}
 	}
-	// fetch the access lists in parallel with the bodies, since they are independent and can be retrieved concurrently
+	// Fetch the access lists in parallel with the bodies, since they are independent and can be retrieved concurrently
 	go func() {
 		defer close(balsCh)
 
@@ -360,21 +360,9 @@ func (b *beaconLightSyncer) rebuildBlocks(peer *peerConnection, req *beaconLight
 		}
 		lists := make([]*bal.BlockAccessList, len(requestHeaders))
 		for i, header := range requestHeaders {
-			if bytes.Equal(bals[i], rlp.EmptyString) {
-				lists[i] = &bal.BlockAccessList{}
-				continue
-			}
-			// Validate the content against the hash committed in the header and
-			// decode it. Anything invalid is a protocol violation.
-			if header.BlockAccessListHash == nil || hashes[i] != *header.BlockAccessListHash {
-				log.Debug("Received invalid BALs", "len", len(bals))
-				b.scheduleRevertRequest(req)
-				b.drop(peer.id)
-				return
-			}
-			list := new(bal.BlockAccessList)
-			if err := rlp.DecodeBytes(bals[i], list); err != nil {
-				log.Debug("Received invalid BALs", "len", len(bals))
+			list, err := decodeBlockAccessList(header, hashes[i], bals[i])
+			if err != nil {
+				log.Debug("Received invalid BAL", "number", header.Number, "hash", header.Hash(), "err", err)
 				b.scheduleRevertRequest(req)
 				b.drop(peer.id)
 				return
@@ -406,7 +394,7 @@ func (b *beaconLightSyncer) rebuildBlocks(peer *peerConnection, req *beaconLight
 		return
 	}
 
-	// decode
+	// Decode
 	decodeBody := func(header *types.Header, index int) (*types.Body, error) {
 		if hashes.TransactionRoots[index] != header.TxHash {
 			return nil, errInvalidBody
@@ -415,11 +403,11 @@ func (b *beaconLightSyncer) rebuildBlocks(peer *peerConnection, req *beaconLight
 			return nil, errInvalidBody
 		}
 		if header.WithdrawalsHash == nil {
-			// nil hash means that withdrawals should not be present in body
+			// Nil hash means that withdrawals should not be present in body
 			if bodies[index].Withdrawals != nil {
 				return nil, errInvalidBody
 			}
-		} else { // non-nil hash: body must have withdrawals
+		} else { // Non-nil hash: body must have withdrawals
 			if bodies[index].Withdrawals == nil {
 				return nil, errInvalidBody
 			}
@@ -498,6 +486,27 @@ func (b *beaconLightSyncer) rebuildBlocks(peer *peerConnection, req *beaconLight
 	}:
 	case <-req.cancel:
 	}
+}
+
+func decodeBlockAccessList(header *types.Header, hash common.Hash, data []byte) (*bal.BlockAccessList, error) {
+	if bytes.Equal(data, rlp.EmptyString) {
+		switch {
+		case header.BlockAccessListHash == nil:
+			return nil, nil
+		case header.EmptyBlockAccessListHash():
+			return &bal.BlockAccessList{}, nil
+		default:
+			return nil, errors.New("missing BAL for block with non-empty block access list hash")
+		}
+	}
+	if header.BlockAccessListHash == nil || hash != *header.BlockAccessListHash {
+		return nil, errors.New("block access list hash mismatch")
+	}
+	list := new(bal.BlockAccessList)
+	if err := rlp.DecodeBytes(data, list); err != nil {
+		return nil, fmt.Errorf("failed to decode BAL: %w", err)
+	}
+	return list, nil
 }
 
 func (b *beaconLightSyncer) fetchBodiesByHash(p *peerConnection, cancel chan struct{}, hashes []common.Hash) (eth.BlockBodyHashes, []eth.BlockBody, error) {
