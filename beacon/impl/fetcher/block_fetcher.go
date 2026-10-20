@@ -62,6 +62,7 @@ var (
 
 var errTerminated = errors.New("terminated")
 var errInvalidBody = errors.New("retrieved block body is invalid")
+var errInvalidBAL = errors.New("retrieved block access list is invalid")
 
 // blockRetrievalFn is a callback type for retrieving a block from the local chain.
 type blockRetrievalFn func(common.Hash) *types.Block
@@ -562,7 +563,7 @@ func (f *BlockFetcher) loop() {
 
 							balList, err := f.fetchBals(peer, hashes)
 							if err != nil {
-								log.Debug(fmt.Errorf("%w: failed to fetch BALs: %v", errInvalidBody, err).Error())
+								log.Debug("failed to fetch BALs: %v", err)
 								return
 							}
 							select {
@@ -1057,7 +1058,7 @@ func (f *BlockFetcher) fetchBals(peer string, hashes []common.Hash) ([]*bal.Bloc
 			accessList := new(bal.BlockAccessList)
 			if !bytes.Equal(bals[index], rlp.EmptyString) {
 				if err := rlp.DecodeBytes(bals[index], accessList); err != nil {
-					return nil, fmt.Errorf("failed to decode BAL: %w", err)
+					return nil, fmt.Errorf("%w: %v", errInvalidBAL, err)
 				}
 			}
 			balList = append(balList, accessList)
