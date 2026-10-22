@@ -2465,7 +2465,6 @@ events:
 				for _, i := range req.missingTxs {
 					c.dbft.OnTransaction(req.Txs[i]) // the blob transaction itself (without sidecars) is already present in PrepareRequest.
 				}
-				clear(req.missingTxs)
 			}
 
 		case h := <-c.chainHeadEvents:
