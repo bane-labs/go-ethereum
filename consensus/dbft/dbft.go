@@ -2450,6 +2450,9 @@ events:
 				req       = pReq.GetPrepareRequest().(*prepareRequest)
 				requested bool
 			)
+			if len(req.missingBlobs) == 0 {
+				continue
+			}
 			for _, h := range blobHashes {
 				if _, ok := req.missingBlobs[h]; ok {
 					delete(req.missingBlobs, h)
