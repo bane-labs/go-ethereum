@@ -71,8 +71,12 @@ func TestRecoverMessage_RLP(t *testing.T) {
 	bytes, err := rlp.EncodeToBytes(rm)
 	require.NoError(t, err)
 
-	decoded := &recoveryMessage{}
+	decoded := &recoveryMessage{
+		isNeoXPrepareRequestExtensionEnabled: func(*big.Int) bool { return false },
+	}
 	err = rlp.DecodeBytes(bytes, decoded)
 	require.NoError(t, err)
+	decoded.isNeoXPrepareRequestExtensionEnabled = nil
+	decoded.PrepareRequest.isNeoXPrepareRequestExtensionEnabled = nil
 	require.Equal(t, rm, decoded)
 }

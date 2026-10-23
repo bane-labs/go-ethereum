@@ -7,6 +7,7 @@ import (
 	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -289,28 +290,59 @@ func (p *Peer) AsyncSendNewBlobsRoot(hash common.Hash) {
 	}
 }
 
-// ReplyTransactionsRLP is the response to RequestTxs.
-func (p *Peer) ReplyTransactionsRLP(id uint64, hashes []common.Hash, txs []rlp.RawValue) error {
-	return p2p.Send(p.rw, TransactionsMsg, &TransactionsRLPPacket{
-		RequestId:               id,
-		TransactionsRLPResponse: txs,
+// ReplyCachedTransactionsRLP is the response to RequestCachedTransactions.
+func (p *Peer) ReplyCachedTransactionsRLP(id uint64, hashes []common.Hash, txs []rlp.RawValue) error {
+	return p2p.Send(p.rw, CachedTransactionsMsg, &CachedTransactionsRLPPacket{
+		RequestId:                     id,
+		CachedTransactionsRLPResponse: txs,
 	})
 }
 
-// RequestTransactions fetches a batch of transactions from a remote node.
-func (p *Peer) RequestTransactions(hashes []common.Hash) error {
-	p.Log().Debug("Fetching batch of transactions", "count", len(hashes))
+// RequestCachedTransactions fetches a batch of cached transactions from a remote node.
+func (p *Peer) RequestCachedTransactions(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of cached transactions", "count", len(hashes))
 	id := rand.Uint64()
 
 	p.tracker.Track(tracker.Request{
 		ID:       id,
-		ReqCode:  GetTransactionsMsg,
-		RespCode: TransactionsMsg,
+		ReqCode:  GetCachedTransactionsMsg,
+		RespCode: CachedTransactionsMsg,
 		Size:     len(hashes),
 	})
-	return p2p.Send(p.rw, GetTransactionsMsg, &GetTransactionsPacket{
-		RequestId:              id,
-		GetTransactionsRequest: hashes,
+	return p2p.Send(p.rw, GetCachedTransactionsMsg, &GetCachedTransactionsPacket{
+		RequestId:                    id,
+		GetCachedTransactionsRequest: hashes,
+	})
+}
+
+// ReplyCachedBlobsRLP is the response to RequestCachedBlobs.
+func (p *Peer) ReplyCachedBlobs(id uint64, hashes []common.Hash, bundle *engine.BlobsBundle) error {
+	res := CachedBlobsResponse{
+		Commitments: bundle.Commitments,
+		Blobs:       bundle.Blobs,
+		Proofs:      bundle.Proofs,
+	}
+
+	return p2p.Send(p.rw, CachedBlobsMsg, &CachedBlobsPacket{
+		RequestId:           id,
+		CachedBlobsResponse: res,
+	})
+}
+
+// RequestCachedBlobs fetches a batch of cached blobs from a remote node.
+func (p *Peer) RequestCachedBlobs(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of cached blobs", "count", len(hashes))
+	id := rand.Uint64()
+
+	p.tracker.Track(tracker.Request{
+		ID:       id,
+		ReqCode:  GetCachedBlobsMsg,
+		RespCode: CachedBlobsMsg,
+		Size:     len(hashes),
+	})
+	return p2p.Send(p.rw, GetCachedBlobsMsg, &GetCachedBlobsPacket{
+		RequestId:             id,
+		GetCachedBlobsRequest: hashes,
 	})
 }
 

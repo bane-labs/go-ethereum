@@ -29,9 +29,8 @@ const (
 )
 
 const (
-	// maxMessageSize is twice 64K of 32 byte hashes, N3 uses 32M, while
-	// Ethereum mostly uses 10M. Should be sufficient.
-	maxMessageSize = 4 * 1024 * 1024
+	// Ethereum uses 10M, and we use the same.
+	maxMessageSize = 10 * 1024 * 1024
 )
 
 var (
