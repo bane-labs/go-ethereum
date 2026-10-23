@@ -94,7 +94,7 @@ type ExecutableData struct {
 	ReceiptsRoot    common.Hash         `json:"receiptsRoot"  gencodec:"required"`
 	LogsBloom       []byte              `json:"logsBloom"     gencodec:"required"`
 	Random          common.Hash         `json:"prevRandao"    gencodec:"required"`
-	Difficulty      uint64              `json:"difficulty"    gencodec:"required"` // TODO: Should remove after TTD reaches.
+	Difficulty      uint64              `json:"difficulty"    gencodec:"required"`
 	Number          uint64              `json:"blockNumber"   gencodec:"required"`
 	GasLimit        uint64              `json:"gasLimit"      gencodec:"required"`
 	GasUsed         uint64              `json:"gasUsed"       gencodec:"required"`
@@ -270,8 +270,17 @@ func DecodeTransactions(enc [][]byte) ([]*types.Transaction, error) {
 // and that the blockhash of the constructed block matches the parameters. Nil
 // Withdrawals value will propagate through the returned block. Empty
 // Withdrawals value must be passed via non-nil, length 0 value in data.
-func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
-	block, err := ExecutableDataToBlockNoHash(data, versionedHashes, beaconRoot, requestsHash)
+func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte) (*types.Block, error) {
+	block, err := executableDataToBlock(data, versionedHashes, beaconRoot, requests)
+	if err != nil {
+		return nil, err
+	}
+	// The access list body is decoded before the block hash is checked. The
+	// header commits to the hash of the raw access list bytes, so a payload
+	// carrying an undecodable access list would otherwise be reported as a
+	// block hash mismatch whenever the header commits to a different encoding,
+	// hiding the actual defect.
+	block, err = attachAccessList(block, data)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +293,17 @@ func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, b
 // ExecutableDataToBlockNoHash is analogous to ExecutableDataToBlock, but is used
 // for stateless execution, so it skips checking if the executable data hashes to
 // the requested hash (stateless has to *compute* the root hash, it's not given).
-func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
+func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte) (*types.Block, error) {
+	block, err := executableDataToBlock(data, versionedHashes, beaconRoot, requests)
+	if err != nil {
+		return nil, err
+	}
+	return attachAccessList(block, data)
+}
+
+// executableDataToBlock assembles the block without its access list body and
+// without checking the block hash.
+func executableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte) (*types.Block, error) {
 	txs, err := DecodeTransactions(data.Transactions)
 	if err != nil {
 		return nil, err
@@ -303,19 +322,37 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 	for _, tx := range txs {
 		blobHashes = append(blobHashes, tx.BlobHashes()...)
 	}
+	// if len(blobHashes) != len(versionedHashes) {
+	// 	return nil, fmt.Errorf("invalid number of versionedHashes: %v blobHashes: %v", versionedHashes, blobHashes)
+	// }
+	// for i := 0; i < len(blobHashes); i++ {
+	// 	if blobHashes[i] != versionedHashes[i] {
+	// 		return nil, fmt.Errorf("invalid versionedHash at %v: %v blobHash: %v", i, versionedHashes[i], blobHashes[i])
+	// 	}
+	// }
+	// Only set withdrawalsRoot if it is non-nil. This allows CLs to use
+	// ExecutableData before withdrawals are enabled by marshaling
+	// Withdrawals as the json null value.
 	var withdrawalsRoot *common.Hash
 	if data.Withdrawals != nil {
 		h := types.DeriveSha(types.Withdrawals(data.Withdrawals), trie.NewStackTrie(nil))
 		withdrawalsRoot = &h
 	}
 
+	var requestsHash *common.Hash
+	if requests != nil {
+		h := types.CalcRequestsHash(requests)
+		requestsHash = &h
+	}
+
 	// If Amsterdam is enabled, data.BlockAccessList is always non-nil,
 	// even for empty blocks with no state transitions.
 	//
 	// If Amsterdam is not enabled yet, blockAccessListHash is expected
-	// to be nil.
+	// to be nil. An empty blockAccessList carries no access list: leave
+	// the hash unset so the block hash check catches the mismatch.
 	var blockAccessListHash *common.Hash
-	if data.BlockAccessList != nil {
+	if len(data.BlockAccessList) > 0 {
 		hash := crypto.Keccak256Hash(data.BlockAccessList)
 		blockAccessListHash = &hash
 	}
@@ -345,14 +382,26 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 	}
 	binary.BigEndian.PutUint64(header.Nonce[:], data.Nonce)
 	body := types.Body{Transactions: txs, Uncles: nil, Withdrawals: data.Withdrawals}
-	if data.BlockAccessList != nil {
-		var accessList bal.BlockAccessList
-		if err := rlp.DecodeBytes(data.BlockAccessList, &accessList); err != nil {
-			return nil, fmt.Errorf("failed to decode BAL: %w", err)
-		}
-		return types.NewBlockWithHeader(header).WithBody(body).WithAccessListUnsafe(&accessList), nil
-	}
 	return types.NewBlockWithHeader(header).WithBody(body), nil
+}
+
+// attachAccessList decodes the block access list carried by the executable data
+// and attaches it to the block. Payloads without an access list are returned
+// unchanged.
+//
+// A present but empty access list field is not a valid RLP encoding (an empty
+// list encodes as 0xc0) and is rejected like any other undecodable payload:
+// the engine API requires such payloads to be answered with the INVALID status
+// rather than an invalid params error.
+func attachAccessList(block *types.Block, data ExecutableData) (*types.Block, error) {
+	if data.BlockAccessList == nil {
+		return block, nil
+	}
+	var accessList bal.BlockAccessList
+	if err := rlp.DecodeBytes(data.BlockAccessList, &accessList); err != nil {
+		return nil, fmt.Errorf("failed to decode BAL: %w", err)
+	}
+	return block.WithAccessListUnsafe(&accessList), nil
 }
 
 // BlockToExecutableData constructs the ExecutableData structure by filling the

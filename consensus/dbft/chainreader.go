@@ -2,6 +2,7 @@ package dbft
 
 import (
 	"context"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -20,7 +21,7 @@ type ChainHeaderReader interface {
 	HasBlock(hash common.Hash, number uint64) bool
 	GetBlock(hash common.Hash, number uint64) *types.Block
 	GetBlockByNumber(uint64) *types.Block
-	StateAt(header *types.Header) (*state.StateDB, error)
+	StateAt(root common.Hash, number *big.Int, time uint64) (*state.StateDB, error)
 	VerifyBlock(block *types.Block, checkState bool) (*state.StateDB, *core.ProcessResult, error)
 	ProcessState(ctx context.Context, block *types.Block, statedb *state.StateDB) (*state.StateDB, *core.ProcessResult, error)
 

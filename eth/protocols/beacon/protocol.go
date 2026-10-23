@@ -7,6 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -14,6 +15,7 @@ import (
 const (
 	BEACON1 = 1
 	BEACON2 = 2
+	BEACON3 = 3
 )
 
 // ProtocolName is the official short name of the `beacon` protocol used during
@@ -22,11 +24,11 @@ const ProtocolName = "beacon"
 
 // ProtocolVersions are the supported versions of the `beacon` protocol (first
 // is primary).
-var ProtocolVersions = []uint{BEACON1, BEACON2}
+var ProtocolVersions = []uint{BEACON1, BEACON2, BEACON3}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{BEACON1: 8, BEACON2: 10}
+var protocolLengths = map[uint]uint64{BEACON1: 8, BEACON2: 10, BEACON3: 10}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -104,10 +106,17 @@ func (p *NewBlockHashesPacket) Unpack() ([]common.Hash, []uint64) {
 	return hashes, numbers
 }
 
-// NewBlockPacket is the network packet for the block propagation message.
-type NewBlockPacket struct {
+// NewBlockPacket1 is the network packet for the block propagation message.
+type NewBlockPacket1 struct {
 	Block *types.Block
 	TD    *big.Int
+}
+
+// NewBlockPacket is the network packet for the block propagation message.
+type NewBlockPacket struct {
+	Block      *types.Block
+	TD         *big.Int
+	AccessList *bal.BlockAccessList // The accessList in the types.Block will not be encoded, so here we have added it separately.
 }
 
 // NewBlobsRootPacket is the network packet for blobs block hash.
@@ -217,6 +226,9 @@ func (*StatusPacket2) Kind() byte   { return StatusMsg }
 
 func (*NewBlockHashesPacket) Name() string { return "NewBlockHashes" }
 func (*NewBlockHashesPacket) Kind() byte   { return NewBlockHashesMsg }
+
+func (*NewBlockPacket1) Name() string { return "NewBlock" }
+func (*NewBlockPacket1) Kind() byte   { return NewBlockMsg }
 
 func (*NewBlockPacket) Name() string { return "NewBlock" }
 func (*NewBlockPacket) Kind() byte   { return NewBlockMsg }

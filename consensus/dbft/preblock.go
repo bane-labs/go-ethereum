@@ -48,7 +48,7 @@ type PreBlock struct {
 	finalState    *state.StateDB
 	finalGASUsed  uint64
 	finalReceipts []*types.Receipt
-	finalBal      *bal.ConstructionBlockAccessList
+	finalBal      *bal.BlockAccessList
 }
 
 // Data implements [dbft.PreBlock] interface.
