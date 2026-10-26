@@ -106,8 +106,8 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 		_, blocksNoFork, _  = core.GenerateChainWithGenesis(gspecNoFork, engine, 2, nil)
 		_, blocksProFork, _ = core.GenerateChainWithGenesis(gspecProFork, engine, 2, nil)
 
-		fsNoFork, _  = core.NewFileSystem(chainNoFork, nil, nil)
-		fsProFork, _ = core.NewFileSystem(chainProFork, nil, nil)
+		fsNoFork, _  = core.NewFileSystem(chainNoFork, nil)
+		fsProFork, _ = core.NewFileSystem(chainProFork, nil)
 
 		txPool       = newTestTxPool()
 		ethNoFork, _ = newHandler(&handlerConfig{
