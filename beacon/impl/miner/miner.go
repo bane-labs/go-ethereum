@@ -92,11 +92,6 @@ func (miner *Miner) RequestNewPayload() error {
 	return nil
 }
 
-// HasTransaction checks if the miner has a transaction with the given hash.
-func (miner *Miner) HasTransaction(hash common.Hash) bool {
-	return miner.worker.hasTransaction(hash)
-}
-
 // GetTransaction tries to find a transaction from the latest payload that the
 // miner has seen.
 func (miner *Miner) GetTransaction(hash common.Hash) *types.Transaction {

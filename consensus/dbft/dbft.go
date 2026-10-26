@@ -995,9 +995,13 @@ func (c *DBFT) processMissingTransactions(req *prepareRequest) {
 			}
 		}
 	} else {
-		for i, tx := range req.Txs {
-			if !c.pendingCache.HasTransaction(tx.Hash()) {
-				missingTxs[tx.Hash()] = i
+		req.Txs = make([]*types.Transaction, len(req.TxHashes))
+		for i, hash := range req.TxHashes {
+			verified := c.pendingCache.GetTransaction(hash)
+			if verified != nil {
+				req.Txs[i] = verified.WithoutBlobTxSidecar()
+			} else {
+				missingTxs[hash] = i
 			}
 		}
 	}

@@ -172,12 +172,6 @@ func (b *Beacon) RefreshPendingPayload() error {
 	return b.miner.RequestNewPayload()
 }
 
-// HasTransaction checks if the beacon client has a transaction with the given hash.
-// This is useful for BFT consensus.
-func (b *Beacon) HasTransaction(hash common.Hash) bool {
-	return b.miner.HasTransaction(hash)
-}
-
 // GetTransaction tries to find a transaction from the consensus level. This is useful for BFT
 // consensus, if a transaction is replaced or evited in the EL txpool.
 func (b *Beacon) GetTransaction(hash common.Hash) *types.Transaction {
