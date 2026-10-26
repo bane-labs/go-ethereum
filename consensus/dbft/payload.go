@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
+	"github.com/ethereum/go-ethereum/core/types"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/nspcc-dev/dbft"
@@ -53,7 +54,7 @@ const (
 	recoveryMessageType messageType = 0x41
 )
 
-var _ dbft.ConsensusPayload[common.Hash] = (*Payload)(nil)
+var _ dbft.ConsensusPayload[common.Hash, *types.Transaction] = (*Payload)(nil)
 
 // ViewNumber implements the payload.ConsensusPayload interface.
 func (p Payload) ViewNumber() byte {
@@ -76,7 +77,7 @@ func (p Payload) GetChangeView() dbft.ChangeView {
 }
 
 // GetPrepareRequest implements the payload.ConsensusPayload interface.
-func (p Payload) GetPrepareRequest() dbft.PrepareRequest[common.Hash] {
+func (p Payload) GetPrepareRequest() dbft.PrepareRequest[common.Hash, *types.Transaction] {
 	return p.msgPayload.(*prepareRequest)
 }
 
@@ -101,7 +102,7 @@ func (p Payload) GetRecoveryRequest() dbft.RecoveryRequest {
 }
 
 // GetRecoveryMessage implements the payload.ConsensusPayload interface.
-func (p Payload) GetRecoveryMessage() dbft.RecoveryMessage[common.Hash] {
+func (p Payload) GetRecoveryMessage() dbft.RecoveryMessage[common.Hash, *types.Transaction] {
 	return p.msgPayload.(*recoveryMessage)
 }
 
