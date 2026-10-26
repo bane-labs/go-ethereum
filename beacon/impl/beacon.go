@@ -172,6 +172,12 @@ func (b *Beacon) RefreshPendingPayload() error {
 	return b.miner.RequestNewPayload()
 }
 
+// HasTransaction checks if the beacon client has a transaction with the given hash.
+// This is useful for BFT consensus.
+func (b *Beacon) HasTransaction(hash common.Hash) bool {
+	return b.miner.HasTransaction(hash)
+}
+
 // GetTransaction tries to find a transaction from the consensus level. This is useful for BFT
 // consensus, if a transaction is replaced or evited in the EL txpool.
 func (b *Beacon) GetTransaction(hash common.Hash) *types.Transaction {
@@ -181,6 +187,12 @@ func (b *Beacon) GetTransaction(hash common.Hash) *types.Transaction {
 // NotifyTransactions notifies the miner about transactions seen in the beacon protocol.
 func (b *Beacon) NotifyTransactions(txs []*types.Transaction) {
 	b.miner.NotifyTransactions(txs)
+}
+
+// HasBlobs checks if the beacon client has all the blobs for the given hashes.
+// This is useful for BFT consensus.
+func (b *Beacon) HasBlobs(hashes []common.Hash) bool {
+	return b.miner.HasBlobs(hashes)
 }
 
 // GetBlobs tries to find blob data from the consensus level. This is useful for BFT

@@ -456,7 +456,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if bft != nil {
 		bft.WithEthAPIBackend(eth.APIBackend)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
-		bft.WithTxPool(eth.TxPool())
 		bft.WithRequestTxs(eth.handler.RequestCachedTransactions)
 		bft.WithRequestBlobs(eth.handler.RequestCachedBlobs)
 		err := bft.WithLogLevel(config.DBFTLogLevel)

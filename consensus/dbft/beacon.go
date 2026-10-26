@@ -13,4 +13,11 @@ type Beacon interface {
 	SubscribeSyncingEvents(ch chan<- bool) event.Subscription
 	SubscribeTransactionEvents(ch chan<- *types.Transaction) event.Subscription
 	SubscribeBlobEvents(ch chan<- []common.Hash) event.Subscription
+	HasTransaction(hash common.Hash) bool
+	HasBlobs(hashes []common.Hash) bool
+}
+
+type beaconCache interface {
+	HasTransaction(hash common.Hash) bool
+	HasBlobs(hashes []common.Hash) bool
 }

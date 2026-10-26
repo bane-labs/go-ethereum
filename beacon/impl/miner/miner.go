@@ -92,6 +92,11 @@ func (miner *Miner) RequestNewPayload() error {
 	return nil
 }
 
+// HasTransaction checks if the miner has a transaction with the given hash.
+func (miner *Miner) HasTransaction(hash common.Hash) bool {
+	return miner.worker.hasTransaction(hash)
+}
+
 // GetTransaction tries to find a transaction from the latest payload that the
 // miner has seen.
 func (miner *Miner) GetTransaction(hash common.Hash) *types.Transaction {
@@ -110,6 +115,11 @@ func (miner *Miner) NotifyTransactions(txs []*types.Transaction) {
 		miner.txFeed.Send(tx)
 	}
 	miner.worker.cacheTransactions(txs)
+}
+
+// HasBlobs checks if the miner has all the blobs for the given hashes.
+func (miner *Miner) HasBlobs(hashes []common.Hash) bool {
+	return miner.worker.hasBlobs(hashes)
 }
 
 // GetBlobs tries to find blob data from the latest payload that the

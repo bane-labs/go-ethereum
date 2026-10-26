@@ -286,6 +286,19 @@ func (w *worker) commit(block *types.Block, versionedHashes []common.Hash, reque
 	return nil
 }
 
+func (c *worker) hasTransaction(hash common.Hash) bool {
+	// The pending payload is also protected by the fork mutex, here we borrow it.
+	c.forkMu.RLock()
+	defer c.forkMu.RUnlock()
+
+	for _, tx := range c.pendingTransactions {
+		if tx.Hash() == hash {
+			return true
+		}
+	}
+	return false
+}
+
 // getTransaction tries to find a transaction from the pending transaction cache.
 func (w *worker) getTransaction(hash common.Hash) *types.Transaction {
 	// The pending payload is also protected by the fork mutex, here we borrow it.
@@ -374,6 +387,20 @@ func (w *worker) cacheTransactions(txs []*types.Transaction) {
 			}
 		}
 	}
+}
+
+// hasBlobs checks if the pending cache has all the blobs for the given hashes.
+func (w *worker) hasBlobs(hashes []common.Hash) bool {
+	// The pending payload is also protected by the fork mutex, here we borrow it.
+	w.forkMu.RLock()
+	defer w.forkMu.RUnlock()
+
+	for _, hash := range hashes {
+		if !slices.Contains(w.pendingVersionedHashes, hash) {
+			return false
+		}
+	}
+	return true
 }
 
 // getBlobs tries to find blob data from the pending cache.

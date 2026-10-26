@@ -263,8 +263,8 @@ type DBFT struct {
 	sealingBal      *bal.ConstructionBlockAccessList
 
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
-	chain  ChainHeaderReader
-	txpool txPool
+	chain        ChainHeaderReader
+	pendingCache beaconCache
 
 	// signerConfig is a types.Signer used to retrieve transactions signer
 	// irrespectively of the chain's height.
@@ -987,8 +987,7 @@ func (c *DBFT) processMissingTransactions(req *prepareRequest) {
 			// it to dBFT iff blob is available and verified. Treat missing/empty
 			// blob transactions as missing until the node is able to fetch and
 			// verify the blob.
-			blob := c.txpool.Get(tx.Hash())
-			if blob == nil {
+			if !c.pendingCache.HasBlobs(tx.BlobHashes()) {
 				for _, h := range tx.BlobHashes() {
 					missingBlobs[h] = struct{}{}
 				}
@@ -997,8 +996,7 @@ func (c *DBFT) processMissingTransactions(req *prepareRequest) {
 		}
 	} else {
 		for i, tx := range req.Txs {
-			verified := c.txpool.Get(tx.Hash())
-			if verified == nil {
+			if !c.pendingCache.HasTransaction(tx.Hash()) {
 				missingTxs[tx.Hash()] = i
 			}
 		}
@@ -1638,12 +1636,8 @@ func (c *DBFT) WithBeacon(beacon Beacon, syncing SyncingFn) {
 	// The direct checker of miner working state.
 	c.syncingSub = beacon.SubscribeSyncingEvents(c.syncingEvents)
 	c.syncing = syncing
-}
-
-// WithTxPool initializes transaction pool API for DBFT interactions with memory pool
-// (fetching unknown transactions).
-func (c *DBFT) WithTxPool(pool txPool) {
-	c.txpool = pool
+	// The cache reader to check pending payloads and their status.
+	c.pendingCache = beacon
 }
 
 // WithZKFiles initializes the paths of ZK required files. Each pair of R1CS and PK
