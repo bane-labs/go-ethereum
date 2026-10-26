@@ -988,9 +988,7 @@ func (c *DBFT) processMissingTransactions(req *prepareRequest) {
 			// blob transactions as missing until the node is able to fetch and
 			// verify the blob.
 			blob := c.txpool.Get(tx.Hash())
-			if blob != nil {
-				req.Txs[i] = tx.WithoutBlobTxSidecar() // replace transaction in-place since we don't need sidecars in the dBFT process.
-			} else {
+			if blob == nil {
 				for _, h := range tx.BlobHashes() {
 					missingBlobs[h] = struct{}{}
 				}
@@ -1000,9 +998,7 @@ func (c *DBFT) processMissingTransactions(req *prepareRequest) {
 	} else {
 		for i, tx := range req.Txs {
 			verified := c.txpool.Get(tx.Hash())
-			if verified != nil {
-				req.Txs[i] = tx.WithoutBlobTxSidecar() // replace transaction in-place since we don't need sidecars in the dBFT process.
-			} else {
+			if verified == nil {
 				missingTxs[tx.Hash()] = i
 			}
 		}
