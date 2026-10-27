@@ -38,6 +38,12 @@ const (
 	// maxBlocksServe is the maximum number of block blobs to serve. This
 	// number is mostly there to limit the number of disk lookups.
 	maxBlocksServe = 16
+
+	// maxTxServe is the maximum number of cached transactions to serve.
+	maxTxServe = 1024
+
+	// maxBlobsServe is the maximum number of cached blobs to serve.
+	maxBlobsServe = 32
 )
 
 // beaconHandler implements the eth.Backend interface to handle the various network
@@ -396,14 +402,16 @@ func (h *beaconHandler) selectBlobTransferPeers(excludePeer *string) []*beaconPe
 func (h *beaconHandler) handleGetCachedTransactionsPacket(peer *beacon.Peer, packet *beacon.GetCachedTransactionsPacket) error {
 	// Gather transactions until the fetch or network limits is reached
 	var (
-		bytes  int
-		hashes []common.Hash
-		txs    []rlp.RawValue
+		bytes   int
+		hashes  []common.Hash
+		txs     []rlp.RawValue
+		lookups int
 	)
 	for _, hash := range packet.GetCachedTransactionsRequest {
-		if bytes >= softResponseLimit {
+		if bytes >= softResponseLimit || len(txs) >= maxTxServe || lookups >= 2*maxTxServe {
 			break
 		}
+		lookups++
 		// First try to find it from the EL txpool.
 		tx := h.txpool.Get(hash)
 		if tx == nil {
@@ -446,11 +454,33 @@ func (h *beaconHandler) handleCachedTransactions(peer *beacon.Peer, packet *beac
 }
 
 func (h *beaconHandler) handleGetCachedBlobsPacket(peer *beacon.Peer, packet *beacon.GetCachedBlobsPacket) error {
-	// Try to find the blob sidecar from the CL.
-	hashes := packet.GetCachedBlobsRequest
-	bundle := h.beacon.GetBlobs(packet.GetCachedBlobsRequest)
+	// Try to find the blob sidecar from the CL until the fetch or network limits is reached.
+	var (
+		bytes   int
+		hashes  []common.Hash
+		bundle  engine.BlobsBundle
+		lookups int
+	)
+	for _, hash := range packet.GetCachedBlobsRequest {
+		if bytes >= softResponseLimit || len(bundle.Blobs) >= maxBlobsServe || lookups >= 2*maxBlobsServe {
+			break
+		}
+		lookups++
+		blob, commitment, proofs := h.beacon.GetBlob(hash)
+		if blob == nil {
+			continue
+		}
+		hashes = append(hashes, hash)
+		bundle.Blobs = append(bundle.Blobs, blob)
+		bundle.Commitments = append(bundle.Commitments, commitment)
+		bundle.Proofs = append(bundle.Proofs, proofs...)
+		bytes += len(blob) + len(commitment)
+		for _, proof := range proofs {
+			bytes += len(proof)
+		}
+	}
 
-	return peer.ReplyCachedBlobs(packet.RequestId, hashes, bundle)
+	return peer.ReplyCachedBlobs(packet.RequestId, hashes, &bundle)
 }
 
 func (h *beaconHandler) handleCachedBlobs(peer *beacon.Peer, packet *beacon.CachedBlobsPacket) error {

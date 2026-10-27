@@ -486,28 +486,20 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.beacon = beaconImpl.New(eth, eth.Downloader(), eth.internalRPC, eth.feeRecipient, eth.shouldPreserve, txCacheFilter, blobCacheFilter)
 	eth.handler.connectBeacon(eth.beacon)
 	// Since we have a beacon client, we use it to fetch blobs and forget about the blob pool.
-	eth.filesystem.SetGetBlobsFn(func(hashes []common.Hash) ([]kzg4844.Blob, []kzg4844.Commitment, []kzg4844.Proof, error) {
-		var blobData []kzg4844.Blob
-		var commitmentData []kzg4844.Commitment
-		var proofData []kzg4844.Proof
-		bundle := eth.beacon.GetBlobs(hashes)
+	eth.filesystem.SetGetBlobFn(func(hash common.Hash) (kzg4844.Blob, kzg4844.Commitment, []kzg4844.Proof, error) {
+		var blobData kzg4844.Blob
+		var commitmentData kzg4844.Commitment
+		proofData := make([]kzg4844.Proof, 0, kzg4844.CellProofsPerBlob)
+		blob, commitment, proof := eth.beacon.GetBlob(hash)
 		// The hashes are expected from the same transaction, so either all or none of the blobs should be present in the cache.
-		if len(bundle.Blobs) > 0 && len(bundle.Blobs) != len(hashes) {
-			return nil, nil, nil, errors.New("partial blobs found in cache, expected all or none")
+		if blob == nil || len(blob) == 0 {
+			return blobData, commitmentData, proofData, errors.New("blob not found in cache")
 		}
-		for i := range bundle.Blobs {
-			var b kzg4844.Blob
-			copy(b[:], bundle.Blobs[i])
-			blobData = append(blobData, b)
-		}
-		for i := range bundle.Commitments {
-			var c kzg4844.Commitment
-			copy(c[:], bundle.Commitments[i])
-			commitmentData = append(commitmentData, c)
-		}
-		for i := range bundle.Proofs {
+		copy(blobData[:], blob)
+		copy(commitmentData[:], commitment)
+		for i := range proof {
 			var p kzg4844.Proof
-			copy(p[:], bundle.Proofs[i])
+			copy(p[:], proof[i])
 			proofData = append(proofData, p)
 		}
 		return blobData, commitmentData, proofData, nil

@@ -6,6 +6,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -117,10 +118,10 @@ func (miner *Miner) HasBlobs(hashes []common.Hash) bool {
 	return miner.worker.hasBlobs(hashes)
 }
 
-// GetBlobs tries to find blob data from the latest payload that the
+// GetBlob tries to find blob data from the latest payload that the
 // miner has seen.
-func (miner *Miner) GetBlobs(hashes []common.Hash) *engine.BlobsBundle {
-	return miner.worker.getBlobs(hashes)
+func (miner *Miner) GetBlob(hash common.Hash) (hexutil.Bytes, hexutil.Bytes, []hexutil.Bytes) {
+	return miner.worker.getBlob(hash)
 }
 
 // NotifyBlobs notifies the miner about blob data seen in the beacon protocol.

@@ -390,31 +390,23 @@ func (w *worker) hasBlobs(hashes []common.Hash) bool {
 	return true
 }
 
-// getBlobs tries to find blob data from the pending cache.
-func (w *worker) getBlobs(hashes []common.Hash) *engine.BlobsBundle {
+// getBlob tries to find blob data from the pending cache.
+func (w *worker) getBlob(hash common.Hash) (hexutil.Bytes, hexutil.Bytes, []hexutil.Bytes) {
 	// The pending payload is also protected by the fork mutex, here we borrow it.
 	w.forkMu.RLock()
 	defer w.forkMu.RUnlock()
 
-	bundle := &engine.BlobsBundle{
-		Blobs:       make([]hexutil.Bytes, 0),
-		Commitments: make([]hexutil.Bytes, 0),
-		Proofs:      make([]hexutil.Bytes, 0),
-	}
-	hashToIndex := make(map[common.Hash]int, len(w.pendingVersionedHashes))
-	for idx, h := range w.pendingVersionedHashes {
-		hashToIndex[h] = idx
-	}
-	for _, hash := range hashes {
-		if idx, exists := hashToIndex[hash]; exists {
-			bundle.Blobs = append(bundle.Blobs, w.pendingBlobs[idx])
-			bundle.Commitments = append(bundle.Commitments, w.pendingCommitments[idx])
-			for n := 0; n < kzg4844.CellProofsPerBlob; n++ {
-				bundle.Proofs = append(bundle.Proofs, w.pendingProofs[idx*kzg4844.CellProofsPerBlob+n])
-			}
+	for i, vh := range w.pendingVersionedHashes {
+		if hash.Cmp(vh) != 0 {
+			continue
 		}
+		proofs := make([]hexutil.Bytes, 0, kzg4844.CellProofsPerBlob)
+		for n := 0; n < kzg4844.CellProofsPerBlob; n++ {
+			proofs = append(proofs, w.pendingProofs[i*kzg4844.CellProofsPerBlob+n])
+		}
+		return w.pendingBlobs[i], w.pendingCommitments[i], proofs
 	}
-	return bundle
+	return nil, nil, nil
 }
 
 // cacheBlobs adds blob data to the pending cache, so mark as

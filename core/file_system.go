@@ -23,13 +23,13 @@ var (
 	errTooManyBlobsInBlock  = fmt.Errorf("too many blobs in block")
 )
 
-// GetBlobsFn returns blobs if they are contained in the pool, or nil otherwise.
-type GetBlobsFn func(hashes []common.Hash) ([]kzg4844.Blob, []kzg4844.Commitment, []kzg4844.Proof, error)
+// GetBlobFn returns blobs if they are contained in the pool, or nil otherwise.
+type GetBlobFn func(hash common.Hash) (kzg4844.Blob, kzg4844.Commitment, []kzg4844.Proof, error)
 
 // FileSystem manages blob sidecars associated with blocks.
 type FileSystem struct {
 	bc          *BlockChain
-	getBlobs    GetBlobsFn
+	getBlob     GetBlobFn
 	blobStorage *filesystem.BlobStorage
 
 	annoBlobFeed event.Feed
@@ -43,11 +43,11 @@ func NewFileSystem(bc *BlockChain, blobStorage *filesystem.BlobStorage) (*FileSy
 	return fs, nil
 }
 
-// SetGetBlobsFn sets the function to retrieve blobs, which is used
+// SetGetBlobFn sets the function to retrieve blobs, which is used
 // to find blobs from the EL pool or beacon cache when committing
 // sealed block hashes.
-func (fs *FileSystem) SetGetBlobsFn(getBlobs GetBlobsFn) {
-	fs.getBlobs = getBlobs
+func (fs *FileSystem) SetGetBlobFn(getBlob GetBlobFn) {
+	fs.getBlob = getBlob
 }
 
 // CommitSealBlockHash commits the sealed block hash associated with committed blobs.
@@ -62,10 +62,19 @@ func (fs *FileSystem) CommitSealBlockHash(block *types.Block) error {
 			continue
 		}
 		hashes := tx.BlobHashes()
-		blobs, commitments, proofs, err := fs.getBlobs(hashes)
-		if err != nil {
-			log.Error("failed to retrieve blobs", "tx_hash", tx.Hash(), "err", err)
-			return err
+
+		blobs := make([]kzg4844.Blob, 0, len(hashes))
+		commitments := make([]kzg4844.Commitment, 0, len(hashes))
+		proofs := make([]kzg4844.Proof, 0, len(hashes)*kzg4844.CellProofsPerBlob)
+		for _, hash := range hashes {
+			blob, commitment, proof, err := fs.getBlob(hash)
+			if err != nil {
+				log.Error("failed to retrieve blobs", "tx_hash", tx.Hash(), "err", err)
+				return err
+			}
+			blobs = append(blobs, blob)
+			commitments = append(commitments, commitment)
+			proofs = append(proofs, proof...)
 		}
 		sidecars = append(sidecars, types.NewBlobTxSidecar(types.BlobSidecarVersion1, blobs, commitments, proofs))
 		blobCount += len(blobs)

@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/beacon/impl/miner"
 	"github.com/ethereum/go-ethereum/beacon/impl/synchronizer"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus/dbft/light"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -189,10 +190,10 @@ func (b *Beacon) HasBlobs(hashes []common.Hash) bool {
 	return b.miner.HasBlobs(hashes)
 }
 
-// GetBlobs tries to find blob data from the consensus level. This is useful for BFT
+// GetBlob tries to find blob data from the consensus level. This is useful for BFT
 // consensus.
-func (b *Beacon) GetBlobs(hashes []common.Hash) *engine.BlobsBundle {
-	return b.miner.GetBlobs(hashes)
+func (b *Beacon) GetBlob(hash common.Hash) (hexutil.Bytes, hexutil.Bytes, []hexutil.Bytes) {
+	return b.miner.GetBlob(hash)
 }
 
 // NotifyBlobs notifies the miner about blob data seen in the beacon protocol.

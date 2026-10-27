@@ -33,6 +33,7 @@ import (
 	beaconfetch "github.com/ethereum/go-ethereum/beacon/impl/fetcher"
 	beaconSync "github.com/ethereum/go-ethereum/beacon/impl/synchronizer"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -122,7 +123,7 @@ type Beacon interface {
 	EnqueueBlock(peer string, block *types.Block)
 	GetTransaction(hash common.Hash) *types.Transaction
 	NotifyTransactions(txs []*types.Transaction)
-	GetBlobs(hashes []common.Hash) *engine.BlobsBundle
+	GetBlob(hash common.Hash) (hexutil.Bytes, hexutil.Bytes, []hexutil.Bytes)
 	NotifyBlobs(blobs *engine.BlobsBundle)
 }
 

@@ -202,8 +202,10 @@ func (n *testBeaconNotifier) NotifyBlockAnnon(string, common.Hash, uint64, time.
 func (n *testBeaconNotifier) EnqueueBlock(string, *types.Block)                       {}
 func (n *testBeaconNotifier) GetTransaction(common.Hash) *types.Transaction           { return nil }
 func (n *testBeaconNotifier) NotifyTransactions([]*types.Transaction)                 {}
-func (n *testBeaconNotifier) GetBlobs([]common.Hash) *engine.BlobsBundle              { return nil }
-func (n *testBeaconNotifier) NotifyBlobs(blobs *engine.BlobsBundle)                   { n.bundle = blobs }
+func (n *testBeaconNotifier) GetBlob(common.Hash) (hexutil.Bytes, hexutil.Bytes, []hexutil.Bytes) {
+	return nil, nil, nil
+}
+func (n *testBeaconNotifier) NotifyBlobs(blobs *engine.BlobsBundle) { n.bundle = blobs }
 
 func TestHandleCachedBlobsValidBundle(t *testing.T) {
 	t.Parallel()
