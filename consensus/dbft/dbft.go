@@ -609,10 +609,15 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Trans
 	}
 
 	if pre.finalState == nil {
-		// We're toast, proposal was invalid (likely just outdated), the node doesn't have relevant
+		// We're toast, proposal was invalid (likely just outdated) or the node can't construct the proposal
+		// due to missing transactions (in case of watch-only node). The node doesn't have relevant
 		// block state, hence can't continue consensus. In good scenario (if proposal is valid but outdated)
 		// new block arrival will trigger dBFT initialization at new height, hence don't stop the node immediately.
-		log.Warn("can't construct block due to missing state: proposal verification failed")
+		if c.dbft.Context.WatchOnly() {
+			log.Info("can't construct block on watch-only node: proposal verification wasn't performed due to missing transactions; waiting for the block from the network")
+		} else {
+			log.Warn("can't construct block due to missing state: proposal verification failed")
+		}
 		return nil
 	}
 
