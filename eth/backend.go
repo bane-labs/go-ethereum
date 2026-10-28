@@ -885,17 +885,21 @@ func (s *Ethereum) Stop() error {
 	s.handler.txTracker.Stop()
 	s.handler.Stop()
 
-	// Then stop everything else.
+	// Then stop CL.
+	s.engine.Close()
+	s.beacon.Close()
+
+	// Then stop EL.
 	ch := make(chan struct{})
 	s.closeFilterMaps <- ch
 	<-ch
 	s.filterMaps.Stop()
 	s.blobCache.Stop()
 	s.txPool.Close()
-	s.beacon.Close()
-	s.internalRPC.Close()
 	s.blockchain.Stop()
-	s.engine.Close()
+
+	// Then stop the RPC connection.
+	s.internalRPC.Close()
 
 	// Clean shutdown marker as the last thing before closing db
 	s.shutdownTracker.Stop()
