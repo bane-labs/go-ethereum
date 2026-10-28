@@ -292,7 +292,8 @@ func (n *Node) openEndpoints() error {
 // stopServices terminates running services, RPC and p2p networking.
 // It is the inverse of Start.
 func (n *Node) stopServices(running []Lifecycle) error {
-	n.stopRPC()
+	// First stop public endpoints.
+	n.stopServers()
 
 	// Stop running lifecycles in reverse order.
 	failure := &StopError{Services: make(map[reflect.Type]error)}
@@ -301,6 +302,9 @@ func (n *Node) stopServices(running []Lifecycle) error {
 			failure.Services[reflect.TypeOf(running[i])] = err
 		}
 	}
+
+	// Then stop the in-process endpoint.
+	n.stopInProc()
 
 	// Stop p2p networking.
 	n.server.Stop()
@@ -525,13 +529,19 @@ func (n *Node) wsServerForPort(port int, authenticated bool) *httpServer {
 	return wsServer
 }
 
+// stopRPC stops the full RPC service.
 func (n *Node) stopRPC() {
+	n.stopServers()
+	n.stopInProc()
+}
+
+// stopServers stops RPC service expect the in-process endpoint.
+func (n *Node) stopServers() {
 	n.http.stop()
 	n.ws.stop()
 	n.httpAuth.stop()
 	n.wsAuth.stop()
 	n.ipc.stop()
-	n.stopInProc()
 }
 
 // startInProc registers all RPC APIs on the inproc server.
