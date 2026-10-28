@@ -613,7 +613,6 @@ drainLoop:
 		}
 	}
 
-	close(c.dkgTaskExecutorToCloseCh)
 	log.Info("DKG task executor stopped")
 }
 
@@ -692,7 +691,6 @@ drainLoop:
 		}
 	}
 
-	close(c.dkgTaskWatcherToCloseCh)
 	log.Info("DKG task watcher stopped")
 }
 

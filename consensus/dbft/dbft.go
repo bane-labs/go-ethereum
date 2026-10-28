@@ -226,6 +226,7 @@ type DBFT struct {
 	dbft             *dbft.DBFT[common.Hash, *types.Transaction]
 	dbftStarted      atomic.Bool
 	eventLoopRunning atomic.Bool
+	wg               sync.WaitGroup
 	blockQueue       *blockQueue
 
 	// lastTimestamp, lastIndex and lastBlockHash are updated on every new header
@@ -271,10 +272,7 @@ type DBFT struct {
 	signerConfig types.Signer
 
 	// Channels used for graceful engine shutdown.
-	quit                     chan struct{}
-	eventLoopToCloseCh       chan struct{}
-	dkgTaskExecutorToCloseCh chan struct{}
-	dkgTaskWatcherToCloseCh  chan struct{}
+	quit chan struct{}
 
 	// various native contract APIs that dBFT uses.
 	backend ethapi.Backend
@@ -357,10 +355,7 @@ func New(chainCfg *params.ChainConfig, _ ethdb.Database) (*DBFT, error) {
 		chainHeadEvents: make(chan core.ChainHeadEvent, 2),
 		syncingEvents:   make(chan bool, 2),
 
-		quit:                     make(chan struct{}),
-		eventLoopToCloseCh:       make(chan struct{}),
-		dkgTaskExecutorToCloseCh: make(chan struct{}),
-		dkgTaskWatcherToCloseCh:  make(chan struct{}),
+		quit: make(chan struct{}),
 
 		dkgSnapshot:       NewSnapshot(),
 		dkgTaskExecutorCh: make(chan *taskList, 2), // The maximum number of task lists per epoch is 3
@@ -2201,7 +2196,10 @@ func (c *DBFT) Authorize(signer common.Address, signFn SignerFn, amevKeystore *a
 // Start initializes last block cache, fetches fresh proposal from miner, starts
 // DBFT engine event loop and starts dBFT consensus process.
 func (c *DBFT) Start(chain ChainHeaderReader, inserter ChainInsertFn, fs FSWriter) {
+	c.wg.Add(1)
 	if c.dbftStarted.CompareAndSwap(false, true) {
+		defer c.wg.Done()
+
 		c.chain = chain
 		c.blockQueue.fs = fs
 		c.blockQueue.SetChain(chain, inserter)
@@ -2210,8 +2208,15 @@ func (c *DBFT) Start(chain ChainHeaderReader, inserter ChainInsertFn, fs FSWrite
 		// Start DKG task dispatcher prior to sealing proposal awaiting since new
 		// block may be discovered during awaiting which may lead to DKG-related
 		// transactions submission.
-		go c.dkgTaskExecutor()
-		go c.dkgTaskWatcher()
+		c.wg.Add(2)
+		go func() {
+			defer c.wg.Done()
+			c.dkgTaskExecutor()
+		}()
+		go func() {
+			defer c.wg.Done()
+			c.dkgTaskWatcher()
+		}()
 
 		// Current head of the header chain may be above the block chain, and
 		// dBFT must always be based on the latest state data (i.e. blocks), thus,
@@ -2269,7 +2274,13 @@ func (c *DBFT) Start(chain ChainHeaderReader, inserter ChainInsertFn, fs FSWrite
 			"last timestamp", c.lastTimestamp)
 		c.dbft.Start(c.lastTimestamp * NsInS)
 
-		go c.eventLoop()
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.eventLoop()
+		}()
+	} else {
+		c.wg.Done()
 	}
 }
 
@@ -2513,21 +2524,6 @@ events:
 	c.blobSub.Unsubscribe()
 	c.syncingSub.Unsubscribe()
 	c.eventLoopRunning.Store(false)
-drainLoop:
-	for {
-		select {
-		case <-c.messages:
-		case <-c.txEvents:
-		case <-c.blobEvents:
-		case <-c.syncingEvents:
-		case <-c.chainHeadEvents:
-		default:
-			break drainLoop
-		}
-	}
-	close(c.messages)
-	close(c.chainHeadEvents)
-	close(c.eventLoopToCloseCh)
 	log.Info("dBFT event loop stopped")
 }
 
@@ -2554,7 +2550,10 @@ func (c *DBFT) OnPayload(cp *dbftproto.Message) error {
 		return nil
 	}
 
-	c.messages <- *p
+	select {
+	case c.messages <- *p:
+	case <-c.quit:
+	}
 	return nil
 }
 
@@ -2893,11 +2892,7 @@ func (c *DBFT) Close() error {
 	if c.dbftStarted.CompareAndSwap(true, false) {
 		log.Info("Shutting down dBFT engine")
 		close(c.quit)
-		if c.eventLoopRunning.Load() {
-			<-c.eventLoopToCloseCh
-		}
-		<-c.dkgTaskExecutorToCloseCh
-		<-c.dkgTaskWatcherToCloseCh
+		c.wg.Wait()
 		close(c.dkgTaskExecutorCh)
 		close(c.dkgTaskWatcherCh)
 		c.scope.Close()
