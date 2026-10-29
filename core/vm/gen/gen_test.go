@@ -309,7 +309,7 @@ func TestDynamicCaseForkGated(t *testing.T) {
 		op   vm.OpCode
 		gate string
 	}{
-		{vm.MCOPY, "if rules.IsCancun {"},
+		{vm.MCOPY, "if rules.IsNeoXDKG {"},
 		{vm.MLOAD, ""}, // Frontier, so no gate
 	} {
 		body := caseBody(string(src), tc.op)
