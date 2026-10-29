@@ -77,8 +77,8 @@ func (h *beaconHandler) Handle(peer *beacon.Peer, packet beacon.Packet) error {
 	case *beacon.NewBlockPacket1:
 		return h.handleBlockBroadcast1(peer, packet)
 
-	case *beacon.NewBlockPacket:
-		return h.handleBlockBroadcast(peer, packet)
+	case *beacon.NewBlockPacket3:
+		return h.handleBlockBroadcast3(peer, packet)
 
 	case *beacon.GetBlobsPacket:
 		return h.handleGetBlobsPacket(peer, packet)
@@ -153,9 +153,9 @@ func (h *beaconHandler) handleBlockBroadcast1(peer *beacon.Peer, packet *beacon.
 	return nil
 }
 
-// handleBlockBroadcast is invoked from a peer's message handler when it transmits a
+// handleBlockBroadcast3 is invoked from a peer's message handler when it transmits a
 // block broadcast for the local node to process.
-func (h *beaconHandler) handleBlockBroadcast(peer *beacon.Peer, packet *beacon.NewBlockPacket) error {
+func (h *beaconHandler) handleBlockBroadcast3(peer *beacon.Peer, packet *beacon.NewBlockPacket3) error {
 	block := packet.Block
 	if block.Header().BlockAccessListHash != nil {
 		block = block.WithAccessListUnsafe(packet.AccessList)

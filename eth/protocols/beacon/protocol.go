@@ -103,8 +103,8 @@ type NewBlockPacket1 struct {
 	TD    *big.Int
 }
 
-// NewBlockPacket is the network packet for the block propagation message.
-type NewBlockPacket struct {
+// NewBlockPacket3 is the network packet for the block propagation message.
+type NewBlockPacket3 struct {
 	Block      *types.Block
 	TD         *big.Int
 	AccessList *bal.BlockAccessList // The accessList in the types.Block will not be encoded, so here we have added it separately.
@@ -232,8 +232,8 @@ func (*NewBlockHashesPacket) Kind() byte   { return NewBlockHashesMsg }
 func (*NewBlockPacket1) Name() string { return "NewBlock" }
 func (*NewBlockPacket1) Kind() byte   { return NewBlockMsg }
 
-func (*NewBlockPacket) Name() string { return "NewBlock" }
-func (*NewBlockPacket) Kind() byte   { return NewBlockMsg }
+func (*NewBlockPacket3) Name() string { return "NewBlock" }
+func (*NewBlockPacket3) Kind() byte   { return NewBlockMsg }
 
 func (*NewBlobsRootPacket) Name() string { return "NewBlobsRoot" }
 func (*NewBlobsRootPacket) Kind() byte   { return NewBlobsRootMsg }

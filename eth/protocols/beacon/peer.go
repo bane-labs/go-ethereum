@@ -185,7 +185,7 @@ func (p *Peer) SendNewBlock(block *types.Block, td *big.Int) error {
 			TD:    td,
 		})
 	}
-	return p2p.Send(p.rw, NewBlockMsg, &NewBlockPacket{
+	return p2p.Send(p.rw, NewBlockMsg, &NewBlockPacket3{
 		Block:      block,
 		TD:         td,
 		AccessList: block.AccessList(),
