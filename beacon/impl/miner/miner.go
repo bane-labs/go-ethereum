@@ -124,6 +124,18 @@ func (miner *Miner) GetBlob(hash common.Hash) (hexutil.Bytes, hexutil.Bytes, []h
 	return miner.worker.getBlob(hash)
 }
 
+// RequestBlobs fetches available blobs from EL and returns hashes that still not found.
+// Only V1 blobs are supported, so ensure the beacon runs on Osaka upgrade.
+func (miner *Miner) RequestBlobs(hashes []common.Hash) []common.Hash {
+	found, missing := miner.worker.searchBlobs(hashes)
+	go func() {
+		// Fetch and notify found ones in background.
+		bundle := miner.worker.fetchBlobs(found)
+		miner.NotifyBlobs(bundle)
+	}()
+	return missing
+}
+
 // NotifyBlobs notifies the miner about blob data seen in the beacon protocol.
 func (miner *Miner) NotifyBlobs(bundle *engine.BlobsBundle) {
 	if len(bundle.Blobs) == 0 {

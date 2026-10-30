@@ -612,6 +612,60 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 	return status, nil
 }
 
+// searchBlobs checks whether requested hashes that can be fetched from EL.
+func (w *worker) searchBlobs(hashes []common.Hash) ([]common.Hash, []common.Hash) {
+	var resp []bool
+	err := w.rpc.CallContext(w.ctx, &resp, "engine_hasBlobs", hashes)
+	if err != nil {
+		log.Error("Failed to search blobs", "err", err)
+		return hashes, []common.Hash{}
+	}
+	found := make([]common.Hash, 0, len(hashes))
+	missing := make([]common.Hash, 0, len(hashes))
+	for i, f := range resp {
+		if f {
+			found = append(found, hashes[i])
+		} else {
+			missing = append(missing, hashes[i])
+		}
+	}
+	return found, missing
+}
+
+// fetchBlobs fetches requested blobs from EL.
+func (w *worker) fetchBlobs(hashes []common.Hash) *engine.BlobsBundle {
+	var bundle engine.BlobsBundle
+	head := w.chain.CurrentHeader()
+	switch w.chainConfig.LatestFork(head.Time) {
+	case forks.Cancun:
+		var resp engine.BlobAndProofListV1
+		err := w.rpc.CallContext(w.ctx, &resp, "engine_getBlobsV1", hashes)
+		if err != nil {
+			log.Error("Failed to fetch blobs", "err", err)
+		}
+		for _, res := range resp {
+			bundle.Blobs = append(bundle.Blobs, res.Blob)
+			bundle.Commitments = append(bundle.Commitments, res.Commitment)
+			bundle.Proofs = append(bundle.Proofs, res.Proof)
+		}
+	case forks.Osaka, forks.Amsterdam:
+		var resp engine.BlobAndProofListV2
+		err := w.rpc.CallContext(w.ctx, &resp, "engine_getBlobsV2", hashes)
+		if err != nil {
+			log.Error("Failed to fetch blobs", "err", err)
+		}
+		for _, res := range resp {
+			bundle.Blobs = append(bundle.Blobs, res.Blob)
+			bundle.Commitments = append(bundle.Commitments, res.Commitment)
+			bundle.Proofs = append(bundle.Proofs, res.CellProofs...)
+		}
+	default:
+		// TODO: extend new forks or support partial storage.
+		log.Error("Fork not supported for engine_getBlobs", "fork", w.chainConfig.LatestFork(head.Time))
+	}
+	return &bundle
+}
+
 const blobCommitmentVersionKZG uint8 = 0x01
 
 func convertKzgCommitmentToVersionedHash(commitment []byte) common.Hash {
