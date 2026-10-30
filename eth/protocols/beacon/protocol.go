@@ -5,6 +5,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -12,8 +13,8 @@ import (
 
 // Constants to match up protocol versions and messages
 const (
-	BEACON1 = 1
 	BEACON2 = 2
+	BEACON3 = 3
 )
 
 // ProtocolName is the official short name of the `beacon` protocol used during
@@ -22,26 +23,28 @@ const ProtocolName = "beacon"
 
 // ProtocolVersions are the supported versions of the `beacon` protocol (first
 // is primary).
-var ProtocolVersions = []uint{BEACON1, BEACON2}
+var ProtocolVersions = []uint{BEACON2, BEACON3}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{BEACON1: 8, BEACON2: 10}
+var protocolLengths = map[uint]uint64{BEACON2: 10, BEACON3: 12}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
 
 const (
-	StatusMsg          = 0x00 // Status message
-	NewBlockHashesMsg  = 0x01 // New block hashes message
-	NewBlockMsg        = 0x02 // New block message
-	NewBlobsRootMsg    = 0x03 // New blobs root message
-	GetBlobsMsg        = 0x04 // Get blobs message
-	BlobsMsg           = 0x05 // Blobs message
-	GetBatchBlobsMsg   = 0x06 // Get batch blobs message
-	BatchBlobsMsg      = 0x07 // Batch blobs message
-	GetTransactionsMsg = 0x08 // Get transactions message
-	TransactionsMsg    = 0x09 // Transactions message
+	StatusMsg                = 0x00 // Status message
+	NewBlockHashesMsg        = 0x01 // New block hashes message
+	NewBlockMsg              = 0x02 // New block message
+	NewBlobsRootMsg          = 0x03 // New blobs root message
+	GetBlobsMsg              = 0x04 // Get blobs message
+	BlobsMsg                 = 0x05 // Blobs message
+	GetBatchBlobsMsg         = 0x06 // Get batch blobs message
+	BatchBlobsMsg            = 0x07 // Batch blobs message
+	GetCachedTransactionsMsg = 0x08 // Get cached transactions message
+	CachedTransactionsMsg    = 0x09 // Cached transactions message
+	GetCachedBlobsMsg        = 0x0A // Get cached blobs message
+	CachedBlobsMsg           = 0x0B // Cached blobs message
 )
 
 var (
@@ -61,19 +64,8 @@ type Packet interface {
 	Kind() byte   // Kind returns the message type.
 }
 
-// StatusPacket1 is the network packet for the status message.
-type StatusPacket1 struct {
-	ProtocolVersion uint32
-	NetworkID       uint64
-	TD              *big.Int
-	Head            common.Hash
-	Genesis         common.Hash
-	ForkID          forkid.ID
-	BlobSync        bool
-}
-
-// StatusPacket2 is the network packet for the status message.
-type StatusPacket2 struct {
+// StatusPacket is the network packet for the status message.
+type StatusPacket struct {
 	ProtocolVersion uint32
 	NetworkID       uint64
 	TD              *big.Int
@@ -151,15 +143,6 @@ type GetBatchBlobsPacket struct {
 	GetBatchBlobsRequest
 }
 
-// BatchBlobsResponse1 is the response packet for blobs by block hash, with BEACON1.
-type BatchBlobsResponse1 [][]*types.BlobTxSidecarV0
-
-// BatchBlobsPacket1 is the response packet for batch blobs by block hashes, with BEACON1.
-type BatchBlobsPacket1 struct {
-	RequestId uint64
-	BatchBlobsResponse1
-}
-
 // BatchBlobsResponse is the response packet for blobs by block hash.
 type BatchBlobsResponse [][]*types.BlobTxSidecar
 
@@ -180,40 +163,60 @@ type BatchBlobsRLPPacket struct {
 	BatchBlobsRLPResponse
 }
 
-// GetTransactionsRequest represents a transaction query.
-type GetTransactionsRequest []common.Hash
+// GetCachedTransactionsRequest represents a cached transaction query.
+type GetCachedTransactionsRequest []common.Hash
 
-// GetTransactionsPacket represents a transaction query with request ID wrapping.
-type GetTransactionsPacket struct {
+// GetCachedTransactionsPacket represents a cached transaction query with request ID wrapping.
+type GetCachedTransactionsPacket struct {
 	RequestId uint64
-	GetTransactionsRequest
+	GetCachedTransactionsRequest
 }
 
-// TransactionsResponse is the network packet for transaction distribution.
-type TransactionsResponse []*types.Transaction
+// CachedTransactionsResponse is the network packet for cached transaction distribution.
+type CachedTransactionsResponse []*types.Transaction
 
-// TransactionsPacket is the network packet for transaction distribution
+// CachedTransactionsPacket is the network packet for cached transaction distribution
 // with request ID wrapping.
-type TransactionsPacket struct {
+type CachedTransactionsPacket struct {
 	RequestId uint64
-	TransactionsResponse
+	CachedTransactionsResponse
 }
 
-// TransactionsRLPResponse is the network packet for transaction distribution, used
+// CachedTransactionsRLPResponse is the network packet for cached transaction distribution, used
 // in the cases we already have them in rlp-encoded form
-type TransactionsRLPResponse []rlp.RawValue
+type CachedTransactionsRLPResponse []rlp.RawValue
 
-// TransactionsRLPPacket is TransactionsRLPResponse with request ID wrapping.
-type TransactionsRLPPacket struct {
+// CachedTransactionsRLPPacket is CachedTransactionsRLPResponse with request ID wrapping.
+type CachedTransactionsRLPPacket struct {
 	RequestId uint64
-	TransactionsRLPResponse
+	CachedTransactionsRLPResponse
 }
 
-func (*StatusPacket1) Name() string { return "Status" }
-func (*StatusPacket1) Kind() byte   { return StatusMsg }
+// GetCachedBlobsRequest represents a cached blob query.
+type GetCachedBlobsRequest []common.Hash
 
-func (*StatusPacket2) Name() string { return "Status" }
-func (*StatusPacket2) Kind() byte   { return StatusMsg }
+// GetCachedBlobsPacket represents a cached blob query with request ID wrapping.
+type GetCachedBlobsPacket struct {
+	RequestId uint64
+	GetCachedBlobsRequest
+}
+
+// CachedBlobsResponse is the network packet for cached blob distribution.
+type CachedBlobsResponse struct {
+	Commitments []hexutil.Bytes
+	Blobs       []hexutil.Bytes
+	Proofs      []hexutil.Bytes
+}
+
+// CachedBlobsPacket is the network packet for cached blob distribution
+// with request ID wrapping.
+type CachedBlobsPacket struct {
+	RequestId uint64
+	CachedBlobsResponse
+}
+
+func (*StatusPacket) Name() string { return "Status" }
+func (*StatusPacket) Kind() byte   { return StatusMsg }
 
 func (*NewBlockHashesPacket) Name() string { return "NewBlockHashes" }
 func (*NewBlockHashesPacket) Kind() byte   { return NewBlockHashesMsg }
@@ -227,23 +230,23 @@ func (*NewBlobsRootPacket) Kind() byte   { return NewBlobsRootMsg }
 func (*GetBlobsPacket) Name() string { return "GetBlobs" }
 func (*GetBlobsPacket) Kind() byte   { return GetBlobsMsg }
 
-func (*BlobsPacket1) Name() string { return "Blobs" }
-func (*BlobsPacket1) Kind() byte   { return BlobsMsg }
-
 func (*BlobsPacket) Name() string { return "Blobs" }
 func (*BlobsPacket) Kind() byte   { return BlobsMsg }
 
 func (*GetBatchBlobsPacket) Name() string { return "GetBatchBlobs" }
 func (*GetBatchBlobsPacket) Kind() byte   { return GetBatchBlobsMsg }
 
-func (*BatchBlobsPacket1) Name() string { return "BatchBlobs" }
-func (*BatchBlobsPacket1) Kind() byte   { return BatchBlobsMsg }
-
 func (*BatchBlobsPacket) Name() string { return "BatchBlobs" }
 func (*BatchBlobsPacket) Kind() byte   { return BatchBlobsMsg }
 
-func (*GetTransactionsRequest) Name() string { return "GetTransactions" }
-func (*GetTransactionsRequest) Kind() byte   { return GetTransactionsMsg }
+func (*GetCachedTransactionsRequest) Name() string { return "GetCachedTransactions" }
+func (*GetCachedTransactionsRequest) Kind() byte   { return GetCachedTransactionsMsg }
 
-func (*TransactionsResponse) Name() string { return "Transactions" }
-func (*TransactionsResponse) Kind() byte   { return TransactionsMsg }
+func (*CachedTransactionsResponse) Name() string { return "CachedTransactions" }
+func (*CachedTransactionsResponse) Kind() byte   { return CachedTransactionsMsg }
+
+func (*GetCachedBlobsRequest) Name() string { return "GetCachedBlobs" }
+func (*GetCachedBlobsRequest) Kind() byte   { return GetCachedBlobsMsg }
+
+func (*CachedBlobsResponse) Name() string { return "CachedBlobs" }
+func (*CachedBlobsResponse) Kind() byte   { return CachedBlobsMsg }

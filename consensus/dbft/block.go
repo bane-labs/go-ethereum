@@ -13,7 +13,7 @@ import (
 	"github.com/nspcc-dev/dbft"
 )
 
-var _ dbft.Block[common.Hash] = (*Block)(nil)
+var _ dbft.Block[common.Hash, *types.Transaction] = (*Block)(nil)
 
 // NsInS is the number of nanoseconds in second.
 const NsInS = 1000_000_000
@@ -56,25 +56,15 @@ func (b *Block) MerkleRoot() common.Hash {
 }
 
 // Transactions implements [dbft.Block] interface.
-func (b *Block) Transactions() []dbft.Transaction[common.Hash] {
-	dst := make([]dbft.Transaction[common.Hash], len(b.transactions))
-	for i, tx := range b.transactions {
-		dst[i] = &Transaction{
-			Tx: tx,
-		}
-	}
-	return dst
+func (b *Block) Transactions() []*types.Transaction {
+	return b.transactions
 }
 
 // SetTransactions implements [dbft.Block] interface. It does not change the
 // underlying block.
-func (b *Block) SetTransactions(txx []dbft.Transaction[common.Hash]) {
+func (b *Block) SetTransactions(txx []*types.Transaction) {
 	if b.isLegacy {
-		txs := make([]*types.Transaction, len(txx))
-		for i, tx := range txx {
-			txs[i] = tx.(*Transaction).Tx
-		}
-		b.transactions = txs
+		b.transactions = txx
 		return
 	}
 	// With anti-MEV dBFT extension enabled, this callback is useless. Block's

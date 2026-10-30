@@ -51,6 +51,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool/locals"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/fetcher"
@@ -394,10 +395,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 	blobStorage.WarmCache()
-	eth.filesystem, err = core.NewFileSystem(eth.blockchain,
-		func(hash common.Hash) *types.Transaction {
-			return eth.blobTxPool.Get(hash)
-		}, blobStorage)
+	eth.filesystem, err = core.NewFileSystem(eth.blockchain, blobStorage)
 	if err != nil {
 		return nil, err
 	}
@@ -458,8 +456,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if bft != nil {
 		bft.WithEthAPIBackend(eth.APIBackend)
 		bft.WithBroadcast(eth.dbftSrv.BroadcastMessage)
-		bft.WithTxPool(eth.TxPool())
-		bft.WithRequestTxs(eth.handler.RequestTransactions)
+		bft.WithRequestTxs(eth.handler.RequestCachedTransactions)
+		bft.WithRequestBlobs(eth.handler.RequestCachedBlobs)
 		err := bft.WithLogLevel(config.DBFTLogLevel)
 		if err != nil {
 			return nil, err
@@ -479,17 +477,32 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Set up local beacon client
 	var txCacheFilter beaconMiner.TransactionFilterFn
+	var blobCacheFilter beaconMiner.BlobFilterFn
 	if bft != nil {
 		txCacheFilter = bft.FilterMissingTransaction
+		blobCacheFilter = bft.FilterMissingBlob
 	}
 	eth.internalRPC = stack.Attach()
-	eth.beacon = beaconImpl.New(eth, eth.Downloader(), eth.internalRPC, eth.feeRecipient, eth.shouldPreserve, txCacheFilter)
+	eth.beacon = beaconImpl.New(eth, eth.Downloader(), eth.internalRPC, eth.feeRecipient, eth.shouldPreserve, txCacheFilter, blobCacheFilter)
 	eth.handler.connectBeacon(eth.beacon)
-	eth.filesystem.SetGetTransactionFn(func(hash common.Hash) *types.Transaction {
-		if tx := eth.blobTxPool.Get(hash); tx != nil {
-			return tx
+	// Since we have a beacon client, we use it to fetch blobs and forget about the blob pool.
+	eth.filesystem.SetGetBlobFn(func(hash common.Hash) (kzg4844.Blob, kzg4844.Commitment, []kzg4844.Proof, error) {
+		var blobData kzg4844.Blob
+		var commitmentData kzg4844.Commitment
+		proofData := make([]kzg4844.Proof, 0, kzg4844.CellProofsPerBlob)
+		blob, commitment, proof := eth.beacon.GetBlob(hash)
+		// The hashes are expected from the same transaction, so either all or none of the blobs should be present in the cache.
+		if blob == nil || len(blob) == 0 {
+			return blobData, commitmentData, proofData, errors.New("blob not found in cache")
 		}
-		return eth.beacon.GetTransaction(hash)
+		copy(blobData[:], blob)
+		copy(commitmentData[:], commitment)
+		for i := range proof {
+			var p kzg4844.Proof
+			copy(p[:], proof[i])
+			proofData = append(proofData, p)
+		}
+		return blobData, commitmentData, proofData, nil
 	})
 
 	// This syncing check is only for dBFT

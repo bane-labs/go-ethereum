@@ -8,6 +8,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core/filesystem"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -22,32 +23,31 @@ var (
 	errTooManyBlobsInBlock  = fmt.Errorf("too many blobs in block")
 )
 
-// GetTransactionFn returns a transaction if it is contained in the pool, or nil otherwise.
-type GetTransactionFn func(hash common.Hash) *types.Transaction
+// GetBlobFn returns blobs if they are contained in the pool, or nil otherwise.
+type GetBlobFn func(hash common.Hash) (kzg4844.Blob, kzg4844.Commitment, []kzg4844.Proof, error)
 
 // FileSystem manages blob sidecars associated with blocks.
 type FileSystem struct {
-	bc             *BlockChain
-	getTransaction GetTransactionFn
-	blobStorage    *filesystem.BlobStorage
+	bc          *BlockChain
+	getBlob     GetBlobFn
+	blobStorage *filesystem.BlobStorage
 
 	annoBlobFeed event.Feed
 }
 
-func NewFileSystem(bc *BlockChain, getTransaction GetTransactionFn, blobStorage *filesystem.BlobStorage) (*FileSystem, error) {
+func NewFileSystem(bc *BlockChain, blobStorage *filesystem.BlobStorage) (*FileSystem, error) {
 	fs := &FileSystem{
-		bc:             bc,
-		getTransaction: getTransaction,
-		blobStorage:    blobStorage,
+		bc:          bc,
+		blobStorage: blobStorage,
 	}
 	return fs, nil
 }
 
-// SetGetTransactionFn sets the function to retrieve transactions, which is used
-// to find blob transactions in the blob pool or beacon pending pool when committing
+// SetGetBlobFn sets the function to retrieve blobs, which is used
+// to find blobs from the EL pool or beacon cache when committing
 // sealed block hashes.
-func (fs *FileSystem) SetGetTransactionFn(getTransaction GetTransactionFn) {
-	fs.getTransaction = getTransaction
+func (fs *FileSystem) SetGetBlobFn(getBlob GetBlobFn) {
+	fs.getBlob = getBlob
 }
 
 // CommitSealBlockHash commits the sealed block hash associated with committed blobs.
@@ -55,38 +55,46 @@ func (fs *FileSystem) CommitSealBlockHash(block *types.Block) error {
 	log.Trace("Commit seal blobs...", "number", block.Number(), "hash", block.Hash(), "txs", len(block.Transactions()))
 
 	// Rebuild blob sidecars from blobpool
-	var blobs types.BlobSidecars
+	var sidecars types.BlobSidecars
+	var blobCount int
 	for _, tx := range block.Transactions() {
 		if tx.Type() != types.BlobTxType {
 			continue
 		}
-		originTx := fs.getTransaction(tx.Hash())
-		if originTx == nil {
-			log.Debug("blob tx not found", "tx_hash", tx.Hash())
-			return errBlobTxNotFound
+		hashes := tx.BlobHashes()
+
+		blobs := make([]kzg4844.Blob, 0, len(hashes))
+		commitments := make([]kzg4844.Commitment, 0, len(hashes))
+		proofs := make([]kzg4844.Proof, 0, len(hashes)*kzg4844.CellProofsPerBlob)
+		for _, hash := range hashes {
+			blob, commitment, proof, err := fs.getBlob(hash)
+			if err != nil {
+				log.Error("failed to retrieve blobs", "tx_hash", tx.Hash(), "err", err)
+				return err
+			}
+			blobs = append(blobs, blob)
+			commitments = append(commitments, commitment)
+			proofs = append(proofs, proof...)
 		}
-		if originTx.BlobTxSidecar() == nil {
-			log.Error("sidecar-less blob transaction", "tx_hash", tx.Hash())
-			return errSidecarLessBlobTx
-		}
-		blobs = append(blobs, originTx.BlobTxSidecar())
+		sidecars = append(sidecars, types.NewBlobTxSidecar(types.BlobSidecarVersion1, blobs, commitments, proofs))
+		blobCount += len(blobs)
 	}
 
 	if !fs.bc.Config().IsCancun(block.Number(), block.Time()) {
-		if blobs != nil {
+		if sidecars != nil {
 			return errSidecarsBeforeCancun
 		}
 	}
-	if len(blobs) > eip4844.MaxBlobsPerBlock(fs.bc.Config(), block.Time()) {
+	if blobCount > eip4844.MaxBlobsPerBlock(fs.bc.Config(), block.Time()) {
 		return errTooManyBlobsInBlock
 	}
-	if len(blobs) == 0 {
+	if blobCount == 0 {
 		// No blobs in this block, nothing to store.
 		return nil
 	}
 
 	// Store blobs to local storage.
-	if err := fs.saveBlobs(block.Header(), blobs); err != nil {
+	if err := fs.saveBlobs(block.Header(), sidecars); err != nil {
 		return err
 	}
 	fs.annoBlobFeed.Send(AnnoBlobEvent{

@@ -327,7 +327,7 @@ func newTestHandlerWithBlocks(blocks int, mode ethconfig.SyncMode) *testHandler 
 	}
 	txpool := newTestTxPool()
 
-	filesystem, err := core.NewFileSystem(chain, nil, nil)
+	filesystem, err := core.NewFileSystem(chain, nil)
 	if err != nil {
 		panic(err)
 	}

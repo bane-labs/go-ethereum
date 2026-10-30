@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/dbft/dbftutil"
+	"github.com/ethereum/go-ethereum/core/types"
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/nspcc-dev/dbft"
@@ -17,12 +18,13 @@ type (
 	messageType byte
 
 	message struct {
-		Type                 messageType
-		BlockIndex           uint64
-		ValidatorIndex       byte
-		ViewNumber           byte
-		msgPayload           interface{}
-		getBlockExtraVersion func(*big.Int) dbftutil.ExtraVersion
+		Type                                 messageType
+		BlockIndex                           uint64
+		ValidatorIndex                       byte
+		ViewNumber                           byte
+		msgPayload                           interface{}
+		getBlockExtraVersion                 func(*big.Int) dbftutil.ExtraVersion
+		isNeoXPrepareRequestExtensionEnabled func(height *big.Int) bool
 	}
 
 	// messageAux is an auxiliary structure for message RLP encoding.
@@ -52,7 +54,7 @@ const (
 	recoveryMessageType messageType = 0x41
 )
 
-var _ dbft.ConsensusPayload[common.Hash] = (*Payload)(nil)
+var _ dbft.ConsensusPayload[common.Hash, *types.Transaction] = (*Payload)(nil)
 
 // ViewNumber implements the payload.ConsensusPayload interface.
 func (p Payload) ViewNumber() byte {
@@ -75,7 +77,7 @@ func (p Payload) GetChangeView() dbft.ChangeView {
 }
 
 // GetPrepareRequest implements the payload.ConsensusPayload interface.
-func (p Payload) GetPrepareRequest() dbft.PrepareRequest[common.Hash] {
+func (p Payload) GetPrepareRequest() dbft.PrepareRequest[common.Hash, *types.Transaction] {
 	return p.msgPayload.(*prepareRequest)
 }
 
@@ -100,7 +102,7 @@ func (p Payload) GetRecoveryRequest() dbft.RecoveryRequest {
 }
 
 // GetRecoveryMessage implements the payload.ConsensusPayload interface.
-func (p Payload) GetRecoveryMessage() dbft.RecoveryMessage[common.Hash] {
+func (p Payload) GetRecoveryMessage() dbft.RecoveryMessage[common.Hash, *types.Transaction] {
 	return p.msgPayload.(*recoveryMessage)
 }
 
@@ -187,6 +189,7 @@ func (m *message) DecodeRLP(s *rlp.Stream) error {
 		return err
 	}
 	m.Type, m.BlockIndex, m.ValidatorIndex, m.ViewNumber = em.Type, em.BlockIndex, em.ValidatorIndex, em.ViewNumber
+	h := big.NewInt(int64(m.BlockIndex))
 	switch m.Type {
 	case changeViewType:
 		m.msgPayload = &changeView{
@@ -194,7 +197,10 @@ func (m *message) DecodeRLP(s *rlp.Stream) error {
 			newViewNumber: m.ViewNumber + 1,
 		}
 	case prepareRequestType:
-		m.msgPayload = new(prepareRequest)
+		req := &prepareRequest{
+			extended: m.isNeoXPrepareRequestExtensionEnabled(h),
+		}
+		m.msgPayload = req
 	case prepareResponseType:
 		m.msgPayload = new(prepareResponse)
 	case preCommitType:
@@ -207,7 +213,8 @@ func (m *message) DecodeRLP(s *rlp.Stream) error {
 		m.msgPayload = new(recoveryRequest)
 	case recoveryMessageType:
 		m.msgPayload = &recoveryMessage{
-			version: m.getBlockExtraVersion(big.NewInt(int64(m.BlockIndex))),
+			version:                              m.getBlockExtraVersion(h),
+			isNeoXPrepareRequestExtensionEnabled: m.isNeoXPrepareRequestExtensionEnabled,
 		}
 	default:
 		err := fmt.Errorf("invalid type: 0x%02x", byte(m.Type))

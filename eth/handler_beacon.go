@@ -9,9 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth/protocols/beacon"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -36,6 +38,12 @@ const (
 	// maxBlocksServe is the maximum number of block blobs to serve. This
 	// number is mostly there to limit the number of disk lookups.
 	maxBlocksServe = 16
+
+	// maxTxServe is the maximum number of cached transactions to serve.
+	maxTxServe = 1024
+
+	// maxBlobsServe is the maximum number of cached blobs to serve.
+	maxBlobsServe = 32
 )
 
 // beaconHandler implements the eth.Backend interface to handle the various network
@@ -78,11 +86,17 @@ func (h *beaconHandler) Handle(peer *beacon.Peer, packet beacon.Packet) error {
 	case *beacon.GetBatchBlobsPacket:
 		return h.handleGetBatchBlobsPacket(peer, packet)
 
-	case *beacon.GetTransactionsPacket:
-		return h.handleGetTransactionsPacket(peer, packet)
+	case *beacon.GetCachedTransactionsPacket:
+		return h.handleGetCachedTransactionsPacket(peer, packet)
 
-	case *beacon.TransactionsPacket:
-		return h.handleTransactions(peer, packet)
+	case *beacon.CachedTransactionsPacket:
+		return h.handleCachedTransactions(peer, packet)
+
+	case *beacon.GetCachedBlobsPacket:
+		return h.handleGetCachedBlobsPacket(peer, packet)
+
+	case *beacon.CachedBlobsPacket:
+		return h.handleCachedBlobs(peer, packet)
 
 	default:
 		return fmt.Errorf("unexpected beacon packet type: %T", packet)
@@ -382,20 +396,22 @@ func (h *beaconHandler) selectBlobTransferPeers(excludePeer *string) []*beaconPe
 	return transfer
 }
 
-// handleGetTransactionsPacket is CL-level search for transactions by hash. It extends
+// handleGetCachedTransactionsPacket is CL-level search for transactions by hash. It extends
 // the EL transaction retrieval by taking pending payloads into consideration. This is
 // useful for BFT consensus to find missing transactions during block processing.
-func (h *beaconHandler) handleGetTransactionsPacket(peer *beacon.Peer, packet *beacon.GetTransactionsPacket) error {
+func (h *beaconHandler) handleGetCachedTransactionsPacket(peer *beacon.Peer, packet *beacon.GetCachedTransactionsPacket) error {
 	// Gather transactions until the fetch or network limits is reached
 	var (
-		bytes  int
-		hashes []common.Hash
-		txs    []rlp.RawValue
+		bytes   int
+		hashes  []common.Hash
+		txs     []rlp.RawValue
+		lookups int
 	)
-	for _, hash := range packet.GetTransactionsRequest {
-		if bytes >= softResponseLimit {
+	for _, hash := range packet.GetCachedTransactionsRequest {
+		if bytes >= softResponseLimit || len(txs) >= maxTxServe || lookups >= 2*maxTxServe {
 			break
 		}
+		lookups++
 		// First try to find it from the EL txpool.
 		tx := h.txpool.Get(hash)
 		if tx == nil {
@@ -416,14 +432,14 @@ func (h *beaconHandler) handleGetTransactionsPacket(peer *beacon.Peer, packet *b
 		txs = append(txs, encoded)
 		bytes += len(encoded)
 	}
-	return peer.ReplyTransactionsRLP(packet.RequestId, hashes, txs)
+	return peer.ReplyCachedTransactionsRLP(packet.RequestId, hashes, txs)
 }
 
-func (h *beaconHandler) handleTransactions(peer *beacon.Peer, packet *beacon.TransactionsPacket) error {
+func (h *beaconHandler) handleCachedTransactions(peer *beacon.Peer, packet *beacon.CachedTransactionsPacket) error {
 	// If we receive any blob transactions missing sidecars, or with
 	// sidecars that don't correspond to the versioned hashes reported
 	// in the header, disconnect from the sending peer.
-	for _, tx := range packet.TransactionsResponse {
+	for _, tx := range packet.CachedTransactionsResponse {
 		if tx.Type() == types.BlobTxType {
 			if tx.BlobTxSidecar() == nil {
 				return errors.New("received sidecar-less blob transaction")
@@ -433,6 +449,96 @@ func (h *beaconHandler) handleTransactions(peer *beacon.Peer, packet *beacon.Tra
 			}
 		}
 	}
-	h.beacon.NotifyTransactions(packet.TransactionsResponse)
+	h.beacon.NotifyTransactions(packet.CachedTransactionsResponse)
+	return nil
+}
+
+func (h *beaconHandler) handleGetCachedBlobsPacket(peer *beacon.Peer, packet *beacon.GetCachedBlobsPacket) error {
+	// Try to find the blob sidecar from the CL until the fetch or network limits is reached.
+	var (
+		bytes   int
+		hashes  []common.Hash
+		bundle  engine.BlobsBundle
+		lookups int
+	)
+	for _, hash := range packet.GetCachedBlobsRequest {
+		if bytes >= softResponseLimit || len(bundle.Blobs) >= maxBlobsServe || lookups >= 2*maxBlobsServe {
+			break
+		}
+		lookups++
+		blob, commitment, proofs := h.beacon.GetBlob(hash)
+		if blob == nil {
+			continue
+		}
+		hashes = append(hashes, hash)
+		bundle.Blobs = append(bundle.Blobs, blob)
+		bundle.Commitments = append(bundle.Commitments, commitment)
+		bundle.Proofs = append(bundle.Proofs, proofs...)
+		bytes += len(blob) + len(commitment)
+		for _, proof := range proofs {
+			bytes += len(proof)
+		}
+	}
+
+	return peer.ReplyCachedBlobs(packet.RequestId, hashes, &bundle)
+}
+
+func (h *beaconHandler) handleCachedBlobs(peer *beacon.Peer, packet *beacon.CachedBlobsPacket) error {
+	// Notify the CL of the received blobs.
+	bundle := engine.BlobsBundle{
+		Blobs:       packet.CachedBlobsResponse.Blobs,
+		Commitments: packet.CachedBlobsResponse.Commitments,
+		Proofs:      packet.CachedBlobsResponse.Proofs,
+	}
+	// Validate the received blobs against the commitments and proofs before notifying the CL.
+	if len(bundle.Blobs) != len(bundle.Commitments) {
+		return errors.New("mismatched lengths of blobs and commitments")
+	}
+	expectedCellProofs := len(bundle.Blobs) * kzg4844.CellsPerBlob
+	// Only V1 blobs are supported in this protocol, same as the EL blobpool rules.
+	if len(bundle.Proofs) != expectedCellProofs {
+		return errors.New("mismatched lengths of blobs and proofs")
+	}
+	// Shortcut if there are no blobs to verify.
+	if expectedCellProofs == 0 {
+		return nil
+	}
+	allCells := make([]kzg4844.Cell, 0, expectedCellProofs)
+	allCommitments := make([]kzg4844.Commitment, 0, len(bundle.Blobs))
+	allProofs := make([]kzg4844.Proof, 0, expectedCellProofs)
+	allIndices := make([]uint64, kzg4844.CellsPerBlob)
+	for i := range allIndices {
+		allIndices[i] = uint64(i)
+	}
+	for blobIdx := range bundle.Blobs {
+		// Check blob size and compute cells.
+		if len(bundle.Blobs[blobIdx]) != len(kzg4844.Blob{}) {
+			return errors.New("invalid blob size")
+		}
+		blob := kzg4844.Blob(bundle.Blobs[blobIdx])
+		cells, err := kzg4844.ComputeCells([]kzg4844.Blob{blob})
+		if err != nil {
+			return fmt.Errorf("failed to compute cells for blob %d: %w", blobIdx, err)
+		}
+		// Check commitment size.
+		if len(bundle.Commitments[blobIdx]) != len(kzg4844.Commitment{}) {
+			return errors.New("invalid commitment size")
+		}
+		// Check proof size.
+		for cellIdx := 0; cellIdx < kzg4844.CellsPerBlob; cellIdx++ {
+			cellProofIdx := blobIdx*kzg4844.CellsPerBlob + cellIdx
+			if len(bundle.Proofs[cellProofIdx]) != len(kzg4844.Proof{}) {
+				return errors.New("invalid proof size")
+			}
+			allCells = append(allCells, cells[cellIdx])
+			allProofs = append(allProofs, kzg4844.Proof(bundle.Proofs[cellProofIdx]))
+		}
+		allCommitments = append(allCommitments, kzg4844.Commitment(bundle.Commitments[blobIdx]))
+	}
+	// Verify the cells against the commitments and proofs.
+	if err := kzg4844.VerifyCells(allCells, allCommitments, allProofs, allIndices); err != nil {
+		return fmt.Errorf("failed to verify cells for blobs: %w", err)
+	}
+	h.beacon.NotifyBlobs(&bundle)
 	return nil
 }
