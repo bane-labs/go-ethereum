@@ -196,6 +196,13 @@ func (b *Beacon) GetBlob(hash common.Hash) (hexutil.Bytes, hexutil.Bytes, []hexu
 	return b.miner.GetBlob(hash)
 }
 
+// RequestBlobs is a shortcut for finding missing blobs by searching the EL. This contains
+// RPC requests, so don't use in BFT consensus directly. Blob hashes that can't be found
+// in EL will be returned again.
+func (b *Beacon) RequestBlobs(hashes []common.Hash) []common.Hash {
+	return b.miner.RequestBlobs(hashes)
+}
+
 // NotifyBlobs notifies the miner about blob data seen in the beacon protocol.
 func (b *Beacon) NotifyBlobs(bundle *engine.BlobsBundle) {
 	b.miner.NotifyBlobs(bundle)
