@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 const (
@@ -101,8 +102,31 @@ type txAnnounce struct {
 // txMetadata provides the extra data transmitted along with the announcement
 // for better fetch scheduling.
 type txMetadata struct {
-	kind byte   // Transaction consensus type
-	size uint32 // Transaction size in bytes
+	kind    byte   // Transaction consensus type
+	size    uint32 // Transaction size in bytes, as announced
+	version uint   // Protocol version of the announcing peer
+}
+
+// txDeliveryMeta is the metadata of a delivered transaction. eth72 announces
+// blob transactions without the blob payload, so both sizes are kept.
+type txDeliveryMeta struct {
+	kind            byte   // Transaction consensus type
+	size            uint32 // Size with blobs
+	sizeWithoutBlob uint32 // Size without blobs (eth72)
+}
+
+// sizeForVersion returns the size an announcer on the given version advertises.
+func (m *txDeliveryMeta) sizeForVersion(version uint) uint32 {
+	if m.kind == types.BlobTxType && version >= eth.ETH72 {
+		return m.sizeWithoutBlob
+	}
+	return m.size
+}
+
+// blobPayloadSize returns the encoded size of the blob payload omitted (under eth72)
+func blobPayloadSize(n int) uint32 {
+	const blobRLPSize = params.BlobTxFieldElementsPerBlob*params.BlobTxBytesPerFieldElement + 4
+	return uint32(n)*blobRLPSize + 4
 }
 
 // txMetadataWithSeq is a wrapper of transaction metadata with an extra field
@@ -123,11 +147,11 @@ type txRequest struct {
 // txDelivery is the notification that a batch of transactions have been added
 // to the pool and should be untracked.
 type txDelivery struct {
-	origin    string        // Identifier of the peer originating the notification
-	hashes    []common.Hash // Batch of transaction hashes having been delivered
-	metas     []txMetadata  // Batch of metadata associated with the delivered hashes
-	direct    bool          // Whether this is a direct reply or a broadcast
-	violation error         // Whether we encountered a protocol violation
+	origin    string           // Identifier of the peer originating the notification
+	hashes    []common.Hash    // Batch of transaction hashes having been delivered
+	metas     []txDeliveryMeta // Batch of metadata associated with the delivered hashes
+	direct    bool             // Whether this is a direct reply or a broadcast
+	violation error            // Whether we encountered a protocol violation
 }
 
 // txDrop is the notification that a peer has disconnected.
@@ -241,7 +265,7 @@ func NewTxFetcherForTests(
 
 // Notify announces the fetcher of the potential availability of a new batch of
 // transactions in the network. It returns array of hashes decided to be fetched.
-func (f *TxFetcher) Notify(peer string, kinds []byte, sizes []uint32, hashes []common.Hash) ([]common.Hash, error) {
+func (f *TxFetcher) Notify(peer string, version uint, kinds []byte, sizes []uint32, hashes []common.Hash) ([]common.Hash, error) {
 	// Keep track of all the announced transactions
 	txAnnounceInMeter.Mark(int64(len(hashes)))
 
@@ -292,7 +316,7 @@ func (f *TxFetcher) Notify(peer string, kinds []byte, sizes []uint32, hashes []c
 		// Transaction metadata has been available since eth68, and all
 		// legacy eth protocols (prior to eth68) have been deprecated.
 		// Therefore, metadata is always expected in the announcement.
-		unknownMetas = append(unknownMetas, txMetadata{kind: kinds[i], size: sizes[i]})
+		unknownMetas = append(unknownMetas, txMetadata{kind: kinds[i], size: sizes[i], version: version})
 	}
 	txAnnounceKnownMeter.Mark(duplicate)
 	txAnnounceUnderpricedMeter.Mark(underpriced)
@@ -326,6 +350,7 @@ type deliveryMetrics struct {
 	knownMeter       *metrics.Meter
 	underpricedMeter *metrics.Meter
 	otherRejectMeter *metrics.Meter
+	noCapacityMeter  *metrics.Meter
 }
 
 // Enqueue imports a batch of received transaction into the transaction pool
@@ -340,6 +365,7 @@ func (f *TxFetcher) Enqueue(peer string, version uint, txs []*types.Transaction,
 		knownMeter:       txReplyKnownMeter,
 		underpricedMeter: txReplyUnderpricedMeter,
 		otherRejectMeter: txReplyOtherRejectMeter,
+		noCapacityMeter:  txReplyNoCapacityMeter,
 	}
 	if !direct {
 		metrics = deliveryMetrics{
@@ -347,6 +373,7 @@ func (f *TxFetcher) Enqueue(peer string, version uint, txs []*types.Transaction,
 			knownMeter:       txBroadcastKnownMeter,
 			underpricedMeter: txBroadcastUnderpricedMeter,
 			otherRejectMeter: txBroadcastOtherRejectMeter,
+			noCapacityMeter:  txBroadcastNoCapacityMeter,
 		}
 	}
 	// Keep track of all the propagated transactions
@@ -356,7 +383,7 @@ func (f *TxFetcher) Enqueue(peer string, version uint, txs []*types.Transaction,
 	// re-requesting them and dropping the peer in case of malicious transfers.
 	var (
 		added = make([]common.Hash, 0, len(txs))
-		metas = make([]txMetadata, 0, len(txs))
+		metas = make([]txDeliveryMeta, 0, len(txs))
 	)
 	// proceed in batches
 	for i := 0; i < len(txs); i += addTxsBatchSize {
@@ -401,26 +428,42 @@ func (f *TxFetcher) Enqueue(peer string, version uint, txs []*types.Transaction,
 				violation = err
 			}
 			added = append(added, batch[j].Hash())
-			metas = append(metas, txMetadata{
-				kind: batch[j].Type(),
-				size: uint32(batch[j].Size()),
-			})
+			size := uint32(batch[j].Size())
+			meta := txDeliveryMeta{
+				kind:            batch[j].Type(),
+				size:            size,
+				sizeWithoutBlob: size,
+			}
+			if sc := batch[j].BlobTxSidecar(); sc != nil {
+				if version >= eth.ETH72 {
+					// tx should be delivered without blobs
+					meta.size += blobPayloadSize(len(sc.Commitments))
+				} else {
+					meta.sizeWithoutBlob -= blobPayloadSize(len(sc.Commitments))
+				}
+			}
+			metas = append(metas, meta)
 			// Terminate the transaction processing if violation is encountered. All
 			// the remaining transactions in response will be silently discarded.
 			if violation != nil {
 				break
 			}
 		}
-		otherreject := f.handleAddErrors(hashes, errs, metrics)
+		otherreject, nocapacity := f.handleAddErrors(hashes, errs, metrics)
 
 		// Notify the tracker which txs from this peer were accepted.
 		if f.onAccepted != nil && len(accepted) > 0 {
 			f.onAccepted(peer, accepted)
 		}
-		// If 'other reject' is >25% of the deliveries in any batch, sleep a bit
-		// to throttle the misbehaving peer.
-		if otherreject > int64((len(hashes)+3)/4) {
-			log.Debug("Peer delivering stale or invalid transactions", "rejected", otherreject)
+		// If more than 25% of the batch was refused, sleep a bit to throttle
+		// the peer. Capacity refusals count towards this (the backpressure is
+		// intended) but are reported separately.
+		if refused := otherreject + nocapacity; refused > int64((len(hashes)+3)/4) {
+			if nocapacity > otherreject {
+				log.Debug("Peer delivering transactions faster than there is room for", "refused", nocapacity)
+			} else {
+				log.Debug("Peer delivering stale or invalid transactions", "rejected", otherreject)
+			}
 			time.Sleep(200 * time.Millisecond)
 		}
 		// If we encountered a protocol violation, disconnect this peer.
@@ -436,7 +479,7 @@ func (f *TxFetcher) Enqueue(peer string, version uint, txs []*types.Transaction,
 	}
 }
 
-func (f *TxFetcher) handleAddErrors(txs []common.Hash, errs []error, metrics deliveryMetrics) (otherreject int64) {
+func (f *TxFetcher) handleAddErrors(txs []common.Hash, errs []error, metrics deliveryMetrics) (otherreject, nocapacity int64) {
 	var (
 		duplicate   int64
 		underpriced int64
@@ -456,6 +499,12 @@ func (f *TxFetcher) handleAddErrors(txs []common.Hash, errs []error, metrics del
 			f.underpriced.Add(txs[i], f.realTime())
 			underpriced++
 
+		// Refused for lack of room, not for anything wrong with the tx. It is
+		// not added to the underpriced set, so it can be fetched again when
+		// announced again.
+		case errors.Is(err, txpool.ErrOutOfCapacity):
+			nocapacity++
+
 		default:
 			otherreject++
 		}
@@ -463,7 +512,8 @@ func (f *TxFetcher) handleAddErrors(txs []common.Hash, errs []error, metrics del
 	metrics.knownMeter.Mark(duplicate)
 	metrics.underpricedMeter.Mark(underpriced)
 	metrics.otherRejectMeter.Mark(otherreject)
-	return otherreject
+	metrics.noCapacityMeter.Mark(nocapacity)
+	return otherreject, nocapacity
 }
 
 // Drop should be called when a peer disconnects. It cleans up all the internal
@@ -517,6 +567,7 @@ func (f *TxFetcher) loop() {
 			knownMeter:       txReplyKnownMeter,
 			underpricedMeter: txReplyUnderpricedMeter,
 			otherRejectMeter: txReplyOtherRejectMeter,
+			noCapacityMeter:  txReplyNoCapacityMeter,
 		})
 
 		select {
@@ -755,13 +806,15 @@ func (f *TxFetcher) loop() {
 							if delivery.metas[i].kind != meta.kind {
 								log.Warn("Announced transaction type mismatch", "peer", peer, "tx", hash, "type", delivery.metas[i].kind, "ann", meta.kind)
 								f.dropPeer(peer)
-							} else if delivery.metas[i].size != meta.size {
-								if math.Abs(float64(delivery.metas[i].size)-float64(meta.size)) > 8 {
-									log.Warn("Announced transaction size mismatch", "peer", peer, "tx", hash, "size", delivery.metas[i].size, "ann", meta.size)
+							} else if size := delivery.metas[i].sizeForVersion(meta.version); size != meta.size {
+								if math.Abs(float64(size)-float64(meta.size)) > 8 {
+									log.Warn("Announced transaction size mismatch", "peer", peer, "tx", hash, "size", size, "ann", meta.size)
 
-									// Normally we should drop a peer considering this is a protocol violation.
-									// However, due to the RLP vs consensus format messyness, allow a few bytes
-									// wiggle-room where we only warn, but don't drop.
+									// Announcing a size that disagrees with the transaction served is a
+									// protocol violation, so the peer is dropped. Due to the RLP vs consensus
+									// format messyness, a few bytes of wiggle-room are tolerated: a difference
+									// of 8 bytes or less is neither warned about nor dropped for, which is why
+									// this branch is guarded above.
 									//
 									// TODO(karalabe): Get rid of this relaxation when clients are proven stable.
 									f.dropPeer(peer)
@@ -781,13 +834,15 @@ func (f *TxFetcher) loop() {
 							if delivery.metas[i].kind != meta.kind {
 								log.Warn("Announced transaction type mismatch", "peer", peer, "tx", hash, "type", delivery.metas[i].kind, "ann", meta.kind)
 								f.dropPeer(peer)
-							} else if delivery.metas[i].size != meta.size {
-								if math.Abs(float64(delivery.metas[i].size)-float64(meta.size)) > 8 {
-									log.Warn("Announced transaction size mismatch", "peer", peer, "tx", hash, "size", delivery.metas[i].size, "ann", meta.size)
+							} else if size := delivery.metas[i].sizeForVersion(meta.version); size != meta.size {
+								if math.Abs(float64(size)-float64(meta.size)) > 8 {
+									log.Warn("Announced transaction size mismatch", "peer", peer, "tx", hash, "size", size, "ann", meta.size)
 
-									// Normally we should drop a peer considering this is a protocol violation.
-									// However, due to the RLP vs consensus format messyness, allow a few bytes
-									// wiggle-room where we only warn, but don't drop.
+									// Announcing a size that disagrees with the transaction served is a
+									// protocol violation, so the peer is dropped. Due to the RLP vs consensus
+									// format messyness, a few bytes of wiggle-room are tolerated: a difference
+									// of 8 bytes or less is neither warned about nor dropped for, which is why
+									// this branch is guarded above.
 									//
 									// TODO(karalabe): Get rid of this relaxation when clients are proven stable.
 									f.dropPeer(peer)

@@ -43,7 +43,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -261,7 +260,6 @@ type DBFT struct {
 	sealingState    *state.StateDB
 	sealingBlock    *types.Block
 	sealingReceipts types.Receipts
-	sealingBal      *bal.ConstructionBlockAccessList
 
 	// chain and mempool instances needed for proper dBFT callbacks functioning.
 	chain        ChainHeaderReader
@@ -547,7 +545,7 @@ func (c *DBFT) processBlockCb(b dbft.Block[common.Hash, *types.Transaction]) err
 	// BAL is only meaningful from Amsterdam onward; skip pre-Amsterdam blocks
 	// to avoid persisting and serving empty BALs over the network.
 	if dbftBlock.accessList != nil && block.AccessList() == nil && c.chain.Config().IsAmsterdam(block.Number(), block.Time()) {
-		block = block.WithAccessList(dbftBlock.accessList)
+		block = block.WithAccessListUnsafe(dbftBlock.accessList)
 	}
 
 	// Firstly, notify chain about new block.
@@ -583,7 +581,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Trans
 		if ctx.IsPrimary() {
 			res.state = c.sealingState
 			res.receipts = c.sealingReceipts
-			res.accessList = c.sealingBal.ToEncodingObj()
+			res.accessList = c.sealingBlock.AccessList()
 		}
 		return res
 	}
@@ -596,7 +594,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Trans
 			header:              c.sealingBlock.Header(),
 			withdrawals:         c.sealingBlock.Withdrawals(),
 			transactions:        c.sealingBlock.Transactions(),
-			accessList:          c.sealingBal.ToEncodingObj(),
+			accessList:          c.sealingBlock.AccessList(),
 			localSignatureBytes: nil,
 			state:               c.sealingState,
 			receipts:            c.sealingReceipts,
@@ -638,7 +636,7 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Trans
 	body := types.Body{Transactions: pre.finalTransactions, Withdrawals: ethBlock.Withdrawals()}
 
 	// Apply the consensus-specific post-transaction changes
-	c.Finalize(c.chain, h, pre.finalState, &body, uint32(len(body.Transactions)+1), pre.finalBal)
+	c.Finalize(c.chain, h, pre.finalState, &body)
 
 	// Assemble the block for delivery.
 	res := core.AssembleBlock(c.chain, h, pre.finalState, &body, pre.finalReceipts, pre.finalBal)
@@ -647,10 +645,10 @@ func (c *DBFT) newBlockFromContextCb(ctx *dbft.Context[common.Hash, *types.Trans
 		header:              res.Header(),
 		withdrawals:         res.Withdrawals(),
 		transactions:        res.Transactions(),
+		accessList:          res.AccessList(),
 		localSignatureBytes: nil,
 		state:               pre.finalState,
 		receipts:            pre.finalReceipts,
-		accessList:          pre.finalBal.ToEncodingObj(),
 	}
 }
 
@@ -765,16 +763,16 @@ func (c *DBFT) newPrepareRequestAux(ts uint64, nonce uint64, txHashes []common.H
 	// Update state root, transactions root, receipts hash and bloom.
 	body := types.Body{Transactions: dbftBlock.transactions, Withdrawals: ethBlock.Withdrawals()}
 	// Apply the consensus-specific post-transaction changes
-	c.Finalize(c.chain, header, state, &body, uint32(len(body.Transactions)+1), result.Bal)
+	c.Finalize(c.chain, header, state, &body)
 
 	// Assemble the block for delivery.
-	res := core.AssembleBlock(c.chain, header, state, &body, result.Receipts, result.Bal)
+	bal, _ := result.EncodedAccessList()
+	res := core.AssembleBlock(c.chain, header, state, &body, result.Receipts, bal)
 
 	c.sealingProposal = res.Header()
 	c.sealingState = state
 	c.sealingBlock = res
 	c.sealingReceipts = result.Receipts
-	c.sealingBal = result.Bal
 
 	req.SealingProposal = c.sealingProposal
 	if len(c.lastBlockSealHash) == common.HashLength {
@@ -1058,7 +1056,7 @@ func (c *DBFT) verifyPreBlockCb(b dbft.PreBlock[common.Hash, *types.Transaction]
 	dbftBlock.finalState = state
 	dbftBlock.finalReceipts = result.Receipts
 	dbftBlock.finalGASUsed = result.GasUsed
-	dbftBlock.finalBal = result.Bal
+	dbftBlock.finalBal, _ = result.EncodedAccessList()
 
 	return true
 }
@@ -1106,6 +1104,7 @@ func (c *DBFT) verifyBlockCb(b dbft.Block[common.Hash, *types.Transaction]) bool
 
 		dbftBlock.state = state
 		dbftBlock.receipts = result.Receipts
+		dbftBlock.accessList, _ = result.EncodedAccessList()
 
 		return true
 	}
@@ -1242,7 +1241,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash, *types.Transaction
 
 		// Now validate decrypted transactions and construct final list of transactions for the block.
 		parent := c.chain.GetHeader(pre.header.ParentHash, pre.header.Number.Uint64()-1)
-		state, err := c.chain.StateAt(parent)
+		state, err := c.chain.StateAt(parent.Root, parent.Number, parent.Time)
 		if err != nil {
 			return fmt.Errorf("failed to get parent state: %w", err)
 		}
@@ -1289,7 +1288,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash, *types.Transaction
 						gp   = gasPool.Snapshot()
 					)
 					state.SetTxContext(pre.transactions[i].Hash(), i, uint32(i+1))
-					receipt, bal, err := core.ApplyTransaction(evm, gasPool, state, pre.header, pre.transactions[i])
+					receipt, bal, err := core.ApplyTransaction(context.Background(), evm, gasPool, state, pre.header, pre.transactions[i])
 					if err != nil {
 						state.RevertToSnapshot(snap)
 						gasPool.Set(gp)
@@ -1357,7 +1356,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash, *types.Transaction
 				gp   = gasPool.Snapshot()
 			)
 			state.SetTxContext(decryptedTx.Hash(), i, uint32(i+1))
-			receipt, bal, err := core.ApplyTransaction(evm, gasPool, state, pre.header, decryptedTx)
+			receipt, bal, err := core.ApplyTransaction(context.Background(), evm, gasPool, state, pre.header, decryptedTx)
 			if err != nil {
 				state.RevertToSnapshot(snap)
 				gasPool.Set(gp)
@@ -1376,7 +1375,7 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash, *types.Transaction
 				j++
 			}
 		}
-		requests, bal, err := core.PostExecution(context.Background(), c.chain.Config(), pre.header.Number, pre.header.Time, allLogs, evm, uint32(len(txx)+1))
+		requests, bal, err := core.PostExecution(context.Background(), c.chain.Config(), pre.header.Number, pre.header.Time, allLogs, pre.withdrawals, evm, uint32(len(txx)+1))
 		if err != nil {
 			return err
 		}
@@ -1386,13 +1385,13 @@ func (c *DBFT) processPreBlockCb(b dbft.PreBlock[common.Hash, *types.Transaction
 			pre.header.RequestsHash = &reqHash
 		}
 		// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-		c.Finalize(c.chain, pre.header, state, &types.Body{Transactions: txx, Withdrawals: pre.withdrawals}, uint32(len(txx)+1), blockAccessList)
+		c.Finalize(c.chain, pre.header, state, &types.Body{Transactions: txx, Withdrawals: pre.withdrawals})
 
 		pre.finalTransactions = txx
 		pre.finalState = state
 		pre.finalReceipts = receipts
 		pre.finalGASUsed = gasPool.Used()
-		pre.finalBal = blockAccessList
+		pre.finalBal = blockAccessList.ToEncodingObj()
 		c.envelopeFeed.Send(envelopes)
 		c.staticPool.ResetStatic()
 	}
@@ -2157,28 +2156,8 @@ func (c *DBFT) Prepare(chain consensus.ChainHeaderReader, header *types.Header) 
 	return nil
 }
 
-// Finalize implements consensus.Engine. For now, it only manages block withdrawals.
-func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body, blockAccessIndex uint32, bal *bal.ConstructionBlockAccessList) {
-	// Withdrawals processing.
-	for _, w := range body.Withdrawals {
-		// Convert amount from gwei to wei.
-		amount := new(uint256.Int).SetUint64(w.Amount)
-		amount = amount.Mul(amount, uint256.NewInt(params.GWei))
-		prev := state.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
-
-		// Populate the block-level accessList if Amsterdam is enabled
-		if chain.Config().IsAmsterdam(header.Number, header.Time) {
-			if w.Amount == 0 {
-				// Zero amount withdrawal, account is accessed potential
-				// without state changes.
-				bal.AccountRead(w.Address)
-			} else {
-				// Non-zero amount withdrawal, account is accessed with
-				// a balance change.
-				bal.BalanceChange(blockAccessIndex, w.Address, new(uint256.Int).Add(&prev, amount))
-			}
-		}
-	}
+// Finalize implements consensus.Engine.
+func (c *DBFT) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
 	// No block rewards in PoA, so the state remains as is
 }
 
