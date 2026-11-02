@@ -120,6 +120,8 @@ var (
 		utils.CryptoKZGLazyFlag,
 		utils.ListenPortFlag,
 		utils.DiscoveryPortFlag,
+		utils.QUICPortFlag,
+		utils.QUICMaxBrowsersFlag,
 		utils.MaxPeersFlag,
 		utils.MaxPendingPeersFlag,
 		utils.MiningEnabledFlag,

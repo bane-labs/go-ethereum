@@ -59,6 +59,7 @@ import (
 	dbftproto "github.com/ethereum/go-ethereum/eth/protocols/dbft"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
+	"github.com/ethereum/go-ethereum/eth/protocols/webtx"
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/eth/verifier"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -743,6 +744,7 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 		advertiseV2 := dl.SnapSyncVersion() == snap.SNAP2 || dl.ConfigSyncMode() != ethconfig.SnapSync
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), advertiseV2)...)
 	}
+	protos = append(protos, webtx.NewProtocol(s.handler.txpool))
 	protos = append(protos, s.dbftSrv.MakeProtocols()...)
 	return protos
 }
