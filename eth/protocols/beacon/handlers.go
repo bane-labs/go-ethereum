@@ -25,6 +25,37 @@ func handleNewBlockhashes(backend Backend, msg Decoder, peer *Peer) error {
 
 func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 	// Retrieve and decode the propagated block
+	if peer.version <= BEACON2 {
+		return handleNewBlockBeacon1(backend, msg, peer)
+	} else if peer.version == BEACON3 {
+		return handleNewBlockBeacon3(backend, msg, peer)
+	}
+	return fmt.Errorf("invalid block version: %d", peer.version)
+}
+
+func handleNewBlockBeacon1(backend Backend, msg Decoder, peer *Peer) error {
+	ann := new(NewBlockPacket1)
+	if err := msg.Decode(ann); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+	if hash := types.CalcUncleHash(ann.Block.Uncles()); hash != ann.Block.UncleHash() {
+		log.Warn("Propagated block has invalid uncles", "have", hash, "exp", ann.Block.UncleHash())
+		return nil // TODO(karalabe): return error eventually, but wait a few releases
+	}
+	if hash := types.DeriveSha(ann.Block.Transactions(), trie.NewStackTrie(nil)); hash != ann.Block.TxHash() {
+		log.Warn("Propagated block has invalid body", "have", hash, "exp", ann.Block.TxHash())
+		return nil // TODO(karalabe): return error eventually, but wait a few releases
+	}
+	ann.Block.ReceivedAt = msg.Time()
+	ann.Block.ReceivedFrom = peer
+
+	// Mark the peer as owning the block
+	peer.markBlock(ann.Block.Hash())
+
+	return backend.Handle(peer, ann)
+}
+
+func handleNewBlockBeacon3(backend Backend, msg Decoder, peer *Peer) error {
 	ann := new(NewBlockPacket3)
 	if err := msg.Decode(ann); err != nil {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
