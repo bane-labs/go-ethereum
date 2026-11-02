@@ -2168,6 +2168,7 @@ func runGetBlobs(t testing.TB, getBlobs getBlobsFn, start, limit int, fillRandom
 		}
 		expect = append(expect, &engine.BlobAndProofV2{
 			Blob:       testBlobs[j][:],
+			Commitment: testBlobCommits[j][:],
 			CellProofs: cellProofs,
 		})
 	}

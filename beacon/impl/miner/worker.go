@@ -240,8 +240,10 @@ func (w *worker) requestWork(timestamp uint64) {
 
 	// Rebuild the block from execution payload.
 	var versionedHashes []common.Hash
-	for _, commitment := range payload.BlobsBundle.Commitments {
-		versionedHashes = append(versionedHashes, convertKzgCommitmentToVersionedHash(commitment))
+	if payload.BlobsBundle != nil {
+		for _, commitment := range payload.BlobsBundle.Commitments {
+			versionedHashes = append(versionedHashes, convertKzgCommitmentToVersionedHash(commitment))
+		}
 	}
 	var beaconRoot *common.Hash
 	if fork := w.chain.Config().LatestFork(timestamp); fork >= forks.Cancun {
@@ -253,18 +255,53 @@ func (w *worker) requestWork(timestamp uint64) {
 		return
 	}
 
+	// Cache the new block's transactions for potential future use, e.g. for BFT missing transaction request.
+	w.pendingTransactions = block.Transactions()
+	if payload.BlobsBundle != nil {
+		w.pendingVersionedHashes = versionedHashes
+		w.pendingBlobs = payload.BlobsBundle.Blobs
+		w.pendingCommitments = payload.BlobsBundle.Commitments
+		if len(payload.BlobsBundle.Proofs) == len(payload.BlobsBundle.Blobs)*kzg4844.CellProofsPerBlob {
+			// If we receive V1 blobs, we just cache the proofs directly.
+			w.pendingProofs = payload.BlobsBundle.Proofs
+		} else if len(payload.BlobsBundle.Proofs) == len(payload.BlobsBundle.Blobs) {
+			// If we receive V0 blobs, we convert them to V1 and compute the cell proofs, since we don't support V0 anymore.
+			w.pendingProofs = make([]hexutil.Bytes, 0)
+			for i := range payload.BlobsBundle.Blobs {
+				var blob kzg4844.Blob
+				copy(blob[:], payload.BlobsBundle.Blobs[i])
+				cellProofs, err := kzg4844.ComputeCellProofs(&blob)
+				if err != nil {
+					// Payload is invalid, clean up the pending cache and return.
+					log.Error("Failed to compute cell proofs", "err", err)
+					w.pendingTransactions = make([]*types.Transaction, 0)
+					w.pendingVersionedHashes = make([]common.Hash, 0)
+					w.pendingProofs = make([]hexutil.Bytes, 0)
+					w.pendingBlobs = make([]hexutil.Bytes, 0)
+					w.pendingCommitments = make([]hexutil.Bytes, 0)
+					return
+				}
+				for n := range cellProofs {
+					w.pendingProofs = append(w.pendingProofs, cellProofs[n][:])
+				}
+			}
+		} else {
+			log.Error("Invalid number of proofs in the blob bundle", "expected", len(payload.BlobsBundle.Blobs)*kzg4844.CellProofsPerBlob, "actual", len(payload.BlobsBundle.Proofs))
+			w.pendingTransactions = make([]*types.Transaction, 0)
+			w.pendingVersionedHashes = make([]common.Hash, 0)
+			w.pendingProofs = make([]hexutil.Bytes, 0)
+			w.pendingBlobs = make([]hexutil.Bytes, 0)
+			w.pendingCommitments = make([]hexutil.Bytes, 0)
+			return
+		}
+	}
+
 	// Submit the generated block for consensus sealing.
 	err = w.commit(block, versionedHashes, payload.Requests, start)
 	if err != nil {
 		log.Error("Failed to commit payload", "err", err)
 		return
 	}
-	// Cache the new block's transactions for potential future use, e.g. for BFT missing transaction request.
-	w.pendingTransactions = block.Transactions()
-	w.pendingVersionedHashes = versionedHashes
-	w.pendingBlobs = payload.BlobsBundle.Blobs
-	w.pendingCommitments = payload.BlobsBundle.Commitments
-	w.pendingProofs = payload.BlobsBundle.Proofs
 }
 
 // commit commits new work to consensus engine.
@@ -515,7 +552,7 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		attributes.BeaconRoot = nil
 		attributes.SlotNumber = nil
 		attributes.TargetGasLimit = nil
-	case forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
+	case forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2, forks.BPO3, forks.BPO4, forks.BPO5:
 		forkChoiceMethod = "engine_forkchoiceUpdatedV3"
 		attributes.SlotNumber = nil
 		attributes.TargetGasLimit = nil
@@ -578,7 +615,7 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 		newPayloadMethod = "engine_newPayloadV2"
 	case forks.Cancun:
 		newPayloadMethod = "engine_newPayloadV3"
-	case forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
+	case forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2, forks.BPO3, forks.BPO4, forks.BPO5:
 		newPayloadMethod = "engine_newPayloadV4"
 	case forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5:
 		newPayloadMethod = "engine_newPayloadV5"
@@ -610,6 +647,63 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 		}
 	}
 	return status, nil
+}
+
+// fetchBlobs fetches requested blobs from EL.
+func (w *worker) fetchBlobs(hashes []common.Hash) (*engine.BlobsBundle, []common.Hash) {
+	var bundle engine.BlobsBundle
+	head := w.chain.CurrentHeader()
+	missing := make([]common.Hash, 0, len(hashes))
+	switch w.chainConfig.LatestFork(head.Time) {
+	case forks.Cancun, forks.Prague:
+		var resp engine.BlobAndProofListV1
+		err := w.rpc.CallContext(w.ctx, &resp, "engine_getBlobsV1", hashes)
+		if err != nil {
+			log.Error("Failed to fetch blobs", "err", err)
+			return nil, hashes
+		}
+		for i, res := range resp {
+			if res == nil {
+				missing = append(missing, hashes[i])
+				continue
+			}
+			// Convert to V1 blobs, since we've dropped the V0 support.
+			var blob kzg4844.Blob
+			copy(blob[:], res.Blob)
+			cellProofs, err := kzg4844.ComputeCellProofs(&blob)
+			if err != nil {
+				log.Error("Failed to compute cell proofs", "err", err)
+				missing = append(missing, hashes[i])
+				continue
+			}
+			bundle.Blobs = append(bundle.Blobs, res.Blob)
+			bundle.Commitments = append(bundle.Commitments, res.Commitment)
+			for i := range cellProofs {
+				bundle.Proofs = append(bundle.Proofs, cellProofs[i][:])
+			}
+		}
+	case forks.Osaka, forks.BPO1, forks.BPO2, forks.BPO3, forks.BPO4, forks.BPO5, forks.Amsterdam:
+		var resp engine.BlobAndProofListV2
+		err := w.rpc.CallContext(w.ctx, &resp, "engine_getBlobsV3", hashes)
+		if err != nil {
+			log.Error("Failed to fetch blobs", "err", err)
+			return nil, hashes
+		}
+		for i, res := range resp {
+			if res == nil {
+				missing = append(missing, hashes[i])
+				continue
+			}
+			bundle.Blobs = append(bundle.Blobs, res.Blob)
+			bundle.Commitments = append(bundle.Commitments, res.Commitment)
+			bundle.Proofs = append(bundle.Proofs, res.CellProofs...)
+		}
+	default:
+		// TODO: extend new forks.
+		log.Error("Fork not supported for engine_getBlobs", "fork", w.chainConfig.LatestFork(head.Time))
+		return nil, hashes
+	}
+	return &bundle, missing
 }
 
 const blobCommitmentVersionKZG uint8 = 0x01

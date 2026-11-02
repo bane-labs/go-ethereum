@@ -43,6 +43,8 @@ func marshalBlobAndProofV1(b *jsonw.Buffer, item *BlobAndProofV1) {
 			b.HexBytes(item.Blob)
 			b.Key("proof")
 			b.HexBytes(item.Proof)
+			b.Key("commitment")
+			b.HexBytes(item.Commitment)
 		})
 	}
 }
@@ -70,6 +72,8 @@ func marshalBlobAndProofV2(b *jsonw.Buffer, item *BlobAndProofV2) {
 			b.HexBytes(item.Blob)
 			b.Key("proofs")
 			appendHexBytesArray(b, item.CellProofs)
+			b.Key("commitment")
+			b.HexBytes(item.Commitment)
 		})
 	}
 }

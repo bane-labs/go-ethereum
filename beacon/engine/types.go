@@ -164,8 +164,9 @@ type BlobsBundle struct {
 }
 
 type BlobAndProofV1 struct {
-	Blob  hexutil.Bytes `json:"blob"`
-	Proof hexutil.Bytes `json:"proof"`
+	Blob       hexutil.Bytes `json:"blob"`
+	Proof      hexutil.Bytes `json:"proof"`
+	Commitment hexutil.Bytes `json:"commitment"` // This field is not needed by Ethereum but required for Neo X.
 }
 
 // BlobAndProofListV1 is a list of BlobAndProofV1 with a hand-rolled JSON marshaler
@@ -174,7 +175,8 @@ type BlobAndProofListV1 []*BlobAndProofV1
 
 type BlobAndProofV2 struct {
 	Blob       hexutil.Bytes   `json:"blob"`
-	CellProofs []hexutil.Bytes `json:"proofs"` // proofs MUST contain exactly CELLS_PER_EXT_BLOB cell proofs.
+	CellProofs []hexutil.Bytes `json:"proofs"`     // proofs MUST contain exactly CELLS_PER_EXT_BLOB cell proofs.
+	Commitment hexutil.Bytes   `json:"commitment"` // This field is not needed by Ethereum but required for Neo X.
 }
 
 type BlobCellsAndProofsV1 struct {
