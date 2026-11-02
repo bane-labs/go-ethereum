@@ -179,9 +179,16 @@ func (p *Peer) AsyncSendNewBlockHash(block *types.Block) {
 func (p *Peer) SendNewBlock(block *types.Block, td *big.Int) error {
 	// Mark all the block hash as known, but ensure we don't overflow our limits
 	p.knownBlocks.Add(block.Hash())
-	return p2p.Send(p.rw, NewBlockMsg, &NewBlockPacket{
-		Block: block,
-		TD:    td,
+	if p.version < BEACON3 {
+		return p2p.Send(p.rw, NewBlockMsg, &NewBlockPacket1{
+			Block: block,
+			TD:    td,
+		})
+	}
+	return p2p.Send(p.rw, NewBlockMsg, &NewBlockPacket3{
+		Block:      block,
+		TD:         td,
+		AccessList: block.AccessList(),
 	})
 }
 

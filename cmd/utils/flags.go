@@ -40,6 +40,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/fdlimit"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
@@ -138,7 +139,7 @@ var (
 	}
 	NetworkIdFlag = &cli.Uint64Flag{
 		Name:     "networkid",
-		Usage:    "Explicitly set network ID (integer)(For testnets: use --sepolia, --holesky, --hoodi instead)",
+		Usage:    "Explicitly set network ID (integer)(For testnets: use --sepolia, --hoodi instead)",
 		Value:    ethconfig.Defaults.NetworkId,
 		Category: flags.EthCategory,
 	}
@@ -150,11 +151,6 @@ var (
 	SepoliaFlag = &cli.BoolFlag{
 		Name:     "sepolia",
 		Usage:    "Sepolia network: pre-configured proof-of-stake test network",
-		Category: flags.EthCategory,
-	}
-	HoleskyFlag = &cli.BoolFlag{
-		Name:     "holesky",
-		Usage:    "Holesky network: pre-configured proof-of-stake test network",
 		Category: flags.EthCategory,
 	}
 	HoodiFlag = &cli.BoolFlag{
@@ -297,17 +293,11 @@ var (
 		Usage:    "Scheme to use for storing ethereum state ('hash' or 'path')",
 		Category: flags.StateCategory,
 	}
-	StateSizeTrackingFlag = &cli.BoolFlag{
-		Name:     "state.size-tracking",
-		Usage:    "Enable state size tracking, retrieve state size with debug_stateSize.",
-		Value:    ethconfig.Defaults.EnableStateSizeTracking,
-		Category: flags.StateCategory,
-	}
 	SnapV2Flag = &cli.BoolFlag{
-		Name:     "snap.v2",
-		Usage:    "Enable the experimental snap/2 (EIP-8189, BAL-based) sync protocol (advertises and syncs via snap/2; not safe on public networks)",
-		Value:    ethconfig.Defaults.SnapV2,
-		Category: flags.StateCategory,
+		Name:        "snap.v2",
+		Usage:       "Enable or disable the snap/2 (EIP-8189, BAL-based) state syncer, which needs Amsterdam active",
+		DefaultText: "automatic",
+		Category:    flags.StateCategory,
 	}
 	BinTrieGroupDepthFlag = &cli.IntFlag{
 		Name:     "bintrie.groupdepth",
@@ -335,13 +325,13 @@ var (
 	}
 	TransactionHistoryFlag = &cli.Uint64Flag{
 		Name:     "history.transactions",
-		Usage:    "Number of recent blocks to maintain transactions index for (default = about one year, 0 = entire chain)",
+		Usage:    "Number of recent blocks to maintain transactions index for (default = about one year, entire chain for archive nodes, 0 = entire chain)",
 		Value:    ethconfig.Defaults.TransactionHistory,
 		Category: flags.StateCategory,
 	}
 	ChainHistoryFlag = &cli.StringFlag{
 		Name:     "history.chain",
-		Usage:    `Blockchain history retention ("all", "postmerge", or "postprague")`,
+		Usage:    fmt.Sprintf(`Blockchain history retention (%s, or "<block number>:<block hash>" to keep from that block)`, history.ChainHistoryNames()),
 		Value:    ethconfig.Defaults.HistoryMode.String(),
 		Category: flags.StateCategory,
 	}
@@ -561,6 +551,11 @@ var (
 	CacheNoPrefetchFlag = &cli.BoolFlag{
 		Name:     "cache.noprefetch",
 		Usage:    "Disable heuristic state prefetch during block import (less CPU and disk IO, more time waiting for data)",
+		Category: flags.PerfCategory,
+	}
+	CacheNoPrecompileFlag = &cli.BoolFlag{
+		Name:     "cache.noprecompile",
+		Usage:    "Disable precompile result caching",
 		Category: flags.PerfCategory,
 	}
 	CachePreimagesFlag = &cli.BoolFlag{
@@ -1248,7 +1243,6 @@ var (
 	// TestnetFlags is the flag group of all built-in supported testnets.
 	TestnetFlags = []cli.Flag{
 		SepoliaFlag,
-		HoleskyFlag,
 		HoodiFlag,
 	}
 	// NetworkFlags is the flag group of all built-in supported networks.
@@ -1263,6 +1257,24 @@ var (
 		DBEngineFlag,
 		StateSchemeFlag,
 		HttpHeaderFlag,
+	}
+
+	// MetricsFlags is the flag group of all metrics flags.
+	MetricsFlags = []cli.Flag{
+		MetricsEnabledFlag,
+		MetricsHTTPFlag,
+		MetricsPortFlag,
+		MetricsEnableInfluxDBFlag,
+		MetricsInfluxDBEndpointFlag,
+		MetricsInfluxDBDatabaseFlag,
+		MetricsInfluxDBUsernameFlag,
+		MetricsInfluxDBPasswordFlag,
+		MetricsInfluxDBTagsFlag,
+		MetricsInfluxDBIntervalFlag,
+		MetricsEnableInfluxDBV2Flag,
+		MetricsInfluxDBTokenFlag,
+		MetricsInfluxDBBucketFlag,
+		MetricsInfluxDBOrganizationFlag,
 	}
 )
 
@@ -1279,9 +1291,6 @@ func MakeDataDir(ctx *cli.Context) string {
 	if path := ctx.String(DataDirFlag.Name); path != "" {
 		if ctx.Bool(SepoliaFlag.Name) {
 			return filepath.Join(path, "sepolia")
-		}
-		if ctx.Bool(HoleskyFlag.Name) {
-			return filepath.Join(path, "holesky")
 		}
 		if ctx.Bool(HoodiFlag.Name) {
 			return filepath.Join(path, "hoodi")
@@ -1331,7 +1340,7 @@ func setNodeUserIdent(ctx *cli.Context, cfg *node.Config) {
 //
 // 1. --bootnodes flag
 // 2. Config file
-// 3. Network preset flags (e.g. --holesky)
+// 3. Network preset flags (e.g. --sepolia)
 // 4. default to mainnet nodes
 func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 	urls := params.MainnetBootnodes
@@ -1342,8 +1351,6 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 			return // Already set by config file, don't apply defaults.
 		}
 		switch {
-		case ctx.Bool(HoleskyFlag.Name):
-			urls = params.HoleskyBootnodes
 		case ctx.Bool(SepoliaFlag.Name):
 			urls = params.SepoliaBootnodes
 		case ctx.Bool(HoodiFlag.Name):
@@ -1783,8 +1790,6 @@ func SetDataDir(ctx *cli.Context, cfg *node.Config) {
 		cfg.DataDir = "" // unless explicitly requested, use memory databases
 	case ctx.Bool(SepoliaFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "sepolia")
-	case ctx.Bool(HoleskyFlag.Name) && cfg.DataDir == node.DefaultDataDir():
-		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "holesky")
 	case ctx.Bool(HoodiFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "hoodi")
 	}
@@ -1913,10 +1918,37 @@ func setRequiredBlocks(ctx *cli.Context, cfg *ethconfig.Config) {
 	}
 }
 
+// setTransactionHistory configures the number of recent blocks whose
+// transactions are indexed.
+//
+// Archive nodes index the entire chain by default. An explicitly configured
+// range, either via the command line or the config file, is honored though,
+// as the transaction index is maintained independently of the retained state.
+func setTransactionHistory(ctx *cli.Context, cfg *ethconfig.Config) {
+	// If user is still using legacy config file with 'TxLookupLimit' configured,
+	// copy the value to 'TransactionHistory'.
+	if cfg.TransactionHistory == ethconfig.Defaults.TransactionHistory && cfg.TxLookupLimit != ethconfig.Defaults.TxLookupLimit {
+		log.Warn("The config option 'TxLookupLimit' is deprecated and will be removed, please use 'TransactionHistory'")
+		cfg.TransactionHistory = cfg.TxLookupLimit
+	}
+	// A value other than the default can only originate from the config file.
+	// Note that configuring the default value in the config file can't be told
+	// apart from omitting it.
+	explicit := cfg.TransactionHistory != ethconfig.Defaults.TransactionHistory
+	if ctx.IsSet(TransactionHistoryFlag.Name) {
+		cfg.TransactionHistory = ctx.Uint64(TransactionHistoryFlag.Name)
+		explicit = true
+	}
+	if cfg.NoPruning && !explicit {
+		cfg.TransactionHistory = 0
+		log.Warn("Disabled transaction unindexing for archive node")
+	}
+}
+
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
-	flags.CheckExclusive(ctx, MainnetFlag, DeveloperFlag, SepoliaFlag, HoleskyFlag, HoodiFlag, OverrideGenesisFlag)
+	flags.CheckExclusive(ctx, MainnetFlag, DeveloperFlag, SepoliaFlag, HoodiFlag, OverrideGenesisFlag)
 	flags.CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 
 	// Set configurations from CLI flags
@@ -1974,8 +2006,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 
 	if ctx.IsSet(ChainHistoryFlag.Name) {
-		value := ctx.String(ChainHistoryFlag.Name)
-		if err := cfg.HistoryMode.UnmarshalText([]byte(value)); err != nil {
+		if err := cfg.HistoryMode.UnmarshalText([]byte(ctx.String(ChainHistoryFlag.Name))); err != nil {
 			Fatalf("--%s: %v", ChainHistoryFlag.Name, err)
 		}
 	}
@@ -2000,6 +2031,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(CacheNoPrefetchFlag.Name) {
 		cfg.NoPrefetch = ctx.Bool(CacheNoPrefetchFlag.Name)
 	}
+	if ctx.IsSet(CacheNoPrecompileFlag.Name) {
+		cfg.NoPrecompileCache = ctx.Bool(CacheNoPrecompileFlag.Name)
+	}
 	if ctx.IsSet(CachePreimagesFlag.Name) {
 		cfg.Preimages = ctx.Bool(CachePreimagesFlag.Name)
 	}
@@ -2022,21 +2056,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(StateSchemeFlag.Name) {
 		cfg.StateScheme = ctx.String(StateSchemeFlag.Name)
 	}
-	// Parse transaction history flag, if user is still using legacy config
-	// file with 'TxLookupLimit' configured, copy the value to 'TransactionHistory'.
-	if cfg.TransactionHistory == ethconfig.Defaults.TransactionHistory && cfg.TxLookupLimit != ethconfig.Defaults.TxLookupLimit {
-		log.Warn("The config option 'TxLookupLimit' is deprecated and will be removed, please use 'TransactionHistory'")
-		cfg.TransactionHistory = cfg.TxLookupLimit
-	}
-	if ctx.IsSet(TransactionHistoryFlag.Name) {
-		cfg.TransactionHistory = ctx.Uint64(TransactionHistoryFlag.Name)
-	}
-	if cfg.NoPruning {
-		if cfg.TransactionHistory != 0 {
-			cfg.TransactionHistory = 0
-			log.Warn("Disabled transaction unindexing for archive node")
-		}
-	}
+	setTransactionHistory(ctx, cfg)
 	if ctx.IsSet(LogHistoryFlag.Name) {
 		cfg.LogHistory = ctx.Uint64(LogHistoryFlag.Name)
 	}
@@ -2158,11 +2178,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.EthDiscoveryURLs = SplitAndTrim(urls)
 		}
 	}
-	if ctx.IsSet(StateSizeTrackingFlag.Name) {
-		cfg.EnableStateSizeTracking = ctx.Bool(StateSizeTrackingFlag.Name)
-	}
 	if ctx.IsSet(SnapV2Flag.Name) {
-		cfg.SnapV2 = ctx.Bool(SnapV2Flag.Name)
+		snapV2 := ctx.Bool(SnapV2Flag.Name)
+		cfg.SnapV2 = &snapV2
 	}
 	// Override any default configs for hard coded networks.
 	switch {
@@ -2170,10 +2188,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.NetworkId = 1
 		cfg.Genesis = core.DefaultGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
-	case ctx.Bool(HoleskyFlag.Name):
-		cfg.NetworkId = 17000
-		cfg.Genesis = core.DefaultHoleskyGenesisBlock()
-		SetDNSDiscoveryDefaults(cfg, params.HoleskyGenesisHash)
 	case ctx.Bool(SepoliaFlag.Name):
 		cfg.NetworkId = 11155111
 		cfg.Genesis = core.DefaultSepoliaGenesisBlock()
@@ -2315,14 +2329,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 func MakeBeaconLightConfig(ctx *cli.Context) bparams.ClientConfig {
 	var config bparams.ClientConfig
 	customConfig := ctx.IsSet(BeaconConfigFlag.Name)
-	flags.CheckExclusive(ctx, MainnetFlag, SepoliaFlag, HoleskyFlag, HoodiFlag, BeaconConfigFlag)
+	flags.CheckExclusive(ctx, MainnetFlag, SepoliaFlag, HoodiFlag, BeaconConfigFlag)
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
 		config.ChainConfig = *bparams.MainnetLightConfig
 	case ctx.Bool(SepoliaFlag.Name):
 		config.ChainConfig = *bparams.SepoliaLightConfig
-	case ctx.Bool(HoleskyFlag.Name):
-		config.ChainConfig = *bparams.HoleskyLightConfig
 	case ctx.Bool(HoodiFlag.Name):
 		config.ChainConfig = *bparams.HoodiLightConfig
 	default:
@@ -2467,6 +2479,73 @@ func RegisterSyncOverrideService(stack *node.Node, eth *eth.Ethereum, config syn
 		log.Info("Registered sync override service")
 	}
 	syncer.Register(stack, eth, config)
+}
+
+// SetMetricsConfig applies metrics-related command line flags to the config.
+func SetMetricsConfig(ctx *cli.Context, cfg *metrics.Config) {
+	if ctx.IsSet(MetricsEnabledFlag.Name) {
+		cfg.Enabled = ctx.Bool(MetricsEnabledFlag.Name)
+	}
+	if ctx.IsSet(MetricsHTTPFlag.Name) {
+		cfg.HTTP = ctx.String(MetricsHTTPFlag.Name)
+	}
+	if ctx.IsSet(MetricsPortFlag.Name) {
+		cfg.Port = ctx.Int(MetricsPortFlag.Name)
+	}
+	if ctx.IsSet(MetricsEnableInfluxDBFlag.Name) {
+		cfg.EnableInfluxDB = ctx.Bool(MetricsEnableInfluxDBFlag.Name)
+	}
+	if ctx.IsSet(MetricsInfluxDBEndpointFlag.Name) {
+		cfg.InfluxDBEndpoint = ctx.String(MetricsInfluxDBEndpointFlag.Name)
+	}
+	if ctx.IsSet(MetricsInfluxDBDatabaseFlag.Name) {
+		cfg.InfluxDBDatabase = ctx.String(MetricsInfluxDBDatabaseFlag.Name)
+	}
+	if ctx.IsSet(MetricsInfluxDBUsernameFlag.Name) {
+		cfg.InfluxDBUsername = ctx.String(MetricsInfluxDBUsernameFlag.Name)
+	}
+	if ctx.IsSet(MetricsInfluxDBPasswordFlag.Name) {
+		cfg.InfluxDBPassword = ctx.String(MetricsInfluxDBPasswordFlag.Name)
+	}
+	if ctx.IsSet(MetricsInfluxDBTagsFlag.Name) {
+		cfg.InfluxDBTags = ctx.String(MetricsInfluxDBTagsFlag.Name)
+	}
+	if ctx.IsSet(MetricsInfluxDBIntervalFlag.Name) {
+		cfg.InfluxDBInterval = ctx.Duration(MetricsInfluxDBIntervalFlag.Name)
+	}
+	if ctx.IsSet(MetricsEnableInfluxDBV2Flag.Name) {
+		cfg.EnableInfluxDBV2 = ctx.Bool(MetricsEnableInfluxDBV2Flag.Name)
+	}
+	if ctx.IsSet(MetricsInfluxDBTokenFlag.Name) {
+		cfg.InfluxDBToken = ctx.String(MetricsInfluxDBTokenFlag.Name)
+	}
+	if ctx.IsSet(MetricsInfluxDBBucketFlag.Name) {
+		cfg.InfluxDBBucket = ctx.String(MetricsInfluxDBBucketFlag.Name)
+	}
+	if ctx.IsSet(MetricsInfluxDBOrganizationFlag.Name) {
+		cfg.InfluxDBOrganization = ctx.String(MetricsInfluxDBOrganizationFlag.Name)
+	}
+	// Sanity-check the commandline flags. It is fine if some unused fields is part
+	// of the toml-config, but we expect the commandline to only contain relevant
+	// arguments, otherwise it indicates an error.
+	var (
+		enableExport   = ctx.Bool(MetricsEnableInfluxDBFlag.Name)
+		enableExportV2 = ctx.Bool(MetricsEnableInfluxDBV2Flag.Name)
+	)
+	if enableExport || enableExportV2 {
+		v1FlagIsSet := ctx.IsSet(MetricsInfluxDBUsernameFlag.Name) ||
+			ctx.IsSet(MetricsInfluxDBPasswordFlag.Name)
+
+		v2FlagIsSet := ctx.IsSet(MetricsInfluxDBTokenFlag.Name) ||
+			ctx.IsSet(MetricsInfluxDBOrganizationFlag.Name) ||
+			ctx.IsSet(MetricsInfluxDBBucketFlag.Name)
+
+		if enableExport && v2FlagIsSet {
+			Fatalf("Flags --%s, --%s, --%s are only available for influxdb-v2", MetricsInfluxDBOrganizationFlag.Name, MetricsInfluxDBTokenFlag.Name, MetricsInfluxDBBucketFlag.Name)
+		} else if enableExportV2 && v1FlagIsSet {
+			Fatalf("Flags --%s, --%s are only available for influxdb-v1", MetricsInfluxDBUsernameFlag.Name, MetricsInfluxDBPasswordFlag.Name)
+		}
+	}
 }
 
 // SetupMetrics configures the metrics system.
@@ -2620,8 +2699,6 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
 		genesis = core.DefaultGenesisBlock()
-	case ctx.Bool(HoleskyFlag.Name):
-		genesis = core.DefaultHoleskyGenesisBlock()
 	case ctx.Bool(SepoliaFlag.Name):
 		genesis = core.DefaultSepoliaGenesisBlock()
 	case ctx.Bool(HoodiFlag.Name):
@@ -2656,6 +2733,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 	options := &core.BlockChainConfig{
 		TrieCleanLimit:          ethconfig.Defaults.TrieCleanCache,
 		NoPrefetch:              ctx.Bool(CacheNoPrefetchFlag.Name),
+		NoPrecompileCache:       ctx.Bool(CacheNoPrecompileFlag.Name),
 		TrieDirtyLimit:          ethconfig.Defaults.TrieDirtyCache,
 		ArchiveMode:             ctx.String(GCModeFlag.Name) == "archive",
 		TrieTimeLimit:           ethconfig.Defaults.TrieTimeout,
@@ -2675,9 +2753,6 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 		// - DATADIR/triedb/merkle.journal
 		// - DATADIR/triedb/verkle.journal
 		TrieJournalDirectory: stack.ResolvePath("triedb"),
-
-		// Enable state size tracking if enabled
-		StateSizeTracking: ctx.Bool(StateSizeTrackingFlag.Name),
 
 		// Configure the slow block statistic logger (disabled by default)
 		SlowBlockThreshold: ethconfig.Defaults.SlowBlockThreshold,

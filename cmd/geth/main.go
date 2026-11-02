@@ -92,6 +92,7 @@ var (
 		utils.ExitWhenSyncedFlag,
 		utils.GCModeFlag,
 		utils.SnapshotFlag,
+		utils.SnapV2Flag,
 		utils.TransactionHistoryFlag,
 		utils.ChainHistoryFlag,
 		utils.LogHistoryFlag,
@@ -109,6 +110,7 @@ var (
 		utils.CacheGCFlag,
 		utils.CacheSnapshotFlag,
 		utils.CacheNoPrefetchFlag,
+		utils.CacheNoPrecompileFlag,
 		utils.CachePreimagesFlag,
 		utils.CacheLogSizeFlag,
 		utils.FDLimitFlag,
@@ -169,6 +171,7 @@ var (
 		utils.BeaconCheckpointFlag,
 		utils.BeaconCheckpointFileFlag,
 		utils.LogSlowBlockFlag,
+		utils.StateSizeTrackingFlag, // deprecated
 	}, utils.NetworkFlags, utils.DatabaseFlags, utils.BlobStorageFlags)
 
 	rpcFlags = []cli.Flag{
@@ -214,25 +217,6 @@ var (
 		utils.RPCTelemetryInstanceIDFlag,
 		utils.RPCTelemetryTagsFlag,
 		utils.RPCTelemetrySampleRatioFlag,
-	}
-
-	metricsFlags = []cli.Flag{
-		utils.MetricsEnabledFlag,
-		utils.MetricsHTTPFlag,
-		utils.MetricsPortFlag,
-		utils.MetricsEnableInfluxDBFlag,
-		utils.MetricsInfluxDBEndpointFlag,
-		utils.MetricsInfluxDBDatabaseFlag,
-		utils.MetricsInfluxDBUsernameFlag,
-		utils.MetricsInfluxDBPasswordFlag,
-		utils.MetricsInfluxDBTagsFlag,
-		utils.MetricsInfluxDBIntervalFlag,
-		utils.MetricsEnableInfluxDBV2Flag,
-		utils.MetricsInfluxDBTokenFlag,
-		utils.MetricsInfluxDBBucketFlag,
-		utils.MetricsInfluxDBOrganizationFlag,
-		utils.StateSizeTrackingFlag,
-		utils.SnapV2Flag,
 	}
 )
 
@@ -287,7 +271,7 @@ func init() {
 		rpcFlags,
 		consoleFlags,
 		debug.Flags,
-		metricsFlags,
+		utils.MetricsFlags,
 	)
 	flags.AutoEnvVars(app.Flags, "GETH")
 
@@ -321,9 +305,6 @@ func prepare(ctx *cli.Context) {
 	switch {
 	case ctx.Bool(utils.SepoliaFlag.Name):
 		log.Info("Starting Geth on Sepolia testnet...")
-
-	case ctx.Bool(utils.HoleskyFlag.Name):
-		log.Info("Starting Geth on Holesky testnet...")
 
 	case ctx.Bool(utils.HoodiFlag.Name):
 		log.Info("Starting Geth on Hoodi testnet...")

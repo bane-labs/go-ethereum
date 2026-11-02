@@ -42,7 +42,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/filesystem"
 	"github.com/ethereum/go-ethereum/core/filesystem/primitives"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
-	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/pruner"
 	"github.com/ethereum/go-ethereum/core/txpool"
@@ -162,8 +161,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if !config.SyncMode.IsValid() {
 		return nil, fmt.Errorf("invalid sync mode %d", config.SyncMode)
 	}
-	if !config.HistoryMode.IsValid() {
-		return nil, fmt.Errorf("invalid history mode %d", config.HistoryMode)
+	if !config.HistoryMode.Mode.IsValid() {
+		return nil, fmt.Errorf("invalid history mode %d", config.HistoryMode.Mode)
 	}
 	if config.Miner.GasPrice == nil || config.Miner.GasPrice.Sign() <= 0 {
 		log.Warn("Sanitizing invalid miner gas price", "provided", config.Miner.GasPrice, "updated", ethconfig.Defaults.Miner.GasPrice)
@@ -256,7 +255,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			rawdb.WriteDatabaseVersion(chainDb, core.BlockChainVersion)
 		}
 	}
-	histPolicy, err := history.NewPolicy(config.HistoryMode, genesisHash)
+	histPolicy, err := config.HistoryMode.Resolve(genesisHash)
 	if err != nil {
 		return nil, err
 	}
@@ -264,6 +263,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		options = &core.BlockChainConfig{
 			TrieCleanLimit:          config.TrieCleanCache,
 			NoPrefetch:              config.NoPrefetch,
+			NoPrecompileCache:       config.NoPrecompileCache,
 			TrieDirtyLimit:          config.TrieDirtyCache,
 			ArchiveMode:             config.NoPruning,
 			TrieTimeLimit:           config.TrieTimeout,
@@ -284,7 +284,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			// - DATADIR/triedb/merkle.journal
 			// - DATADIR/triedb/verkle.journal
 			TrieJournalDirectory: stack.ResolvePath("triedb"),
-			StateSizeTracking:    config.EnableStateSizeTracking,
 			SlowBlockThreshold:   config.SlowBlockThreshold,
 
 			StatelessSelfValidation: config.StatelessSelfValidation,
@@ -356,7 +355,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		config.BlobPool.Datadir = stack.ResolvePath(config.BlobPool.Datadir)
 	}
 	eth.blobTxPool = blobpool.New(config.BlobPool, eth.blockchain, legacyPool.HasPendingAuth)
-	eth.blobCache = blobpool.NewCache(eth.blobTxPool)
 	subPools := []txpool.SubPool{legacyPool, eth.blobTxPool}
 	enableAMEVCachePool := config.TxPool.AMEVCache && !config.TxPool.NoLocals
 	if enableAMEVCachePool {
@@ -373,6 +371,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Only after txpool.New has run the pool's Init: the cache reads the pool's
+	// lookup and store, which Init builds without holding the pool lock.
+	eth.blobCache = blobpool.NewCache(eth.blobTxPool)
 
 	if !config.TxPool.NoLocals {
 		rejournal := config.TxPool.Rejournal
@@ -730,13 +731,17 @@ func (s *Ethereum) SetSynced()                         { s.handler.enableSyncedF
 func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruning }
 func (s *Ethereum) EngineMaxReorgDepth() uint64        { return s.config.EngineMaxReorgDepth }
 
-// Protocols returns all the currently configured
-// network protocols to start.
+// Protocols returns all the currently configured network protocols to start.
 func (s *Ethereum) Protocols() []p2p.Protocol {
 	protos := beaconproto.MakeProtocols((*beaconHandler)(s.handler))
 	protos = append(protos, eth.MakeProtocols((*ethHandler)(s.handler), s.networkID, s.discmix)...)
 	if s.config.SnapshotCache > 0 {
-		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), s.config.SnapV2)...)
+		// SNAP/2 drops the trie node requests SNAP/1 healing needs, and peers
+		// negotiate the highest shared version, so a node syncing via SNAP/1
+		// must not advertise it. Every other node serves both versions.
+		dl := s.handler.downloader
+		advertiseV2 := dl.SnapSyncVersion() == snap.SNAP2 || dl.ConfigSyncMode() != ethconfig.SnapSync
+		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), advertiseV2)...)
 	}
 	protos = append(protos, s.dbftSrv.MakeProtocols()...)
 	return protos

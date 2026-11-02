@@ -211,11 +211,13 @@ func (f *fetcherTester) makeBodyFetcher(blocks map[common.Hash]*types.Block, dri
 		// Gather the block bodies to return
 		transactions := make([][]*types.Transaction, 0, len(hashes))
 		uncles := make([][]*types.Header, 0, len(hashes))
+		withdrawals := make([][]*types.Withdrawal, 0, len(hashes))
 
 		for _, hash := range hashes {
 			if block, ok := closure[hash]; ok {
 				transactions = append(transactions, block.Transactions())
 				uncles = append(uncles, block.Uncles())
+				withdrawals = append(withdrawals, block.Withdrawals())
 			}
 		}
 		// Return on a new thread
@@ -229,9 +231,18 @@ func (f *fetcherTester) makeBodyFetcher(blocks map[common.Hash]*types.Block, dri
 			if err != nil {
 				return nil, err
 			}
+			var withdrawalsRlpList *rlp.RawList[*types.Withdrawal]
+			if withdrawals[i] != nil {
+				rawList, err := rlp.EncodeToRawList(withdrawals[i])
+				if err != nil {
+					return nil, err
+				}
+				withdrawalsRlpList = &rawList
+			}
 			bodies[i] = eth.BlockBody{
 				Transactions: txsRlpList,
 				Uncles:       unclesRlpList,
+				Withdrawals:  withdrawalsRlpList,
 			}
 		}
 		req := &eth.Request{
@@ -250,6 +261,7 @@ func (f *fetcherTester) makeBodyFetcher(blocks map[common.Hash]*types.Block, dri
 	}
 }
 
+// makeBALFetcher retrieves a block access list fetcher associated with a simulated peer.
 func (f *fetcherTester) makeBALFetcher(blocks map[common.Hash]*types.Block, drift time.Duration) RequesterFn {
 	closure := make(map[common.Hash]*types.Block)
 	for hash, block := range blocks {
@@ -291,6 +303,98 @@ func (f *fetcherTester) makeBALFetcher(blocks map[common.Hash]*types.Block, drif
 			sink <- res
 		}()
 		return req, nil
+	}
+}
+
+func TestFetchBALsUnavailableIsNotDecodedAsEmpty(t *testing.T) {
+	blockHash := common.HexToHash("0x01")
+	response := eth.BlockAccessListResponse{rlp.EmptyString}
+	responseHashes := []common.Hash{{}}
+	tester := &BlockFetcher{
+		fetcher: Fetcher{
+			FetchBALs: func(peer string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+				go func() {
+					sink <- &eth.Response{
+						Res:  &response,
+						Meta: responseHashes,
+						Done: make(chan error, 1),
+					}
+				}()
+				return &eth.Request{}, nil
+			},
+		},
+	}
+
+	hashes, lists, err := tester.fetchBals("peer", []common.Hash{blockHash}, make(chan struct{}))
+	if err != nil {
+		t.Fatalf("fetchBals error: %v", err)
+	}
+	if len(hashes) != 1 || hashes[0] != (common.Hash{}) {
+		t.Fatalf("fetchBals hashes = %v, want one zero hash for unavailable BAL", hashes)
+	}
+	if len(lists) != 1 || lists[0] != nil {
+		t.Fatalf("fetchBals lists = %v, want one nil entry for unavailable BAL", lists)
+	}
+}
+
+func TestFetchBALsAcceptsEmptyList(t *testing.T) {
+	blockHash := common.HexToHash("0x01")
+	encoded, err := rlp.EncodeToBytes(bal.BlockAccessList{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := eth.BlockAccessListResponse{encoded}
+	responseHashes := []common.Hash{crypto.Keccak256Hash(encoded)}
+	tester := &BlockFetcher{
+		fetcher: Fetcher{
+			FetchBALs: func(peer string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+				go func() {
+					sink <- &eth.Response{
+						Res:  &response,
+						Meta: responseHashes,
+						Done: make(chan error, 1),
+					}
+				}()
+				return &eth.Request{}, nil
+			},
+		},
+	}
+
+	hashes, lists, err := tester.fetchBals("peer", []common.Hash{blockHash}, make(chan struct{}))
+	if err != nil {
+		t.Fatalf("fetchBals error: %v", err)
+	}
+	if len(hashes) != 1 || hashes[0] != responseHashes[0] {
+		t.Fatalf("fetchBals hashes = %v, want %v", hashes, responseHashes)
+	}
+	if len(lists) != 1 || lists[0] == nil || len(*lists[0]) != 0 {
+		t.Fatalf("fetchBals lists = %v, want one empty list", lists)
+	}
+}
+
+func TestFetchBALsCanBeCanceled(t *testing.T) {
+	tester := &BlockFetcher{
+		fetcher: Fetcher{
+			FetchBALs: func(peer string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+				return &eth.Request{}, nil
+			},
+		},
+	}
+	cancel := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := tester.fetchBals("peer", []common.Hash{common.HexToHash("0x01")}, cancel)
+		result <- err
+	}()
+	close(cancel)
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, errBALFetchCanceled) {
+			t.Fatalf("fetchBals error = %v, want %v", err, errBALFetchCanceled)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fetchBals did not return after cancellation")
 	}
 }
 
@@ -734,4 +838,62 @@ func TestEmptyBlockShortCircuit(t *testing.T) {
 		verifyImportEvent(t, imported, true)
 	}
 	verifyImportDone(t, imported)
+}
+
+func TestUnavailableBALReleasesCompletion(t *testing.T) {
+	balHash := common.HexToHash("0x1234")
+	block := types.NewBlock(
+		&types.Header{
+			ParentHash:          genesis.Hash(),
+			Number:              big.NewInt(1),
+			Difficulty:          big.NewInt(0),
+			GasLimit:            params.GenesisGasLimit,
+			BaseFee:             big.NewInt(params.InitialBaseFee),
+			BlockAccessListHash: &balHash,
+		},
+		&types.Body{},
+		nil,
+		trie.NewStackTrie(nil),
+	)
+	blocks := map[common.Hash]*types.Block{
+		genesis.Hash(): genesis,
+		block.Hash():   block,
+	}
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.fetcher.FetchHeader = tester.makeHeaderFetcher(blocks, -gatherSlack)
+	tester.fetcher.fetcher.FetchBodies = tester.makeBodyFetcher(blocks, 0)
+	tester.fetcher.fetcher.FetchBALs = func(peer string, hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+		response := eth.BlockAccessListResponse{rlp.EmptyString}
+		go func() {
+			sink <- &eth.Response{
+				Res:  &response,
+				Meta: []common.Hash{{}},
+				Done: make(chan error, 1),
+			}
+		}()
+		return &eth.Request{}, nil
+	}
+
+	fetching := make(chan []common.Hash, 4)
+	tester.fetcher.fetchingHook = func(hashes []common.Hash) { fetching <- hashes }
+	completing := make(chan []common.Hash, 1)
+	tester.fetcher.completingHook = func(hashes []common.Hash) { completing <- hashes }
+
+	tester.fetcher.Notify("valid", block.Hash(), block.NumberU64(), time.Now().Add(-arriveTimeout))
+	verifyFetchingEvent(t, fetching, true)
+	verifyCompletingEvent(t, completing, true)
+
+	deadline := time.After(time.Second)
+	for {
+		tester.fetcher.Notify("valid", block.Hash(), block.NumberU64(), time.Now().Add(-arriveTimeout))
+		select {
+		case <-fetching:
+			return
+		case <-time.After(10 * time.Millisecond):
+		case <-deadline:
+			t.Fatal("completion was not released after the peer reported an unavailable BAL")
+		}
+	}
 }

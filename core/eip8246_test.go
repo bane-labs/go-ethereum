@@ -55,9 +55,9 @@ func TestEIP8246SelfdestructNoBurn(t *testing.T) {
 
 	gspec := &Genesis{
 		Config: &config,
-		Alloc: types.GenesisAlloc{
+		Alloc: withSystemContracts(types.GenesisAlloc{
 			addr1: {Balance: newGwei(1_000_000_000)},
-		},
+		}),
 	}
 	// The contract created by addr1's first (nonce 0) transaction.
 	created := crypto.CreateAddress(addr1, 0)
@@ -86,7 +86,7 @@ func TestEIP8246SelfdestructNoBurn(t *testing.T) {
 	// which the chain-generation harness on this branch does not yet populate
 	// consistently — an orthogonal concern to the EIP-8246 state semantics under
 	// test here.
-	state, err := chain.StateAt(blocks[0].Header())
+	state, err := chain.StateAt(blocks[0].Root(), blocks[0].Number(), blocks[0].Time())
 	if err != nil {
 		t.Fatalf("failed to obtain block state: %v", err)
 	}
@@ -138,10 +138,10 @@ func TestEIP8246SelfdestructRefunded(t *testing.T) {
 	factoryCode = append(factoryCode, 0x00)
 	gspec := &Genesis{
 		Config: &config,
-		Alloc: types.GenesisAlloc{
+		Alloc: withSystemContracts(types.GenesisAlloc{
 			sender:  {Balance: newGwei(1_000_000_000)},
 			factory: {Nonce: 1, Code: factoryCode, Balance: big.NewInt(15)},
-		},
+		}),
 	}
 	child := crypto.CreateAddress(factory, 1)
 	db, blocks, _ := GenerateChainWithGenesis(gspec, engine, 1, func(_ int, b *BlockGen) {
@@ -159,7 +159,7 @@ func TestEIP8246SelfdestructRefunded(t *testing.T) {
 		t.Fatalf("failed to create chain: %v", err)
 	}
 	defer chain.Stop()
-	state, err := chain.StateAt(blocks[0].Header())
+	state, err := chain.StateAt(blocks[0].Root(), blocks[0].Number(), blocks[0].Time())
 	if err != nil {
 		t.Fatalf("failed to obtain block state: %v", err)
 	}
@@ -204,10 +204,10 @@ func TestEIP8246Create2RecreatesBalanceOnly(t *testing.T) {
 	)
 	gspec := &Genesis{
 		Config: &config,
-		Alloc: types.GenesisAlloc{
+		Alloc: withSystemContracts(types.GenesisAlloc{
 			sender:  {Balance: newGwei(1_000_000_000)},
 			factory: {Nonce: 1, Code: factoryCode, Balance: common.Big0},
-		},
+		}),
 	}
 	var salt [32]byte
 	salt[31] = 1
@@ -232,7 +232,7 @@ func TestEIP8246Create2RecreatesBalanceOnly(t *testing.T) {
 		t.Fatalf("failed to create chain: %v", err)
 	}
 	defer chain.Stop()
-	state, err := chain.StateAt(blocks[1].Header())
+	state, err := chain.StateAt(blocks[1].Root(), blocks[1].Number(), blocks[1].Time())
 	if err != nil {
 		t.Fatalf("failed to obtain block state: %v", err)
 	}
