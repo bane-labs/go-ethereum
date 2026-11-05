@@ -2,11 +2,53 @@
 
 This document outlines major changes between releases.
 
+## 0.7.0 "Undulation" (5 Nov 2026)
+
+This version introduces the support for Ethereum Amsterdam upgrade and Geth
+v1.17.11. Since this repository starts from and still is an Execution Layer (EL),
+this upgrade is a part of Glamsterdam.
+
+Follow the instructions below to upgrade your node from v0.6.2 to v0.7.0:
+
+1. Download new binary file from the release page.
+2. Gracefully stop the node.
+3. Replace the old binary with the new binary.
+4. Execute offline PebbleDB migration with the following command:
+   ```
+   ./geth db pebble-upgrade
+   ```
+5. For TestNet nodes only: don't remove DB; reinitialize DB using new binary and
+   new genesis configuration file with the following command:
+   ```
+   ./geth init --datadir ./node-datadir ./config/genesis.json
+   ```
+6. Start the node.
+
+Behaviour changes:
+ * Base Geth source code is updated to v1.17.11 (#651, #667)
+ * Extend dBFT PrepareRequest to broadcast the full bytes of transactions (#655)
+ * Remove BEACON/1 and add BEACON/3 protocol for blob bundle message (#664)
+ * Deploy the same system contracts as Ethereum (#666)
+ * Enable `Amsterdam` fork at timestamp `` on TestNet (#)
+ * Enable `NeoXPrepareRequestExtensionBlock` at height `` on TestNet (#)
+
+Improvements:
+ * Simplify the interface integration of dBFT library (#665)
+ * Align the EL engine API format with Ethereum (#670)
+ * Add Ethereum system contract allocation for PrivNets (#668)
+ * Optimize local blob search to reduce network fetch (#674)
+
+Bugs fixed:
+ * Fix failed block fetcher UTs (#654)
+ * Fix an incorrect DB close that caused "missing trie node" after initialization (#657)
+ * Fix compilation errors of the cmd keeper (#660)
+ * Fix the EL/CL shutdown order and enforce keystore round number check (#673)
+
 ## 0.6.2 "Transduction" (28 July 2026)
 
 This patch-release introduces several improvements for v0.6.1, and brings
 the new GovPaymaster system contract for better ERC-4337 UX. It's highly
-recommended to upgrade from v0.6.1, especially on Mainnet.
+recommended to upgrade from v0.6.1, especially on MainNet.
 
 Follow the instructions below to upgrade your node from v0.6.1 to v0.6.2:
 
@@ -104,7 +146,7 @@ Bugs fixed:
 ## 0.5.3 "Quenchation" (16 Mar 2026)
 
 This patch-release introduces several improvements and bug fixes for v0.5.2.
-It's highly recommended to upgrade from v0.5.2, especially on Mainnet.
+It's highly recommended to upgrade from v0.5.2, especially on MainNet.
 
 Follow the instructions below to upgrade your node from v0.5.2 to v0.5.3:
 
@@ -114,13 +156,13 @@ Follow the instructions below to upgrade your node from v0.5.2 to v0.5.3:
 4. Start the node.
 
 Improvements:
-* refresh sealing proposal when CV happens (#577)
-* update the error message of etherbase missing (#580)
-* reduce the log level of missing blob tx (#586)
+ * refresh sealing proposal when CV happens (#577)
+ * update the error message of etherbase missing (#580)
+ * reduce the log level of missing blob tx (#586)
 
 Bugs fixed:
-* exclude tx blob sidecar in `OnTransaction` callback (#581)
-* fix blob error handling for block committed by dBFT (#584)
+ * exclude tx blob sidecar in `OnTransaction` callback (#581)
+ * fix blob error handling for block committed by dBFT (#584)
 
 ## 0.5.2 "Polarization" (4 Mar 2026)
 
@@ -150,19 +192,19 @@ New features:
 * support EL-level blob data storage and JSON APIs for EIP-4844 (#526)
 
 Behaviour changes:
-* add a minimized CL implementation and switch to post-merge mining
-  (#538, #546, #551, #564)
-* create a beacon protocol and move the block broadcast message to the CL
-  (#542, #547, #549, #560)
-* remove EL reorg judgement and other deprecated pre-merge behaviors (#543)
+ * add a minimized CL implementation and switch to post-merge mining
+   (#538, #546, #551, #564)
+ * create a beacon protocol and move the block broadcast message to the CL
+   (#542, #547, #549, #560)
+ * remove EL reorg judgement and other deprecated pre-merge behaviors (#543)
 
 Improvements:
-* improve snap synchronization for short chains (#535, #536)
+ * improve snap synchronization for short chains (#535, #536)
 
 Bugs fixed:
-* fix possible panics in gas price query caused by uninitiated variables (#534)
-* fix DKG synchronization failure caused by blocks before #491 (#556)
-* fix DKG synchronization failure caused by missing group initialization (#557)
+ * fix possible panics in gas price query caused by uninitiated variables (#534)
+ * fix DKG synchronization failure caused by blocks before #491 (#556)
+ * fix DKG synchronization failure caused by missing group initialization (#557)
 
 ## 0.5.1 "Ornamentation" (7 Nov 2025)
 
@@ -400,14 +442,14 @@ transaction verification. This version is compatible with v0.3.1 and does not re
 DB resync or configuration update on upgrade.
 
 Behaviour changes:
-* `NeoXAMEV` fork is enabled at height `2088000` of Testnet (#437)
+* `NeoXAMEV` fork is enabled at height `2088000` of TestNet (#437)
 
 Bugs fixed:
 * decrypted transaction can't be verified at primary node due to panic (#439)
 
 ## 0.3.1 "Zonation" (11 Mar 2025)
 
-This patch-release introduces `NeoXDKG` fork on Testnet and contains a couple of minor
+This patch-release introduces `NeoXDKG` fork on TestNet and contains a couple of minor
 improvements compatible with v0.3.0 version.
 
 Please, follow the notes to upgrade your node from v0.3.0 to v0.3.1:
@@ -426,7 +468,7 @@ Please, follow the notes to upgrade your node from v0.3.0 to v0.3.1:
 6. Start the node.
 
 Behaviour changes:
- * `NeoXDKG` fork is enabled at height `1990080` of Testnet (#434)
+ * `NeoXDKG` fork is enabled at height `1990080` of TestNet (#434)
 
 Improvements:
  * anti-MEV related documentation upgrade (#430)
