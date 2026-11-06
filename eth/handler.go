@@ -124,6 +124,7 @@ type Beacon interface {
 	GetTransaction(hash common.Hash) *types.Transaction
 	NotifyTransactions(txs []*types.Transaction)
 	GetBlob(hash common.Hash) (hexutil.Bytes, hexutil.Bytes, []hexutil.Bytes)
+	RequestBlobs(hashes []common.Hash) []common.Hash
 	NotifyBlobs(blobs *engine.BlobsBundle)
 }
 
@@ -1008,12 +1009,15 @@ func (h *handler) RequestCachedBlobs(versionedHashed []common.Hash) {
 	if len(versionedHashed) == 0 {
 		return
 	}
+	// Filter out blobs that can be fetched from the local EL.
+	hash := h.beacon.RequestBlobs(versionedHashed)
+	// Request from the network.
 	peers := h.peers.allBeacons()
-	for i := 0; i <= len(versionedHashed)/maxHashesCount; i++ {
+	for i := 0; i <= len(hash)/maxHashesCount; i++ {
 		start := i * maxHashesCount
 		stop := (i + 1) * maxHashesCount
-		if stop > len(versionedHashed) {
-			stop = len(versionedHashed)
+		if stop > len(hash) {
+			stop = len(hash)
 		}
 		if start == stop {
 			break
@@ -1023,9 +1027,9 @@ func (h *handler) RequestCachedBlobs(versionedHashed []common.Hash) {
 			if peer.Version() < beaconproto.BEACON3 {
 				continue
 			}
-			err := peer.RequestCachedBlobs(versionedHashed[start:stop])
+			err := peer.RequestCachedBlobs(hash[start:stop])
 			if err != nil {
-				log.Error("Failed to request blobs", "versionedHashed", versionedHashed, "peer", peer.ID(), "error", err)
+				log.Error("Failed to request blobs", "hash", hash, "peer", peer.ID(), "error", err)
 			}
 		}
 	}

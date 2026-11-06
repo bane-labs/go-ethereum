@@ -205,7 +205,8 @@ func (n *testBeaconNotifier) NotifyTransactions([]*types.Transaction)           
 func (n *testBeaconNotifier) GetBlob(common.Hash) (hexutil.Bytes, hexutil.Bytes, []hexutil.Bytes) {
 	return nil, nil, nil
 }
-func (n *testBeaconNotifier) NotifyBlobs(blobs *engine.BlobsBundle) { n.bundle = blobs }
+func (n *testBeaconNotifier) RequestBlobs(hashes []common.Hash) []common.Hash { return nil }
+func (n *testBeaconNotifier) NotifyBlobs(blobs *engine.BlobsBundle)           { n.bundle = blobs }
 
 func TestHandleCachedBlobsValidBundle(t *testing.T) {
 	t.Parallel()
