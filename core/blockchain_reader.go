@@ -430,6 +430,9 @@ func (bc *BlockChain) State() (*state.StateDB, error) {
 // StateAt returns a new mutable state with the given root, at the block with
 // the given number and time.
 func (bc *BlockChain) StateAt(root common.Hash, number *big.Int, time uint64) (*state.StateDB, error) {
+	if bc.chainConfig.IsPBT(number, time) {
+		return state.New(root, state.NewPBTDatabase(bc.triedb, bc.codedb))
+	}
 	if bc.chainConfig.IsUBT(number, time) {
 		return state.New(root, state.NewUBTDatabase(bc.triedb, bc.codedb))
 	}
@@ -439,6 +442,9 @@ func (bc *BlockChain) StateAt(root common.Hash, number *big.Int, time uint64) (*
 // StateAtForkBoundary returns a new mutable state based on the parent state
 // and the given header, handling the transition across the UBT fork.
 func (bc *BlockChain) StateAtForkBoundary(parent *types.Header, header *types.Header) (*state.StateDB, error) {
+	if bc.chainConfig.IsPBT(parent.Number, parent.Time) {
+		return state.New(parent.Root, state.NewPBTDatabase(bc.triedb, bc.codedb))
+	}
 	// The parent is already in the UBT fork.
 	if bc.chainConfig.IsUBT(parent.Number, parent.Time) {
 		return state.New(parent.Root, state.NewUBTDatabase(bc.triedb, bc.codedb))
@@ -457,6 +463,9 @@ func (bc *BlockChain) StateAtForkBoundary(parent *types.Header, header *types.He
 // the given number and time. Live states are not available and won't be served,
 // please use `State` or `StateAt` instead.
 func (bc *BlockChain) HistoricState(root common.Hash, number *big.Int, time uint64) (*state.StateDB, error) {
+	if bc.chainConfig.IsPBT(number, time) {
+		return nil, errors.New("historical state over pbt is not yet supported")
+	}
 	if bc.chainConfig.IsUBT(number, time) {
 		return nil, errors.New("historical state over ubt is not yet supported")
 	}

@@ -74,6 +74,7 @@ require (
 	github.com/thomaso-mirodin/intmath v0.0.0-20160323211736-5dc6d854e46e
 	github.com/urfave/cli/v2 v2.27.5
 	github.com/wealdtech/go-eth2-wallet-encryptor-keystorev4 v1.4.1
+	github.com/zeebo/blake3 v0.2.4
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.46.0
