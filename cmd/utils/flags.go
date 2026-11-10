@@ -267,11 +267,6 @@ var (
 		Usage:    "Manually specify the bpo2 fork timestamp, overriding the bundled setting",
 		Category: flags.EthCategory,
 	}
-	OverrideUBT = &cli.Uint64Flag{
-		Name:     "override.ubt",
-		Usage:    "Manually specify the UBT fork timestamp, overriding the bundled setting",
-		Category: flags.EthCategory,
-	}
 	OverrideGenesisFlag = &cli.StringFlag{
 		Name:     "override.genesis",
 		Usage:    "Load genesis block and configuration from file at this path",
@@ -299,12 +294,6 @@ var (
 		Usage:       "Enable or disable the snap/2 (EIP-8189, BAL-based) state syncer, which needs Amsterdam active",
 		DefaultText: "automatic",
 		Category:    flags.StateCategory,
-	}
-	BinTrieGroupDepthFlag = &cli.IntFlag{
-		Name:     "bintrie.groupdepth",
-		Usage:    "Number of levels per serialized group in binary trie (1-8, default 5). Lower values create smaller groups with more nodes.",
-		Value:    5,
-		Category: flags.StateCategory,
 	}
 	StateHistoryFlag = &cli.Uint64Flag{
 		Name:     "history.state",
@@ -2076,9 +2065,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(TrienodeHistoryFullValueCheckpointFlag.Name) {
 		cfg.NodeFullValueCheckpoint = uint32(ctx.Uint(TrienodeHistoryFullValueCheckpointFlag.Name))
 	}
-	if ctx.IsSet(BinTrieGroupDepthFlag.Name) {
-		cfg.BinTrieGroupDepth = ctx.Int(BinTrieGroupDepthFlag.Name)
-	}
 	if ctx.IsSet(StateSchemeFlag.Name) {
 		cfg.StateScheme = ctx.String(StateSchemeFlag.Name)
 	}
@@ -2763,7 +2749,6 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 		StateHistory:            ctx.Uint64(StateHistoryFlag.Name),
 		TrienodeHistory:         ctx.Int64(TrienodeHistoryFlag.Name),
 		NodeFullValueCheckpoint: uint32(ctx.Uint(TrienodeHistoryFullValueCheckpointFlag.Name)),
-		BinTrieGroupDepth:       ctx.Int(BinTrieGroupDepthFlag.Name),
 
 		// Disable transaction indexing/unindexing.
 		TxLookupLimit: -1,
@@ -2771,7 +2756,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 		// Enables file journaling for the trie database. The journal files will be stored
 		// within the data directory. The corresponding paths will be either:
 		// - DATADIR/triedb/merkle.journal
-		// - DATADIR/triedb/verkle.journal
+		// - DATADIR/triedb/pbt.journal
 		TrieJournalDirectory: stack.ResolvePath("triedb"),
 
 		// Configure the slow block statistic logger (disabled by default)
@@ -2844,10 +2829,9 @@ func MakeConsolePreloads(ctx *cli.Context) []string {
 }
 
 // MakeTrieDatabase constructs a trie database based on the configured scheme.
-func MakeTrieDatabase(ctx *cli.Context, stack *node.Node, disk ethdb.Database, preimage bool, readOnly bool, isUBT bool, isPBT bool) *triedb.Database {
+func MakeTrieDatabase(ctx *cli.Context, stack *node.Node, disk ethdb.Database, preimage bool, readOnly bool, isPBT bool) *triedb.Database {
 	config := &triedb.Config{
 		Preimages: preimage,
-		IsUBT:     isUBT,
 		IsPBT:     isPBT,
 	}
 	scheme, err := rawdb.ParseStateScheme(ctx.String(StateSchemeFlag.Name), disk)

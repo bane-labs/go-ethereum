@@ -273,7 +273,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			StateHistory:            config.StateHistory,
 			TrienodeHistory:         config.TrienodeHistory,
 			NodeFullValueCheckpoint: config.NodeFullValueCheckpoint,
-			BinTrieGroupDepth:       config.BinTrieGroupDepth,
 			StateScheme:             scheme,
 			HistoryPolicy:           histPolicy,
 			TxLookupLimit:           int64(min(config.TransactionHistory, math.MaxInt64)),
@@ -283,7 +282,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			// Enables file journaling for the trie database. The journal files will be stored
 			// within the data directory. The corresponding paths will be either:
 			// - DATADIR/triedb/merkle.journal
-			// - DATADIR/triedb/verkle.journal
+			// - DATADIR/triedb/pbt.journal
 			TrieJournalDirectory: stack.ResolvePath("triedb"),
 			SlowBlockThreshold:   config.SlowBlockThreshold,
 
@@ -315,9 +314,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	if config.OverrideBPO2 != nil {
 		overrides.OverrideBPO2 = config.OverrideBPO2
-	}
-	if config.OverrideUBT != nil {
-		overrides.OverrideUBT = config.OverrideUBT
 	}
 	options.Overrides = &overrides
 
