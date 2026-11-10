@@ -490,6 +490,7 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		FinalizedBlockHash: head.ParentHash,
 	}
 	emptyUint64 := uint64(0)
+	targetGasLimit := uint64(60_000_000) // Use the default value, ref miner/miner.go DefaultConfig.GasCeil
 	attributes := engine.PayloadAttributes{
 		Timestamp:             timestamp,
 		Random:                common.Hash{},
@@ -497,7 +498,7 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		Withdrawals:           make([]*types.Withdrawal, 0),
 		BeaconRoot:            &types.EmptyRootHash,
 		SlotNumber:            &emptyUint64,
-		TargetGasLimit:        &emptyUint64,
+		TargetGasLimit:        &targetGasLimit,
 	}
 
 	var forkChoiceMethod string
