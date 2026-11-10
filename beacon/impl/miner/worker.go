@@ -484,7 +484,7 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		SafeBlockHash:      head.ParentHash,
 		FinalizedBlockHash: head.ParentHash,
 	}
-	emptyUint64 := uint64(0)
+	slotNumber := uint64(0)
 	targetGasLimit := uint64(60_000_000) // Use the default value, ref miner/miner.go DefaultConfig.GasCeil
 	attributes := engine.PayloadAttributes{
 		Timestamp:             timestamp,
@@ -492,36 +492,31 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		SuggestedFeeRecipient: w.feeRecipient,
 		Withdrawals:           make([]*types.Withdrawal, 0),
 		BeaconRoot:            &types.EmptyRootHash,
-		SlotNumber:            &emptyUint64,
+		SlotNumber:            &slotNumber,
 		TargetGasLimit:        &targetGasLimit,
 	}
 
 	var forkChoiceMethod string
 	var resp engine.ForkChoiceResponse
-	switch w.chain.Config().LatestFork(timestamp) {
-	case forks.Paris:
+	latest := w.chain.Config().LatestFork(timestamp)
+	if latest >= forks.Amsterdam {
+		// TODO: custodyColumns has not set
+		forkChoiceMethod = "engine_forkchoiceUpdatedV4"
+	} else if latest >= forks.Cancun {
+		forkChoiceMethod = "engine_forkchoiceUpdatedV3"
+		attributes.SlotNumber = nil
+		attributes.TargetGasLimit = nil
+	} else if latest >= forks.Shanghai {
+		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
+		attributes.BeaconRoot = nil
+		attributes.SlotNumber = nil
+		attributes.TargetGasLimit = nil
+	} else {
 		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
 		attributes.Withdrawals = nil
 		attributes.BeaconRoot = nil
 		attributes.SlotNumber = nil
 		attributes.TargetGasLimit = nil
-	case forks.Shanghai:
-		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
-		attributes.BeaconRoot = nil
-		attributes.SlotNumber = nil
-		attributes.TargetGasLimit = nil
-	case forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2, forks.BPO3, forks.BPO4, forks.BPO5:
-		forkChoiceMethod = "engine_forkchoiceUpdatedV3"
-		attributes.SlotNumber = nil
-		attributes.TargetGasLimit = nil
-	case forks.Amsterdam:
-		// TODO: custodyColumns has not set
-		forkChoiceMethod = "engine_forkchoiceUpdatedV4"
-	case forks.Bogota:
-		// TODO: add support for engine_forkchoiceUpdatedV5 when EL supports it
-		forkChoiceMethod = "engine_forkchoiceUpdatedV5"
-	default:
-		return engine.ForkChoiceResponse{}, fmt.Errorf("fork %s is not supported for engine_forkchoiceUpdated", w.chain.Config().LatestFork(timestamp).String())
 	}
 
 	// Set mining attributes only when the worker is set to be mining.
@@ -568,20 +563,15 @@ func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloa
 func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte, timestamp uint64) (engine.PayloadStatusV1, error) {
 	var newPayloadMethod string
 	var status engine.PayloadStatusV1
-	switch w.chain.Config().LatestFork(timestamp) {
-	case forks.Paris, forks.Shanghai:
-		newPayloadMethod = "engine_newPayloadV2"
-	case forks.Cancun:
-		newPayloadMethod = "engine_newPayloadV3"
-	case forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2, forks.BPO3, forks.BPO4, forks.BPO5:
-		newPayloadMethod = "engine_newPayloadV4"
-	case forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5:
+	latest := w.chain.Config().LatestFork(timestamp)
+	if latest >= forks.Amsterdam {
 		newPayloadMethod = "engine_newPayloadV5"
-	case forks.Bogota:
-		// TODO: add support for engine_newPayloadV6 when EL supports it
-		newPayloadMethod = "engine_newPayloadV6"
-	default:
-		return engine.PayloadStatusV1{}, fmt.Errorf("fork %s is not supported for engine_getPayload", w.chain.Config().LatestFork(timestamp).String())
+	} else if latest >= forks.Prague {
+		newPayloadMethod = "engine_newPayloadV4"
+	} else if latest >= forks.Cancun {
+		newPayloadMethod = "engine_newPayloadV3"
+	} else {
+		newPayloadMethod = "engine_newPayloadV2"
 	}
 	switch newPayloadMethod {
 	case "engine_newPayloadV2":
@@ -612,8 +602,24 @@ func (w *worker) fetchBlobs(hashes []common.Hash) (*engine.BlobsBundle, []common
 	var bundle engine.BlobsBundle
 	head := w.chain.CurrentHeader()
 	missing := make([]common.Hash, 0, len(hashes))
-	switch w.chainConfig.LatestFork(head.Time) {
-	case forks.Cancun, forks.Prague:
+	latest := w.chainConfig.LatestFork(head.Time)
+	if latest >= forks.Osaka {
+		var resp engine.BlobAndProofListV2
+		err := w.rpc.CallContext(w.ctx, &resp, "engine_getBlobsV3", hashes)
+		if err != nil {
+			log.Error("Failed to fetch blobs", "err", err)
+			return nil, hashes
+		}
+		for i, res := range resp {
+			if res == nil {
+				missing = append(missing, hashes[i])
+				continue
+			}
+			bundle.Blobs = append(bundle.Blobs, res.Blob)
+			bundle.Commitments = append(bundle.Commitments, res.Commitment)
+			bundle.Proofs = append(bundle.Proofs, res.CellProofs...)
+		}
+	} else {
 		var resp engine.BlobAndProofListV1
 		err := w.rpc.CallContext(w.ctx, &resp, "engine_getBlobsV1", hashes)
 		if err != nil {
@@ -640,26 +646,6 @@ func (w *worker) fetchBlobs(hashes []common.Hash) (*engine.BlobsBundle, []common
 				bundle.Proofs = append(bundle.Proofs, cellProofs[i][:])
 			}
 		}
-	case forks.Osaka, forks.BPO1, forks.BPO2, forks.BPO3, forks.BPO4, forks.BPO5, forks.Amsterdam:
-		var resp engine.BlobAndProofListV2
-		err := w.rpc.CallContext(w.ctx, &resp, "engine_getBlobsV3", hashes)
-		if err != nil {
-			log.Error("Failed to fetch blobs", "err", err)
-			return nil, hashes
-		}
-		for i, res := range resp {
-			if res == nil {
-				missing = append(missing, hashes[i])
-				continue
-			}
-			bundle.Blobs = append(bundle.Blobs, res.Blob)
-			bundle.Commitments = append(bundle.Commitments, res.Commitment)
-			bundle.Proofs = append(bundle.Proofs, res.CellProofs...)
-		}
-	default:
-		// TODO: extend new forks.
-		log.Error("Fork not supported for engine_getBlobs", "fork", w.chainConfig.LatestFork(head.Time))
-		return nil, hashes
 	}
 	return &bundle, missing
 }
