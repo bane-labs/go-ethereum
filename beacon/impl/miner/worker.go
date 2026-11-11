@@ -244,7 +244,10 @@ func (w *worker) requestWork(timestamp uint64) {
 		}
 	}
 	var beaconRoot *common.Hash
-	if fork := w.chain.Config().LatestFork(timestamp); fork >= forks.Cancun {
+	latest := w.chain.Config().LatestFork(timestamp)
+	if latest >= forks.Amsterdam {
+		beaconRoot = &common.Hash{}
+	} else if latest >= forks.Cancun {
 		beaconRoot = &types.EmptyRootHash
 	}
 	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, beaconRoot, payload.Requests)
@@ -443,7 +446,14 @@ func (w *worker) feedback(block *types.Block, reorgCheck bool) error {
 	payload := engine.BlockToExecutableData(block, nil, nil, nil)
 
 	// Send payload through RPC. TODO: collect and include versioned hashes if possible
-	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, payload.Requests, block.Time())
+	var beaconRoot *common.Hash
+	latest := w.chain.Config().LatestFork(block.Time())
+	if latest >= forks.Amsterdam {
+		beaconRoot = &common.Hash{}
+	} else if latest >= forks.Cancun {
+		beaconRoot = &types.EmptyRootHash
+	}
+	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), beaconRoot, payload.Requests, block.Time())
 	if err != nil {
 		return err
 	}
@@ -491,7 +501,7 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		Random:                common.Hash{},
 		SuggestedFeeRecipient: w.feeRecipient,
 		Withdrawals:           make([]*types.Withdrawal, 0),
-		BeaconRoot:            &types.EmptyRootHash,
+		BeaconRoot:            &common.Hash{},
 		SlotNumber:            &slotNumber,
 		TargetGasLimit:        &targetGasLimit,
 	}
@@ -504,6 +514,7 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		forkChoiceMethod = "engine_forkchoiceUpdatedV4"
 	} else if latest >= forks.Cancun {
 		forkChoiceMethod = "engine_forkchoiceUpdatedV3"
+		attributes.BeaconRoot = &types.EmptyRootHash
 		attributes.SlotNumber = nil
 		attributes.TargetGasLimit = nil
 	} else if latest >= forks.Shanghai {

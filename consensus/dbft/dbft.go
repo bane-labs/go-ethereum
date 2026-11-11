@@ -1889,9 +1889,6 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if cancun && header.ParentBeaconRoot == nil {
 		return errors.New("missing parentBeaconRoot")
 	}
-	if cancun && header.ParentBeaconRoot.Cmp(types.EmptyRootHash) != 0 {
-		return fmt.Errorf("invalid parentBeaconRoot: have %x, expected %x", *header.ParentBeaconRoot, &types.EmptyRootHash)
-	}
 	if !cancun && header.ParentBeaconRoot != nil {
 		return fmt.Errorf("invalid parentBeaconRoot, have %x, expected nil", header.ParentBeaconRoot)
 	}
@@ -1908,21 +1905,27 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	}
 	// Verify the existence / non-existence of Amsterdam-specific header fields
 	amsterdam := chain.Config().IsAmsterdam(header.Number, header.Time)
-	if amsterdam {
-		if header.BlockAccessListHash == nil {
-			log.Info("header is missing block access list hash", "number", header.Number.Uint64())
-			return errors.New("header is missing block access list hash")
-		}
-		if header.SlotNumber == nil {
-			return errors.New("header is missing slotNumber")
-		}
-	} else {
-		if header.BlockAccessListHash != nil {
-			return fmt.Errorf("invalid block access list hash: have %x, expected nil", *header.BlockAccessListHash)
-		}
-		if header.SlotNumber != nil {
-			return fmt.Errorf("invalid slotNumber: have %d, expected nil", *header.SlotNumber)
-		}
+	if amsterdam && header.BlockAccessListHash == nil {
+		return errors.New("missing blockAccessListHash")
+	}
+	if !amsterdam && header.BlockAccessListHash != nil {
+		return fmt.Errorf("invalid blockAccessListHash: have %x, expected nil", *header.BlockAccessListHash)
+	}
+	if amsterdam && header.SlotNumber == nil {
+		return errors.New("missing slotNumber")
+	}
+	if amsterdam && *header.SlotNumber != 0 {
+		return fmt.Errorf("invalid slotNumber: have %x, expected 0", *header.SlotNumber)
+	}
+	if !amsterdam && header.SlotNumber != nil {
+		return fmt.Errorf("invalid slotNumber: have %d, expected nil", *header.SlotNumber)
+	}
+	// Parent beacon root value check.
+	if amsterdam && cancun && header.ParentBeaconRoot.Cmp(common.Hash{}) != 0 {
+		return fmt.Errorf("invalid parentBeaconRoot: have %x, expected %x", *header.ParentBeaconRoot, common.Hash{})
+	}
+	if !amsterdam && cancun && header.ParentBeaconRoot.Cmp(types.EmptyRootHash) != 0 {
+		return fmt.Errorf("invalid parentBeaconRoot: have %x, expected %x", *header.ParentBeaconRoot, &types.EmptyRootHash)
 	}
 	// All basic checks passed, verify cascading fields
 	return c.verifyCascadingFields(chain, header, parents, isSealed)
