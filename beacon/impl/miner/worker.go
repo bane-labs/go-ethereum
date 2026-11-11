@@ -2,9 +2,7 @@ package miner
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,13 +75,12 @@ type worker struct {
 	syncing atomic.Bool // The indicator whether the node is still syncing.
 
 	// Mutex to prevent parallel fork request.
-	forkMu                 sync.RWMutex
-	pendingPayloadID       *engine.PayloadID
-	pendingTransactions    types.Transactions
-	pendingVersionedHashes []common.Hash
-	pendingBlobs           []hexutil.Bytes
-	pendingCommitments     []hexutil.Bytes
-	pendingProofs          []hexutil.Bytes
+	forkMu              sync.RWMutex
+	pendingPayloadID    *engine.PayloadID
+	pendingTransactions types.Transactions
+
+	// Blob management
+	blobCache *blobCache
 }
 
 func newWorker(eth Backend, rpc *rpc.Client, feeRecipient common.Address, shouldPreserve func(header *types.Header) bool) *worker {
@@ -100,6 +97,7 @@ func newWorker(eth Backend, rpc *rpc.Client, feeRecipient common.Address, should
 		resultCh:     make(chan *types.Block, resultQueueSize),
 		startCh:      make(chan struct{}, 1),
 		exitCh:       make(chan struct{}),
+		blobCache:    newBlobCache(32),
 	}
 	worker.ctx, worker.cancel = context.WithCancel(context.Background())
 
@@ -240,11 +238,16 @@ func (w *worker) requestWork(timestamp uint64) {
 
 	// Rebuild the block from execution payload.
 	var versionedHashes []common.Hash
-	for _, commitment := range payload.BlobsBundle.Commitments {
-		versionedHashes = append(versionedHashes, convertKzgCommitmentToVersionedHash(commitment))
+	if payload.BlobsBundle != nil {
+		for _, commitment := range payload.BlobsBundle.Commitments {
+			versionedHashes = append(versionedHashes, convertKzgCommitmentToVersionedHash(commitment))
+		}
 	}
 	var beaconRoot *common.Hash
-	if fork := w.chain.Config().LatestFork(timestamp); fork >= forks.Cancun {
+	latest := w.chain.Config().LatestFork(timestamp)
+	if latest >= forks.Amsterdam {
+		beaconRoot = &common.Hash{}
+	} else if latest >= forks.Cancun {
 		beaconRoot = &types.EmptyRootHash
 	}
 	block, err := engine.ExecutableDataToBlock(*payload.ExecutionPayload, versionedHashes, beaconRoot, payload.Requests)
@@ -253,18 +256,43 @@ func (w *worker) requestWork(timestamp uint64) {
 		return
 	}
 
+	// Cache the new block's transactions for potential future use, e.g. for BFT missing transaction request.
+	w.pendingTransactions = block.Transactions()
+	if payload.BlobsBundle != nil && len(versionedHashes) > 0 {
+		bundle := payload.BlobsBundle
+		if len(bundle.Proofs) == len(bundle.Blobs) {
+			// If we receive V0 blobs, we convert them to V1 and compute the cell proofs, since we don't support V0 anymore.
+			bundle.Proofs = make([]hexutil.Bytes, 0, len(bundle.Blobs)*kzg4844.CellProofsPerBlob)
+			for i := range bundle.Blobs {
+				var blob kzg4844.Blob
+				copy(blob[:], bundle.Blobs[i])
+				cellProofs, err := kzg4844.ComputeCellProofs(&blob)
+				if err != nil {
+					log.Error("Failed to compute cell proofs", "err", err)
+					w.pendingTransactions = nil
+					return
+				}
+				for n := range cellProofs {
+					bundle.Proofs = append(bundle.Proofs, cellProofs[n][:])
+				}
+			}
+		} else if len(bundle.Proofs) != len(bundle.Blobs)*kzg4844.CellProofsPerBlob {
+			log.Error("Invalid number of proofs in the blob bundle",
+				"expectedV0", len(bundle.Blobs),
+				"expectedV1", len(bundle.Blobs)*kzg4844.CellProofsPerBlob,
+				"actual", len(bundle.Proofs))
+			w.pendingTransactions = nil
+			return
+		}
+		w.blobCache.Add(versionedHashes, bundle)
+	}
+
 	// Submit the generated block for consensus sealing.
 	err = w.commit(block, versionedHashes, payload.Requests, start)
 	if err != nil {
 		log.Error("Failed to commit payload", "err", err)
 		return
 	}
-	// Cache the new block's transactions for potential future use, e.g. for BFT missing transaction request.
-	w.pendingTransactions = block.Transactions()
-	w.pendingVersionedHashes = versionedHashes
-	w.pendingBlobs = payload.BlobsBundle.Blobs
-	w.pendingCommitments = payload.BlobsBundle.Commitments
-	w.pendingProofs = payload.BlobsBundle.Proofs
 }
 
 // commit commits new work to consensus engine.
@@ -294,30 +322,20 @@ func (w *worker) getTransaction(hash common.Hash) *types.Transaction {
 				blobHashes := tx.BlobHashes()
 				blobs := make([]kzg4844.Blob, len(blobHashes))
 				commitments := make([]kzg4844.Commitment, len(blobHashes))
-				var version byte
-				var proofs []kzg4844.Proof
-				// Build a map from versioned hash to index for O(1) lookups.
-				hashToIndex := make(map[common.Hash]int, len(w.pendingVersionedHashes))
-				for idx, vHash := range w.pendingVersionedHashes {
-					hashToIndex[vHash] = idx
-				}
-				// Only support blob V1, same as the EL blobpool rules.
-				version = types.BlobSidecarVersion1
-				proofs = make([]kzg4844.Proof, len(blobHashes)*kzg4844.CellProofsPerBlob)
+				proofs := make([]kzg4844.Proof, len(blobHashes)*kzg4844.CellProofsPerBlob)
 				for i, blobHash := range blobHashes {
-					m, exists := hashToIndex[blobHash]
-					if exists {
-						copy(blobs[i][:], w.pendingBlobs[m])
-						copy(commitments[i][:], w.pendingCommitments[m])
-						for n := range kzg4844.CellProofsPerBlob {
-							copy(proofs[i*kzg4844.CellProofsPerBlob+n][:], w.pendingProofs[m*kzg4844.CellProofsPerBlob+n])
-						}
-					} else {
+					blob, commitment, proof, ok := w.blobCache.Get(blobHash)
+					if !ok {
 						log.Error("Blob is missing in the cache", "txhash", hash, "blobhash", blobHash)
 						return nil
 					}
+					copy(blobs[i][:], blob)
+					copy(commitments[i][:], commitment)
+					for n := 0; n < kzg4844.CellProofsPerBlob; n++ {
+						copy(proofs[i*kzg4844.CellProofsPerBlob+n][:], proof[n])
+					}
 				}
-				return tx.WithBlobTxSidecar(types.NewBlobTxSidecar(version, blobs, commitments, proofs))
+				return tx.WithBlobTxSidecar(types.NewBlobTxSidecar(types.BlobSidecarVersion1, blobs, commitments, proofs))
 			} else {
 				return tx
 			}
@@ -359,14 +377,19 @@ func (w *worker) cacheTransactions(txs []*types.Transaction) {
 			}
 			w.pendingTransactions = append(w.pendingTransactions, tx.WithoutBlobTxSidecar())
 			hashToIndex[tx.Hash()] = len(w.pendingTransactions) - 1
-			w.pendingVersionedHashes = append(w.pendingVersionedHashes, tx.BlobHashes()...)
+			bundle := engine.BlobsBundle{
+				Blobs:       make([]hexutil.Bytes, len(sidecar.Blobs)),
+				Commitments: make([]hexutil.Bytes, len(sidecar.Commitments)),
+				Proofs:      make([]hexutil.Bytes, len(sidecar.Proofs)),
+			}
 			for i := range sidecar.Blobs {
-				w.pendingBlobs = append(w.pendingBlobs, sidecar.Blobs[i][:])
-				w.pendingCommitments = append(w.pendingCommitments, sidecar.Commitments[i][:])
+				bundle.Blobs[i] = append(bundle.Blobs[i], sidecar.Blobs[i][:]...)
+				bundle.Commitments[i] = append(bundle.Commitments[i], sidecar.Commitments[i][:]...)
 			}
-			for _, proof := range sidecar.Proofs {
-				w.pendingProofs = append(w.pendingProofs, proof[:])
+			for i := range sidecar.Proofs {
+				bundle.Proofs[i] = append(bundle.Proofs[i], sidecar.Proofs[i][:]...)
 			}
+			w.blobCache.Add(tx.BlobHashes(), &bundle)
 		}
 	}
 }
@@ -378,7 +401,7 @@ func (w *worker) hasBlobs(hashes []common.Hash) bool {
 	defer w.forkMu.RUnlock()
 
 	for _, hash := range hashes {
-		if !slices.Contains(w.pendingVersionedHashes, hash) {
+		if !w.blobCache.Contains(hash) {
 			return false
 		}
 	}
@@ -391,17 +414,11 @@ func (w *worker) getBlob(hash common.Hash) (hexutil.Bytes, hexutil.Bytes, []hexu
 	w.forkMu.RLock()
 	defer w.forkMu.RUnlock()
 
-	for i, vh := range w.pendingVersionedHashes {
-		if hash.Cmp(vh) != 0 {
-			continue
-		}
-		proofs := make([]hexutil.Bytes, 0, kzg4844.CellProofsPerBlob)
-		for n := 0; n < kzg4844.CellProofsPerBlob; n++ {
-			proofs = append(proofs, w.pendingProofs[i*kzg4844.CellProofsPerBlob+n])
-		}
-		return w.pendingBlobs[i], w.pendingCommitments[i], proofs
+	blob, commitment, proofs, ok := w.blobCache.Get(hash)
+	if !ok {
+		return nil, nil, nil
 	}
-	return nil, nil, nil
+	return blob, commitment, proofs
 }
 
 // cacheBlobs adds blob data to the pending cache, so mark as
@@ -411,26 +428,7 @@ func (w *worker) cacheBlobs(hashes []common.Hash, bundle *engine.BlobsBundle) {
 	w.forkMu.Lock()
 	defer w.forkMu.Unlock()
 
-	hashToIndex := make(map[common.Hash]int)
-	for idx, h := range w.pendingVersionedHashes {
-		hashToIndex[h] = idx
-	}
-	for i := range bundle.Blobs {
-		vhash := convertKzgCommitmentToVersionedHash(bundle.Commitments[i])
-		if !slices.Contains(hashes, vhash) {
-			continue
-		}
-		if _, exists := hashToIndex[vhash]; exists {
-			continue
-		}
-		w.pendingVersionedHashes = append(w.pendingVersionedHashes, vhash)
-		w.pendingBlobs = append(w.pendingBlobs, bundle.Blobs[i])
-		w.pendingCommitments = append(w.pendingCommitments, bundle.Commitments[i])
-		for n := 0; n < kzg4844.CellProofsPerBlob; n++ {
-			w.pendingProofs = append(w.pendingProofs, bundle.Proofs[i*kzg4844.CellProofsPerBlob+n])
-		}
-		hashToIndex[vhash] = len(w.pendingVersionedHashes) - 1
-	}
+	w.blobCache.Add(hashes, bundle)
 }
 
 // feedback sends signed block back to EL for execution.
@@ -448,7 +446,14 @@ func (w *worker) feedback(block *types.Block, reorgCheck bool) error {
 	payload := engine.BlockToExecutableData(block, nil, nil, nil)
 
 	// Send payload through RPC. TODO: collect and include versioned hashes if possible
-	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), &types.EmptyRootHash, payload.Requests, block.Time())
+	var beaconRoot *common.Hash
+	latest := w.chain.Config().LatestFork(block.Time())
+	if latest >= forks.Amsterdam {
+		beaconRoot = &common.Hash{}
+	} else if latest >= forks.Cancun {
+		beaconRoot = &types.EmptyRootHash
+	}
+	status, err := w.sendPayload(payload.ExecutionPayload, make([]common.Hash, 0), beaconRoot, payload.Requests, block.Time())
 	if err != nil {
 		return err
 	}
@@ -489,44 +494,40 @@ func (w *worker) sendForkChoice(head *types.Header, timestamp uint64, requestMin
 		SafeBlockHash:      head.ParentHash,
 		FinalizedBlockHash: head.ParentHash,
 	}
-	emptyUint64 := uint64(0)
+	slotNumber := uint64(0)
 	targetGasLimit := uint64(60_000_000) // Use the default value, ref miner/miner.go DefaultConfig.GasCeil
 	attributes := engine.PayloadAttributes{
 		Timestamp:             timestamp,
 		Random:                common.Hash{},
 		SuggestedFeeRecipient: w.feeRecipient,
 		Withdrawals:           make([]*types.Withdrawal, 0),
-		BeaconRoot:            &types.EmptyRootHash,
-		SlotNumber:            &emptyUint64,
+		BeaconRoot:            &common.Hash{},
+		SlotNumber:            &slotNumber,
 		TargetGasLimit:        &targetGasLimit,
 	}
 
 	var forkChoiceMethod string
 	var resp engine.ForkChoiceResponse
-	switch w.chain.Config().LatestFork(timestamp) {
-	case forks.Paris:
+	latest := w.chain.Config().LatestFork(timestamp)
+	if latest >= forks.Amsterdam {
+		// TODO: custodyColumns has not set
+		forkChoiceMethod = "engine_forkchoiceUpdatedV4"
+	} else if latest >= forks.Cancun {
+		forkChoiceMethod = "engine_forkchoiceUpdatedV3"
+		attributes.BeaconRoot = &types.EmptyRootHash
+		attributes.SlotNumber = nil
+		attributes.TargetGasLimit = nil
+	} else if latest >= forks.Shanghai {
+		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
+		attributes.BeaconRoot = nil
+		attributes.SlotNumber = nil
+		attributes.TargetGasLimit = nil
+	} else {
 		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
 		attributes.Withdrawals = nil
 		attributes.BeaconRoot = nil
 		attributes.SlotNumber = nil
 		attributes.TargetGasLimit = nil
-	case forks.Shanghai:
-		forkChoiceMethod = "engine_forkchoiceUpdatedV2"
-		attributes.BeaconRoot = nil
-		attributes.SlotNumber = nil
-		attributes.TargetGasLimit = nil
-	case forks.Cancun, forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
-		forkChoiceMethod = "engine_forkchoiceUpdatedV3"
-		attributes.SlotNumber = nil
-		attributes.TargetGasLimit = nil
-	case forks.Amsterdam:
-		// TODO: custodyColumns has not set
-		forkChoiceMethod = "engine_forkchoiceUpdatedV4"
-	case forks.Bogota:
-		// TODO: add support for engine_forkchoiceUpdatedV5 when EL supports it
-		forkChoiceMethod = "engine_forkchoiceUpdatedV5"
-	default:
-		return engine.ForkChoiceResponse{}, fmt.Errorf("fork %s is not supported for engine_forkchoiceUpdated", w.chain.Config().LatestFork(timestamp).String())
 	}
 
 	// Set mining attributes only when the worker is set to be mining.
@@ -573,20 +574,15 @@ func (w *worker) getPayload(payloadID *engine.PayloadID) (engine.ExecutionPayloa
 func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte, timestamp uint64) (engine.PayloadStatusV1, error) {
 	var newPayloadMethod string
 	var status engine.PayloadStatusV1
-	switch w.chain.Config().LatestFork(timestamp) {
-	case forks.Paris, forks.Shanghai:
-		newPayloadMethod = "engine_newPayloadV2"
-	case forks.Cancun:
-		newPayloadMethod = "engine_newPayloadV3"
-	case forks.Prague, forks.Osaka, forks.BPO1, forks.BPO2:
-		newPayloadMethod = "engine_newPayloadV4"
-	case forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5:
+	latest := w.chain.Config().LatestFork(timestamp)
+	if latest >= forks.Amsterdam {
 		newPayloadMethod = "engine_newPayloadV5"
-	case forks.Bogota:
-		// TODO: add support for engine_newPayloadV6 when EL supports it
-		newPayloadMethod = "engine_newPayloadV6"
-	default:
-		return engine.PayloadStatusV1{}, fmt.Errorf("fork %s is not supported for engine_getPayload", w.chain.Config().LatestFork(timestamp).String())
+	} else if latest >= forks.Prague {
+		newPayloadMethod = "engine_newPayloadV4"
+	} else if latest >= forks.Cancun {
+		newPayloadMethod = "engine_newPayloadV3"
+	} else {
+		newPayloadMethod = "engine_newPayloadV2"
 	}
 	switch newPayloadMethod {
 	case "engine_newPayloadV2":
@@ -612,10 +608,55 @@ func (w *worker) sendPayload(payload *engine.ExecutableData, versionedHashes []c
 	return status, nil
 }
 
-const blobCommitmentVersionKZG uint8 = 0x01
-
-func convertKzgCommitmentToVersionedHash(commitment []byte) common.Hash {
-	versionedHash := sha256.Sum256(commitment)
-	versionedHash[0] = blobCommitmentVersionKZG
-	return versionedHash
+// fetchBlobs fetches requested blobs from EL.
+func (w *worker) fetchBlobs(hashes []common.Hash) (*engine.BlobsBundle, []common.Hash) {
+	var bundle engine.BlobsBundle
+	head := w.chain.CurrentHeader()
+	missing := make([]common.Hash, 0, len(hashes))
+	latest := w.chainConfig.LatestFork(head.Time)
+	if latest >= forks.Osaka {
+		var resp engine.BlobAndProofListV2
+		err := w.rpc.CallContext(w.ctx, &resp, "engine_getBlobsV3", hashes)
+		if err != nil {
+			log.Error("Failed to fetch blobs", "err", err)
+			return nil, hashes
+		}
+		for i, res := range resp {
+			if res == nil {
+				missing = append(missing, hashes[i])
+				continue
+			}
+			bundle.Blobs = append(bundle.Blobs, res.Blob)
+			bundle.Commitments = append(bundle.Commitments, res.Commitment)
+			bundle.Proofs = append(bundle.Proofs, res.CellProofs...)
+		}
+	} else {
+		var resp engine.BlobAndProofListV1
+		err := w.rpc.CallContext(w.ctx, &resp, "engine_getBlobsV1", hashes)
+		if err != nil {
+			log.Error("Failed to fetch blobs", "err", err)
+			return nil, hashes
+		}
+		for i, res := range resp {
+			if res == nil {
+				missing = append(missing, hashes[i])
+				continue
+			}
+			// Convert to V1 blobs, since we've dropped the V0 support.
+			var blob kzg4844.Blob
+			copy(blob[:], res.Blob)
+			cellProofs, err := kzg4844.ComputeCellProofs(&blob)
+			if err != nil {
+				log.Error("Failed to compute cell proofs", "err", err)
+				missing = append(missing, hashes[i])
+				continue
+			}
+			bundle.Blobs = append(bundle.Blobs, res.Blob)
+			bundle.Commitments = append(bundle.Commitments, res.Commitment)
+			for i := range cellProofs {
+				bundle.Proofs = append(bundle.Proofs, cellProofs[i][:])
+			}
+		}
+	}
+	return &bundle, missing
 }
