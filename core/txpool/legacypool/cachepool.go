@@ -173,10 +173,7 @@ func (pool *CachePool) Init(gasTip uint64, head *types.Header, _ txpool.Reserver
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	statedb, err := pool.chain.StateAt(head)
-	if err != nil {
-		statedb, err = pool.chain.StateAt(pool.chain.Genesis().Header())
-	}
+	statedb, err := txpool.HeadState(pool.chainconfig, pool.chain.StateAt, head)
 	if err != nil {
 		return err
 	}
@@ -694,7 +691,7 @@ func (pool *CachePool) reset(oldHead, newHead *types.Header) {
 	if newHead == nil {
 		newHead = pool.chain.CurrentBlock() // Special case during testing
 	}
-	statedb, err := pool.chain.StateAt(newHead)
+	statedb, err := pool.chain.StateAt(newHead.Root, newHead.Number, newHead.Time)
 	if err != nil {
 		log.Error("Failed to reset txpool state", "err", err)
 		return

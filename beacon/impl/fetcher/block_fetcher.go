@@ -61,7 +61,9 @@ var (
 )
 
 var errTerminated = errors.New("terminated")
+var errBALFetchCanceled = errors.New("block access list fetch canceled")
 var errInvalidBody = errors.New("retrieved block body is invalid")
+var errInvalidBAL = errors.New("retrieved block access list is invalid")
 
 // blockRetrievalFn is a callback type for retrieving a block from the local chain.
 type blockRetrievalFn func(common.Hash) *types.Block
@@ -121,10 +123,10 @@ type headerFilterTask struct {
 // bodyFilterTask represents a batch of block bodies (transactions and uncles)
 // needing fetcher filtering.
 type bodyFilterTask struct {
-	peer   string                 // The source peer of block bodies
-	bodies []types.Body           // Collection of block body per block
-	bals   []*bal.BlockAccessList // Collection of BALs per block
-	time   time.Time              // Arrival time of the blocks' contents
+	peer   string                               // The source peer of block bodies
+	bodies []types.Body                         // Collection of block body per block
+	balMap map[common.Hash]*bal.BlockAccessList // Collection of non-empty BALs per block, the key is the block access list hash
+	time   time.Time                            // Arrival time of the blocks' contents
 }
 
 // blockOrHeaderInject represents a schedules import operation.
@@ -312,8 +314,8 @@ func (f *BlockFetcher) FilterHeaders(peer string, headers []*types.Header, time 
 
 // FilterBodies extracts all the block bodies that were explicitly requested by
 // the fetcher, returning those that should be handled differently.
-func (f *BlockFetcher) FilterBodies(peer string, bodies []types.Body, bals []*bal.BlockAccessList, time time.Time) ([]types.Body, []*bal.BlockAccessList) {
-	log.Trace("Filtering bodies", "peer", peer, "bodies", len(bodies), "bals", len(bals))
+func (f *BlockFetcher) FilterBodies(peer string, bodies []types.Body, balMap map[common.Hash]*bal.BlockAccessList, time time.Time) ([]types.Body, map[common.Hash]*bal.BlockAccessList) {
+	log.Trace("Filtering bodies", "peer", peer, "bodies", len(bodies), "fetched bals", len(balMap))
 
 	// Send the filter channel to the fetcher
 	filter := make(chan *bodyFilterTask)
@@ -325,14 +327,14 @@ func (f *BlockFetcher) FilterBodies(peer string, bodies []types.Body, bals []*ba
 	}
 	// Request the filtering of the body list
 	select {
-	case filter <- &bodyFilterTask{peer: peer, bodies: bodies, bals: bals, time: time}:
+	case filter <- &bodyFilterTask{peer: peer, bodies: bodies, balMap: balMap, time: time}:
 	case <-f.quit:
 		return nil, nil
 	}
 	// Retrieve the bodies remaining after filtering
 	select {
 	case task := <-filter:
-		return task.bodies, task.bals
+		return task.bodies, task.balMap
 	case <-f.quit:
 		return nil, nil
 	}
@@ -535,10 +537,14 @@ func (f *BlockFetcher) loop() {
 
 				// toFetchBals is set if any of the blocks have a non-empty access list hash
 				toFetchBals := false
+				toFetchHashes := make([]common.Hash, 0, len(hashes))
+				expectedBALs := make(map[common.Hash]common.Hash, len(hashes))
 				for _, hash := range hashes {
 					header := f.completing[hash].header
 					if header.BlockAccessListHash != nil && !header.EmptyBlockAccessListHash() {
 						toFetchBals = true
+						toFetchHashes = append(toFetchHashes, hash)
+						expectedBALs[hash] = *header.BlockAccessListHash
 					}
 				}
 
@@ -554,12 +560,41 @@ func (f *BlockFetcher) loop() {
 					timeout := time.NewTimer(2 * fetchTimeout) // 2x leeway before dropping the peer
 					defer timeout.Stop()
 
+					// Fetch the access lists in parallel with the bodies, since they are independent and can be retrieved concurrently
+					balsCh := make(chan map[common.Hash]*bal.BlockAccessList)
+					balsCancel := make(chan struct{})
+					defer close(balsCancel)
+					if toFetchBals {
+						go func(peer string, hashes []common.Hash) {
+							defer close(balsCh)
+
+							balHashes, balList, err := f.fetchBals(peer, hashes, balsCancel)
+							if err != nil {
+								if !errors.Is(err, errBALFetchCanceled) {
+									log.Debug("Failed to fetch BALs", "peer", peer, "err", err)
+								}
+								return
+							}
+							result := make(map[common.Hash]*bal.BlockAccessList)
+							for i, hash := range balHashes {
+								if balList[i] != nil {
+									result[hash] = balList[i]
+								}
+							}
+							select {
+							case <-balsCancel:
+								return
+							case balsCh <- result:
+							}
+						}(peer, toFetchHashes)
+					}
+
 					select {
 					case res := <-resCh:
 						res.Done <- nil
 						bodies := *res.Res.(*eth.BlockBodiesResponse)
 						bodyList := make([]types.Body, 0, len(bodies))
-						// decode
+						// Decode
 						for index := 0; index < len(bodies); index++ {
 							txs, err := bodies[index].Transactions.Items()
 							if err != nil {
@@ -586,20 +621,34 @@ func (f *BlockFetcher) loop() {
 							})
 						}
 
-						// fetch Bals
-						var balList []*bal.BlockAccessList
+						// If we need to fetch BALs, wait for them to arrive.
+						balMap := make(map[common.Hash]*bal.BlockAccessList)
 						if toFetchBals {
-							balList, err = f.fetchBals(peer, hashes)
-							if err != nil {
-								log.Debug(fmt.Errorf("%w: failed to fetch BALs: %v", errInvalidBody, err).Error())
+							select {
+							case <-timeout.C:
+								f.dropPeer(peer)
 								return
+							case balMap = <-balsCh:
+								if balMap == nil {
+									f.dropPeer(peer)
+									return
+								}
 							}
-						} else {
-							// If we don't have any BALs, we make an empty list of BALs
-							balList = make([]*bal.BlockAccessList, len(bodyList))
 						}
 
-						f.FilterBodies(peer, bodyList, balList, time.Now())
+						f.FilterBodies(peer, bodyList, balMap, time.Now())
+						// A peer may legally report that it doesn't have a BAL.
+						// Release those completions so a later announcement can retry
+						// from another peer instead of leaving them stuck indefinitely.
+						for hash, balHash := range expectedBALs {
+							if _, ok := balMap[balHash]; !ok {
+								select {
+								case f.done <- hash:
+								case <-f.quit:
+									return
+								}
+							}
+						}
 
 					case <-timeout.C:
 						// The peer didn't respond in time. The request
@@ -655,6 +704,10 @@ func (f *BlockFetcher) loop() {
 							}
 							if block.Header().EmptyBlockAccessListHash() {
 								block = block.WithAccessListUnsafe(new(bal.BlockAccessList))
+							} else if block.Header().BlockAccessListHash != nil {
+								log.Debug("Need to fetch block access list", "BlockAccessListHash", block.Header().BlockAccessListHash)
+								incomplete = append(incomplete, announce)
+								continue
 							}
 							block.ReceivedAt = task.time
 
@@ -711,16 +764,17 @@ func (f *BlockFetcher) loop() {
 			}
 			bodyFilterInMeter.Mark(int64(len(task.bodies)))
 			blocks := []*types.Block{}
-			// abort early if there's nothing explicitly requested
+			// Abort early if there's nothing explicitly requested
 			if len(f.completing) > 0 {
-				for i := 0; i < len(task.bodies) && i < len(task.bals); i++ {
+				for i := 0; i < len(task.bodies); i++ {
 					// Match up a body to any possible completion request
 					var (
 						matched         = false
 						uncleHash       common.Hash // calculated lazily and reused
 						txnHash         common.Hash // calculated lazily and reused
 						withdrawalsHash common.Hash // calculated lazily and reused
-						balHash         common.Hash // calculated lazily and reused
+						balHash         common.Hash
+						accessList      *bal.BlockAccessList
 					)
 					for hash, announce := range f.completing {
 						if f.queued[hash] != nil || announce.origin != task.peer {
@@ -753,19 +807,18 @@ func (f *BlockFetcher) loop() {
 								continue
 							}
 						}
-						if task.bals[i] == nil {
-							if announce.header.BlockAccessListHash != nil {
-								continue
-							}
-						} else {
-							if announce.header.BlockAccessListHash == nil {
-								continue
-							}
-							if balHash == (common.Hash{}) {
-								balHash = task.bals[i].Hash()
-							}
-							if balHash != *announce.header.BlockAccessListHash {
-								continue
+
+						// If the block has a non-empty access list hash, check if we have the corresponding access list
+						if announce.header.BlockAccessListHash != nil {
+							balHash = *announce.header.BlockAccessListHash
+							if announce.header.EmptyBlockAccessListHash() {
+								accessList = new(bal.BlockAccessList)
+							} else {
+								if bal, ok := task.balMap[balHash]; ok {
+									accessList = bal
+								} else {
+									continue
+								}
 							}
 						}
 
@@ -774,7 +827,7 @@ func (f *BlockFetcher) loop() {
 						if f.getBlock(hash) == nil {
 							block := types.NewBlockWithHeader(announce.header).WithBody(task.bodies[i])
 							if announce.header.BlockAccessListHash != nil {
-								block = block.WithAccessList(task.bals[i])
+								block = block.WithAccessListUnsafe(accessList)
 							}
 							block.ReceivedAt = task.time
 							blocks = append(blocks, block)
@@ -784,7 +837,6 @@ func (f *BlockFetcher) loop() {
 					}
 					if matched {
 						task.bodies = append(task.bodies[:i], task.bodies[i+1:]...)
-						task.bals = append(task.bals[:i], task.bals[i+1:]...)
 						i--
 						continue
 					}
@@ -1004,12 +1056,12 @@ func (f *BlockFetcher) forgetBlock(hash common.Hash) {
 	}
 }
 
-func (f *BlockFetcher) fetchBals(peer string, hashes []common.Hash) ([]*bal.BlockAccessList, error) {
+func (f *BlockFetcher) fetchBals(peer string, hashes []common.Hash, cancel <-chan struct{}) ([]common.Hash, []*bal.BlockAccessList, error) {
 	resCh := make(chan *eth.Response)
 
 	req, err := f.fetcher.FetchBALs(peer, hashes, resCh)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer req.Close()
 
@@ -1017,25 +1069,30 @@ func (f *BlockFetcher) fetchBals(peer string, hashes []common.Hash) ([]*bal.Bloc
 	defer timeout.Stop()
 
 	select {
+	case <-cancel:
+		return nil, nil, errBALFetchCanceled
+
 	case res := <-resCh:
 		res.Done <- nil
-		var balList []*bal.BlockAccessList
 		bals := *res.Res.(*eth.BlockAccessListResponse)
-		// decode
+		balHashes := res.Meta.([]common.Hash) // {keccak256 hash per entry, zero hash if unavailable}
+		// Decode
+		balList := make([]*bal.BlockAccessList, 0, len(bals))
 		for index := 0; index < len(bals); index++ {
-			var accessList *bal.BlockAccessList
-			if !bytes.Equal(bals[index], rlp.EmptyString) {
-				accessList = new(bal.BlockAccessList)
-				if err := rlp.DecodeBytes(bals[index], accessList); err != nil {
-					return nil, fmt.Errorf("failed to decode BAL: %w", err)
-				}
+			if bytes.Equal(bals[index], rlp.EmptyString) {
+				balList = append(balList, nil)
+				continue
+			}
+			accessList := new(bal.BlockAccessList)
+			if err := rlp.DecodeBytes(bals[index], accessList); err != nil {
+				return nil, nil, fmt.Errorf("%w: %v", errInvalidBAL, err)
 			}
 			balList = append(balList, accessList)
 		}
-		return balList, nil
+		return balHashes, balList, nil
 	case <-timeout.C:
 		// The peer didn't respond in time.
 		// It's possible that the peer has not upgraded yet, so no action is taken here.
 	}
-	return nil, fmt.Errorf("failed to fetch BALs from peer: %s", peer)
+	return nil, nil, fmt.Errorf("failed to fetch BALs from peer: %s", peer)
 }

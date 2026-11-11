@@ -33,7 +33,7 @@ func (h *testBeaconHandler) PeerInfo(enode.ID) interface{}              { panic(
 
 func (h *testBeaconHandler) Handle(peer *beacon.Peer, packet beacon.Packet) error {
 	switch packet := packet.(type) {
-	case *beacon.NewBlockPacket:
+	case *beacon.NewBlockPacket3:
 		h.blockBroadcasts.Send(packet.Block)
 		return nil
 
