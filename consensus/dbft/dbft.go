@@ -2759,6 +2759,12 @@ func encodeUnchangeableHeader(w io.Writer, header *types.Header) {
 	if header.RequestsHash != nil {
 		enc = append(enc, header.RequestsHash)
 	}
+	if header.BlockAccessListHash != nil {
+		enc = append(enc, header.BlockAccessListHash)
+	}
+	if header.SlotNumber != nil {
+		enc = append(enc, header.SlotNumber)
+	}
 	if err := rlp.Encode(w, enc); err != nil {
 		panic("can't encode: " + err.Error())
 	}
@@ -2863,6 +2869,12 @@ func EncodeSigHeader(w io.Writer, header *types.Header) {
 	}
 	if header.RequestsHash != nil {
 		enc = append(enc, header.RequestsHash)
+	}
+	if header.BlockAccessListHash != nil {
+		enc = append(enc, header.BlockAccessListHash)
+	}
+	if header.SlotNumber != nil {
+		enc = append(enc, header.SlotNumber)
 	}
 	if err := rlp.Encode(w, enc); err != nil {
 		panic("can't encode: " + err.Error())
