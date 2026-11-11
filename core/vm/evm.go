@@ -337,6 +337,9 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
 		// The target address is blacklisted by policy, so revert directly.
 		ret, err = nil, ErrExecutionReverted
+	} else if evm.chainRules.IsPrague && evm.isBlacklistedDelegation(addr) {
+		// The target delegation is blacklisted by policy, so revert directly.
+		ret, err = nil, ErrExecutionReverted
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		code := evm.resolveCode(addr)
@@ -392,6 +395,9 @@ func (evm *EVM) CallCode(caller common.Address, addr common.Address, input []byt
 	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
 		// The target address is blacklisted by policy, so revert directly.
 		ret, err = nil, ErrExecutionReverted
+	} else if evm.chainRules.IsPrague && evm.isBlacklistedDelegation(addr) {
+		// The target delegation is blacklisted by policy, so revert directly.
+		ret, err = nil, ErrExecutionReverted
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
@@ -435,6 +441,9 @@ func (evm *EVM) DelegateCall(originCaller common.Address, caller common.Address,
 		ret, gas, err = RunPrecompiledContract(evm.StateDB, p, addr, input, gas, evm.Config.Tracer, evm.chainRules, evm.precompileCache)
 	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
 		// The target address is blacklisted by policy, so revert directly.
+		ret, err = nil, ErrExecutionReverted
+	} else if evm.chainRules.IsPrague && evm.isBlacklistedDelegation(addr) {
+		// The target delegation is blacklisted by policy, so revert directly.
 		ret, err = nil, ErrExecutionReverted
 	} else {
 		contract := NewContract(originCaller, caller, value, gas, evm.jumpDests)
@@ -485,6 +494,9 @@ func (evm *EVM) StaticCall(caller common.Address, addr common.Address, input []b
 		ret, gas, err = RunPrecompiledContract(evm.StateDB, p, addr, input, gas, evm.Config.Tracer, evm.chainRules, evm.precompileCache)
 	} else if evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(addr)) != (common.Hash{}) {
 		// The target address is blacklisted by policy, so revert directly.
+		ret, err = nil, ErrExecutionReverted
+	} else if evm.chainRules.IsPrague && evm.isBlacklistedDelegation(addr) {
+		// The target delegation is blacklisted by policy, so revert directly.
 		ret, err = nil, ErrExecutionReverted
 	} else {
 		contract := NewContract(caller, addr, new(uint256.Int), gas, evm.jumpDests)
@@ -732,6 +744,12 @@ func (evm *EVM) Create2(caller common.Address, code []byte, gas GasBudget, endow
 	inithash := crypto.Keccak256Hash(code)
 	contractAddr = crypto.CreateAddress2(caller, salt.Bytes32(), inithash[:])
 	return evm.create(caller, code, gas, endowment, contractAddr, CREATE2)
+}
+
+// isBlacklistedDelegation checks if the address delegates to blacklisted target address.
+func (evm *EVM) isBlacklistedDelegation(addr common.Address) bool {
+	target, ok := types.ParseDelegation(evm.StateDB.GetCode(addr))
+	return ok && evm.StateDB.GetState(systemcontracts.PolicyProxyHash, systemcontracts.GetBlackListStateHash(target)) != (common.Hash{})
 }
 
 // resolveCode returns the code associated with the provided account. After
