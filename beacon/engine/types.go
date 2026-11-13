@@ -21,7 +21,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"runtime"
 	"slices"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -250,15 +252,50 @@ func encodeTransactions(txs []*types.Transaction) [][]byte {
 }
 
 func DecodeTransactions(enc [][]byte) ([]*types.Transaction, error) {
-	var txs = make([]*types.Transaction, len(enc))
-	for i, encTx := range enc {
+	var (
+		txs     = make([]*types.Transaction, len(enc))
+		workers = min(runtime.GOMAXPROCS(0), len(enc)/decodeBatchSize)
+	)
+	if workers < 2 {
+		if err := decodeRange(enc, txs, 0, len(enc)); err != nil {
+			return nil, err
+		}
+		return txs, nil
+	}
+	// Each worker decodes a contiguous run and stops at its first error, so the
+	// first failed run holds the lowest failing index.
+	var (
+		errs  = make([]error, workers)
+		chunk = (len(enc) + workers - 1) / workers
+		wg    sync.WaitGroup
+	)
+	for w := range workers {
+		wg.Go(func() {
+			errs[w] = decodeRange(enc, txs, w*chunk, min((w+1)*chunk, len(enc)))
+		})
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return txs, nil
+}
+
+// decodeBatchSize is the fewest transactions worth handing to a decode worker.
+const decodeBatchSize = 32
+
+// decodeRange decodes enc[from:to] into txs.
+func decodeRange(enc [][]byte, txs []*types.Transaction, from, to int) error {
+	for i := from; i < to; i++ {
 		var tx types.Transaction
-		if err := tx.UnmarshalBinary(encTx); err != nil {
-			return nil, fmt.Errorf("invalid transaction %d: %v", i, err)
+		if err := tx.UnmarshalBinary(enc[i]); err != nil {
+			return fmt.Errorf("invalid transaction %d: %v", i, err)
 		}
 		txs[i] = &tx
 	}
-	return txs, nil
+	return nil
 }
 
 // ExecutableDataToBlock constructs a block from executable data.
@@ -273,7 +310,17 @@ func DecodeTransactions(enc [][]byte) ([]*types.Transaction, error) {
 // Withdrawals value will propagate through the returned block. Empty
 // Withdrawals value must be passed via non-nil, length 0 value in data.
 func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
-	block, err := executableDataToBlock(data, versionedHashes, beaconRoot, requestsHash)
+	txs, err := DecodeTransactions(data.Transactions)
+	if err != nil {
+		return nil, err
+	}
+	return ExecutableDataToBlockWithTxs(data, txs, versionedHashes, beaconRoot, requestsHash)
+}
+
+// ExecutableDataToBlockWithTxs is ExecutableDataToBlock for callers that already
+// decoded data.Transactions with DecodeTransactions.
+func ExecutableDataToBlockWithTxs(data ExecutableData, txs []*types.Transaction, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
+	block, err := executableDataToBlock(data, txs, versionedHashes, beaconRoot, requestsHash)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +343,11 @@ func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, b
 // for stateless execution, so it skips checking if the executable data hashes to
 // the requested hash (stateless has to *compute* the root hash, it's not given).
 func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
-	block, err := executableDataToBlock(data, versionedHashes, beaconRoot, requestsHash)
+	txs, err := DecodeTransactions(data.Transactions)
+	if err != nil {
+		return nil, err
+	}
+	block, err := executableDataToBlock(data, txs, versionedHashes, beaconRoot, requestsHash)
 	if err != nil {
 		return nil, err
 	}
@@ -305,11 +356,7 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 
 // executableDataToBlock assembles the block without its access list body and
 // without checking the block hash.
-func executableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
-	txs, err := DecodeTransactions(data.Transactions)
-	if err != nil {
-		return nil, err
-	}
+func executableDataToBlock(data ExecutableData, txs []*types.Transaction, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (*types.Block, error) {
 	// if len(data.ExtraData) > int(params.MaximumExtraDataSize) {
 	// 	return nil, fmt.Errorf("invalid extradata length: %v", len(data.ExtraData))
 	// }
@@ -332,14 +379,6 @@ func executableDataToBlock(data ExecutableData, versionedHashes []common.Hash, b
 	// 		return nil, fmt.Errorf("invalid versionedHash at %v: %v blobHash: %v", i, versionedHashes[i], blobHashes[i])
 	// 	}
 	// }
-	// Only set withdrawalsRoot if it is non-nil. This allows CLs to use
-	// ExecutableData before withdrawals are enabled by marshaling
-	// Withdrawals as the json null value.
-	var withdrawalsRoot *common.Hash
-	if data.Withdrawals != nil {
-		h := types.DeriveSha(types.Withdrawals(data.Withdrawals), trie.NewStackTrie(nil))
-		withdrawalsRoot = &h
-	}
 
 	// If Amsterdam is enabled, data.BlockAccessList is always non-nil,
 	// even for empty blocks with no state transitions.
@@ -357,7 +396,6 @@ func executableDataToBlock(data ExecutableData, versionedHashes []common.Hash, b
 		UncleHash:           types.EmptyUncleHash,
 		Coinbase:            data.FeeRecipient,
 		Root:                data.StateRoot,
-		TxHash:              types.DeriveSha(types.Transactions(txs), trie.NewStackTrie(nil)),
 		ReceiptHash:         data.ReceiptsRoot,
 		Bloom:               types.BytesToBloom(data.LogsBloom),
 		Difficulty:          new(big.Int).SetUint64(data.Difficulty),
@@ -368,7 +406,6 @@ func executableDataToBlock(data ExecutableData, versionedHashes []common.Hash, b
 		BaseFee:             data.BaseFeePerGas,
 		Extra:               data.ExtraData,
 		MixDigest:           data.Random,
-		WithdrawalsHash:     withdrawalsRoot,
 		ExcessBlobGas:       data.ExcessBlobGas,
 		BlobGasUsed:         data.BlobGasUsed,
 		ParentBeaconRoot:    beaconRoot,
@@ -377,8 +414,12 @@ func executableDataToBlock(data ExecutableData, versionedHashes []common.Hash, b
 		BlockAccessListHash: blockAccessListHash,
 	}
 	binary.BigEndian.PutUint64(header.Nonce[:], data.Nonce)
+	// The transaction and withdrawal roots are derived from the body. Only
+	// withdrawals that are non-nil get a root, which allows CLs to use
+	// ExecutableData before withdrawals are enabled by marshaling Withdrawals
+	// as the json null value.
 	body := types.Body{Transactions: txs, Uncles: nil, Withdrawals: data.Withdrawals}
-	return types.NewBlockWithHeader(header).WithBody(body), nil
+	return types.NewBlockFromBody(header, body, trie.NewStackTrie(nil)), nil
 }
 
 // attachAccessList decodes the block access list carried by the executable data
