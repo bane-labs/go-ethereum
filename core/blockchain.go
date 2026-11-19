@@ -75,6 +75,20 @@ var (
 	chainInfoGauge   = metrics.NewRegisteredGaugeInfo("chain/info", nil)
 	chainMgaspsMeter = metrics.NewRegisteredResettingTimer("chain/mgasps", nil)
 
+	// Wall-clock time of the block insertion and its phases
+	blockInsertTimer   = metrics.NewRegisteredResettingTimer("chain/inserts", nil)
+	blockProcessTimer  = metrics.NewRegisteredResettingTimer("chain/phase/process", nil)
+	blockValidateTimer = metrics.NewRegisteredResettingTimer("chain/phase/validate", nil)
+	blockCommitTimer   = metrics.NewRegisteredResettingTimer("chain/phase/commit", nil)
+
+	// Critical-path time of the processing and validation phases, excluding the
+	// state reads and the state hashing respectively
+	blockExecutionTimer       = metrics.NewRegisteredResettingTimer("chain/execution", nil)
+	blockValidationTimer      = metrics.NewRegisteredResettingTimer("chain/validation", nil)
+	blockCrossValidationTimer = metrics.NewRegisteredResettingTimer("chain/crossvalidation", nil)
+
+	// State access time, the reads are summed over the concurrent readers in the
+	// parallel execution
 	accountReadTimer   = metrics.NewRegisteredResettingTimer("chain/account/reads", nil)
 	accountHashTimer   = metrics.NewRegisteredResettingTimer("chain/account/hashes", nil)
 	accountUpdateTimer = metrics.NewRegisteredResettingTimer("chain/account/updates", nil)
@@ -85,6 +99,12 @@ var (
 	storageCommitTimer = metrics.NewRegisteredResettingTimer("chain/storage/commits", nil)
 	codeReadTimer      = metrics.NewRegisteredResettingTimer("chain/code/reads", nil)
 	codeReadBytesTimer = metrics.NewRegisteredResettingTimer("chain/code/readbytes", nil)
+
+	accountReadSingleTimer = metrics.NewRegisteredResettingTimer("chain/account/single/reads", nil)
+	storageReadSingleTimer = metrics.NewRegisteredResettingTimer("chain/storage/single/reads", nil)
+	codeReadSingleTimer    = metrics.NewRegisteredResettingTimer("chain/code/single/reads", nil)
+	triedbCommitTimer      = metrics.NewRegisteredResettingTimer("chain/triedb/commits", nil)
+	blockWriteTimer        = metrics.NewRegisteredResettingTimer("chain/write", nil) // Block data write, concurrent with the state commit
 
 	accountCacheHitMeter  = metrics.NewRegisteredMeter("chain/account/reads/cache/process/hit", nil)
 	accountCacheMissMeter = metrics.NewRegisteredMeter("chain/account/reads/cache/process/miss", nil)
@@ -99,17 +119,6 @@ var (
 	storageCacheMissPrefetchMeter = metrics.NewRegisteredMeter("chain/storage/reads/cache/prefetch/miss", nil)
 	codeCacheHitPrefetchMeter     = metrics.NewRegisteredMeter("chain/code/reads/cache/prefetch/hit", nil)
 	codeCacheMissPrefetchMeter    = metrics.NewRegisteredMeter("chain/code/reads/cache/prefetch/miss", nil)
-
-	accountReadSingleTimer = metrics.NewRegisteredResettingTimer("chain/account/single/reads", nil)
-	storageReadSingleTimer = metrics.NewRegisteredResettingTimer("chain/storage/single/reads", nil)
-	codeReadSingleTimer    = metrics.NewRegisteredResettingTimer("chain/code/single/reads", nil)
-	triedbCommitTimer      = metrics.NewRegisteredResettingTimer("chain/triedb/commits", nil)
-
-	blockInsertTimer          = metrics.NewRegisteredResettingTimer("chain/inserts", nil)
-	blockValidationTimer      = metrics.NewRegisteredResettingTimer("chain/validation", nil)
-	blockCrossValidationTimer = metrics.NewRegisteredResettingTimer("chain/crossvalidation", nil)
-	blockExecutionTimer       = metrics.NewRegisteredResettingTimer("chain/execution", nil)
-	blockWriteTimer           = metrics.NewRegisteredResettingTimer("chain/write", nil)
 
 	blockReorgMeter     = metrics.NewRegisteredMeter("chain/reorg/executes", nil)
 	blockReorgAddMeter  = metrics.NewRegisteredMeter("chain/reorg/add", nil)
@@ -180,10 +189,9 @@ type BlockChainConfig struct {
 	TrieNoAsyncFlush     bool          // Whether the asynchronous buffer flushing is disallowed
 	TrieJournalDirectory string        // Directory path to the journal used for persisting trie data across node restarts
 
-	Preimages         bool   // Whether to store preimage of trie key to the disk
-	StateScheme       string // Scheme used to store ethereum states and merkle tree nodes on top
-	ArchiveMode       bool   // Whether to enable the archive mode
-	BinTrieGroupDepth int    // Number of levels per serialized group in binary trie (1-8)
+	Preimages   bool   // Whether to store preimage of trie key to the disk
+	StateScheme string // Scheme used to store ethereum states and merkle tree nodes on top
+	ArchiveMode bool   // Whether to enable the archive mode
 
 	// Number of blocks from the chain head for which state histories are retained.
 	// If set to 0, all state histories across the entire chain will be retained;
@@ -267,11 +275,10 @@ func (cfg BlockChainConfig) WithNoAsyncFlush(on bool) *BlockChainConfig {
 }
 
 // triedbConfig derives the configures for trie database.
-func (cfg *BlockChainConfig) triedbConfig(isUBT bool) *triedb.Config {
+func (cfg *BlockChainConfig) triedbConfig(isPBT bool) *triedb.Config {
 	config := &triedb.Config{
-		Preimages:         cfg.Preimages,
-		IsUBT:             isUBT,
-		BinTrieGroupDepth: cfg.BinTrieGroupDepth,
+		Preimages: cfg.Preimages,
+		IsPBT:     isPBT,
 	}
 	if cfg.StateScheme == rawdb.HashScheme {
 		config.HashDB = &hashdb.Config{
@@ -392,11 +399,11 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 	}
 
 	// Open trie database with provided config
-	enableVerkle, err := EnableUBTAtGenesis(db, genesis)
+	enablePBT, err := pbtAtGenesis(db, genesis)
 	if err != nil {
 		return nil, err
 	}
-	triedb := triedb.NewDatabase(db, cfg.triedbConfig(enableVerkle))
+	triedb := triedb.NewDatabase(db, cfg.triedbConfig(enablePBT))
 
 	// Write the supplied genesis to the database if it has not been initialized
 	// yet. The corresponding chain config will be returned, either from the
@@ -405,6 +412,9 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 	chainConfig, genesisHash, compatErr, err := SetupGenesisBlockWithOverride(db, triedb, genesis, cfg.Overrides, cfg.VmConfig.Tracer)
 	if err != nil {
 		return nil, err
+	}
+	if chainConfig.PBTTime != nil && !enablePBT {
+		return nil, errors.New("binary tree activation after genesis is not supported")
 	}
 	log.Info("")
 	log.Info(strings.Repeat("-", 153))
@@ -1735,7 +1745,7 @@ func (bc *BlockChain) writeKnownBlock(block *types.Block) error {
 
 // writeBlockWithState writes block, metadata and corresponding state data to the
 // database.
-func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.Receipt, statedb *state.StateDB) error {
+func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.Receipt, statedb *state.StateDB, stats *CommitStats) error {
 	// Calculate the total difficulty of the block
 	ptd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
 	if ptd == nil {
@@ -1743,6 +1753,16 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	}
 	// Make sure no inconsistent state is leaked during insertion
 	externTd := new(big.Int).Add(block.Difficulty(), ptd)
+	// Registered first so it runs after the block data write is joined.
+	if stats != nil {
+		start := time.Now()
+		defer func() {
+			stats.Total = time.Since(start)
+			stats.AccountCommits = statedb.AccountCommits
+			stats.StorageCommits = statedb.StorageCommits
+			stats.DatabaseCommit = statedb.DatabaseCommits
+		}()
+	}
 
 	// Irrelevant of the canonical status, write the block itself to the database.
 	//
@@ -1856,8 +1876,9 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 // writeBlockAndSetHead is the internal implementation of WriteBlockAndSetHead.
 // This function expects the chain mutex to be held.
-func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB, emitHeadEvent bool) (status WriteStatus, err error) {
-	if err := bc.writeBlockWithState(block, receipts, state); err != nil {
+func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB, emitHeadEvent bool, stats *CommitStats) (status WriteStatus, err error) {
+	start := time.Now()
+	if err := bc.writeBlockWithState(block, receipts, state, stats); err != nil {
 		return NonStatTy, err
 	}
 	currentBlock := bc.CurrentBlock()
@@ -1889,6 +1910,7 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 	if emitHeadEvent {
 		bc.chainHeadFeed.Send(ChainHeadEvent{Header: block.Header()})
 	}
+	stats.Total = time.Since(start)
 	return CanonStatTy, nil
 }
 
@@ -2212,8 +2234,8 @@ type ExecuteConfig struct {
 	EnableWitnessStats bool
 }
 
-// overrideTracerActivation returns the EVM configuration to execute a block with, honoring the
-// caller's tracing intent.
+// overrideTracerActivation returns the EVM configuration to execute a block with,
+// honoring the caller's tracing intent.
 func (bc *BlockChain) overrideTracerActivation(tracerOn bool) vm.Config {
 	vmConfig := bc.cfg.VmConfig
 	if !tracerOn {
@@ -2244,8 +2266,8 @@ func (bc *BlockChain) setupExecutionState(parentRoot common.Hash, block *types.B
 	noop := func(*blockProcessingResult) {}
 
 	var sdb state.Database
-	if bc.chainConfig.IsUBT(block.Number(), block.Time()) {
-		sdb = state.NewUBTDatabase(bc.triedb, bc.codedb)
+	if bc.chainConfig.IsPBT(block.Number(), block.Time()) {
+		sdb = state.NewPBTDatabase(bc.triedb, bc.codedb)
 	} else {
 		sdb = state.NewMPTDatabase(bc.triedb, bc.codedb).WithSnapshot(bc.snaps)
 	}
@@ -2269,7 +2291,17 @@ func (bc *BlockChain) setupExecutionState(parentRoot common.Hash, block *types.B
 			stop()
 			return nil, nil, err
 		}
-		return statedb, func(*blockProcessingResult) { stop() }, nil
+		return statedb, func(result *blockProcessingResult) {
+			stop()
+
+			// Upload the statistics of reader at the end.
+			if result == nil {
+				return
+			}
+			if stater, ok := reader.(state.ReaderStater); ok {
+				result.stats.StateReadCacheStats = stater.GetStats()
+			}
+		}, nil
 
 	case bc.cfg.NoPrefetch || !ok:
 		statedb, err := state.New(parentRoot, sdb)
@@ -2350,13 +2382,7 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 	defer interrupt.Store(true) // terminate the prefetch at the end
 	execIndex.Store(-1)         // no transaction executed yet
 
-	// Resolve the EVM config for this execution before any component consults
-	// it. The live tracer stored in bc.cfg.VmConfig is a stateful, node-wide
-	// singleton whose hooks are only safe to drive from the chain-insertion
-	// goroutine, so it is attached only when the caller opts in via
-	// EnableTracer. Both the reader topology (setupExecutionState) and the
-	// execution strategy (StateProcessor.Process) key off this resolved
-	// config, keeping the BAL-parallel/sequential decision consistent.
+	// Resolve the EVM config for this execution before any component consults it.
 	vmConfig := bc.overrideTracerActivation(config.EnableTracer)
 
 	// Set up the state reader feeding execution, along with a cleanup to run once
@@ -2408,25 +2434,22 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 	}
 
 	// Process block using the parent state as reference point
-	pstart := time.Now()
+	stats := new(ExecuteStats)
 	pctx, _, spanEnd := telemetry.StartSpan(ctx, "bc.processor.Process")
-	res, err := bc.processor.Process(pctx, block, statedb, bc.jumpDestCache, bc.precompileCache, vmConfig, &execIndex)
+	res, err := bc.processor.Process(pctx, block, statedb, bc.jumpDestCache, bc.precompileCache, vmConfig, &execIndex, &stats.Process)
 	spanEnd(&err)
 	if err != nil {
 		bc.reportBadBlock(block, res, err)
 		return nil, err
 	}
-	ptime := time.Since(pstart)
 
-	vstart := time.Now()
 	_, _, spanEnd = telemetry.StartSpan(ctx, "bc.validator.ValidateState")
-	err = bc.validator.ValidateState(block, statedb, res, false)
+	err = bc.validator.ValidateState(block, statedb, res, false, &stats.Validate)
 	spanEnd(&err)
 	if err != nil {
 		bc.reportBadBlock(block, res, err)
 		return nil, err
 	}
-	vtime := time.Since(vstart)
 
 	// If witnesses was generated and stateless self-validation requested, do
 	// that now. Self validation should *never* run in production, it's more of
@@ -2456,35 +2479,8 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 			return nil, fmt.Errorf("stateless self-validation receipt root mismatch (cross: %x local: %x)", crossReceiptRoot, block.ReceiptHash())
 		}
 	}
-
-	var (
-		xvtime   = time.Since(xvstart)
-		proctime = time.Since(startTime) // processing + validation + cross validation
-		stats    = &ExecuteStats{}
-	)
-	// Update the metrics touched during block processing and validation
-	stats.AccountReads = statedb.AccountReads     // Account reads are complete(in processing)
-	stats.StorageReads = statedb.StorageReads     // Storage reads are complete(in processing)
-	stats.AccountUpdates = statedb.AccountUpdates // Account updates are complete(in validation)
-	stats.StorageUpdates = statedb.StorageUpdates // Storage updates are complete(in validation)
-	stats.AccountHashes = statedb.AccountHashes   // Account hashes are complete(in validation)
-	stats.CodeReads = statedb.CodeReads
-
-	stats.AccountLoaded = statedb.AccountLoaded
-	stats.AccountUpdated = statedb.AccountUpdated
-	stats.AccountDeleted = statedb.AccountDeleted
-	stats.StorageLoaded = statedb.StorageLoaded
-	stats.StorageUpdated = int(statedb.StorageUpdated.Load())
-	stats.StorageDeleted = int(statedb.StorageDeleted.Load())
-
-	stats.CodeLoaded = statedb.CodeLoaded
-	stats.CodeLoadBytes = statedb.CodeLoadBytes
-	stats.CodeUpdated = statedb.CodeUpdated
-	stats.CodeUpdateBytes = statedb.CodeUpdateBytes
-
-	stats.Execution = ptime - (statedb.AccountReads + statedb.StorageReads + statedb.CodeReads)          // The time spent on EVM processing
-	stats.Validation = vtime - (statedb.AccountHashes + statedb.AccountUpdates + statedb.StorageUpdates) // The time spent on block validation
-	stats.CrossValidation = xvtime                                                                       // The time spent on stateless cross validation
+	stats.CrossValidation = time.Since(xvstart)
+	proctime := time.Since(startTime) // processing + validation + cross validation
 
 	// Attach the computed block access list so it gets persisted alongside the
 	// block. The validator has already verified the hash matches the header.
@@ -2497,23 +2493,24 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 	// Write the block to the chain and get the status.
 	var status WriteStatus
 	if config.WriteState {
+		_, _, spanEnd = telemetry.StartSpan(ctx, "bc.writeState")
 		if !config.WriteHead {
 			// Don't set the head, only insert the block
-			err = bc.writeBlockWithState(block, res.Receipts, statedb)
+			err = bc.writeBlockWithState(block, res.Receipts, statedb, &stats.Commit)
 		} else {
-			status, err = bc.writeBlockAndSetHead(block, res.Receipts, res.Logs, statedb, false)
+			status, err = bc.writeBlockAndSetHead(block, res.Receipts, res.Logs, statedb, false, &stats.Commit)
 		}
+		spanEnd(&err)
 		if err != nil {
 			return nil, err
 		}
-		// Update the metrics touched during block commit
-		stats.AccountCommits = statedb.AccountCommits  // Account commits are complete, we can mark them
-		stats.StorageCommits = statedb.StorageCommits  // Storage commits are complete, we can mark them
-		stats.DatabaseCommit = statedb.DatabaseCommits // Database commits are complete, we can mark them
 	}
 	elapsed := time.Since(startTime) + 1 // prevent zero division
 	stats.TotalTime = elapsed
 	stats.MgasPerSecond = float64(res.GasUsed) * 1000 / float64(elapsed)
+	if start, ok := prepareStart(ctx); ok {
+		stats.Prepare = startTime.Sub(start)
+	}
 
 	return &blockProcessingResult{
 		usedGas:  res.GasUsed,
@@ -3230,7 +3227,7 @@ func (bc *BlockChain) ProcessState(ctx context.Context, block *types.Block, stat
 		}
 	}
 
-	res, err := bc.processor.Process(ctx, block, statedb, bc.jumpDestCache, bc.precompileCache, bc.cfg.VmConfig, nil)
+	res, err := bc.processor.Process(ctx, block, statedb, bc.jumpDestCache, bc.precompileCache, bc.cfg.VmConfig, nil, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to process block: %w", err)
 	}
@@ -3267,7 +3264,7 @@ func (bc *BlockChain) VerifyBlock(block *types.Block, checkState bool) (*state.S
 		return nil, nil, fmt.Errorf("failed to process block state: %w", err)
 	}
 
-	if err := bc.validator.ValidateState(block, statedb, res, false); err != nil {
+	if err := bc.validator.ValidateState(block, statedb, res, false, nil); err != nil {
 		return nil, nil, fmt.Errorf("failed to verify state: %w", err)
 	}
 	return statedb, res, nil

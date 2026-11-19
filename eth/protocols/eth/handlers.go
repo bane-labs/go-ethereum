@@ -323,7 +323,7 @@ func serviceGetReceiptsQuery70(chain *core.BlockChain, query GetReceiptsRequest,
 		if body == nil {
 			break
 		}
-		q := receiptQueryParams{sizeLimit: uint64(maxPacketSize - bytes)}
+		q := receiptQueryParams{sizeLimit: uint64(maxPacketSize - receiptsEnvelopeReserve - bytes)}
 		if i == 0 {
 			q.firstIndex = firstBlockReceiptIndex
 		}
@@ -574,7 +574,6 @@ func handleReceipts70(backend Backend, msg Decoder, peer *Peer) error {
 	if complete := peer.flushReceipts(res.RequestId); complete != nil {
 		receiptLists = complete
 	}
-
 	return dispatchReceipts(res.RequestId, receiptLists, peer)
 }
 
@@ -771,20 +770,13 @@ func answerGetCells(backend Backend, query GetCellsRequest) ([]common.Hash, [][]
 					skip = true
 					break
 				}
+				flat = append(flat, *c)
 			}
 			if skip {
 				break
 			}
 		}
-		if skip {
-			continue
-		}
-		for i := range blobCells[0] {
-			for _, bc := range blobCells {
-				flat = append(flat, *bc[i])
-			}
-		}
-		if len(flat) == 0 {
+		if skip || len(flat) == 0 {
 			continue
 		}
 		hashes = append(hashes, hash)

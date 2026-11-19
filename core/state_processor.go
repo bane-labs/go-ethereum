@@ -19,9 +19,9 @@ package core
 import (
 	"context"
 	"fmt"
-	"math"
 	"math/big"
 	"sync/atomic"
+	"time"
 
 	"github.com/ethereum/go-ethereum/antimev"
 	"github.com/ethereum/go-ethereum/common"
@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/internal/telemetry"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
@@ -67,11 +68,15 @@ func (p *StateProcessor) chainConfig() *params.ChainConfig {
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
-func (p *StateProcessor) Process(ctx context.Context, block *types.Block, statedb *state.StateDB, jumpDestCache vm.JumpDestCache, precompileCache *vm.PrecompileCache, cfg vm.Config, execIndex *atomic.Int64) (*ProcessResult, error) {
-	if supportsParallelExecution(block, p.chainConfig(), statedb.Witness() != nil, cfg.Tracer != nil, cfg.DisableParallelExecution) {
-		return p.processParallel(ctx, block, statedb, jumpDestCache, precompileCache, cfg)
+func (p *StateProcessor) Process(ctx context.Context, block *types.Block, statedb *state.StateDB, jumpDestCache vm.JumpDestCache, precompileCache *vm.PrecompileCache, cfg vm.Config, execIndex *atomic.Int64, stats *ProcessStats) (*ProcessResult, error) {
+	reason := sequentialExecutionReason(block, p.chainConfig(), statedb.Witness() != nil, cfg.Tracer != nil, cfg.DisableParallelExecution)
+	if reason == nil {
+		log.Debug("Executing block", "number", block.NumberU64(), "hash", block.Hash(), "path", "parallel")
+		return p.processParallel(ctx, block, statedb, jumpDestCache, precompileCache, cfg, stats)
 	}
+	log.Debug("Executing block", "number", block.NumberU64(), "hash", block.Hash(), "path", "sequential", "reason", reason)
 	var (
+		start         = time.Now()
 		config        = p.chainConfig()
 		receipts      = make(types.Receipts, 0, len(block.Transactions()))
 		envelopeCount = uint64(0)
@@ -94,10 +99,6 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	var tracingStateDB = vm.StateDB(statedb)
 	if hooks := cfg.Tracer; hooks != nil {
 		tracingStateDB = state.NewHookedState(statedb, hooks)
-	}
-	// Mutate the block and state according to any hard-fork specs
-	if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(block.Number()) == 0 {
-		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	parent := p.chain.GetHeader(block.ParentHash(), block.NumberU64()-1)
 	if parent == nil {
@@ -171,6 +172,11 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	// the pipeline has filled in their blooms.
 	pipeline.joinReceipts()
 
+	if stats != nil {
+		stats.addReads(statedb)
+		stats.Total = time.Since(start)
+		stats.Execution = stats.Total - stats.stateReads()
+	}
 	return &ProcessResult{
 		Receipts: receipts,
 		Requests: requests,
@@ -189,12 +195,16 @@ func PreExecution(ctx context.Context, beaconRoot *common.Hash, parent *types.He
 	if config.IsAmsterdam(number, time) {
 		blockAccessList = bal.NewConstructionBlockAccessList()
 	}
+	// Mutate the state according to any hard-fork specs
+	if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(number) == 0 {
+		misc.ApplyDAOHardFork(evm.StateDB)
+	}
 	// EIP-4788
 	if beaconRoot != nil {
 		ProcessBeaconBlockRoot(*beaconRoot, evm, blockAccessList)
 	}
 	// EIP-2935
-	if config.IsPrague(number, time) || config.IsUBT(number, time) {
+	if config.IsPrague(number, time) {
 		ProcessParentBlockHash(parent.Hash(), evm, blockAccessList)
 	}
 	if config.DBFT != nil {
@@ -260,10 +270,6 @@ func ProcessWithdrawals(withdrawals types.Withdrawals, evm *vm.EVM, blockAccessI
 		amount := new(uint256.Int).SetUint64(w.Amount)
 		amount = amount.Mul(amount, uint256.NewInt(params.GWei))
 		evm.StateDB.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
-
-		if rules.IsEIP4762 {
-			evm.StateDB.AccessEvents().AddAccount(w.Address, true, math.MaxUint64)
-		}
 	}
 	accessList := evm.StateDB.Finalise(rules)
 	if rules.IsAmsterdam {
@@ -307,11 +313,6 @@ func applyTransactionWithEVM(ctx context.Context, msg *Message, gp *GasPool, sta
 		bal = evm.StateDB.Finalise(evm.GetRules())
 	} else {
 		root = statedb.IntermediateRoot(evm.GetRules()).Bytes()
-	}
-	// Merge the tx-local access event into the "block-local" one, in order to collect
-	// all values, so that the witness can be built.
-	if statedb.Database().Type().Is(state.TypeUBT) {
-		statedb.AccessEvents().Merge(evm.AccessEvents)
 	}
 	receipt = makeReceipt(evm, result, statedb, blockNumber, blockHash, blockTime, tx, gp.CumulativeUsed(), root)
 	if withBloom {
@@ -419,9 +420,6 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, evm *vm.EVM, blockAccessList
 
 	// Unchecked system call (EIP-4788), failures are ignored as spec
 	_, _, _ = evm.Call(msg.From, *msg.To, msg.Data, gasBudget, common.U2560)
-	if evm.StateDB.AccessEvents() != nil {
-		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
-	}
 	accessList := evm.StateDB.Finalise(evm.GetRules())
 	if evm.GetRules().IsAmsterdam {
 		blockAccessList.Merge(accessList)
@@ -454,9 +452,6 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM, blockAccessList *
 
 	// Unchecked system call (EIP-2935), failures are ignored as spec
 	_, _, _ = evm.Call(msg.From, *msg.To, msg.Data, gasBudget, common.U2560)
-	if evm.StateDB.AccessEvents() != nil {
-		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
-	}
 	accessList := evm.StateDB.Finalise(evm.GetRules())
 	if evm.GetRules().IsAmsterdam {
 		blockAccessList.Merge(accessList)
@@ -512,9 +507,6 @@ func processRequestsSystemCall(requests *[][]byte, rules params.Rules, evm *vm.E
 	evm.StateDB.SetTxContext(common.Hash{}, 0, blockAccessIndex)
 	evm.StateDB.AddAddressToAccessList(addr)
 	ret, _, err := evm.Call(msg.From, *msg.To, msg.Data, gasBudget, common.U2560)
-	if evm.StateDB.AccessEvents() != nil {
-		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
-	}
 	bal := evm.StateDB.Finalise(evm.GetRules())
 	if err != nil {
 		return fmt.Errorf("system call failed to execute: %v", err)
@@ -555,27 +547,38 @@ func ParseDepositLogs(requests *[][]byte, logs []*types.Log, config *params.Chai
 }
 
 func onSystemCallStart(tracer *tracing.Hooks, ctx *tracing.VMContext) {
-	if tracer.OnSystemCallStartV2 != nil {
-		tracer.OnSystemCallStartV2(ctx)
-	} else if tracer.OnSystemCallStart != nil {
-		tracer.OnSystemCallStart()
-	}
+	tracer.EmitSystemCallStart(ctx)
 }
 
 // AssembleBlock finalizes the state and assembles the block with provided
 // body and receipts.
-func AssembleBlock(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt, bal *bal.BlockAccessList) *types.Block {
-	// Assign the post-transition state root
-	rules := chain.Config().Rules(header.Number, header.Difficulty.Sign() == 0, header.Time)
-	header.Root = state.IntermediateRoot(rules)
+func AssembleBlock(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt, accessList *bal.BlockAccessList) *types.Block {
+	var (
+		done  = make(chan struct{})
+		rules = chain.Config().Rules(header.Number, header.Difficulty.Sign() == 0, header.Time)
+	)
+	go func() {
+		header.DeriveBodyFields(body, receipts, trie.NewStackTrie(nil))
+		if rules.IsAmsterdam {
+			hash := accessList.Hash()
+			header.BlockAccessListHash = &hash
+		}
+		close(done)
+	}()
+	defer func() { <-done }()
 
-	if !rules.IsAmsterdam {
-		return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil))
+	root := state.IntermediateRoot(rules)
+	<-done
+	header.Root = root
+
+	block := types.NewBlockWithHeader(header)
+	if body != nil {
+		block = block.WithBody(*body)
 	}
-	// Assign the BlockAccessListHash if Amsterdam has been enabled
-	balHash := bal.Hash()
-	header.BlockAccessListHash = &balHash
-	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)).WithAccessListUnsafe(bal)
+	if accessList != nil {
+		block = block.WithAccessListUnsafe(accessList)
+	}
+	return block
 }
 
 // ProcessOnPersist applies a system call to the governance contract.
@@ -643,9 +646,6 @@ func applyLocalSystemCall(to common.Address, data []byte, evm *vm.EVM, blockAcce
 	_, _, err := evm.Call(msg.From, *msg.To, msg.Data, gasBudget, common.U2560)
 	if err != nil {
 		return err
-	}
-	if evm.StateDB.AccessEvents() != nil {
-		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
 	}
 	accessList := evm.StateDB.Finalise(evm.GetRules())
 	if evm.GetRules().IsAmsterdam {

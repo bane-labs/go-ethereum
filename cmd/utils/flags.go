@@ -117,9 +117,10 @@ var (
 		Category: flags.EthCategory,
 	}
 	MinFreeDiskSpaceFlag = &cli.IntFlag{
-		Name:     "datadir.minfreedisk",
-		Usage:    "Minimum free disk space in MB, once reached triggers auto shut down (default = --cache.gc converted to MB, 0 = disabled)",
-		Category: flags.EthCategory,
+		Name:        "datadir.minfreedisk",
+		Usage:       "Minimum free disk space in MB, once reached triggers auto shut down (0 = disabled)",
+		DefaultText: "--cache.gc converted to MB",
+		Category:    flags.EthCategory,
 	}
 	KeyStoreDirFlag = &flags.DirectoryFlag{
 		Name:     "keystore",
@@ -266,11 +267,6 @@ var (
 		Usage:    "Manually specify the bpo2 fork timestamp, overriding the bundled setting",
 		Category: flags.EthCategory,
 	}
-	OverrideUBT = &cli.Uint64Flag{
-		Name:     "override.ubt",
-		Usage:    "Manually specify the UBT fork timestamp, overriding the bundled setting",
-		Category: flags.EthCategory,
-	}
 	OverrideGenesisFlag = &cli.StringFlag{
 		Name:     "override.genesis",
 		Usage:    "Load genesis block and configuration from file at this path",
@@ -298,12 +294,6 @@ var (
 		Usage:       "Enable or disable the snap/2 (EIP-8189, BAL-based) state syncer, which needs Amsterdam active",
 		DefaultText: "automatic",
 		Category:    flags.StateCategory,
-	}
-	BinTrieGroupDepthFlag = &cli.IntFlag{
-		Name:     "bintrie.groupdepth",
-		Usage:    "Number of levels per serialized group in binary trie (1-8, default 5). Lower values create smaller groups with more nodes.",
-		Value:    5,
-		Category: flags.StateCategory,
 	}
 	StateHistoryFlag = &cli.Uint64Flag{
 		Name:     "history.state",
@@ -570,14 +560,16 @@ var (
 		Value:    ethconfig.Defaults.FilterLogCacheSize,
 	}
 	FDLimitFlag = &cli.IntFlag{
-		Name:     "fdlimit",
-		Usage:    "Raise the open file descriptor resource limit (default = system fd limit)",
-		Category: flags.PerfCategory,
+		Name:        "fdlimit",
+		Usage:       "Raise the open file descriptor resource limit",
+		DefaultText: "system fd limit",
+		Category:    flags.PerfCategory,
 	}
 	MemoryLimitFlag = &cli.IntFlag{
-		Name:     "memorylimit",
-		Usage:    "Soft memory limit for the Go runtime in megabytes (default = no limit)",
-		Category: flags.PerfCategory,
+		Name:        "memorylimit",
+		Usage:       "Soft memory limit for the Go runtime in megabytes",
+		DefaultText: "no limit",
+		Category:    flags.PerfCategory,
 	}
 	GOGCFlag = &cli.IntFlag{
 		Name:     "gogc",
@@ -589,6 +581,11 @@ var (
 		Name:     "crypto.kzg",
 		Usage:    "KZG library implementation to use; gokzg (recommended) or ckzg",
 		Value:    "gokzg",
+		Category: flags.PerfCategory,
+	}
+	CryptoKZGLazyFlag = &cli.BoolFlag{
+		Name:     "crypto.kzg.lazy",
+		Usage:    "Initialize the KZG library on first use instead of at startup (speeds up test nodes without blobs)",
 		Category: flags.PerfCategory,
 	}
 
@@ -1052,6 +1049,18 @@ var (
 		Value:    30303,
 		Category: flags.NetworkingCategory,
 	}
+	QUICPortFlag = &cli.IntFlag{
+		Name:     "quic.port",
+		Usage:    "UDP listening port for the experimental QUIC/WebTransport transport (0 = OS-assigned). Setting this enables QUIC.",
+		Value:    0,
+		Category: flags.NetworkingCategory,
+	}
+	QUICMaxBrowsersFlag = &cli.IntFlag{
+		Name:     "quic.maxbrowsers",
+		Usage:    "Maximum number of browser peers connected over QUIC, budgeted separately from maxpeers",
+		Value:    node.DefaultConfig.P2P.MaxBrowserPeers,
+		Category: flags.NetworkingCategory,
+	}
 
 	// Console
 	JSpathFlag = &flags.DirectoryFlag{
@@ -1408,6 +1417,9 @@ func setListenAddress(ctx *cli.Context, cfg *p2p.Config) {
 	if ctx.IsSet(DiscoveryPortFlag.Name) {
 		cfg.DiscAddr = fmt.Sprintf(":%d", ctx.Int(DiscoveryPortFlag.Name))
 	}
+	if ctx.IsSet(QUICPortFlag.Name) {
+		cfg.ListenQUICAddr = fmt.Sprintf(":%d", ctx.Int(QUICPortFlag.Name))
+	}
 }
 
 // setNAT creates a port mapper from command line flags.
@@ -1652,6 +1664,9 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 
 	if ctx.IsSet(MaxPendingPeersFlag.Name) {
 		cfg.MaxPendingPeers = ctx.Int(MaxPendingPeersFlag.Name)
+	}
+	if ctx.IsSet(QUICMaxBrowsersFlag.Name) {
+		cfg.MaxBrowserPeers = ctx.Int(QUICMaxBrowsersFlag.Name)
 	}
 	if ctx.IsSet(NoDiscoverFlag.Name) {
 		cfg.NoDiscovery = ctx.Bool(NoDiscoverFlag.Name)
@@ -2050,9 +2065,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(TrienodeHistoryFullValueCheckpointFlag.Name) {
 		cfg.NodeFullValueCheckpoint = uint32(ctx.Uint(TrienodeHistoryFullValueCheckpointFlag.Name))
 	}
-	if ctx.IsSet(BinTrieGroupDepthFlag.Name) {
-		cfg.BinTrieGroupDepth = ctx.Int(BinTrieGroupDepthFlag.Name)
-	}
 	if ctx.IsSet(StateSchemeFlag.Name) {
 		cfg.StateScheme = ctx.String(StateSchemeFlag.Name)
 	}
@@ -2305,15 +2317,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.String(CryptoKZGFlag.Name) != "gokzg" && ctx.String(CryptoKZGFlag.Name) != "ckzg" {
 		Fatalf("--%s flag must be 'gokzg' or 'ckzg'", CryptoKZGFlag.Name)
 	}
-	// The initialization of the KZG library can take up to 2 seconds
-	// We start this here in parallel, so it should be available
-	// once we start executing blocks. It's threadsafe.
-	go func() {
-		log.Info("Initializing the KZG library", "backend", ctx.String(CryptoKZGFlag.Name))
-		if err := kzg4844.UseCKZG(ctx.String(CryptoKZGFlag.Name) == "ckzg"); err != nil {
-			Fatalf("Failed to set KZG library implementation to %s: %v", ctx.String(CryptoKZGFlag.Name), err)
-		}
-	}()
+	if err := kzg4844.SelectCKZG(ctx.String(CryptoKZGFlag.Name) == "ckzg"); err != nil {
+		Fatalf("Failed to set KZG library implementation to %s: %v", ctx.String(CryptoKZGFlag.Name), err)
+	}
 
 	// VM tracing config.
 	if ctx.IsSet(VMTraceFlag.Name) {
@@ -2743,7 +2749,6 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 		StateHistory:            ctx.Uint64(StateHistoryFlag.Name),
 		TrienodeHistory:         ctx.Int64(TrienodeHistoryFlag.Name),
 		NodeFullValueCheckpoint: uint32(ctx.Uint(TrienodeHistoryFullValueCheckpointFlag.Name)),
-		BinTrieGroupDepth:       ctx.Int(BinTrieGroupDepthFlag.Name),
 
 		// Disable transaction indexing/unindexing.
 		TxLookupLimit: -1,
@@ -2751,7 +2756,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 		// Enables file journaling for the trie database. The journal files will be stored
 		// within the data directory. The corresponding paths will be either:
 		// - DATADIR/triedb/merkle.journal
-		// - DATADIR/triedb/verkle.journal
+		// - DATADIR/triedb/pbt.journal
 		TrieJournalDirectory: stack.ResolvePath("triedb"),
 
 		// Configure the slow block statistic logger (disabled by default)
@@ -2824,10 +2829,10 @@ func MakeConsolePreloads(ctx *cli.Context) []string {
 }
 
 // MakeTrieDatabase constructs a trie database based on the configured scheme.
-func MakeTrieDatabase(ctx *cli.Context, stack *node.Node, disk ethdb.Database, preimage bool, readOnly bool, isUBT bool) *triedb.Database {
+func MakeTrieDatabase(ctx *cli.Context, stack *node.Node, disk ethdb.Database, preimage bool, readOnly bool, isPBT bool) *triedb.Database {
 	config := &triedb.Config{
 		Preimages: preimage,
-		IsUBT:     isUBT,
+		IsPBT:     isPBT,
 	}
 	scheme, err := rawdb.ParseStateScheme(ctx.String(StateSchemeFlag.Name), disk)
 	if err != nil {
