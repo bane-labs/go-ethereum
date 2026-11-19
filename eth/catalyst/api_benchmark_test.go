@@ -31,7 +31,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -806,7 +805,8 @@ func makeBenchNewPayload(b *testing.B, numTx int) (engine.ExecutableData, []comm
 		ExcessBlobGas: new(uint64),
 	}
 	vhashes := []common.Hash{}
-	block, err := engine.ExecutableDataToBlockNoHash(data, vhashes, &beaconRoot, [][]byte{})
+	requestsHash := types.EmptyRequestsHash
+	block, err := engine.ExecutableDataToBlockNoHash(data, vhashes, &beaconRoot, &requestsHash)
 	if err != nil {
 		b.Fatalf("assembling the payload failed: %v", err)
 	}
@@ -830,9 +830,14 @@ func makeBenchNewPayloadRequest(b *testing.B, numTx int) []byte {
 	if err != nil {
 		b.Fatalf("marshaling the beacon root failed: %v", err)
 	}
+	requestsHash := types.EmptyRequestsHash
+	requestHash, err := json.Marshal(&requestsHash)
+	if err != nil {
+		b.Fatalf("marshaling the requests hash failed: %v", err)
+	}
 	return []byte(fmt.Sprintf(
-		`{"jsonrpc":"2.0","id":1,"method":"engine_newPayloadV4","params":[%s,%s,%s,[]]}`,
-		payload, hashes, root))
+		`{"jsonrpc":"2.0","id":1,"method":"engine_newPayloadV4","params":[%s,%s,%s,%s]}`,
+		payload, hashes, root, requestHash))
 }
 
 // newPayloadDecodeStub answers engine_newPayloadV4 with no chain behind it. With
@@ -842,13 +847,9 @@ type newPayloadDecodeStub struct {
 	err     error
 }
 
-func (s *newPayloadDecodeStub) NewPayloadV4(ctx context.Context, params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, executionRequests []hexutil.Bytes) (engine.PayloadStatusV1, error) {
+func (s *newPayloadDecodeStub) NewPayloadV4(ctx context.Context, params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requestsHash *common.Hash) (engine.PayloadStatusV1, error) {
 	if s.toBlock {
-		requests := make([][]byte, len(executionRequests))
-		for i, r := range executionRequests {
-			requests[i] = r
-		}
-		if _, err := engine.ExecutableDataToBlock(params, versionedHashes, beaconRoot, requests); err != nil {
+		if _, err := engine.ExecutableDataToBlock(params, versionedHashes, beaconRoot, requestsHash); err != nil {
 			s.err = err
 		}
 	}

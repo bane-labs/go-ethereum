@@ -71,6 +71,12 @@ func requestsOf(envelope *engine.ExecutionPayloadEnvelope) []hexutil.Bytes {
 	return reqs
 }
 
+// requestsHashOf returns the envelope's execution requests hash in the shape the V4/V5
+func requestsHashOf(envelope *engine.ExecutionPayloadEnvelope) *common.Hash {
+	hash := types.CalcRequestsHash(envelope.Requests)
+	return &hash
+}
+
 var witnessForks = []witnessFork{
 	{
 		name:     "shanghai",
@@ -114,10 +120,10 @@ var witnessForks = []witnessFork{
 			return api.ForkchoiceUpdatedWithWitnessV3(context.Background(), state, attrs)
 		},
 		newPayload: func(api *ConsensusAPI, e *engine.ExecutionPayloadEnvelope) (engine.PayloadStatusV1, error) {
-			return api.NewPayloadWithWitnessV4(context.Background(), *e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsOf(e))
+			return api.NewPayloadWithWitnessV4(context.Background(), *e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsHashOf(e))
 		},
 		stateless: func(api *ConsensusAPI, e *engine.ExecutionPayloadEnvelope, w hexutil.Bytes) (engine.StatelessPayloadStatusV1, error) {
-			return api.ExecuteStatelessPayloadV4(*e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsOf(e), w)
+			return api.ExecuteStatelessPayloadV4(*e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsHashOf(e), w)
 		},
 	},
 	{
@@ -133,10 +139,10 @@ var witnessForks = []witnessFork{
 			return api.ForkchoiceUpdatedWithWitnessV4(context.Background(), state, attrs, nil)
 		},
 		newPayload: func(api *ConsensusAPI, e *engine.ExecutionPayloadEnvelope) (engine.PayloadStatusV1, error) {
-			return api.NewPayloadWithWitnessV5(context.Background(), *e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsOf(e))
+			return api.NewPayloadWithWitnessV5(context.Background(), *e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsHashOf(e))
 		},
 		stateless: func(api *ConsensusAPI, e *engine.ExecutionPayloadEnvelope, w hexutil.Bytes) (engine.StatelessPayloadStatusV1, error) {
-			return api.ExecuteStatelessPayloadV5(*e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsOf(e), w)
+			return api.ExecuteStatelessPayloadV5(*e.ExecutionPayload, []common.Hash{}, &witnessBeaconRoot, requestsHashOf(e), w)
 		},
 	},
 }

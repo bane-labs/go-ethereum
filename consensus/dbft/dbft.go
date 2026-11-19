@@ -1897,9 +1897,6 @@ func (c *DBFT) verifyHeader(chain consensus.ChainHeaderReader, header *types.Hea
 	if prague && header.RequestsHash == nil {
 		return errors.New("missing requestsHash")
 	}
-	if prague && header.RequestsHash.Cmp(types.EmptyRequestsHash) != 0 {
-		return fmt.Errorf("invalid requestsHash: have %x, expected %x", header.RequestsHash, &types.EmptyRequestsHash)
-	}
 	if !prague && header.RequestsHash != nil {
 		return fmt.Errorf("invalid requestsHash, have %x, expected nil", header.RequestsHash)
 	}

@@ -285,6 +285,11 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 		beaconRoot = &common.Hash{}
 		requests = envelope.Requests
 	}
+	var requestsHash *common.Hash
+	if requests != nil {
+		h := types.CalcRequestsHash(requests)
+		requestsHash = &h
+	}
 
 	// Create a server span for newPayload, simulating the consensus client
 	// sending the execution payload for validation.
@@ -295,7 +300,7 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 	})
 
 	// Mark the payload as canon
-	_, err = c.engineAPI.newPayload(npCtx, *payload, blobHashes, beaconRoot, requests, false)
+	_, err = c.engineAPI.newPayload(npCtx, *payload, blobHashes, beaconRoot, requestsHash, false)
 	npSpanEnd(&err)
 	if err != nil {
 		return err
