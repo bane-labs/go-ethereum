@@ -122,12 +122,6 @@ type GetBlobsPacket struct {
 	Ttl       uint8
 }
 
-// BlobsPacket1 is the response packet for blobs by block hash, with BEACON1.
-type BlobsPacket1 struct {
-	RequestId uint64
-	Sidecars  types.BlobSidecarV0s
-}
-
 // BlobsPacket is the response packet for blobs by block hash.
 type BlobsPacket struct {
 	RequestId uint64
