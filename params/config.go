@@ -920,8 +920,8 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 						lastFork.name, *lastFork.timestamp, cur.name, *cur.timestamp)
 				}
 
-				// Timestamp based forks can follow block based ones, but not the other way around
-				if lastFork.timestamp != nil && cur.block != nil {
+				// The NeoX PrepareRequest extension is intentionally block-based after Osaka.
+				if lastFork.timestamp != nil && cur.block != nil && cur.name != "neoXPrepareRequestExtensionBlock" {
 					return fmt.Errorf("unsupported fork ordering: %v used timestamp ordering, but %v reverted to block ordering",
 						lastFork.name, cur.name)
 				}
@@ -1047,7 +1047,8 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkBlockIncompatible(c.NeoXEthSigBlock, newcfg.NeoXEthSigBlock, headNumber) {
 		return newBlockCompatError("NeoXEthSig fork block", c.NeoXEthSigBlock, newcfg.NeoXEthSigBlock)
 	}
-	if isForkBlockIncompatible(c.NeoXPrepareRequestExtensionBlock, newcfg.NeoXPrepareRequestExtensionBlock, headNumber) {
+	// Removing this switch opts back into the legacy PrepareRequest format without rewinding the chain.
+	if newcfg.NeoXPrepareRequestExtensionBlock != nil && isForkBlockIncompatible(c.NeoXPrepareRequestExtensionBlock, newcfg.NeoXPrepareRequestExtensionBlock, headNumber) {
 		return newBlockCompatError("NeoXPrepareRequestExtension fork block", c.NeoXPrepareRequestExtensionBlock, newcfg.NeoXPrepareRequestExtensionBlock)
 	}
 	if isForkTimestampIncompatible(c.CancunTime, newcfg.CancunTime, headTimestamp) {

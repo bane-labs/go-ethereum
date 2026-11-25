@@ -250,6 +250,10 @@ func gatherForks(config *params.ChainConfig, genesis uint64) ([]uint64, []uint64
 	for i := 0; i < kind.NumField(); i++ {
 		// Fetch the next field and skip non-fork rules
 		field := kind.Field(i)
+		// The NeoX PrepareRequest extension is intentionally excluded from ForkID.
+		if field.Name == "NeoXPrepareRequestExtensionBlock" {
+			continue
+		}
 
 		time := strings.HasSuffix(field.Name, "Time")
 		if !time && !strings.HasSuffix(field.Name, "Block") {
