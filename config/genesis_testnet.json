@@ -18,6 +18,7 @@
     "neoXDKGBlock": 1990080,
     "neoXAMEVBlock": 2088000,
     "neoXEthSigBlock": 3750000,
+    "neoXPrepareRequestExtensionBlock": 11388000,
     "cancunTime": 1761600000,
     "pragueTime": 1761600000,
     "osakaTime": 1781500000,
