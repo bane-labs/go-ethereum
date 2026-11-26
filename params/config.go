@@ -23,6 +23,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params/forks"
 )
 
@@ -57,6 +58,7 @@ var (
 		EIP150Block:             big.NewInt(0),
 		EIP155Block:             big.NewInt(0),
 		EIP158Block:             big.NewInt(0),
+		EIP170Block:             big.NewInt(0),
 		ByzantiumBlock:          big.NewInt(0),
 		ConstantinopleBlock:     big.NewInt(0),
 		PetersburgBlock:         big.NewInt(0),
@@ -73,7 +75,6 @@ var (
 		PragueTime:              nil,
 		OsakaTime:               nil,
 		BogotaTime:              nil,
-		UBTTime:                 nil,
 		Ethash:                  new(EthashConfig),
 		Clique:                  nil,
 	}
@@ -84,6 +85,7 @@ var (
 		EIP150Block:             big.NewInt(0),
 		EIP155Block:             big.NewInt(0),
 		EIP158Block:             big.NewInt(0),
+		EIP170Block:             big.NewInt(0),
 		ByzantiumBlock:          big.NewInt(0),
 		ConstantinopleBlock:     big.NewInt(0),
 		PetersburgBlock:         big.NewInt(0),
@@ -115,6 +117,7 @@ var (
 		EIP150Block:             big.NewInt(0),
 		EIP155Block:             big.NewInt(0),
 		EIP158Block:             big.NewInt(0),
+		EIP170Block:             big.NewInt(0),
 		ByzantiumBlock:          big.NewInt(0),
 		ConstantinopleBlock:     big.NewInt(0),
 		PetersburgBlock:         big.NewInt(0),
@@ -130,7 +133,6 @@ var (
 		PragueTime:              nil,
 		OsakaTime:               nil,
 		BogotaTime:              nil,
-		UBTTime:                 nil,
 		TerminalTotalDifficulty: big.NewInt(math.MaxInt64),
 		Ethash:                  nil,
 		Clique:                  &CliqueConfig{Period: 0, Epoch: 30000},
@@ -146,6 +148,7 @@ var (
 		EIP150Block:             big.NewInt(0),
 		EIP155Block:             big.NewInt(0),
 		EIP158Block:             big.NewInt(0),
+		EIP170Block:             big.NewInt(0),
 		ByzantiumBlock:          big.NewInt(0),
 		ConstantinopleBlock:     big.NewInt(0),
 		PetersburgBlock:         big.NewInt(0),
@@ -161,7 +164,6 @@ var (
 		PragueTime:              nil,
 		OsakaTime:               nil,
 		BogotaTime:              nil,
-		UBTTime:                 nil,
 		TerminalTotalDifficulty: big.NewInt(math.MaxInt64),
 		Ethash:                  new(EthashConfig),
 		Clique:                  nil,
@@ -177,6 +179,7 @@ var (
 		EIP150Block:             big.NewInt(0),
 		EIP155Block:             big.NewInt(0),
 		EIP158Block:             big.NewInt(0),
+		EIP170Block:             big.NewInt(0),
 		ByzantiumBlock:          big.NewInt(0),
 		ConstantinopleBlock:     big.NewInt(0),
 		PetersburgBlock:         big.NewInt(0),
@@ -192,7 +195,6 @@ var (
 		PragueTime:              newUint64(0),
 		OsakaTime:               newUint64(0),
 		BogotaTime:              nil,
-		UBTTime:                 nil,
 		TerminalTotalDifficulty: big.NewInt(0),
 		Ethash:                  new(EthashConfig),
 		Clique:                  nil,
@@ -212,6 +214,7 @@ var (
 		EIP150Block:             nil,
 		EIP155Block:             nil,
 		EIP158Block:             nil,
+		EIP170Block:             nil,
 		ByzantiumBlock:          nil,
 		ConstantinopleBlock:     nil,
 		PetersburgBlock:         nil,
@@ -227,7 +230,6 @@ var (
 		PragueTime:              nil,
 		OsakaTime:               nil,
 		BogotaTime:              nil,
-		UBTTime:                 nil,
 		TerminalTotalDifficulty: big.NewInt(math.MaxInt64),
 		Ethash:                  new(EthashConfig),
 		Clique:                  nil,
@@ -304,6 +306,13 @@ type ChainConfig struct {
 	EIP155Block *big.Int `json:"eip155Block,omitempty"` // EIP155 HF block
 	EIP158Block *big.Int `json:"eip158Block,omitempty"` // EIP158 HF block
 
+	// EIP170Block and EIP170Time schedule EIP-170 (contract code size limit)
+	// by block number or timestamp. They are mutually exclusive; EIP170Time
+	// takes precedence. On Ethereum this coincides with EIP158Block. If neither
+	// is set, EIP-170 activates with EIP158Block (legacy configs).
+	EIP170Block *big.Int `json:"eip170Block,omitempty"`
+	EIP170Time  *uint64  `json:"eip170Time,omitempty"`
+
 	ByzantiumBlock      *big.Int `json:"byzantiumBlock,omitempty"`      // Byzantium switch block (nil = no fork, 0 = already on byzantium)
 	ConstantinopleBlock *big.Int `json:"constantinopleBlock,omitempty"` // Constantinople switch block (nil = no fork, 0 = already activated)
 	PetersburgBlock     *big.Int `json:"petersburgBlock,omitempty"`     // Petersburg switch block (nil = same as Constantinople)
@@ -328,7 +337,8 @@ type ChainConfig struct {
 	BPO5Time      *uint64 `json:"bpo5Time,omitempty"`      // BPO5 switch time (nil = no fork, 0 = already on bpo5)
 	AmsterdamTime *uint64 `json:"amsterdamTime,omitempty"` // Amsterdam switch time (nil = no fork, 0 = already on amsterdam)
 	BogotaTime    *uint64 `json:"bogotaTime,omitempty"`    // Bogota switch time (nil = no fork, 0 = already on bogota)
-	UBTTime       *uint64 `json:"ubtTime,omitempty"`       // UBT switch time (nil = no fork, 0 = already on UBT)
+
+	PBTTime *uint64 `json:"binaryTrieTime,omitempty"` // EIP-8297 partitioned binary tree switch time (nil = no fork, 0 = already on the tree)
 
 	// Neo X specific forks, enabled after Shanghai but before Cancun, represented in blocks
 	NeoXDKGBlock                     *big.Int `json:"neoXDKGBlock,omitempty"`                     // Block-based switch to DKG related logic for dBFT, system contracts and processing engine (nil = no fork, 0 = already activated)
@@ -341,19 +351,6 @@ type ChainConfig struct {
 	TerminalTotalDifficulty *big.Int `json:"terminalTotalDifficulty,omitempty"`
 
 	DepositContractAddress common.Address `json:"depositContractAddress,omitempty"`
-
-	// EnableUBTAtGenesis is a flag that specifies whether the network uses
-	// the Verkle tree starting from the genesis block. If set to true, the
-	// genesis state will be committed using the Binary tree, eliminating the
-	// need for any Binary transition later.
-	//
-	// This is a temporary flag only for binary devnet testing, where binary is
-	// activated at genesis, and the configured activation date has already passed.
-	//
-	// In production networks (mainnet and public testnets), binary activation
-	// always occurs after the genesis block, making this flag irrelevant in
-	// those cases.
-	EnableUBTAtGenesis bool `json:"enableUBTAtGenesis,omitempty"`
 
 	// Various consensus engines
 	Ethash             *EthashConfig       `json:"ethash,omitempty"`
@@ -452,6 +449,12 @@ func (c *ChainConfig) String() string {
 	if c.MergeNetsplitBlock != nil {
 		result += fmt.Sprintf(", MergeNetsplitBlock: %v", c.MergeNetsplitBlock)
 	}
+	if c.EIP170Block != nil {
+		result += fmt.Sprintf(", EIP170Block: %v", c.EIP170Block)
+	}
+	if c.EIP170Time != nil {
+		result += fmt.Sprintf(", EIP170Time: %v", *c.EIP170Time)
+	}
 
 	// Add timestamp-based forks
 	if c.ShanghaiTime != nil {
@@ -487,8 +490,8 @@ func (c *ChainConfig) String() string {
 	if c.BogotaTime != nil {
 		result += fmt.Sprintf(", BogotaTime: %v", *c.BogotaTime)
 	}
-	if c.UBTTime != nil {
-		result += fmt.Sprintf(", UBTTime: %v", *c.UBTTime)
+	if c.PBTTime != nil {
+		result += fmt.Sprintf(", PBTTime: %v", *c.PBTTime)
 	}
 	result += "}"
 	return result
@@ -587,8 +590,8 @@ func (c *ChainConfig) Description() string {
 	if c.BogotaTime != nil {
 		banner += fmt.Sprintf(" - Bogota:                      @%-10v\n", *c.BogotaTime)
 	}
-	if c.UBTTime != nil {
-		banner += fmt.Sprintf(" - UBT:                         @%-10v\n", *c.UBTTime)
+	if c.PBTTime != nil {
+		banner += fmt.Sprintf(" - PBT:                         @%-10v\n", *c.PBTTime)
 	}
 	banner += fmt.Sprintf("\nAll fork specifications can be found at https://ethereum.github.io/execution-specs/src/ethereum/forks/\n")
 	banner += "\n"
@@ -663,6 +666,26 @@ func (c *ChainConfig) IsEIP155(num *big.Int) bool {
 // IsEIP158 returns whether num is either equal to the EIP158 fork block or greater.
 func (c *ChainConfig) IsEIP158(num *big.Int) bool {
 	return isBlockForked(c.EIP158Block, num)
+}
+
+// IsEIP170 returns whether EIP-170 is active at the given block and time,
+// with EIP170Time taking precedence over EIP170Block.
+func (c *ChainConfig) IsEIP170(num *big.Int, time uint64) bool {
+	block, timestamp := c.eip170Schedule()
+	if timestamp != nil {
+		return isTimestampForked(timestamp, time)
+	}
+	return isBlockForked(block, num)
+}
+
+// eip170Schedule returns the effective EIP-170 activation. Chain configs that
+// predate eip170Block/eip170Time, such as those persisted in the database by
+// older versions, activate EIP-170 together with EIP-158.
+func (c *ChainConfig) eip170Schedule() (*big.Int, *uint64) {
+	if c.EIP170Block == nil && c.EIP170Time == nil {
+		return c.EIP158Block, nil
+	}
+	return c.EIP170Block, c.EIP170Time
 }
 
 // IsByzantium returns whether num is either equal to the Byzantium fork block or greater.
@@ -806,28 +829,10 @@ func (c *ChainConfig) IsBogota(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.BogotaTime, time)
 }
 
-// IsUBT returns whether time is either equal to the Verkle fork time or greater.
-func (c *ChainConfig) IsUBT(num *big.Int, time uint64) bool {
-	return c.IsLondon(num) && isTimestampForked(c.UBTTime, time)
-}
-
-// IsUBTGenesis checks whether the verkle fork is activated at the genesis block.
-//
-// Verkle mode is considered enabled if the verkle fork time is configured,
-// regardless of whether the local time has surpassed the fork activation time.
-// This is a temporary workaround for verkle devnet testing, where verkle is
-// activated at genesis, and the configured activation date has already passed.
-//
-// In production networks (mainnet and public testnets), verkle activation
-// always occurs after the genesis block, making this function irrelevant in
-// those cases.
-func (c *ChainConfig) IsUBTGenesis() bool {
-	return c.EnableUBTAtGenesis
-}
-
-// IsEIP4762 returns whether eip 4762 has been activated at given block.
-func (c *ChainConfig) IsEIP4762(num *big.Int, time uint64) bool {
-	return c.IsUBT(num, time)
+// IsPBT returns whether time is either equal to the EIP-8297 partitioned binary
+// tree fork time or greater.
+func (c *ChainConfig) IsPBT(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.PBTTime, time)
 }
 
 // CheckCompatible checks whether scheduled fork transitions have been imported
@@ -871,6 +876,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "eip150Block", block: c.EIP150Block},
 		{name: "eip155Block", block: c.EIP155Block},
 		{name: "eip158Block", block: c.EIP158Block},
+		{name: "eip170Block", block: c.EIP170Block, timestamp: c.EIP170Time, optional: true},
 		{name: "byzantiumBlock", block: c.ByzantiumBlock},
 		{name: "constantinopleBlock", block: c.ConstantinopleBlock},
 		{name: "petersburgBlock", block: c.PetersburgBlock},
@@ -889,7 +895,6 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "cancunTime", timestamp: c.CancunTime, optional: true},
 		{name: "pragueTime", timestamp: c.PragueTime, optional: true},
 		{name: "osakaTime", timestamp: c.OsakaTime, optional: true},
-		{name: "ubtTime", timestamp: c.UBTTime, optional: true},
 		{name: "bpo1", timestamp: c.BPO1Time, optional: true},
 		{name: "bpo2", timestamp: c.BPO2Time, optional: true},
 		{name: "amsterdam", timestamp: c.AmsterdamTime, optional: true},
@@ -931,6 +936,12 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		if !cur.optional || (cur.block != nil || cur.timestamp != nil) {
 			lastFork = cur
 		}
+	}
+	if c.EIP170Block != nil && c.EIP170Time != nil {
+		return fmt.Errorf("unsupported fork configuration: eip170Block %v and eip170Time %v are mutually exclusive", c.EIP170Block, *c.EIP170Time)
+	}
+	if c.EIP170Block == nil && c.EIP170Time == nil && c.EIP158Block != nil {
+		log.Warn("Chain config does not set eip170Block/eip170Time; EIP-170 activation implicitly follows eip158Block. This fallback is deprecated, please set eip170Block/eip170Time explicitly")
 	}
 
 	// Check that all forks with blobs explicitly define the blob schedule configuration.
@@ -1035,6 +1046,14 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkBlockIncompatible(c.MergeNetsplitBlock, newcfg.MergeNetsplitBlock, headNumber) {
 		return newBlockCompatError("Merge netsplit fork block", c.MergeNetsplitBlock, newcfg.MergeNetsplitBlock)
 	}
+	storedEIP170Block, storedEIP170Time := c.eip170Schedule()
+	newEIP170Block, newEIP170Time := newcfg.eip170Schedule()
+	if isForkBlockIncompatible(storedEIP170Block, newEIP170Block, headNumber) {
+		return newBlockCompatError("EIP-170 fork block", storedEIP170Block, newEIP170Block)
+	}
+	if isForkTimestampIncompatible(storedEIP170Time, newEIP170Time, headTimestamp) {
+		return newTimestampCompatError("EIP-170 fork timestamp", storedEIP170Time, newEIP170Time)
+	}
 	if isForkTimestampIncompatible(c.ShanghaiTime, newcfg.ShanghaiTime, headTimestamp) {
 		return newTimestampCompatError("Shanghai fork timestamp", c.ShanghaiTime, newcfg.ShanghaiTime)
 	}
@@ -1059,9 +1078,6 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	}
 	if isForkTimestampIncompatible(c.OsakaTime, newcfg.OsakaTime, headTimestamp) {
 		return newTimestampCompatError("Osaka fork timestamp", c.OsakaTime, newcfg.OsakaTime)
-	}
-	if isForkTimestampIncompatible(c.UBTTime, newcfg.UBTTime, headTimestamp) {
-		return newTimestampCompatError("UBT fork timestamp", c.UBTTime, newcfg.UBTTime)
 	}
 	if isForkTimestampIncompatible(c.BPO1Time, newcfg.BPO1Time, headTimestamp) {
 		return newTimestampCompatError("BPO1 fork timestamp", c.BPO1Time, newcfg.BPO1Time)
@@ -1375,27 +1391,27 @@ func (err *ConfigCompatError) Error() string {
 // phases.
 type Rules struct {
 	IsHomestead, IsEIP150, IsEIP155, IsEIP158                   bool
-	IsEIP2929, IsEIP4762                                        bool
+	IsEIP170, IsEIP2929                                         bool
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul     bool
 	IsBerlin, IsLondon                                          bool
 	IsMerge, IsShanghai, IsNeoXDKG, IsCancun, IsPrague, IsOsaka bool
-	IsAmsterdam, IsBogota, IsUBT                                bool
+	IsAmsterdam, IsBogota                                       bool
 }
 
 // Rules ensures c's ChainID is not nil.
 func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules {
-	isUBT := c.IsUBT(num, timestamp)
 	return Rules{
 		IsHomestead:      c.IsHomestead(num),
 		IsEIP150:         c.IsEIP150(num),
 		IsEIP155:         c.IsEIP155(num),
 		IsEIP158:         c.IsEIP158(num),
+		IsEIP170:         c.IsEIP170(num, timestamp),
 		IsByzantium:      c.IsByzantium(num),
 		IsConstantinople: c.IsConstantinople(num),
 		IsPetersburg:     c.IsPetersburg(num),
 		IsIstanbul:       c.IsIstanbul(num),
 		IsBerlin:         c.IsBerlin(num),
-		IsEIP2929:        c.IsBerlin(num) && !isUBT,
+		IsEIP2929:        c.IsBerlin(num),
 		IsLondon:         c.IsLondon(num),
 		IsMerge:          isMerge,
 		IsShanghai:       c.IsShanghai(num, timestamp),
@@ -1405,7 +1421,5 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsOsaka:          c.IsOsaka(num, timestamp),
 		IsAmsterdam:      c.IsAmsterdam(num, timestamp),
 		IsBogota:         c.IsBogota(num, timestamp),
-		IsUBT:            isUBT,
-		IsEIP4762:        isUBT,
 	}
 }

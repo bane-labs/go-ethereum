@@ -591,18 +591,16 @@ func (st *stateTransition) preCheck(rules params.Rules) error {
 	}
 	if !msg.skipGasLimitCapCheck {
 		// Verify tx gas limit does not exceed the EIP-8037 total cap, or the EIP-7825 cap before it.
-		if rules.IsAmsterdam && msg.GasLimit > params.MaxTxTotalGas {
-			return fmt.Errorf("%w (cap: %d, tx: %d)", ErrGasLimitTooHigh, params.MaxTxTotalGas, msg.GasLimit)
-		}
-		if !rules.IsAmsterdam && rules.IsOsaka && msg.GasLimit > params.MaxTxGas {
-			return fmt.Errorf("%w (cap: %d, tx: %d)", ErrGasLimitTooHigh, params.MaxTxGas, msg.GasLimit)
+		if err := CheckGasLimitCap(msg.GasLimit, rules); err != nil {
+			return err
 		}
 	}
 	if !msg.skipEOACheck {
 		// Make sure the sender is an EOA
 		code := st.state.GetCode(msg.From)
+		// EIP-7702 exempts the delegation designator from EIP-3607, from Prague on.
 		_, delegated := types.ParseDelegation(code)
-		if len(code) > 0 && !delegated {
+		if len(code) > 0 && !(delegated && rules.IsPrague) {
 			return fmt.Errorf("%w: address %v, len(code): %d", ErrSenderNoEOA, msg.From.Hex(), len(code))
 		}
 		// Apply policy blacklist
@@ -731,11 +729,8 @@ func (st *stateTransition) preCheck(rules params.Rules) error {
 		if !rules.IsPrague {
 			return fmt.Errorf("%w: setcode tx (sender %v)", ErrTxTypeNotSupported, msg.From)
 		}
-		if msg.To == nil {
-			return fmt.Errorf("%w (sender %v)", ErrSetCodeTxCreate, msg.From)
-		}
-		if len(msg.SetCodeAuthorizations) == 0 {
-			return fmt.Errorf("%w (sender %v)", ErrEmptyAuthList, msg.From)
+		if err := CheckSetCodeTx(msg.To, msg.SetCodeAuthorizations); err != nil {
+			return fmt.Errorf("%w (sender %v)", err, msg.From)
 		}
 	}
 	// Check whether the init code size has been exceeded (EIP-3860).
@@ -761,6 +756,28 @@ func (st *stateTransition) preCheck(rules params.Rules) error {
 	return st.buyGas()
 }
 
+// CheckGasLimitCap checks the tx gas limit against the EIP-8037 total cap, or the EIP-7825 cap before it.
+func CheckGasLimitCap(gasLimit uint64, rules params.Rules) error {
+	if rules.IsAmsterdam && gasLimit > params.MaxTxTotalGas {
+		return fmt.Errorf("%w (cap: %d, tx: %d)", ErrGasLimitTooHigh, params.MaxTxTotalGas, gasLimit)
+	}
+	if !rules.IsAmsterdam && rules.IsOsaka && gasLimit > params.MaxTxGas {
+		return fmt.Errorf("%w (cap: %d, tx: %d)", ErrGasLimitTooHigh, params.MaxTxGas, gasLimit)
+	}
+	return nil
+}
+
+// CheckSetCodeTx checks that an EIP-7702 tx has a recipient and a non-empty authorization list.
+func CheckSetCodeTx(to *common.Address, authList []types.SetCodeAuthorization) error {
+	if to == nil {
+		return ErrSetCodeTxCreate
+	}
+	if len(authList) == 0 {
+		return ErrEmptyAuthList
+	}
+	return nil
+}
+
 // execute transitions the state by applying the current message and
 // returns the EVM execution result with the following fields:
 //
@@ -777,50 +794,15 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 		msg              = st.msg
 		rules            = st.evm.ChainConfig().Rules(st.evm.Context.BlockNumber, st.evm.Context.Random != nil, st.evm.Context.Time)
 		contractCreation = msg.To == nil
-		floorDataGas     uint64
 	)
 	// Validate the message and pre-pay gas.
 	if err := st.preCheck(rules); err != nil {
 		return nil, err
 	}
-	// Calculate the intrinsic gas of this transaction and make sure the gas limit
-	// is sufficient to cover that.
-	intrinsicGas, err := IntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, msg.From, msg.To, msg.Value, rules)
+	intrinsicGas, floorDataGas, err := CheckIntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, msg.From, msg.To, msg.Value, msg.GasLimit, rules, msg.skipExecutionGasCap)
 	if err != nil {
 		return nil, err
 	}
-	if msg.GasLimit < intrinsicGas {
-		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, msg.GasLimit, intrinsicGas)
-	}
-	// Validate the EIP-7623 calldata floor against the gas limit. The floor inflates
-	// the total gas usage at tx end, so the gas limit must be sufficient to cover that.
-	if rules.IsPrague {
-		floorDataGas, err = FloorDataGas(rules, msg.From, msg.To, msg.Value, msg.Data, msg.AccessList)
-		if err != nil {
-			return nil, err
-		}
-		// Make sure the transaction has sufficient gas allowance to
-		// pay the floor cost.
-		if msg.GasLimit < floorDataGas {
-			return nil, fmt.Errorf("%w: have %d, want %d", ErrFloorDataGas, msg.GasLimit, floorDataGas)
-		}
-	}
-	// In Amsterdam, the transaction gas limit is allowed to exceed
-	// params.MaxTxGas, but the intrinsic cost and calldata floor
-	// cost is still capped by it.
-	if rules.IsAmsterdam && !msg.skipExecutionGasCap && max(intrinsicGas, floorDataGas) > params.MaxTxGas {
-		return nil, fmt.Errorf("%w: intrinsic cost %v, floor: %v", ErrFloorDataGas, intrinsicGas, floorDataGas)
-	}
-
-	// EIP-4762 setup
-	if rules.IsEIP4762 {
-		st.evm.AccessEvents.AddTxOrigin(msg.From)
-
-		if targetAddr := msg.To; targetAddr != nil {
-			st.evm.AccessEvents.AddTxDestination(*targetAddr, msg.Value.Sign() != 0, !st.state.Exist(*targetAddr))
-		}
-	}
-
 	// Top-call affordability, the sender must still be able to cover the value
 	// transfer of the top frame after gas pre-pay.
 	value := msg.Value
@@ -876,17 +858,47 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 	fee.Mul(fee, effectiveTip)
 	st.state.AddBalance(st.evm.Context.Coinbase, fee, tracing.BalanceIncreaseRewardTransactionFee)
 
-	// add the coinbase to the witness iff the fee is greater than 0
-	if rules.IsEIP4762 && fee.Sign() != 0 {
-		st.evm.AccessEvents.AddAccount(st.evm.Context.Coinbase, true, math.MaxUint64)
-	}
-
 	return &ExecutionResult{
 		UsedGas:    gasUsed,
 		MaxUsedGas: peakUsed,
 		Err:        vmerr,
 		ReturnData: ret,
 	}, nil
+}
+
+// CheckIntrinsicGas computes the intrinsic gas and calldata floor and checks them
+// against the gas limit and the protocol's execution gas cap.
+func CheckIntrinsicGas(data []byte, accessList types.AccessList, authList []types.SetCodeAuthorization, from common.Address, to *common.Address, value *uint256.Int, gasLimit uint64, rules params.Rules, skipExecutionGasCap bool) (uint64, uint64, error) {
+	// Calculate the intrinsic gas of this transaction and make sure the gas limit
+	// is sufficient to cover that.
+	intrinsicGas, err := IntrinsicGas(data, accessList, authList, from, to, value, rules)
+	if err != nil {
+		return 0, 0, err
+	}
+	if gasLimit < intrinsicGas {
+		return 0, 0, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, gasLimit, intrinsicGas)
+	}
+	// Validate the EIP-7623 calldata floor against the gas limit. The floor inflates
+	// the total gas usage at tx end, so the gas limit must be sufficient to cover that.
+	var floorDataGas uint64
+	if rules.IsPrague {
+		floorDataGas, err = FloorDataGas(rules, from, to, value, data, accessList)
+		if err != nil {
+			return 0, 0, err
+		}
+		// Make sure the transaction has sufficient gas allowance to
+		// pay the floor cost.
+		if gasLimit < floorDataGas {
+			return 0, 0, fmt.Errorf("%w: have %d, want %d", ErrFloorDataGas, gasLimit, floorDataGas)
+		}
+	}
+	// In Amsterdam, the transaction gas limit is allowed to exceed
+	// params.MaxTxGas, but the intrinsic cost and calldata floor
+	// cost is still capped by it.
+	if rules.IsAmsterdam && !skipExecutionGasCap && max(intrinsicGas, floorDataGas) > params.MaxTxGas {
+		return 0, 0, fmt.Errorf("%w: intrinsic cost %v, floor: %v", ErrFloorDataGas, intrinsicGas, floorDataGas)
+	}
+	return intrinsicGas, floorDataGas, nil
 }
 
 // executeCreate runs the top-level frame of a contract-creation transaction

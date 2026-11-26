@@ -1108,6 +1108,7 @@ func TestCall(t *testing.T) {
 		call           TransactionArgs
 		blockOverrides override.BlockOverrides
 		expectErr      error
+		expectErrCode  int
 		want           string
 	}{
 		// transfer on genesis
@@ -1350,7 +1351,8 @@ func TestCall(t *testing.T) {
 			blockOverrides: override.BlockOverrides{
 				BeaconRoot: &common.Hash{0, 1, 2},
 			},
-			expectErr: errors.New(`block override "beaconRoot" is not supported for this RPC method`),
+			expectErr:     errors.New(`block override "beaconRoot" is not supported for this RPC method`),
+			expectErrCode: ErrCodeInvalidParams,
 		},
 		{
 			name:        "unsupported block override withdrawals",
@@ -1359,7 +1361,8 @@ func TestCall(t *testing.T) {
 			blockOverrides: override.BlockOverrides{
 				Withdrawals: &types.Withdrawals{},
 			},
-			expectErr: errors.New(`block override "withdrawals" is not supported for this RPC method`),
+			expectErr:     errors.New(`block override "withdrawals" is not supported for this RPC method`),
+			expectErrCode: ErrCodeInvalidParams,
 		},
 		// Verify that an overridden basefee is honored when computing gasPrice
 		// from the 1559 fee fields. Returning GASPRICE opcode; expected value
@@ -1392,8 +1395,13 @@ func TestCall(t *testing.T) {
 			}
 			if !errors.Is(err, tc.expectErr) {
 				// Second try
-				if !reflect.DeepEqual(err, tc.expectErr) {
+				if err.Error() != tc.expectErr.Error() {
 					t.Errorf("test %s: error mismatch, want %v, have %v", tc.name, tc.expectErr, err)
+				}
+			}
+			if tc.expectErrCode != 0 {
+				if rpcErr, ok := err.(rpc.Error); !ok || rpcErr.ErrorCode() != tc.expectErrCode {
+					t.Errorf("test %s: want error code %d, have %v", tc.name, tc.expectErrCode, err)
 				}
 			}
 			continue
@@ -1642,7 +1650,7 @@ func TestSimulateV1(t *testing.T) {
 				}},
 			}},
 			want:      nil,
-			expectErr: &invalidTxError{Message: fmt.Sprintf("err: insufficient funds for gas * price + value: address %s have 0 want 1000 (supplied gas 4712388)", randomAccounts[0].addr.String()), Code: errCodeInsufficientFunds},
+			expectErr: &invalidTxError{Message: fmt.Sprintf("err: insufficient funds for gas * price + value: address %s have 0 want 1000 (supplied gas 4712388)", randomAccounts[0].addr.String()), Code: ErrCodeInsufficientFunds},
 		}, {
 			// EVM error
 			name: "evm-error",
@@ -1664,7 +1672,7 @@ func TestSimulateV1(t *testing.T) {
 				BaseFeePerGas: "0x0",
 				Calls: []callRes{{
 					ReturnValue: "0x",
-					Error:       callErr{Message: "stack underflow (0 <=> 2)", Code: errCodeVMError},
+					Error:       callErr{Message: "stack underflow (0 <=> 2)", Code: ErrCodeVMError},
 					GasUsed:     "0x47e7c4",
 					Logs:        []log{},
 					Status:      "0x0",
@@ -2108,7 +2116,7 @@ func TestSimulateV1(t *testing.T) {
 			}},
 			validation: &validation,
 			want:       nil,
-			expectErr:  &invalidTxError{Message: fmt.Sprintf("err: nonce too high: address %s, tx: 2 state: 0 (supplied gas 4712388)", accounts[2].addr), Code: errCodeNonceTooHigh},
+			expectErr:  &invalidTxError{Message: fmt.Sprintf("err: nonce too high: address %s, tx: 2 state: 0 (supplied gas 4712388)", accounts[2].addr), Code: ErrCodeNonceTooHigh},
 		},
 		// Contract sends tx in validation mode.
 		{
@@ -2661,6 +2669,8 @@ func TestSimulateV1TxSender(t *testing.T) {
 		sender2   = common.Address{0xaa, 0xab}
 		sender3   = common.Address{0xaa, 0xac}
 		recipient = common.Address{0xbb, 0xbb}
+		gas       = hexutil.Uint64(21000)
+		nonce     = hexutil.Uint64(1)
 		gspec     = &core.Genesis{
 			Config: params.MergedTestChainConfig,
 			Alloc: types.GenesisAlloc{
@@ -2697,13 +2707,19 @@ func TestSimulateV1TxSender(t *testing.T) {
 		{Calls: []TransactionArgs{
 			{From: &sender2, To: &recipient, Value: (*hexutil.Big)(big.NewInt(4000))},
 		}},
+		// Two calls that differ only in the sender have the same transaction hash.
+		{Calls: []TransactionArgs{
+			{From: &sender, To: &recipient, Gas: &gas, Nonce: &nonce},
+			{From: &sender3, To: &recipient, Gas: &gas, Nonce: &nonce},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("simulation execution failed: %v", err)
 	}
-	require.Len(t, results, 2, "expected 2 simulated blocks")
+	require.Len(t, results, 3, "expected 3 simulated blocks")
 	require.Len(t, results[0].Block.Transactions(), 3, "expected 3 transaction in simulated block")
 	require.Len(t, results[1].Block.Transactions(), 1, "expected 1 transaction in 2nd simulated block")
+	require.Len(t, results[2].Block.Transactions(), 2, "expected 2 transaction in 3rd simulated block")
 	enc, err := json.Marshal(results)
 	if err != nil {
 		t.Fatalf("failed to marshal results: %v", err)
@@ -2711,19 +2727,24 @@ func TestSimulateV1TxSender(t *testing.T) {
 	type resultType struct {
 		Transactions []struct {
 			From common.Address `json:"from"`
+			Hash common.Hash    `json:"hash"`
 		}
 	}
 	var summary []resultType
 	if err := json.Unmarshal(enc, &summary); err != nil {
 		t.Fatalf("failed to unmarshal results: %v", err)
 	}
-	require.Len(t, summary, 2, "expected 2 simulated blocks")
+	require.Len(t, summary, 3, "expected 3 simulated blocks")
 	require.Len(t, summary[0].Transactions, 3, "expected 3 transaction in simulated block")
 	require.Equal(t, sender, summary[0].Transactions[0].From, "sender address mismatch")
 	require.Equal(t, sender2, summary[0].Transactions[1].From, "sender address mismatch")
 	require.Equal(t, sender3, summary[0].Transactions[2].From, "sender address mismatch")
 	require.Len(t, summary[1].Transactions, 1, "expected 1 transaction in simulated block")
 	require.Equal(t, sender2, summary[1].Transactions[0].From, "sender address mismatch")
+	require.Len(t, summary[2].Transactions, 2, "expected 2 transaction in 3rd simulated block")
+	require.Equal(t, summary[2].Transactions[0].Hash, summary[2].Transactions[1].Hash, "expected equal transaction hashes")
+	require.Equal(t, sender, summary[2].Transactions[0].From, "sender address mismatch")
+	require.Equal(t, sender3, summary[2].Transactions[1].From, "sender address mismatch")
 }
 
 // TestSimulateV1LogIndex checks that logs which are dropped because their call or call frame
@@ -2811,6 +2832,137 @@ func TestSimulateV1LogIndex(t *testing.T) {
 				}
 			}
 			require.Equal(t, tc.want, have)
+		})
+	}
+}
+
+// TestSimulateV1ReceiptsEqualHash checks that the receipt of a call holds only the logs
+// of that call when an earlier call has the same transaction hash. Each case runs twice:
+// with equal hashes, and with a different gas limit in the last call, which changes its
+// hash but not its receipt, because the gas used is the same. Both runs must give the
+// same receipts root and bloom.
+func TestSimulateV1ReceiptsEqualHash(t *testing.T) {
+	t.Parallel()
+
+	var (
+		accounts  = newAccounts(3)
+		sender1   = accounts[0].addr
+		sender2   = accounts[1].addr
+		recipient = accounts[2].addr
+		emitter   = common.HexToAddress("0xc0de000000000000000000000000000000000001")
+		reverter  = common.HexToAddress("0xc0de000000000000000000000000000000000002")
+		// CALLER PUSH0 PUSH0 LOG1 STOP
+		emitterCode = hex2Bytes("335f5fa100")
+		// CALLER PUSH0 PUSH0 LOG1, then REVERT if CALLER is sender2, else STOP
+		reverterCode = hex2Bytes("335f5fa13373" + strings.TrimPrefix(sender2.Hex(), "0x") + "14601f57005b5f5ffd")
+		value        = (*hexutil.Big)(big.NewInt(1000))
+		gas          = hexutil.Uint64(100_000)
+		amsterdam    = *params.MergedTestChainConfig
+	)
+	amsterdam.AmsterdamTime = new(uint64)
+
+	for _, tc := range []struct {
+		name   string
+		config *params.ChainConfig
+		// blocks returns the simulated blocks. The last call has the given gas limit.
+		blocks func(last *hexutil.Uint64) []simBlock
+		// lastStatus is the status of the last call.
+		lastStatus uint64
+	}{
+		{
+			name:   "one block",
+			config: params.MergedTestChainConfig,
+			blocks: func(last *hexutil.Uint64) []simBlock {
+				return []simBlock{{Calls: []TransactionArgs{
+					{From: &sender1, To: &emitter, Gas: &gas},
+					{From: &sender2, To: &emitter, Gas: last},
+				}}}
+			},
+			lastStatus: types.ReceiptStatusSuccessful,
+		},
+		{
+			name:   "two blocks",
+			config: params.MergedTestChainConfig,
+			blocks: func(last *hexutil.Uint64) []simBlock {
+				return []simBlock{
+					{Calls: []TransactionArgs{{From: &sender1, To: &emitter, Gas: &gas}}},
+					{Calls: []TransactionArgs{{From: &sender2, To: &emitter, Gas: last}}},
+				}
+			},
+			lastStatus: types.ReceiptStatusSuccessful,
+		},
+		{
+			name:   "second call reverts",
+			config: params.MergedTestChainConfig,
+			blocks: func(last *hexutil.Uint64) []simBlock {
+				return []simBlock{{Calls: []TransactionArgs{
+					{From: &sender1, To: &reverter, Gas: &gas},
+					{From: &sender2, To: &reverter, Gas: last},
+				}}}
+			},
+			lastStatus: types.ReceiptStatusFailed,
+		},
+		{
+			name:   "transfer logs after amsterdam",
+			config: &amsterdam,
+			blocks: func(last *hexutil.Uint64) []simBlock {
+				return []simBlock{{Calls: []TransactionArgs{
+					{From: &sender1, To: &recipient, Value: value, Gas: &gas},
+					{From: &sender2, To: &recipient, Value: value, Gas: last},
+				}}}
+			},
+			lastStatus: types.ReceiptStatusSuccessful,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gspec := &core.Genesis{
+				Config: tc.config,
+				Alloc: types.GenesisAlloc{
+					sender1:   {Balance: big.NewInt(params.Ether)},
+					sender2:   {Balance: big.NewInt(params.Ether)},
+					recipient: {Balance: big.NewInt(1)},
+				},
+			}
+			backend := newTestBackend(t, 1, gspec, beacon.New(ethash.NewFaker()), func(i int, b *core.BlockGen) {})
+			run := func(lastGas hexutil.Uint64) []*simBlockResult {
+				stateDB, baseHeader, err := backend.StateAndHeaderByNumberOrHash(context.Background(), rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber))
+				if err != nil {
+					t.Fatalf("failed to get state and header: %v", err)
+				}
+				sim := &simulator{
+					b:           backend,
+					state:       stateDB,
+					base:        baseHeader,
+					chainConfig: backend.ChainConfig(),
+					budget:      newGasBudget(0),
+				}
+				blocks := tc.blocks(&lastGas)
+				blocks[0].StateOverrides = &override.StateOverride{
+					emitter:  override.OverrideAccount{Code: emitterCode},
+					reverter: override.OverrideAccount{Code: reverterCode},
+				}
+				results, err := sim.execute(context.Background(), blocks)
+				if err != nil {
+					t.Fatalf("simulation execution failed: %v", err)
+				}
+				return results
+			}
+			var (
+				equal   = run(100_000)
+				control = run(100_001)
+				hashes  = make(map[common.Hash]struct{})
+			)
+			for i := range equal {
+				for _, tx := range equal[i].Block.Transactions() {
+					hashes[tx.Hash()] = struct{}{}
+				}
+				require.Equal(t, control[i].Block.ReceiptHash(), equal[i].Block.ReceiptHash(), "block %d receipts root", i)
+				require.Equal(t, control[i].Block.Bloom(), equal[i].Block.Bloom(), "block %d bloom", i)
+			}
+			require.Len(t, hashes, 1, "expected equal transaction hashes")
+			require.Len(t, equal[0].Calls[0].Logs, 1)
+			lastBlock := equal[len(equal)-1]
+			require.Equal(t, hexutil.Uint64(tc.lastStatus), lastBlock.Calls[len(lastBlock.Calls)-1].Status)
 		})
 	}
 }
@@ -4869,8 +5021,8 @@ func TestSendRawTransactionSync_Timeout(t *testing.T) {
 	if !errors.As(err, &de) {
 		t.Fatalf("expected data error with code/data, got %T %v", err, err)
 	}
-	if de.ErrorCode() != errCodeTxSyncTimeout {
-		t.Fatalf("expected code %d, got %d", errCodeTxSyncTimeout, de.ErrorCode())
+	if de.ErrorCode() != ErrCodeTxSyncTimeout {
+		t.Fatalf("expected code %d, got %d", ErrCodeTxSyncTimeout, de.ErrorCode())
 	}
 	tx := new(types.Transaction)
 	if e := tx.UnmarshalBinary(raw); e != nil {
@@ -5101,5 +5253,40 @@ func TestCreateAccessListAuthorizationGas(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, result.Error)
 		})
+	}
+}
+
+// headerErrorBackend fails header lookups of the safe and finalized tags.
+type headerErrorBackend struct {
+	*testBackend
+	err error
+}
+
+func (b headerErrorBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
+	if number == rpc.SafeBlockNumber || number == rpc.FinalizedBlockNumber {
+		return nil, b.err
+	}
+	return b.testBackend.HeaderByNumber(ctx, number)
+}
+
+// A safe or finalized tag that cannot be resolved to a block yet is null, while
+// any other backend failure is still reported.
+func TestGetHeaderByNumberUnresolvedTag(t *testing.T) {
+	t.Parallel()
+
+	backend := newTestBackend(t, 0, &core.Genesis{Config: params.MergedTestChainConfig, Difficulty: common.Big0}, beacon.New(ethash.NewFaker()), nil)
+	failure := errors.New("database failure")
+	for number, notFound := range map[rpc.BlockNumber]error{
+		rpc.SafeBlockNumber:      ErrSafeBlockNotFound,
+		rpc.FinalizedBlockNumber: ErrFinalizedBlockNotFound,
+	} {
+		api := NewBlockChainAPI(headerErrorBackend{backend, notFound})
+		if header, err := api.GetHeaderByNumber(context.Background(), number); header != nil || err != nil {
+			t.Errorf("%v not found: have %v %v, want null", number, header, err)
+		}
+		api = NewBlockChainAPI(headerErrorBackend{backend, failure})
+		if _, err := api.GetHeaderByNumber(context.Background(), number); !errors.Is(err, failure) {
+			t.Errorf("%v failure: have %v, want %v", number, err, failure)
+		}
 	}
 }
